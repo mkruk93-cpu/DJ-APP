@@ -7,13 +7,19 @@ Stop: Ctrl+C
 
 import os
 import re
+import shutil
 import sys
 import time
 import threading
+import urllib.parse
+import urllib.request
+import json
 from datetime import datetime
 from dotenv import load_dotenv
 from supabase import create_client
 import yt_dlp
+
+HAS_FFMPEG = shutil.which("ffmpeg") is not None
 
 def get_base_dir():
     if getattr(sys, "frozen", False):
@@ -49,43 +55,33 @@ def download(request: dict):
     log(f"Downloading: {url} voor {nickname}")
 
     try:
-        files_before = set(os.listdir(DOWNLOAD_PATH))
-
         ydl_opts = {
             "format": "bestaudio/best",
             "outtmpl": os.path.join(DOWNLOAD_PATH, "%(artist,uploader,creator|Unknown)s - %(title)s.%(ext)s"),
             "noplaylist": True,
-            "postprocessors": [{
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": "192",
-            }],
-            "keepvideo": False,
             "quiet": True,
             "js_runtimes": {"nodejs": {}},
         }
 
+        if HAS_FFMPEG:
+            ydl_opts["postprocessors"] = [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            }]
+            ydl_opts["keepvideo"] = False
+        else:
+            log("ffmpeg niet gevonden — audio wordt gedownload in origineel formaat")
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
-
-        # Wait for ffmpeg to release files, then clean up non-mp3
-        time.sleep(2)
-        files_after = set(os.listdir(DOWNLOAD_PATH))
-        for f in files_after - files_before:
-            if not f.lower().endswith(".mp3"):
-                path = os.path.join(DOWNLOAD_PATH, f)
-                try:
-                    os.remove(path)
-                    log(f"Opgeruimd: {f}")
-                except OSError:
-                    pass
 
         sb.table("requests").update({"status": "downloaded"}).eq("id", rid).execute()
         log(f"Done: {url}")
 
     except Exception as e:
-        sb.table("requests").update({"status": "rejected"}).eq("id", rid).execute()
-        log(f"Error: {e}")
+        sb.table("requests").update({"status": "error"}).eq("id", rid).execute()
+        log(f"Download error: {e}")
 
 
 def read_file_text(path: str) -> str:
@@ -94,6 +90,26 @@ def read_file_text(path: str) -> str:
             return f.read().strip()
     except (OSError, UnicodeDecodeError):
         return ""
+
+
+def fetch_artwork(artist: str, title: str) -> str | None:
+    """Search iTunes for album artwork. Returns a 600x600 image URL or None."""
+    try:
+        query = f"{artist} {title}".strip()
+        if not query:
+            return None
+        url = "https://itunes.apple.com/search?" + urllib.parse.urlencode({
+            "term": query, "media": "music", "limit": 1,
+        })
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            data = json.loads(resp.read())
+        results = data.get("results", [])
+        if not results:
+            return None
+        art_url = results[0].get("artworkUrl100", "")
+        return art_url.replace("100x100bb", "600x600bb") if art_url else None
+    except Exception:
+        return None
 
 
 def now_playing_watcher():
@@ -112,10 +128,14 @@ def now_playing_watcher():
         if title != last_title or artist != last_artist:
             last_title = title
             last_artist = artist
+            artwork_url = fetch_artwork(artist, title)
+            if artwork_url:
+                log(f"Artwork gevonden: {artwork_url[:60]}...")
             try:
                 sb.table("now_playing").update({
                     "title": title or None,
                     "artist": artist or None,
+                    "artwork_url": artwork_url,
                     "updated_at": datetime.utcnow().isoformat(),
                 }).eq("id", 1).execute()
                 log(f"Now playing: {artist} — {title}")

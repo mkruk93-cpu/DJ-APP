@@ -24,6 +24,7 @@ const statusConfig: Record<string, { label: string; color: string }> = {
   approved: { label: "Goedgekeurd", color: "bg-green-500/20 text-green-400" },
   downloaded: { label: "Gedownload", color: "bg-violet-500/20 text-violet-400" },
   rejected: { label: "Afgekeurd", color: "bg-red-500/20 text-red-400" },
+  error: { label: "Download mislukt", color: "bg-orange-500/20 text-orange-400" },
 };
 
 export default function RequestForm() {
@@ -189,9 +190,11 @@ export default function RequestForm() {
               className={`overflow-hidden rounded-lg border transition ${
                 r.status === "rejected"
                   ? "border-red-500/20 bg-red-500/5 opacity-60"
-                  : isOwn
-                    ? "border-violet-500/20 bg-violet-500/5"
-                    : "border-gray-800 bg-gray-800/50"
+                  : r.status === "error"
+                    ? "border-orange-500/20 bg-orange-500/5 opacity-70"
+                    : isOwn
+                      ? "border-violet-500/20 bg-violet-500/5"
+                      : "border-gray-800 bg-gray-800/50"
               }`}
             >
               <div className="flex gap-3 p-3">
