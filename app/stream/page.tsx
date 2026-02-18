@@ -73,7 +73,9 @@ export default function StreamPage() {
             </button>
           </div>
         </div>
-        <NowPlaying />
+        <div className={mode === "audio" ? "hidden sm:block" : ""}>
+          <NowPlaying />
+        </div>
       </header>
 
       <main className="flex min-h-0 flex-1 flex-col gap-2 p-2 sm:gap-4 sm:p-4 lg:flex-row">
@@ -124,7 +126,7 @@ export default function StreamPage() {
         </div>
 
         {/* Chat + Requests: tabbed on mobile, side by side on desktop */}
-        <div className="flex min-h-0 flex-1 gap-2 lg:gap-4">
+        <div className="flex min-h-0 flex-1 flex-col gap-2 lg:flex-row lg:gap-4">
           <div className={`min-h-0 flex-1 ${activeTab === "chat" ? "" : "hidden"} lg:block`}>
             <ChatBox onNewMessage={() => { if (activeTabRef.current !== "chat") setChatBadge(true); }} />
           </div>

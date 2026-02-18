@@ -91,11 +91,11 @@ export default function AudioPlayer({ src }: { src: string }) {
           )}
           <div className="mt-1 flex items-center gap-2">
             <span className="relative flex h-2 w-2">
-              <span className={`absolute inline-flex h-full w-full rounded-full opacity-75 ${playing ? "animate-ping bg-violet-400" : "bg-gray-600"}`} />
-              <span className={`relative inline-flex h-2 w-2 rounded-full ${playing ? "bg-violet-500" : "bg-gray-600"}`} />
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-violet-500" />
             </span>
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">
-              {playing ? "Live" : "Offline"}
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-violet-400">
+              Live
             </span>
           </div>
         </div>
@@ -148,11 +148,11 @@ export default function AudioPlayer({ src }: { src: string }) {
 
         <div className="flex items-center gap-2">
           <span className="relative flex h-3 w-3">
-            <span className={`absolute inline-flex h-full w-full rounded-full opacity-75 ${playing ? "animate-ping bg-violet-400" : "bg-gray-600"}`} />
-            <span className={`relative inline-flex h-3 w-3 rounded-full ${playing ? "bg-violet-500" : "bg-gray-600"}`} />
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400 opacity-75" />
+            <span className="relative inline-flex h-3 w-3 rounded-full bg-violet-500" />
           </span>
-          <span className="text-sm font-semibold uppercase tracking-wider text-gray-400">
-            {playing ? "Audio Live" : "Audio Stream"}
+          <span className="text-sm font-semibold uppercase tracking-wider text-violet-400">
+            Live
           </span>
         </div>
 
