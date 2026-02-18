@@ -134,13 +134,16 @@ def now_playing_watcher():
             artwork_url = fetch_artwork(artist, title)
             if artwork_url:
                 log(f"Artwork gevonden: {artwork_url[:60]}...")
+            else:
+                log("Geen artwork gevonden — wordt gereset")
             try:
-                sb.table("now_playing").update({
+                row = {
                     "title": title or None,
                     "artist": artist or None,
-                    "artwork_url": artwork_url,
+                    "artwork_url": artwork_url if artwork_url else None,
                     "updated_at": datetime.utcnow().isoformat(),
-                }).eq("id", 1).execute()
+                }
+                sb.table("now_playing").upsert({"id": 1, **row}).execute()
                 log(f"Now playing: {artist} — {title}")
             except Exception as e:
                 log(f"Now-playing update error: {e}")

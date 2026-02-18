@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useId } from "react";
 import { getSupabase } from "@/lib/supabaseClient";
 
 interface ChatMessage {
@@ -32,6 +32,7 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
   const [cooldown, setCooldown] = useState(false);
   const lastMsgRef = useRef<{ text: string; time: number }>({ text: "", time: 0 });
   const bottomRef = useRef<HTMLDivElement>(null);
+  const channelId = useId();
   const nickname = typeof window !== "undefined" ? localStorage.getItem("nickname") ?? "anon" : "anon";
 
   useEffect(() => {
@@ -46,7 +47,7 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
       });
 
     const channel = sb
-      .channel("chat")
+      .channel(`chat-${channelId}`)
       .on<ChatMessage>(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "chat_messages" },

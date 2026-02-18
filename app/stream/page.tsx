@@ -93,54 +93,43 @@ export default function StreamPage() {
           )}
         </div>
 
-        {/* Mobile: tabbed layout filling remaining screen height */}
-        <div className="flex min-h-0 flex-1 flex-col lg:hidden">
-          {/* Tab bar */}
-          <div className="mb-2 flex shrink-0 gap-1 rounded-lg bg-gray-800/60 p-1">
-            <button
-              onClick={() => { setActiveTab("chat"); setChatBadge(false); }}
-              className={`relative flex-1 rounded-md px-3 py-2 text-xs font-semibold uppercase tracking-wider transition ${
-                activeTab === "chat"
-                  ? "bg-violet-600 text-white shadow-sm"
-                  : "text-gray-400 hover:text-white"
-              }`}
-            >
-              Chat
-              {chatBadge && activeTab !== "chat" && (
-                <span className="absolute right-2 top-1/2 -translate-y-1/2 h-2 w-2 rounded-full bg-violet-400 animate-pulse" />
-              )}
-            </button>
-            <button
-              onClick={() => { setActiveTab("requests"); setRequestBadge(false); }}
-              className={`relative flex-1 rounded-md px-3 py-2 text-xs font-semibold uppercase tracking-wider transition ${
-                activeTab === "requests"
-                  ? "bg-violet-600 text-white shadow-sm"
-                  : "text-gray-400 hover:text-white"
-              }`}
-            >
-              Verzoekjes
-              {requestBadge && activeTab !== "requests" && (
-                <span className="absolute right-2 top-1/2 -translate-y-1/2 h-2 w-2 rounded-full bg-violet-400 animate-pulse" />
-              )}
-            </button>
-          </div>
-
-          {/* Tab content — both stay mounted for realtime subscriptions */}
-          <div className={`min-h-0 flex-1 ${activeTab === "chat" ? "" : "hidden"}`}>
-            <ChatBox onNewMessage={() => { if (activeTabRef.current !== "chat") setChatBadge(true); }} />
-          </div>
-          <div className={`min-h-0 flex-1 ${activeTab === "requests" ? "" : "hidden"}`}>
-            <RequestForm onNewRequest={() => { if (activeTabRef.current !== "requests") setRequestBadge(true); }} />
-          </div>
+        {/* Mobile: tab bar (hidden on desktop) */}
+        <div className="flex shrink-0 gap-1 rounded-lg bg-gray-800/60 p-1 lg:hidden">
+          <button
+            onClick={() => { setActiveTab("chat"); setChatBadge(false); }}
+            className={`relative flex-1 rounded-md px-3 py-2 text-xs font-semibold uppercase tracking-wider transition ${
+              activeTab === "chat"
+                ? "bg-violet-600 text-white shadow-sm"
+                : "text-gray-400 hover:text-white"
+            }`}
+          >
+            Chat
+            {chatBadge && activeTab !== "chat" && (
+              <span className="absolute right-2 top-1/2 -translate-y-1/2 h-2 w-2 rounded-full bg-violet-400 animate-pulse" />
+            )}
+          </button>
+          <button
+            onClick={() => { setActiveTab("requests"); setRequestBadge(false); }}
+            className={`relative flex-1 rounded-md px-3 py-2 text-xs font-semibold uppercase tracking-wider transition ${
+              activeTab === "requests"
+                ? "bg-violet-600 text-white shadow-sm"
+                : "text-gray-400 hover:text-white"
+            }`}
+          >
+            Verzoekjes
+            {requestBadge && activeTab !== "requests" && (
+              <span className="absolute right-2 top-1/2 -translate-y-1/2 h-2 w-2 rounded-full bg-violet-400 animate-pulse" />
+            )}
+          </button>
         </div>
 
-        {/* Desktop: side by side */}
-        <div className="hidden min-h-0 flex-1 gap-4 lg:grid lg:grid-cols-2">
-          <div className="min-h-0">
-            <ChatBox />
+        {/* Chat + Requests: tabbed on mobile, side by side on desktop */}
+        <div className="flex min-h-0 flex-1 gap-2 lg:gap-4">
+          <div className={`min-h-0 flex-1 ${activeTab === "chat" ? "" : "hidden"} lg:block`}>
+            <ChatBox onNewMessage={() => { if (activeTabRef.current !== "chat") setChatBadge(true); }} />
           </div>
-          <div className="min-h-0">
-            <RequestForm />
+          <div className={`min-h-0 flex-1 ${activeTab === "requests" ? "" : "hidden"} lg:block`}>
+            <RequestForm onNewRequest={() => { if (activeTabRef.current !== "requests") setRequestBadge(true); }} />
           </div>
         </div>
       </main>

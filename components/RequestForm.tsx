@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useId } from "react";
 import { getSupabase } from "@/lib/supabaseClient";
 
 interface Request {
@@ -34,6 +34,7 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
   const [cooldownLeft, setCooldownLeft] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const cooldownTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const channelId = useId();
   const nickname = typeof window !== "undefined" ? localStorage.getItem("nickname") ?? "anon" : "anon";
 
   const myActiveRequests = allRequests.filter(
@@ -54,7 +55,7 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
     load();
 
     const channel = sb
-      .channel("all-requests")
+      .channel(`requests-${channelId}`)
       .on<Request>(
         "postgres_changes",
         { event: "*", schema: "public", table: "requests" },
