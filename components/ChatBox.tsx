@@ -26,7 +26,7 @@ function timeStr(iso: string) {
   return new Date(iso).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" });
 }
 
-export default function ChatBox() {
+export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } = {}) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [cooldown, setCooldown] = useState(false);
@@ -55,6 +55,7 @@ export default function ChatBox() {
             const next = [...prev, payload.new];
             return next.length > MAX_MESSAGES ? next.slice(-MAX_MESSAGES) : next;
           });
+          onNewMessage?.();
         }
       )
       .subscribe();
@@ -89,9 +90,9 @@ export default function ChatBox() {
         <h2 className="text-xs font-semibold uppercase tracking-wider text-violet-400 sm:text-sm">Chat</h2>
       </div>
 
-      <div className="chat-scroll flex-1 space-y-0.5 overflow-y-auto px-2 py-2 sm:space-y-1 sm:px-4 sm:py-3">
+      <div className="chat-scroll min-h-0 flex-1 space-y-0.5 overflow-y-auto px-3 py-2 sm:space-y-1 sm:px-4 sm:py-3">
         {messages.map((m) => (
-          <div key={m.id} className="text-xs leading-relaxed sm:text-sm">
+          <div key={m.id} className="text-sm leading-relaxed">
             <span className="font-semibold text-violet-400">{m.nickname}</span>
             <span className="mx-1 text-gray-600 sm:mx-1.5">{timeStr(m.created_at)}</span>
             <span className="text-gray-300">{m.content}</span>
@@ -102,7 +103,7 @@ export default function ChatBox() {
 
       <form
         onSubmit={(e) => { e.preventDefault(); sendMessage(); }}
-        className="flex gap-1.5 border-t border-gray-800 px-2 py-2 sm:gap-2 sm:px-4 sm:py-3"
+        className="flex shrink-0 gap-2 border-t border-gray-800 px-3 py-2 sm:px-4 sm:py-3"
       >
         <input
           type="text"
@@ -110,12 +111,12 @@ export default function ChatBox() {
           onChange={(e) => setInput(e.target.value)}
           maxLength={MAX_LENGTH}
           placeholder="Bericht..."
-          className="min-w-0 flex-1 rounded-lg border border-gray-700 bg-gray-800 px-2 py-1.5 text-xs text-white placeholder-gray-500 outline-none transition focus:border-violet-500 sm:px-3 sm:py-2 sm:text-sm"
+          className="min-w-0 flex-1 rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
         />
         <button
           type="submit"
           disabled={cooldown || !input.trim()}
-          className="shrink-0 rounded-lg bg-violet-600 px-2.5 py-1.5 text-xs font-semibold text-white transition hover:bg-violet-500 disabled:opacity-40 sm:px-4 sm:py-2 sm:text-sm"
+          className="shrink-0 rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-violet-500 disabled:opacity-40"
         >
           Stuur
         </button>

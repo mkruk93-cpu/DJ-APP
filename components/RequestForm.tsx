@@ -27,7 +27,7 @@ const statusConfig: Record<string, { label: string; color: string }> = {
   error: { label: "Download mislukt", color: "bg-orange-500/20 text-orange-400" },
 };
 
-export default function RequestForm() {
+export default function RequestForm({ onNewRequest }: { onNewRequest?: () => void } = {}) {
   const [url, setUrl] = useState("");
   const [feedback, setFeedback] = useState<{ msg: string; ok: boolean } | null>(null);
   const [allRequests, setAllRequests] = useState<Request[]>([]);
@@ -44,7 +44,8 @@ export default function RequestForm() {
     const { data } = await getSupabase()
       .from("requests")
       .select("*")
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .limit(15);
     if (data) setAllRequests(data);
   }, []);
 
@@ -57,7 +58,7 @@ export default function RequestForm() {
       .on<Request>(
         "postgres_changes",
         { event: "*", schema: "public", table: "requests" },
-        () => { load(); }
+        () => { load(); onNewRequest?.(); }
       )
       .subscribe();
 
@@ -155,31 +156,31 @@ export default function RequestForm() {
         </h2>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-1.5 border-b border-gray-800 px-2 py-2 sm:space-y-2 sm:px-4 sm:py-3">
+      <form onSubmit={handleSubmit} className="space-y-2 border-b border-gray-800 px-3 py-2 sm:px-4 sm:py-3">
         <input
           type="url"
           value={url}
           onChange={(e) => { setUrl(e.target.value); setFeedback(null); }}
           placeholder="YouTube / SoundCloud URL"
-          className="w-full rounded-lg border border-gray-700 bg-gray-800 px-2 py-1.5 text-xs text-white placeholder-gray-500 outline-none transition focus:border-violet-500 sm:px-3 sm:py-2 sm:text-sm"
+          className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
         />
         <button
           type="submit"
           disabled={submitting}
-          className="w-full rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-violet-500 active:scale-[0.98] disabled:opacity-40 sm:px-4 sm:py-2 sm:text-sm"
+          className="w-full rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-violet-500 active:scale-[0.98] disabled:opacity-40"
         >
           {submitting ? "Laden..." : "Insturen"}
         </button>
         {feedback && (
-          <p className={`text-xs sm:text-sm ${feedback.ok ? "text-green-400" : "text-red-400"}`}>
+          <p className={`text-sm ${feedback.ok ? "text-green-400" : "text-red-400"}`}>
             {feedback.msg}
           </p>
         )}
       </form>
 
-      <div className="chat-scroll flex-1 space-y-1.5 overflow-y-auto px-2 py-2 sm:space-y-2 sm:px-4 sm:py-3">
+      <div className="chat-scroll min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-2 sm:px-4 sm:py-3">
         {allRequests.length === 0 && (
-          <p className="text-center text-xs text-gray-500 sm:text-sm">Nog geen verzoekjes</p>
+          <p className="text-center text-sm text-gray-500">Nog geen verzoekjes</p>
         )}
         {allRequests.map((r) => {
           const cfg = statusConfig[r.status] ?? { label: r.status, color: "" };
@@ -197,31 +198,36 @@ export default function RequestForm() {
                       : "border-gray-800 bg-gray-800/50"
               }`}
             >
-              <div className="flex gap-2 p-2 sm:gap-3 sm:p-3">
+              <div className="flex gap-2.5 p-2.5 sm:gap-3 sm:p-3">
                 {r.thumbnail && (
                   <img
                     src={r.thumbnail}
                     alt=""
-                    className="hidden h-14 w-20 shrink-0 rounded-md object-cover sm:block"
+                    className="h-12 w-12 shrink-0 rounded-md object-cover sm:h-14 sm:w-20"
                   />
                 )}
                 <div className="min-w-0 flex-1">
-                  <div className="mb-0.5 flex flex-wrap items-center gap-1 sm:mb-1 sm:gap-1.5">
-                    <span className="text-[10px] font-semibold text-violet-400 sm:text-xs">
+                  <div className="mb-0.5 flex flex-wrap items-center gap-1.5">
+                    <span className="text-xs font-semibold text-violet-400">
                       {r.nickname}
                     </span>
-                    <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium sm:px-2 sm:text-xs ${cfg.color}`}>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${cfg.color}`}>
                       {cfg.label}
                     </span>
                   </div>
                   {r.title ? (
-                    <p className="truncate text-xs font-medium text-white sm:text-sm">{r.title}</p>
+                    <>
+                      <p className="truncate text-sm font-medium text-white">{r.title}</p>
+                      {r.artist && (
+                        <p className="truncate text-xs text-gray-400">{r.artist}</p>
+                      )}
+                    </>
                   ) : (
                     <a
                       href={r.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="block truncate text-xs text-violet-400 underline decoration-violet-400/30 hover:decoration-violet-400 sm:text-sm"
+                      className="block truncate text-sm text-violet-400 underline decoration-violet-400/30 hover:decoration-violet-400"
                     >
                       {r.url}
                     </a>

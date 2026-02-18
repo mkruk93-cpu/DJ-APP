@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { getSupabase } from "@/lib/supabaseClient";
 import TwitchPlayer from "@/components/TwitchPlayer";
@@ -18,6 +18,10 @@ export default function StreamPage() {
   const [mode, setMode] = useState<StreamMode>("offline");
   const [icecastUrl, setIcecastUrl] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<MobileTab>("chat");
+  const [chatBadge, setChatBadge] = useState(false);
+  const [requestBadge, setRequestBadge] = useState(false);
+  const activeTabRef = useRef<MobileTab>(activeTab);
+  activeTabRef.current = activeTab;
 
   useEffect(() => {
     const nickname = localStorage.getItem("nickname");
@@ -49,7 +53,7 @@ export default function StreamPage() {
   }, [checkStatus]);
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
+    <div className="flex h-dvh flex-col overflow-hidden">
       {/* Header */}
       <header className="relative z-50 border-b border-gray-800 bg-gray-900/80 px-3 py-2 backdrop-blur-sm sm:px-6 sm:py-3">
         <div className="flex items-center justify-between">
@@ -94,33 +98,39 @@ export default function StreamPage() {
           {/* Tab bar */}
           <div className="mb-2 flex shrink-0 gap-1 rounded-lg bg-gray-800/60 p-1">
             <button
-              onClick={() => setActiveTab("chat")}
-              className={`flex-1 rounded-md px-3 py-2 text-xs font-semibold uppercase tracking-wider transition ${
+              onClick={() => { setActiveTab("chat"); setChatBadge(false); }}
+              className={`relative flex-1 rounded-md px-3 py-2 text-xs font-semibold uppercase tracking-wider transition ${
                 activeTab === "chat"
                   ? "bg-violet-600 text-white shadow-sm"
                   : "text-gray-400 hover:text-white"
               }`}
             >
               Chat
+              {chatBadge && activeTab !== "chat" && (
+                <span className="absolute right-2 top-1/2 -translate-y-1/2 h-2 w-2 rounded-full bg-violet-400 animate-pulse" />
+              )}
             </button>
             <button
-              onClick={() => setActiveTab("requests")}
-              className={`flex-1 rounded-md px-3 py-2 text-xs font-semibold uppercase tracking-wider transition ${
+              onClick={() => { setActiveTab("requests"); setRequestBadge(false); }}
+              className={`relative flex-1 rounded-md px-3 py-2 text-xs font-semibold uppercase tracking-wider transition ${
                 activeTab === "requests"
                   ? "bg-violet-600 text-white shadow-sm"
                   : "text-gray-400 hover:text-white"
               }`}
             >
               Verzoekjes
+              {requestBadge && activeTab !== "requests" && (
+                <span className="absolute right-2 top-1/2 -translate-y-1/2 h-2 w-2 rounded-full bg-violet-400 animate-pulse" />
+              )}
             </button>
           </div>
 
           {/* Tab content — both stay mounted for realtime subscriptions */}
           <div className={`min-h-0 flex-1 ${activeTab === "chat" ? "" : "hidden"}`}>
-            <ChatBox />
+            <ChatBox onNewMessage={() => { if (activeTabRef.current !== "chat") setChatBadge(true); }} />
           </div>
           <div className={`min-h-0 flex-1 ${activeTab === "requests" ? "" : "hidden"}`}>
-            <RequestForm />
+            <RequestForm onNewRequest={() => { if (activeTabRef.current !== "requests") setRequestBadge(true); }} />
           </div>
         </div>
 
