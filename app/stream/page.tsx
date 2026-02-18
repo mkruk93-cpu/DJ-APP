@@ -6,6 +6,7 @@ import TwitchPlayer from "@/components/TwitchPlayer";
 import ChatBox from "@/components/ChatBox";
 import RequestForm from "@/components/RequestForm";
 import OnlineUsers from "@/components/OnlineUsers";
+import NowPlaying from "@/components/NowPlaying";
 
 export default function StreamPage() {
   const router = useRouter();
@@ -18,10 +19,13 @@ export default function StreamPage() {
   return (
     <div className="flex min-h-screen flex-col">
       {/* Header */}
-      <header className="flex items-center justify-between border-b border-gray-800 bg-gray-900/80 px-6 py-3 backdrop-blur-sm">
-        <h1 className="text-lg font-bold tracking-tight text-white">
-          🎵 <span className="text-violet-400">{process.env.NEXT_PUBLIC_TWITCH_CHANNEL ?? "Stream"}</span>
-        </h1>
+      <header className="relative z-50 flex items-center justify-between border-b border-gray-800 bg-gray-900/80 px-6 py-3 backdrop-blur-sm">
+        <div className="flex items-center gap-4">
+          <h1 className="text-lg font-bold tracking-tight text-white">
+            🎵 <span className="text-violet-400">{process.env.NEXT_PUBLIC_TWITCH_CHANNEL ?? "Stream"}</span>
+          </h1>
+          <NowPlaying />
+        </div>
         <div className="flex items-center gap-3">
           <OnlineUsers />
           <button
