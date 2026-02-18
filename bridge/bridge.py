@@ -58,7 +58,7 @@ def download(request: dict):
             }],
             "keepvideo": False,
             "quiet": True,
-            "js_runtimes": ["nodejs"],
+            "js_runtimes": {"nodejs": {}},
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:

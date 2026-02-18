@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import TwitchPlayer from "@/components/TwitchPlayer";
 import ChatBox from "@/components/ChatBox";
 import RequestForm from "@/components/RequestForm";
+import OnlineUsers from "@/components/OnlineUsers";
 
 export default function StreamPage() {
   const router = useRouter();
@@ -21,15 +22,18 @@ export default function StreamPage() {
         <h1 className="text-lg font-bold tracking-tight text-white">
           🎵 <span className="text-violet-400">{process.env.NEXT_PUBLIC_TWITCH_CHANNEL ?? "Stream"}</span>
         </h1>
-        <button
-          onClick={() => {
-            localStorage.removeItem("nickname");
-            router.push("/");
-          }}
-          className="rounded-lg border border-gray-700 px-3 py-1.5 text-sm text-gray-400 transition hover:border-gray-600 hover:text-white"
-        >
-          Uitloggen
-        </button>
+        <div className="flex items-center gap-3">
+          <OnlineUsers />
+          <button
+            onClick={() => {
+              localStorage.removeItem("nickname");
+              router.push("/");
+            }}
+            className="rounded-lg border border-gray-700 px-3 py-1.5 text-sm text-gray-400 transition hover:border-gray-600 hover:text-white"
+          >
+            Uitloggen
+          </button>
+        </div>
       </header>
 
       {/* Three-column layout */}

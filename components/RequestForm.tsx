@@ -140,15 +140,10 @@ export default function RequestForm() {
 
   return (
     <div className="flex h-full flex-col rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5">
-      <div className="flex items-center justify-between border-b border-gray-800 px-4 py-3">
+      <div className="border-b border-gray-800 px-4 py-3">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-violet-400">
           Muziekverzoekjes
         </h2>
-        <span className="text-xs text-gray-500">
-          {queueSlots > 0
-            ? `${queueSlots}/${MAX_QUEUE} plekken vrij`
-            : "Wachtrij vol — oudste wordt vervangen"}
-        </span>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-2 border-b border-gray-800 px-4 py-3">
