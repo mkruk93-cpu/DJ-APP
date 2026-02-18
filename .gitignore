@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+
+# Environment
+.env.local
+bridge/.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+*.swp
+
+# PyInstaller
+bridge/build/
+bridge/dist/
+bridge/*.spec
