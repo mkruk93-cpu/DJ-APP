@@ -23,6 +23,8 @@ CREATE TABLE requests (
 -- ALTER TABLE requests ADD COLUMN IF NOT EXISTS title text;
 -- ALTER TABLE requests ADD COLUMN IF NOT EXISTS artist text;
 -- ALTER TABLE requests ADD COLUMN IF NOT EXISTS thumbnail text;
+-- ALTER TABLE requests DROP CONSTRAINT IF EXISTS requests_status_check;
+-- ALTER TABLE requests ADD CONSTRAINT requests_status_check CHECK (status IN ('pending', 'approved', 'downloaded', 'rejected', 'error'));
 
 -- App settings (single-row table, always id=1)
 CREATE TABLE settings (

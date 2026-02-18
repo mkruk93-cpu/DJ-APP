@@ -80,8 +80,11 @@ def download(request: dict):
         log(f"Done: {url}")
 
     except Exception as e:
-        sb.table("requests").update({"status": "error"}).eq("id", rid).execute()
         log(f"Download error: {e}")
+        try:
+            sb.table("requests").update({"status": "error"}).eq("id", rid).execute()
+        except Exception:
+            sb.table("requests").update({"status": "rejected"}).eq("id", rid).execute()
 
 
 def read_file_text(path: str) -> str:

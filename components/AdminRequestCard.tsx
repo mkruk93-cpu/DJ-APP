@@ -18,6 +18,7 @@ const statusConfig: Record<string, { label: string; color: string }> = {
   approved: { label: "Goedgekeurd", color: "bg-green-500/20 text-green-400 border-green-500/30" },
   downloaded: { label: "Gedownload", color: "bg-violet-500/20 text-violet-400 border-violet-500/30" },
   rejected: { label: "Afgekeurd", color: "bg-red-500/20 text-red-400 border-red-500/30" },
+  error: { label: "Download mislukt", color: "bg-orange-500/20 text-orange-400 border-orange-500/30" },
 };
 
 export default function AdminRequestCard({
@@ -122,7 +123,7 @@ export default function AdminRequestCard({
               </button>
             </>
           )}
-          {(request.status === "rejected" || request.status === "downloaded") && (
+          {(request.status === "rejected" || request.status === "downloaded" || request.status === "error") && (
             <button
               onClick={remove}
               className="rounded-lg bg-gray-600/20 px-3 py-1.5 text-sm font-medium text-gray-400 transition hover:bg-gray-600/30"

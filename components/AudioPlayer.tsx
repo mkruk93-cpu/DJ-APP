@@ -1,15 +1,47 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { getSupabase } from "@/lib/supabaseClient";
+
+interface NowPlayingData {
+  title: string | null;
+  artist: string | null;
+  artwork_url: string | null;
+}
 
 export default function AudioPlayer({ src }: { src: string }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
   const [volume, setVolume] = useState(0.8);
+  const [track, setTrack] = useState<NowPlayingData>({ title: null, artist: null, artwork_url: null });
 
   useEffect(() => {
     if (audioRef.current) audioRef.current.volume = volume;
   }, [volume]);
+
+  useEffect(() => {
+    const sb = getSupabase();
+
+    sb.from("now_playing")
+      .select("title, artist, artwork_url")
+      .eq("id", 1)
+      .single()
+      .then(({ data }) => { if (data) setTrack(data); });
+
+    const channel = sb
+      .channel("audio-now-playing")
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "now_playing", filter: "id=eq.1" },
+        (payload) => {
+          const { title, artist, artwork_url } = payload.new as NowPlayingData;
+          setTrack({ title, artist, artwork_url });
+        }
+      )
+      .subscribe();
+
+    return () => { sb.removeChannel(channel); };
+  }, []);
 
   function toggle() {
     const audio = audioRef.current;
@@ -26,11 +58,47 @@ export default function AudioPlayer({ src }: { src: string }) {
     }
   }
 
+  const hasTrack = track.title || track.artist;
+
   return (
     <div className="relative w-full overflow-hidden rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5">
-      <div className="flex flex-col items-center justify-center gap-4 px-6 py-12 sm:py-16">
+      <div className="flex flex-col items-center justify-center gap-5 px-6 py-10 sm:py-14">
         <audio ref={audioRef} onError={() => setPlaying(false)} />
 
+        {/* Album artwork */}
+        <div className="relative">
+          {track.artwork_url ? (
+            <img
+              src={track.artwork_url}
+              alt=""
+              className={`h-36 w-36 rounded-2xl object-cover shadow-xl sm:h-44 sm:w-44 ${
+                playing ? "shadow-violet-500/20" : "shadow-black/30"
+              }`}
+            />
+          ) : (
+            <div className={`flex h-36 w-36 items-center justify-center rounded-2xl bg-gray-800 sm:h-44 sm:w-44 ${
+              playing ? "shadow-xl shadow-violet-500/20" : ""
+            }`}>
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-16 w-16 text-gray-600">
+                <path d="M9 19c0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2 2 .9 2 2ZM19 15c0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2 2 .9 2 2ZM21 3v12.54a2.98 2.98 0 0 0-2-1.04c-1.1 0-2.13.6-2.67 1.5H16V6.3L10 7.83V17a2.98 2.98 0 0 0-2-1c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V9.12l6-1.5V13a2.98 2.98 0 0 0-2-1c-1.66 0-3 1.34-3 3s1.34 3 3 3c1.47 0 2.7-1.07 2.95-2.47L21 3Z" />
+              </svg>
+            </div>
+          )}
+        </div>
+
+        {/* Track info */}
+        {hasTrack && (
+          <div className="max-w-64 text-center">
+            {track.title && (
+              <p className="truncate text-sm font-semibold text-white sm:text-base">{track.title}</p>
+            )}
+            {track.artist && (
+              <p className="truncate text-xs text-violet-400 sm:text-sm">{track.artist}</p>
+            )}
+          </div>
+        )}
+
+        {/* Live indicator */}
         <div className="flex items-center gap-2">
           <span className="relative flex h-3 w-3">
             <span
@@ -49,6 +117,7 @@ export default function AudioPlayer({ src }: { src: string }) {
           </span>
         </div>
 
+        {/* Play/Pause */}
         <button
           onClick={toggle}
           className={`flex h-16 w-16 items-center justify-center rounded-full transition-all ${
@@ -69,6 +138,7 @@ export default function AudioPlayer({ src }: { src: string }) {
           )}
         </button>
 
+        {/* Volume */}
         <div className="flex w-full max-w-48 items-center gap-2">
           <svg className="h-4 w-4 shrink-0 text-gray-500" fill="currentColor" viewBox="0 0 24 24">
             <path d="M3 9v6h4l5 5V4L7 9H3z" />
