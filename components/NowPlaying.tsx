@@ -54,21 +54,21 @@ export default function NowPlaying() {
 
   return (
     <div
-      className={`flex items-center gap-2.5 rounded-lg border border-gray-700/60 bg-gray-800/60 px-3 py-1.5 transition-all duration-500 ${
+      className={`mt-2 flex items-center gap-2 overflow-hidden rounded-lg border border-gray-700/60 bg-gray-800/60 px-3 py-1.5 transition-all duration-500 sm:mt-2 sm:gap-2.5 ${
         animate ? "border-violet-500/50 bg-violet-500/10" : ""
       }`}
     >
-      <div className="flex items-center gap-1.5">
+      <div className="flex shrink-0 items-center gap-1.5">
         <span className="relative flex h-2 w-2">
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400 opacity-75" />
           <span className="relative inline-flex h-2 w-2 rounded-full bg-violet-500" />
         </span>
-        <span className="text-xs font-medium uppercase tracking-wider text-gray-500">
+        <span className="hidden text-xs font-medium uppercase tracking-wider text-gray-500 sm:inline">
           Live
         </span>
       </div>
-      <div className="min-w-0">
-        <p className="truncate text-sm font-medium text-white">
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xs font-medium text-white sm:text-sm">
           {track.artist && (
             <span className="text-violet-400">{track.artist}</span>
           )}

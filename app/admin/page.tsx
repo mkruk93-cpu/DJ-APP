@@ -25,12 +25,13 @@ export default function AdminPage() {
   const [error, setError] = useState("");
   const [requests, setRequests] = useState<Request[]>([]);
   const [autoApprove, setAutoApprove] = useState(false);
+  const [icecastUrl, setIcecastUrl] = useState("");
+  const [icecastSaved, setIcecastSaved] = useState(false);
 
   useEffect(() => {
     if (sessionStorage.getItem("admin_auth") === "true") {
       setAuthenticated(true);
     }
-    setAutoApprove(localStorage.getItem("auto_approve") === "true");
   }, []);
 
   const loadRequests = useCallback(async () => {
@@ -44,9 +45,22 @@ export default function AdminPage() {
     }
   }, []);
 
+  const loadSettings = useCallback(async () => {
+    const { data } = await getSupabase()
+      .from("settings")
+      .select("auto_approve, icecast_url")
+      .eq("id", 1)
+      .single();
+    if (data) {
+      setAutoApprove(data.auto_approve);
+      setIcecastUrl(data.icecast_url ?? "");
+    }
+  }, []);
+
   useEffect(() => {
     if (!authenticated) return;
     loadRequests();
+    loadSettings();
 
     const sb = getSupabase();
     const channel = sb
@@ -54,24 +68,12 @@ export default function AdminPage() {
       .on<Request>(
         "postgres_changes",
         { event: "*", schema: "public", table: "requests" },
-        async (payload) => {
-          if (
-            payload.eventType === "INSERT" &&
-            payload.new.status === "pending" &&
-            localStorage.getItem("auto_approve") === "true"
-          ) {
-            await sb
-              .from("requests")
-              .update({ status: "approved" })
-              .eq("id", payload.new.id);
-          }
-          loadRequests();
-        }
+        () => { loadRequests(); }
       )
       .subscribe();
 
     return () => { sb.removeChannel(channel); };
-  }, [authenticated, loadRequests]);
+  }, [authenticated, loadRequests, loadSettings]);
 
   function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -83,10 +85,22 @@ export default function AdminPage() {
     }
   }
 
-  function toggleAutoApprove() {
+  async function toggleAutoApprove() {
     const next = !autoApprove;
     setAutoApprove(next);
-    localStorage.setItem("auto_approve", String(next));
+    await getSupabase()
+      .from("settings")
+      .update({ auto_approve: next })
+      .eq("id", 1);
+  }
+
+  async function saveIcecastUrl() {
+    await getSupabase()
+      .from("settings")
+      .update({ icecast_url: icecastUrl.trim() || null })
+      .eq("id", 1);
+    setIcecastSaved(true);
+    setTimeout(() => setIcecastSaved(false), 2000);
   }
 
   if (!authenticated) {
@@ -145,6 +159,31 @@ export default function AdminPage() {
       </header>
 
       <main className="mx-auto max-w-4xl space-y-3 p-6">
+        {/* Icecast URL setting */}
+        <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
+          <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-gray-500">
+            Audio Stream URL (Icecast)
+          </label>
+          <div className="flex gap-2">
+            <input
+              type="url"
+              value={icecastUrl}
+              onChange={(e) => setIcecastUrl(e.target.value)}
+              placeholder="https://....trycloudflare.com/stream"
+              className="flex-1 rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
+            />
+            <button
+              onClick={saveIcecastUrl}
+              className="shrink-0 rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-violet-500"
+            >
+              {icecastSaved ? "Opgeslagen!" : "Opslaan"}
+            </button>
+          </div>
+          <p className="mt-1.5 text-xs text-gray-500">
+            {icecastUrl ? "Audio stream is actief op de website." : "Leeg = audio stream uit."}
+          </p>
+        </div>
+
         {requests.length === 0 && (
           <p className="py-20 text-center text-gray-500">Geen verzoekjes gevonden.</p>
         )}

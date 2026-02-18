@@ -58,7 +58,7 @@ export default function OnlineUsers() {
       </button>
 
       {expanded && onlineUsers.length > 0 && (
-        <div className="absolute right-0 top-full z-50 mt-2 w-56 rounded-xl border border-gray-700 bg-gray-900 p-3 shadow-xl shadow-black/40">
+        <div className="absolute right-0 top-full z-50 mt-2 w-48 rounded-xl border border-gray-700 bg-gray-900 p-3 shadow-xl shadow-black/40 sm:w-56">
           <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
             Online gebruikers
           </p>

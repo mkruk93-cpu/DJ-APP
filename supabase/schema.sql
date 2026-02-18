@@ -24,6 +24,17 @@ CREATE TABLE requests (
 -- ALTER TABLE requests ADD COLUMN IF NOT EXISTS artist text;
 -- ALTER TABLE requests ADD COLUMN IF NOT EXISTS thumbnail text;
 
+-- App settings (single-row table, always id=1)
+CREATE TABLE settings (
+  id              integer PRIMARY KEY DEFAULT 1,
+  auto_approve    boolean DEFAULT false,
+  icecast_url     text
+);
+INSERT INTO settings (id) VALUES (1);
+
+-- Migration for existing settings table:
+-- ALTER TABLE settings ADD COLUMN IF NOT EXISTS icecast_url text;
+
 -- Now playing track (single-row table, always id=1)
 CREATE TABLE now_playing (
   id          integer PRIMARY KEY DEFAULT 1,

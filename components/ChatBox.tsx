@@ -36,6 +36,15 @@ export default function ChatBox() {
 
   useEffect(() => {
     const sb = getSupabase();
+
+    sb.from("chat_messages")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(10)
+      .then(({ data }) => {
+        if (data) setMessages(data.reverse());
+      });
+
     const channel = sb
       .channel("chat")
       .on<ChatMessage>(

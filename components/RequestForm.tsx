@@ -29,39 +29,39 @@ const statusConfig: Record<string, { label: string; color: string }> = {
 export default function RequestForm() {
   const [url, setUrl] = useState("");
   const [feedback, setFeedback] = useState<{ msg: string; ok: boolean } | null>(null);
-  const [myRequests, setMyRequests] = useState<Request[]>([]);
+  const [allRequests, setAllRequests] = useState<Request[]>([]);
   const [cooldownLeft, setCooldownLeft] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const cooldownTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const nickname = typeof window !== "undefined" ? localStorage.getItem("nickname") ?? "anon" : "anon";
 
-  const activeRequests = myRequests.filter((r) => r.status === "pending" || r.status === "approved");
-  const queueSlots = MAX_QUEUE - activeRequests.length;
+  const myActiveRequests = allRequests.filter(
+    (r) => r.nickname === nickname && (r.status === "pending" || r.status === "approved")
+  );
 
   const load = useCallback(async () => {
     const { data } = await getSupabase()
       .from("requests")
       .select("*")
-      .eq("nickname", nickname)
       .order("created_at", { ascending: false });
-    if (data) setMyRequests(data);
-  }, [nickname]);
+    if (data) setAllRequests(data);
+  }, []);
 
   useEffect(() => {
     const sb = getSupabase();
     load();
 
     const channel = sb
-      .channel("my-requests")
+      .channel("all-requests")
       .on<Request>(
         "postgres_changes",
-        { event: "*", schema: "public", table: "requests", filter: `nickname=eq.${nickname}` },
+        { event: "*", schema: "public", table: "requests" },
         () => { load(); }
       )
       .subscribe();
 
     return () => { sb.removeChannel(channel); };
-  }, [nickname, load]);
+  }, [load]);
 
   useEffect(() => {
     if (cooldownLeft <= 0) return;
@@ -107,9 +107,8 @@ export default function RequestForm() {
       return;
     }
 
-    // If queue is full, remove oldest active request (FIFO)
-    if (activeRequests.length >= MAX_QUEUE) {
-      const oldest = [...activeRequests].sort(
+    if (myActiveRequests.length >= MAX_QUEUE) {
+      const oldest = [...myActiveRequests].sort(
         (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
       )[0];
       if (oldest) {
@@ -117,12 +116,21 @@ export default function RequestForm() {
       }
     }
 
+    let initialStatus = "pending";
+    const { data: settings } = await sb
+      .from("settings")
+      .select("auto_approve")
+      .eq("id", 1)
+      .single();
+    if (settings?.auto_approve) initialStatus = "approved";
+
     const { error } = await sb.from("requests").insert({
       nickname,
       url: trimmed,
       title: meta.title,
       artist: meta.artist,
       thumbnail: meta.thumbnail,
+      status: initialStatus,
     });
 
     setSubmitting(false);
@@ -169,18 +177,21 @@ export default function RequestForm() {
       </form>
 
       <div className="chat-scroll flex-1 space-y-2 overflow-y-auto px-4 py-3">
-        {myRequests.length === 0 && (
+        {allRequests.length === 0 && (
           <p className="text-center text-sm text-gray-500">Nog geen verzoekjes</p>
         )}
-        {myRequests.map((r) => {
+        {allRequests.map((r) => {
           const cfg = statusConfig[r.status] ?? { label: r.status, color: "" };
+          const isOwn = r.nickname === nickname;
           return (
             <div
               key={r.id}
               className={`overflow-hidden rounded-lg border transition ${
                 r.status === "rejected"
                   ? "border-red-500/20 bg-red-500/5 opacity-60"
-                  : "border-gray-800 bg-gray-800/50"
+                  : isOwn
+                    ? "border-violet-500/20 bg-violet-500/5"
+                    : "border-gray-800 bg-gray-800/50"
               }`}
             >
               <div className="flex gap-3 p-3">
@@ -192,7 +203,10 @@ export default function RequestForm() {
                   />
                 )}
                 <div className="min-w-0 flex-1">
-                  <div className="mb-1 flex items-center gap-2">
+                  <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                    <span className="text-xs font-semibold text-violet-400">
+                      {r.nickname}
+                    </span>
                     <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${cfg.color}`}>
                       {cfg.label}
                     </span>
