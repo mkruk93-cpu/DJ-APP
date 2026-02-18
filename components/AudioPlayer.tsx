@@ -60,64 +60,102 @@ export default function AudioPlayer({ src }: { src: string }) {
 
   const hasTrack = track.title || track.artist;
 
+  const artworkFallback = (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-6 w-6 text-gray-600 sm:h-16 sm:w-16">
+      <path d="M9 19c0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2 2 .9 2 2ZM19 15c0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2 2 .9 2 2ZM21 3v12.54a2.98 2.98 0 0 0-2-1.04c-1.1 0-2.13.6-2.67 1.5H16V6.3L10 7.83V17a2.98 2.98 0 0 0-2-1c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V9.12l6-1.5V13a2.98 2.98 0 0 0-2-1c-1.66 0-3 1.34-3 3s1.34 3 3 3c1.47 0 2.7-1.07 2.95-2.47L21 3Z" />
+    </svg>
+  );
+
   return (
     <div className="relative w-full overflow-hidden rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5">
-      <div className="flex flex-col items-center justify-center gap-5 px-6 py-10 sm:py-14">
-        <audio ref={audioRef} onError={() => setPlaying(false)} />
+      <audio ref={audioRef} onError={() => setPlaying(false)} />
 
-        {/* Album artwork */}
-        <div className="relative">
-          {track.artwork_url ? (
-            <img
-              src={track.artwork_url}
-              alt=""
-              className={`h-36 w-36 rounded-2xl object-cover shadow-xl sm:h-44 sm:w-44 ${
-                playing ? "shadow-violet-500/20" : "shadow-black/30"
-              }`}
-            />
-          ) : (
-            <div className={`flex h-36 w-36 items-center justify-center rounded-2xl bg-gray-800 sm:h-44 sm:w-44 ${
-              playing ? "shadow-xl shadow-violet-500/20" : ""
-            }`}>
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-16 w-16 text-gray-600">
-                <path d="M9 19c0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2 2 .9 2 2ZM19 15c0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2 2 .9 2 2ZM21 3v12.54a2.98 2.98 0 0 0-2-1.04c-1.1 0-2.13.6-2.67 1.5H16V6.3L10 7.83V17a2.98 2.98 0 0 0-2-1c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V9.12l6-1.5V13a2.98 2.98 0 0 0-2-1c-1.66 0-3 1.34-3 3s1.34 3 3 3c1.47 0 2.7-1.07 2.95-2.47L21 3Z" />
-              </svg>
-            </div>
-          )}
-        </div>
-
-        {/* Track info */}
-        {hasTrack && (
-          <div className="max-w-64 text-center">
-            {track.title && (
-              <p className="truncate text-sm font-semibold text-white sm:text-base">{track.title}</p>
-            )}
-            {track.artist && (
-              <p className="truncate text-xs text-violet-400 sm:text-sm">{track.artist}</p>
-            )}
+      {/* Mobile: compact horizontal layout */}
+      <div className="flex items-center gap-3 p-3 sm:hidden">
+        {track.artwork_url ? (
+          <img src={track.artwork_url} alt="" className="h-14 w-14 shrink-0 rounded-lg object-cover" />
+        ) : (
+          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-gray-800">
+            {artworkFallback}
           </div>
         )}
 
-        {/* Live indicator */}
+        <div className="min-w-0 flex-1">
+          {hasTrack ? (
+            <>
+              {track.title && <p className="truncate text-sm font-semibold text-white">{track.title}</p>}
+              {track.artist && <p className="truncate text-xs text-violet-400">{track.artist}</p>}
+            </>
+          ) : (
+            <p className="text-sm font-medium text-gray-400">Audio Stream</p>
+          )}
+          <div className="mt-1 flex items-center gap-2">
+            <span className="relative flex h-2 w-2">
+              <span className={`absolute inline-flex h-full w-full rounded-full opacity-75 ${playing ? "animate-ping bg-violet-400" : "bg-gray-600"}`} />
+              <span className={`relative inline-flex h-2 w-2 rounded-full ${playing ? "bg-violet-500" : "bg-gray-600"}`} />
+            </span>
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+              {playing ? "Live" : "Offline"}
+            </span>
+          </div>
+        </div>
+
+        <button
+          onClick={toggle}
+          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-all ${
+            playing
+              ? "bg-violet-600 shadow-md shadow-violet-500/30 hover:bg-violet-500"
+              : "bg-gray-700 hover:bg-gray-600"
+          }`}
+        >
+          {playing ? (
+            <svg className="h-4 w-4 text-white" fill="currentColor" viewBox="0 0 24 24">
+              <rect x="6" y="4" width="4" height="16" rx="1" />
+              <rect x="14" y="4" width="4" height="16" rx="1" />
+            </svg>
+          ) : (
+            <svg className="ml-0.5 h-4 w-4 text-white" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+          )}
+        </button>
+      </div>
+
+      {/* Desktop: centered vertical layout */}
+      <div className="hidden flex-col items-center justify-center gap-5 px-6 py-10 sm:flex sm:py-14">
+        {track.artwork_url ? (
+          <img
+            src={track.artwork_url}
+            alt=""
+            className={`h-44 w-44 rounded-2xl object-cover shadow-xl ${
+              playing ? "shadow-violet-500/20" : "shadow-black/30"
+            }`}
+          />
+        ) : (
+          <div className={`flex h-44 w-44 items-center justify-center rounded-2xl bg-gray-800 ${
+            playing ? "shadow-xl shadow-violet-500/20" : ""
+          }`}>
+            {artworkFallback}
+          </div>
+        )}
+
+        {hasTrack && (
+          <div className="max-w-64 text-center">
+            {track.title && <p className="truncate text-base font-semibold text-white">{track.title}</p>}
+            {track.artist && <p className="truncate text-sm text-violet-400">{track.artist}</p>}
+          </div>
+        )}
+
         <div className="flex items-center gap-2">
           <span className="relative flex h-3 w-3">
-            <span
-              className={`absolute inline-flex h-full w-full rounded-full opacity-75 ${
-                playing ? "animate-ping bg-violet-400" : "bg-gray-600"
-              }`}
-            />
-            <span
-              className={`relative inline-flex h-3 w-3 rounded-full ${
-                playing ? "bg-violet-500" : "bg-gray-600"
-              }`}
-            />
+            <span className={`absolute inline-flex h-full w-full rounded-full opacity-75 ${playing ? "animate-ping bg-violet-400" : "bg-gray-600"}`} />
+            <span className={`relative inline-flex h-3 w-3 rounded-full ${playing ? "bg-violet-500" : "bg-gray-600"}`} />
           </span>
           <span className="text-sm font-semibold uppercase tracking-wider text-gray-400">
             {playing ? "Audio Live" : "Audio Stream"}
           </span>
         </div>
 
-        {/* Play/Pause */}
         <button
           onClick={toggle}
           className={`flex h-16 w-16 items-center justify-center rounded-full transition-all ${
@@ -138,7 +176,6 @@ export default function AudioPlayer({ src }: { src: string }) {
           )}
         </button>
 
-        {/* Volume */}
         <div className="flex w-full max-w-48 items-center gap-2">
           <svg className="h-4 w-4 shrink-0 text-gray-500" fill="currentColor" viewBox="0 0 24 24">
             <path d="M3 9v6h4l5 5V4L7 9H3z" />

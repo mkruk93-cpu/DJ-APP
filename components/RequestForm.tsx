@@ -149,37 +149,37 @@ export default function RequestForm() {
 
   return (
     <div className="flex h-full flex-col rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5">
-      <div className="border-b border-gray-800 px-4 py-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-violet-400">
-          Muziekverzoekjes
+      <div className="border-b border-gray-800 px-3 py-2 sm:px-4 sm:py-3">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-violet-400 sm:text-sm">
+          Verzoekjes
         </h2>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-2 border-b border-gray-800 px-4 py-3">
+      <form onSubmit={handleSubmit} className="space-y-1.5 border-b border-gray-800 px-2 py-2 sm:space-y-2 sm:px-4 sm:py-3">
         <input
           type="url"
           value={url}
           onChange={(e) => { setUrl(e.target.value); setFeedback(null); }}
-          placeholder="YouTube of SoundCloud URL"
-          className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
+          placeholder="YouTube / SoundCloud URL"
+          className="w-full rounded-lg border border-gray-700 bg-gray-800 px-2 py-1.5 text-xs text-white placeholder-gray-500 outline-none transition focus:border-violet-500 sm:px-3 sm:py-2 sm:text-sm"
         />
         <button
           type="submit"
           disabled={submitting}
-          className="w-full rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-violet-500 active:scale-[0.98] disabled:opacity-40"
+          className="w-full rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-violet-500 active:scale-[0.98] disabled:opacity-40 sm:px-4 sm:py-2 sm:text-sm"
         >
-          {submitting ? "Laden..." : "Verzoekje insturen"}
+          {submitting ? "Laden..." : "Insturen"}
         </button>
         {feedback && (
-          <p className={`text-sm ${feedback.ok ? "text-green-400" : "text-red-400"}`}>
+          <p className={`text-xs sm:text-sm ${feedback.ok ? "text-green-400" : "text-red-400"}`}>
             {feedback.msg}
           </p>
         )}
       </form>
 
-      <div className="chat-scroll flex-1 space-y-2 overflow-y-auto px-4 py-3">
+      <div className="chat-scroll flex-1 space-y-1.5 overflow-y-auto px-2 py-2 sm:space-y-2 sm:px-4 sm:py-3">
         {allRequests.length === 0 && (
-          <p className="text-center text-sm text-gray-500">Nog geen verzoekjes</p>
+          <p className="text-center text-xs text-gray-500 sm:text-sm">Nog geen verzoekjes</p>
         )}
         {allRequests.map((r) => {
           const cfg = statusConfig[r.status] ?? { label: r.status, color: "" };
@@ -197,39 +197,31 @@ export default function RequestForm() {
                       : "border-gray-800 bg-gray-800/50"
               }`}
             >
-              <div className="flex gap-3 p-3">
+              <div className="flex gap-2 p-2 sm:gap-3 sm:p-3">
                 {r.thumbnail && (
                   <img
                     src={r.thumbnail}
                     alt=""
-                    className="h-14 w-20 shrink-0 rounded-md object-cover"
+                    className="hidden h-14 w-20 shrink-0 rounded-md object-cover sm:block"
                   />
                 )}
                 <div className="min-w-0 flex-1">
-                  <div className="mb-1 flex flex-wrap items-center gap-1.5">
-                    <span className="text-xs font-semibold text-violet-400">
+                  <div className="mb-0.5 flex flex-wrap items-center gap-1 sm:mb-1 sm:gap-1.5">
+                    <span className="text-[10px] font-semibold text-violet-400 sm:text-xs">
                       {r.nickname}
                     </span>
-                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${cfg.color}`}>
+                    <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium sm:px-2 sm:text-xs ${cfg.color}`}>
                       {cfg.label}
-                    </span>
-                    <span className="text-xs text-gray-500">
-                      {new Date(r.created_at).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })}
                     </span>
                   </div>
                   {r.title ? (
-                    <>
-                      <p className="truncate text-sm font-medium text-white">{r.title}</p>
-                      {r.artist && (
-                        <p className="truncate text-xs text-gray-400">{r.artist}</p>
-                      )}
-                    </>
+                    <p className="truncate text-xs font-medium text-white sm:text-sm">{r.title}</p>
                   ) : (
                     <a
                       href={r.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="block truncate text-sm text-violet-400 underline decoration-violet-400/30 hover:decoration-violet-400"
+                      className="block truncate text-xs text-violet-400 underline decoration-violet-400/30 hover:decoration-violet-400 sm:text-sm"
                     >
                       {r.url}
                     </a>

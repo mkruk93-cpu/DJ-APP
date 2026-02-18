@@ -49,9 +49,9 @@ export default function StreamPage() {
   return (
     <div className="flex min-h-screen flex-col overflow-x-hidden">
       {/* Header */}
-      <header className="relative z-50 border-b border-gray-800 bg-gray-900/80 px-4 py-3 backdrop-blur-sm sm:px-6">
+      <header className="relative z-50 border-b border-gray-800 bg-gray-900/80 px-3 py-2 backdrop-blur-sm sm:px-6 sm:py-3">
         <div className="flex items-center justify-between">
-          <h1 className="shrink-0 text-lg font-bold tracking-tight text-white">
+          <h1 className="shrink-0 text-base font-bold tracking-tight text-white sm:text-lg">
             🎵 <span className="text-violet-400">{process.env.NEXT_PUBLIC_TWITCH_CHANNEL ?? "Stream"}</span>
           </h1>
           <div className="flex items-center gap-2 sm:gap-3">
@@ -70,35 +70,31 @@ export default function StreamPage() {
         <NowPlaying />
       </header>
 
-      {/* Main layout: stacked on mobile, three columns on desktop */}
-      <main className="flex flex-1 flex-col gap-3 p-3 sm:gap-4 sm:p-4 lg:flex-row">
-        {/* Column 1: Player */}
-        <div className="lg:flex-[2]">
+      <main className="flex flex-1 flex-col gap-2 p-2 sm:gap-4 sm:p-4 lg:flex-row">
+        {/* Player */}
+        <div className="shrink-0 lg:flex-[2]">
           {mode === "twitch" && <TwitchPlayer />}
           {mode === "audio" && icecastUrl && <AudioPlayer src={icecastUrl} />}
           {mode === "offline" && (
-            <div className="flex w-full items-center justify-center rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5"
-                 style={{ paddingTop: "56.25%", position: "relative" }}>
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gray-800">
-                  <svg className="h-6 w-6 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5.636 18.364a9 9 0 010-12.728m12.728 0a9 9 0 010 12.728M9.172 14.828a4 4 0 010-5.656m5.656 0a4 4 0 010 5.656M12 12h.01" />
-                  </svg>
-                </div>
-                <p className="text-sm text-gray-500">Momenteel offline</p>
+            <div className="flex items-center justify-center gap-2 rounded-xl border border-gray-800 bg-gray-900 px-4 py-4 shadow-lg shadow-violet-500/5 sm:py-16" style={{ minHeight: 0 }}>
+              <div className="hidden h-10 w-10 items-center justify-center rounded-full bg-gray-800 sm:flex">
+                <svg className="h-5 w-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5.636 18.364a9 9 0 010-12.728m12.728 0a9 9 0 010 12.728M9.172 14.828a4 4 0 010-5.656m5.656 0a4 4 0 010 5.656M12 12h.01" />
+                </svg>
               </div>
+              <p className="text-sm text-gray-500">Momenteel offline</p>
             </div>
           )}
         </div>
 
-        {/* Column 2: Chat */}
-        <div className="h-[350px] sm:h-[500px] lg:h-auto lg:flex-1">
-          <ChatBox />
-        </div>
-
-        {/* Column 3: Requests */}
-        <div className="h-[400px] sm:h-[500px] lg:h-auto lg:flex-1">
-          <RequestForm />
+        {/* Chat + Requests: side by side on mobile, stacked in desktop column */}
+        <div className="grid min-h-0 flex-1 grid-cols-2 gap-2 sm:grid-cols-2 sm:gap-4 lg:grid-cols-1 lg:grid-rows-2 lg:gap-4">
+          <div className="h-[280px] sm:h-[400px] lg:h-auto">
+            <ChatBox />
+          </div>
+          <div className="h-[280px] sm:h-[400px] lg:h-auto">
+            <RequestForm />
+          </div>
         </div>
       </main>
     </div>

@@ -85,15 +85,15 @@ export default function ChatBox() {
 
   return (
     <div className="flex h-full flex-col rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5">
-      <div className="border-b border-gray-800 px-4 py-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-violet-400">Chat</h2>
+      <div className="border-b border-gray-800 px-3 py-2 sm:px-4 sm:py-3">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-violet-400 sm:text-sm">Chat</h2>
       </div>
 
-      <div className="chat-scroll flex-1 space-y-1 overflow-y-auto px-4 py-3">
+      <div className="chat-scroll flex-1 space-y-0.5 overflow-y-auto px-2 py-2 sm:space-y-1 sm:px-4 sm:py-3">
         {messages.map((m) => (
-          <div key={m.id} className="text-sm leading-relaxed">
+          <div key={m.id} className="text-xs leading-relaxed sm:text-sm">
             <span className="font-semibold text-violet-400">{m.nickname}</span>
-            <span className="mx-1.5 text-gray-600">{timeStr(m.created_at)}</span>
+            <span className="mx-1 text-gray-600 sm:mx-1.5">{timeStr(m.created_at)}</span>
             <span className="text-gray-300">{m.content}</span>
           </div>
         ))}
@@ -102,20 +102,20 @@ export default function ChatBox() {
 
       <form
         onSubmit={(e) => { e.preventDefault(); sendMessage(); }}
-        className="flex gap-2 border-t border-gray-800 px-4 py-3"
+        className="flex gap-1.5 border-t border-gray-800 px-2 py-2 sm:gap-2 sm:px-4 sm:py-3"
       >
         <input
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           maxLength={MAX_LENGTH}
-          placeholder="Typ een bericht..."
-          className="flex-1 rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
+          placeholder="Bericht..."
+          className="min-w-0 flex-1 rounded-lg border border-gray-700 bg-gray-800 px-2 py-1.5 text-xs text-white placeholder-gray-500 outline-none transition focus:border-violet-500 sm:px-3 sm:py-2 sm:text-sm"
         />
         <button
           type="submit"
           disabled={cooldown || !input.trim()}
-          className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-violet-500 disabled:opacity-40"
+          className="shrink-0 rounded-lg bg-violet-600 px-2.5 py-1.5 text-xs font-semibold text-white transition hover:bg-violet-500 disabled:opacity-40 sm:px-4 sm:py-2 sm:text-sm"
         >
           Stuur
         </button>
