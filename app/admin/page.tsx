@@ -8,6 +8,9 @@ interface Request {
   id: string;
   nickname: string;
   url: string;
+  title: string | null;
+  artist: string | null;
+  thumbnail: string | null;
   status: string;
   created_at: string;
 }
