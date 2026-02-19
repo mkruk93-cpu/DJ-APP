@@ -11,7 +11,8 @@ import { cleanupFile } from './cleanup.js';
 export const playerEvents = new EventEmitter();
 
 let currentTrack: Track | null = null;
-let currentFfmpeg: ChildProcess | null = null;
+let currentDecoder: ChildProcess | null = null;
+let encoder: ChildProcess | null = null;
 let isRunning = false;
 let keepFiles = false;
 
@@ -34,15 +35,15 @@ export function getCurrentTrack(): Track | null {
 }
 
 export function skipCurrentTrack(): void {
-  if (currentFfmpeg && currentFfmpeg.pid) {
+  if (currentDecoder && currentDecoder.pid) {
     try {
       if (process.platform === 'win32') {
-        spawn('taskkill', ['/pid', String(currentFfmpeg.pid), '/f', '/t']);
+        spawn('taskkill', ['/pid', String(currentDecoder.pid), '/f', '/t']);
       } else {
-        process.kill(currentFfmpeg.pid, 'SIGTERM');
+        process.kill(currentDecoder.pid, 'SIGTERM');
       }
     } catch {
-      console.warn('[player] Could not kill ffmpeg process');
+      console.warn('[player] Could not kill decoder process');
     }
   }
 }
@@ -69,6 +70,44 @@ function takeFromBuffer(itemId: string): PreloadedTrack | null {
 
 function isInBuffer(itemId: string): boolean {
   return preloadBuffer.some((p) => p.item.id === itemId);
+}
+
+// Persistent encoder: stays connected to Icecast across tracks
+function ensureEncoder(
+  icecast: { host: string; port: number; password: string; mount: string },
+): ChildProcess {
+  if (encoder && !encoder.killed && encoder.exitCode === null) return encoder;
+
+  const icecastUrl = `icecast://source:${icecast.password}@${icecast.host}:${icecast.port}${icecast.mount}`;
+
+  console.log('[encoder] Starting persistent encoder → Icecast');
+
+  encoder = spawn('ffmpeg', [
+    '-hide_banner',
+    '-f', 's16le',
+    '-ar', '44100',
+    '-ac', '2',
+    '-i', 'pipe:0',
+    '-acodec', 'libmp3lame',
+    '-b:a', '128k',
+    '-f', 'mp3',
+    '-content_type', 'audio/mpeg',
+    icecastUrl,
+  ]);
+
+  encoder.stderr?.on('data', () => {});
+
+  encoder.on('close', (code) => {
+    console.log(`[encoder] Exited with code ${code}`);
+    encoder = null;
+  });
+
+  encoder.on('error', (err) => {
+    console.error(`[encoder] Error: ${err.message}`);
+    encoder = null;
+  });
+
+  return encoder;
 }
 
 export async function startPlayCycle(
@@ -104,6 +143,9 @@ export async function startPlayCycle(
 export function stopPlayCycle(): void {
   isRunning = false;
   skipCurrentTrack();
+  if (encoder && encoder.stdin) {
+    encoder.stdin.end();
+  }
 }
 
 async function fillPreloadBuffer(sb: SupabaseClient, cacheDir: string, currentId: string): Promise<void> {
@@ -209,14 +251,11 @@ async function playNext(
     };
     io.emit('track:change', currentTrack);
 
-    // Remove from queue immediately so it disappears from the list
-    try {
-      await clearQueueItem(sb, item.id);
-      const updatedQueue = await getQueue(sb);
-      io.emit('queue:update', { items: updatedQueue });
-    } catch {
-      console.warn('[player] Could not remove playing item from queue');
-    }
+    // Remove from queue so it disappears from the list
+    clearQueueItem(sb, item.id)
+      .then(() => getQueue(sb))
+      .then((q) => io.emit('queue:update', { items: q }))
+      .catch(() => {});
 
     const durStr = trackDuration
       ? `${Math.floor(trackDuration / 60)}:${String(Math.round(trackDuration % 60)).padStart(2, '0')}`
@@ -225,13 +264,14 @@ async function playNext(
 
     fillPreloadBuffer(sb, cacheDir, item.id);
 
-    await streamToIcecast(audioFile, icecast);
+    const enc = ensureEncoder(icecast);
+    await decodeToEncoder(audioFile, enc);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Onbekende fout';
     console.error(`[player] Error playing ${item.youtube_id}: ${message}`);
     io.emit('error:toast', { message: `Fout bij afspelen: ${message}` });
   } finally {
-    currentFfmpeg = null;
+    currentDecoder = null;
     currentTrack = null;
     io.emit('track:change', null);
 
@@ -240,18 +280,79 @@ async function playNext(
     }
 
     if (audioFile) {
-      try {
-        await sb.from('played_history').insert({
-          youtube_id: item.youtube_id,
-          title: item.title,
-          thumbnail: item.thumbnail,
-          duration_s: trackDuration,
-        });
-      } catch {
-        console.warn('[player] Could not insert into played_history');
-      }
+      sb.from('played_history').insert({
+        youtube_id: item.youtube_id,
+        title: item.title,
+        thumbnail: item.thumbnail,
+        duration_s: trackDuration,
+      }).then(() => {}).catch(() => {});
     }
   }
+}
+
+/** Decode an audio file to raw PCM and pipe it into the encoder's stdin. */
+function decodeToEncoder(audioFile: string, enc: ChildProcess): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (!enc.stdin || enc.stdin.destroyed) {
+      reject(new Error('Encoder stdin not available'));
+      return;
+    }
+
+    const decoder = spawn('ffmpeg', [
+      '-hide_banner',
+      '-re',
+      '-i', audioFile,
+      '-vn',
+      '-f', 's16le',
+      '-ar', '44100',
+      '-ac', '2',
+      'pipe:1',
+    ]);
+
+    currentDecoder = decoder;
+
+    decoder.stdout?.on('data', (chunk: Buffer) => {
+      if (enc.stdin && !enc.stdin.destroyed) {
+        const ok = enc.stdin.write(chunk);
+        if (!ok) {
+          decoder.stdout?.pause();
+          enc.stdin.once('drain', () => decoder.stdout?.resume());
+        }
+      }
+    });
+
+    let stderr = '';
+    decoder.stderr?.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+
+    decoder.on('close', (code) => {
+      currentDecoder = null;
+      if (code === 0 || code === 255 || code === null) {
+        resolve();
+      } else {
+        reject(new Error(`decoder exited ${code}: ${stderr.slice(-200)}`));
+      }
+    });
+
+    decoder.on('error', (err) => {
+      currentDecoder = null;
+      reject(new Error(`Failed to start decoder: ${err.message}`));
+    });
+
+    // If the encoder dies, kill the decoder
+    enc.on('close', () => {
+      if (decoder.pid && decoder.exitCode === null) {
+        try {
+          if (process.platform === 'win32') {
+            spawn('taskkill', ['/pid', String(decoder.pid), '/f', '/t']);
+          } else {
+            process.kill(decoder.pid, 'SIGTERM');
+          }
+        } catch {}
+      }
+    });
+  });
 }
 
 function downloadAudio(item: QueueItem, cacheDir: string): Promise<string> {
@@ -295,47 +396,6 @@ function downloadAudio(item: QueueItem, cacheDir: string): Promise<string> {
 
     proc.on('error', (err) => {
       reject(new Error(`Failed to start yt-dlp: ${err.message}`));
-    });
-  });
-}
-
-function streamToIcecast(
-  audioFile: string,
-  icecast: { host: string; port: number; password: string; mount: string },
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const icecastUrl = `icecast://source:${icecast.password}@${icecast.host}:${icecast.port}${icecast.mount}`;
-
-    const proc = spawn('ffmpeg', [
-      '-re',
-      '-i', audioFile,
-      '-vn',
-      '-acodec', 'libmp3lame',
-      '-b:a', '128k',
-      '-f', 'mp3',
-      '-content_type', 'audio/mpeg',
-      icecastUrl,
-    ]);
-
-    currentFfmpeg = proc;
-
-    let stderr = '';
-    proc.stderr?.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-
-    proc.on('close', (code) => {
-      currentFfmpeg = null;
-      if (code === 0 || code === 255 || code === null) {
-        resolve();
-      } else {
-        reject(new Error(`ffmpeg exited ${code}: ${stderr.slice(-200)}`));
-      }
-    });
-
-    proc.on('error', (err) => {
-      currentFfmpeg = null;
-      reject(new Error(`Failed to start ffmpeg: ${err.message}`));
     });
   });
 }
