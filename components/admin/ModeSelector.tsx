@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useRadioStore } from "@/lib/radioStore";
 import { getSocket } from "@/lib/socket";
 import { getRadioToken } from "@/lib/auth";
@@ -17,18 +18,18 @@ const MODE_CONFIG: { mode: Mode; icon: string; description: string }[] = [
 export default function ModeSelector() {
   const currentMode = useRadioStore((s) => s.mode);
   const connected = useRadioStore((s) => s.connected);
+  const [debugMsg, setDebugMsg] = useState("");
 
   function selectMode(mode: Mode) {
     const token = getRadioToken();
-    if (!token) {
-      console.warn("[ModeSelector] No radio token found");
-      return;
-    }
-    if (!connected) {
-      console.warn("[ModeSelector] Not connected to radio server");
-      return;
-    }
-    getSocket().emit("mode:set", { mode, token });
+    const s = getSocket();
+    const info = `token:${token ? "yes" : "no"} connected:${connected} sock:${s.connected} id:${s.id ?? "none"}`;
+
+    if (!token) { setDebugMsg(`NO TOKEN | ${info}`); return; }
+    if (!connected) { setDebugMsg(`NOT CONNECTED | ${info}`); return; }
+
+    s.emit("mode:set", { mode, token });
+    setDebugMsg(`Sent mode:${mode} | ${info}`);
   }
 
   return (
@@ -36,6 +37,7 @@ export default function ModeSelector() {
       <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500">
         Modus
       </h3>
+      {debugMsg && <p className="text-xs text-yellow-400 bg-yellow-500/10 rounded p-2 break-all">{debugMsg}</p>}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
         {MODE_CONFIG.map(({ mode, icon, description }) => {
           const active = mode === currentMode;
