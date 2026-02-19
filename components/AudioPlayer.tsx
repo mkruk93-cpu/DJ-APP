@@ -2,6 +2,8 @@
 
 import { useState, useRef, useEffect } from "react";
 import { getSupabase } from "@/lib/supabaseClient";
+import { useRadioStore } from "@/lib/radioStore";
+import type { Track } from "@/lib/types";
 
 interface NowPlayingData {
   title: string | null;
@@ -9,11 +11,25 @@ interface NowPlayingData {
   artwork_url: string | null;
 }
 
-export default function AudioPlayer({ src }: { src: string }) {
+interface AudioPlayerProps {
+  src: string;
+  radioTrack?: Track | null;
+  showFallback?: boolean;
+}
+
+function formatTime(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+export default function AudioPlayer({ src, radioTrack, showFallback = false }: AudioPlayerProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
   const [volume, setVolume] = useState(0.8);
   const [track, setTrack] = useState<NowPlayingData>({ title: null, artist: null, artwork_url: null });
+  const [elapsed, setElapsed] = useState(0);
+  const connected = useRadioStore((s) => s.connected);
 
   useEffect(() => {
     if (audioRef.current) audioRef.current.volume = volume;
@@ -43,6 +59,18 @@ export default function AudioPlayer({ src }: { src: string }) {
     return () => { sb.removeChannel(channel); };
   }, []);
 
+  useEffect(() => {
+    if (!radioTrack?.started_at) { setElapsed(0); return; }
+
+    function tick() {
+      if (!radioTrack?.started_at) return;
+      setElapsed(Math.floor((Date.now() - radioTrack.started_at) / 1000));
+    }
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [radioTrack]);
+
   function toggle() {
     const audio = audioRef.current;
     if (!audio) return;
@@ -58,7 +86,16 @@ export default function AudioPlayer({ src }: { src: string }) {
     }
   }
 
-  const hasTrack = track.title || track.artist;
+  const isRadioMode = !!radioTrack;
+  const isLoading = isRadioMode && radioTrack.started_at === 0;
+  const showSupabaseData = showFallback && !connected;
+  const displayTitle = radioTrack?.title ?? (showSupabaseData ? track.title : null);
+  const displayArtist = radioTrack ? null : (showSupabaseData ? track.artist : null);
+  const displayArtwork = radioTrack?.thumbnail ?? (showSupabaseData ? track.artwork_url : null);
+  const hasTrack = displayTitle || displayArtist;
+
+  const duration = radioTrack?.duration ?? null;
+  const progress = duration && duration > 0 ? Math.min(elapsed / duration, 1) : 0;
 
   const artworkFallback = (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-6 w-6 text-gray-600 sm:h-16 sm:w-16">
@@ -71,127 +108,173 @@ export default function AudioPlayer({ src }: { src: string }) {
       <audio ref={audioRef} onError={() => setPlaying(false)} />
 
       {/* Mobile: compact horizontal layout */}
-      <div className="flex items-center gap-3 p-3 sm:hidden">
-        {track.artwork_url ? (
-          <img src={track.artwork_url} alt="" className="h-14 w-14 shrink-0 rounded-lg object-cover" />
-        ) : (
-          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-gray-800">
-            {artworkFallback}
-          </div>
-        )}
-
-        <div className="min-w-0 flex-1">
-          {hasTrack ? (
-            <>
-              {track.title && <p className="truncate text-sm font-semibold text-white">{track.title}</p>}
-              {track.artist && <p className="truncate text-xs text-violet-400">{track.artist}</p>}
-            </>
+      <div className="flex flex-col sm:hidden">
+        <div className="flex items-center gap-3 p-3">
+          {displayArtwork ? (
+            <img src={displayArtwork} alt="" className="h-14 w-14 shrink-0 rounded-lg object-cover" />
           ) : (
-            <p className="text-sm font-medium text-gray-400">Audio Stream</p>
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-gray-800">
+              {artworkFallback}
+            </div>
           )}
-          <div className="mt-1 flex items-center gap-2">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400 opacity-75" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-violet-500" />
-            </span>
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-violet-400">
-              Live
-            </span>
+
+          <div className="min-w-0 flex-1">
+            {hasTrack ? (
+              <>
+                {displayTitle && <p className="truncate text-sm font-semibold text-white">{displayTitle}</p>}
+                {displayArtist && <p className="truncate text-xs text-violet-400">{displayArtist}</p>}
+              </>
+            ) : (
+              <p className="text-sm font-medium text-gray-400">
+                {isRadioMode ? "Wacht op nummer..." : "Audio Stream"}
+              </p>
+            )}
+            {isLoading ? (
+              <div className="mt-1 flex items-center gap-2">
+                <span className="h-2 w-2 animate-spin rounded-full border border-violet-400 border-t-transparent" />
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-yellow-400">Laden...</span>
+              </div>
+            ) : isRadioMode && duration && duration > 0 ? (
+              <p className="mt-0.5 text-[10px] tabular-nums text-gray-500">
+                {formatTime(elapsed)} / {formatTime(duration)}
+              </p>
+            ) : (
+              <div className="mt-1 flex items-center gap-2">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-violet-500" />
+                </span>
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-violet-400">Live</span>
+              </div>
+            )}
           </div>
+
+          <button
+            onClick={toggle}
+            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-all ${
+              playing
+                ? "bg-violet-600 shadow-md shadow-violet-500/30 hover:bg-violet-500"
+                : "bg-gray-700 hover:bg-gray-600"
+            }`}
+          >
+            {playing ? (
+              <svg className="h-4 w-4 text-white" fill="currentColor" viewBox="0 0 24 24">
+                <rect x="6" y="4" width="4" height="16" rx="1" />
+                <rect x="14" y="4" width="4" height="16" rx="1" />
+              </svg>
+            ) : (
+              <svg className="ml-0.5 h-4 w-4 text-white" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+            )}
+          </button>
         </div>
 
-        <button
-          onClick={toggle}
-          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-all ${
-            playing
-              ? "bg-violet-600 shadow-md shadow-violet-500/30 hover:bg-violet-500"
-              : "bg-gray-700 hover:bg-gray-600"
-          }`}
-        >
-          {playing ? (
-            <svg className="h-4 w-4 text-white" fill="currentColor" viewBox="0 0 24 24">
-              <rect x="6" y="4" width="4" height="16" rx="1" />
-              <rect x="14" y="4" width="4" height="16" rx="1" />
-            </svg>
-          ) : (
-            <svg className="ml-0.5 h-4 w-4 text-white" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M8 5v14l11-7z" />
-            </svg>
-          )}
-        </button>
+        {isRadioMode && duration && duration > 0 && (
+          <div className="px-3 pb-2">
+            <div className="h-1 w-full overflow-hidden rounded-full bg-gray-700">
+              <div
+                className="h-full rounded-full bg-violet-500 transition-all duration-1000 ease-linear"
+                style={{ width: `${progress * 100}%` }}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Desktop: centered vertical layout */}
-      <div className="hidden flex-col items-center justify-center gap-5 px-6 py-10 sm:flex sm:py-14">
-        {track.artwork_url ? (
+      {/* Desktop: compact horizontal layout */}
+      <div className="hidden items-center gap-4 px-4 py-4 sm:flex">
+        {displayArtwork ? (
           <img
-            src={track.artwork_url}
+            src={displayArtwork}
             alt=""
-            className={`h-44 w-44 rounded-2xl object-cover shadow-xl ${
+            className={`h-24 w-24 shrink-0 rounded-xl object-cover shadow-lg ${
               playing ? "shadow-violet-500/20" : "shadow-black/30"
             }`}
           />
         ) : (
-          <div className={`flex h-44 w-44 items-center justify-center rounded-2xl bg-gray-800 ${
-            playing ? "shadow-xl shadow-violet-500/20" : ""
+          <div className={`flex h-24 w-24 shrink-0 items-center justify-center rounded-xl bg-gray-800 ${
+            playing ? "shadow-lg shadow-violet-500/20" : ""
           }`}>
             {artworkFallback}
           </div>
         )}
 
-        {hasTrack && (
-          <div className="max-w-64 text-center">
-            {track.title && <p className="truncate text-base font-semibold text-white">{track.title}</p>}
-            {track.artist && <p className="truncate text-sm text-violet-400">{track.artist}</p>}
-          </div>
-        )}
-
-        <div className="flex items-center gap-2">
-          <span className="relative flex h-3 w-3">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400 opacity-75" />
-            <span className="relative inline-flex h-3 w-3 rounded-full bg-violet-500" />
-          </span>
-          <span className="text-sm font-semibold uppercase tracking-wider text-violet-400">
-            Live
-          </span>
-        </div>
-
-        <button
-          onClick={toggle}
-          className={`flex h-16 w-16 items-center justify-center rounded-full transition-all ${
-            playing
-              ? "bg-violet-600 shadow-lg shadow-violet-500/30 hover:bg-violet-500"
-              : "bg-gray-700 hover:bg-gray-600"
-          }`}
-        >
-          {playing ? (
-            <svg className="h-6 w-6 text-white" fill="currentColor" viewBox="0 0 24 24">
-              <rect x="6" y="4" width="4" height="16" rx="1" />
-              <rect x="14" y="4" width="4" height="16" rx="1" />
-            </svg>
-          ) : (
-            <svg className="ml-1 h-6 w-6 text-white" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M8 5v14l11-7z" />
-            </svg>
+        <div className="flex min-w-0 flex-1 flex-col gap-2">
+          {hasTrack && (
+            <div className="min-w-0">
+              {displayTitle && <p className="truncate text-sm font-semibold text-white">{displayTitle}</p>}
+              {displayArtist && <p className="truncate text-xs text-violet-400">{displayArtist}</p>}
+            </div>
           )}
-        </button>
 
-        <div className="flex w-full max-w-48 items-center gap-2">
-          <svg className="h-4 w-4 shrink-0 text-gray-500" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M3 9v6h4l5 5V4L7 9H3z" />
-          </svg>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={volume}
-            onChange={(e) => setVolume(Number(e.target.value))}
-            className="h-1 w-full cursor-pointer appearance-none rounded-full bg-gray-700 accent-violet-500"
-          />
-          <svg className="h-4 w-4 shrink-0 text-gray-500" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
-          </svg>
+          {isLoading ? (
+            <div className="flex items-center gap-2">
+              <span className="h-2.5 w-2.5 animate-spin rounded-full border-2 border-violet-400 border-t-transparent" />
+              <span className="text-xs font-semibold uppercase tracking-wider text-yellow-400">Downloaden...</span>
+            </div>
+          ) : isRadioMode && duration && duration > 0 ? (
+            <div className="flex w-full flex-col gap-1">
+              <div className="h-1 w-full overflow-hidden rounded-full bg-gray-700">
+                <div
+                  className="h-full rounded-full bg-violet-500 transition-all duration-1000 ease-linear"
+                  style={{ width: `${progress * 100}%` }}
+                />
+              </div>
+              <div className="flex justify-between">
+                <span className="text-[10px] tabular-nums text-gray-500">{formatTime(elapsed)}</span>
+                <span className="text-[10px] tabular-nums text-gray-500">{formatTime(duration)}</span>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400 opacity-75" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-violet-500" />
+              </span>
+              <span className="text-xs font-semibold uppercase tracking-wider text-violet-400">Live</span>
+            </div>
+          )}
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={toggle}
+              className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-all ${
+                playing
+                  ? "bg-violet-600 shadow-md shadow-violet-500/30 hover:bg-violet-500"
+                  : "bg-gray-700 hover:bg-gray-600"
+              }`}
+            >
+              {playing ? (
+                <svg className="h-4 w-4 text-white" fill="currentColor" viewBox="0 0 24 24">
+                  <rect x="6" y="4" width="4" height="16" rx="1" />
+                  <rect x="14" y="4" width="4" height="16" rx="1" />
+                </svg>
+              ) : (
+                <svg className="ml-0.5 h-4 w-4 text-white" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              )}
+            </button>
+
+            <div className="flex flex-1 items-center gap-2">
+              <svg className="h-3.5 w-3.5 shrink-0 text-gray-500" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M3 9v6h4l5 5V4L7 9H3z" />
+              </svg>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={volume}
+                onChange={(e) => setVolume(Number(e.target.value))}
+                className="h-1 w-full max-w-32 cursor-pointer appearance-none rounded-full bg-gray-700 accent-violet-500"
+              />
+              <svg className="h-3.5 w-3.5 shrink-0 text-gray-500" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
+              </svg>
+            </div>
+          </div>
         </div>
       </div>
     </div>

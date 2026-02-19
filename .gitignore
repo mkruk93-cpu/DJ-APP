@@ -21,3 +21,8 @@ Thumbs.db
 bridge/build/
 bridge/dist/
 bridge/*.spec
+
+# Radio server
+server/.env
+server/node_modules/
+server/dist/

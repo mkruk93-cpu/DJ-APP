@@ -2,7 +2,19 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { getSupabase } from "@/lib/supabaseClient";
+import { connectSocket, disconnectSocket, getSocket } from "@/lib/socket";
+import { useRadioStore } from "@/lib/radioStore";
+import { getRadioToken, setRadioToken, clearRadioToken, isRadioAdmin } from "@/lib/auth";
 import AdminRequestCard from "@/components/AdminRequestCard";
+import ModeSelector from "@/components/admin/ModeSelector";
+import ModeSettings from "@/components/admin/ModeSettings";
+import QueueManager from "@/components/admin/QueueManager";
+import QueueAdd from "@/components/QueueAdd";
+import ListenerCount from "@/components/admin/ListenerCount";
+import StreamStatus from "@/components/admin/StreamStatus";
+import PlayedHistory from "@/components/admin/PlayedHistory";
+import DurationVotePanel from "@/components/DurationVote";
+import type { Track, QueueItem, Mode, ModeSettings as ModeSettingsType, VoteState, DurationVote } from "@/lib/types";
 
 interface Request {
   id: string;
@@ -19,6 +31,8 @@ const ADMIN_PASSWORD = process.env.NEXT_PUBLIC_ADMIN_PASSWORD;
 
 const statusOrder: Record<string, number> = { pending: 0, approved: 1, downloaded: 2, rejected: 3 };
 
+type AdminTab = "requests" | "radio";
+
 export default function AdminPage() {
   const [authenticated, setAuthenticated] = useState(false);
   const [password, setPassword] = useState("");
@@ -27,12 +41,99 @@ export default function AdminPage() {
   const [autoApprove, setAutoApprove] = useState(false);
   const [icecastUrl, setIcecastUrl] = useState("");
   const [icecastSaved, setIcecastSaved] = useState(false);
+  const [activeTab, setActiveTab] = useState<AdminTab>("requests");
+
+  // Radio admin auth
+  const [radioToken, setRadioTokenState] = useState("");
+  const [radioAuthError, setRadioAuthError] = useState("");
+  const [radioAuthed, setRadioAuthed] = useState(false);
+  const [keepFiles, setKeepFiles] = useState(false);
+
+  const radioConnected = useRadioStore((s) => s.connected);
+  const radioTrack = useRadioStore((s) => s.currentTrack);
+  const store = useRadioStore;
 
   useEffect(() => {
     if (sessionStorage.getItem("admin_auth") === "true") {
       setAuthenticated(true);
     }
+    if (getRadioToken()) {
+      setRadioAuthed(true);
+    }
   }, []);
+
+  // Auto-authenticate radio when admin password matches the admin token
+  useEffect(() => {
+    if (!authenticated || radioAuthed) return;
+    const token = ADMIN_PASSWORD ?? "";
+    setRadioToken(token);
+    setRadioAuthed(true);
+  }, [authenticated, radioAuthed]);
+
+  // Initialize Socket.io for radio admin
+  useEffect(() => {
+    if (!authenticated) return;
+    const serverUrl = process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
+    if (!serverUrl) return;
+
+    const socket = connectSocket();
+
+    function fetchState() {
+      fetch(`${serverUrl}/state`)
+        .then((r) => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json();
+        })
+        .then((state) => {
+          store.getState().initFromServer({
+            currentTrack: state.currentTrack ?? null,
+            queue: state.queue ?? [],
+            mode: state.mode ?? "radio",
+            modeSettings: state.modeSettings ?? store.getState().modeSettings,
+            listenerCount: state.listenerCount ?? 0,
+            streamOnline: state.streamOnline ?? false,
+            durationVote: state.durationVote ?? null,
+          });
+        })
+        .catch((err) => {
+          console.warn("[radio] Failed to fetch state:", err.message);
+          setTimeout(fetchState, 3000);
+        });
+    }
+
+    socket.on("connect", () => {
+      store.getState().setConnected(true);
+      fetchState();
+    });
+
+    socket.on("disconnect", () => store.getState().resetAll());
+    socket.on("track:change", (track: Track | null) => {
+      store.getState().setCurrentTrack(track);
+      store.getState().setStreamOnline(track !== null);
+    });
+    socket.on("queue:update", (data: { items: QueueItem[] }) => store.getState().setQueue(data.items));
+    socket.on("mode:change", (data: { mode: Mode; settings: ModeSettingsType }) => store.getState().setMode(data.mode, data.settings));
+    socket.on("vote:update", (data: VoteState) => store.getState().setVoteState(data));
+    socket.on("stream:status", (data: { online: boolean; listeners: number }) => {
+      store.getState().setStreamOnline(data.online);
+      store.getState().setListenerCount(data.listeners);
+    });
+    socket.on("error:toast", (data: { message: string }) => {
+      console.warn("[radio admin]", data.message);
+    });
+    socket.on("settings:keepFilesChanged", (data: { keep: boolean }) => {
+      setKeepFiles(data.keep);
+    });
+    socket.on("durationVote:update", (data: DurationVote & { voters: string[] }) => {
+      const voted = data.voters?.includes(socket.id ?? "") ?? false;
+      store.getState().setDurationVote({ ...data, voted });
+    });
+    socket.on("durationVote:end", () => {
+      store.getState().setDurationVote(null);
+    });
+
+    return () => disconnectSocket();
+  }, [authenticated, store]);
 
   const loadRequests = useCallback(async () => {
     const { data } = await getSupabase()
@@ -80,6 +181,8 @@ export default function AdminPage() {
     if (password === ADMIN_PASSWORD) {
       setAuthenticated(true);
       sessionStorage.setItem("admin_auth", "true");
+      setRadioToken(password);
+      setRadioAuthed(true);
     } else {
       setError("Onjuist wachtwoord.");
     }
@@ -101,6 +204,26 @@ export default function AdminPage() {
       .eq("id", 1);
     setIcecastSaved(true);
     setTimeout(() => setIcecastSaved(false), 2000);
+  }
+
+  function handleRadioAuth(e: React.FormEvent) {
+    e.preventDefault();
+    const socket = getSocket();
+    socket.emit("auth:verify", { token: radioToken }, (valid: boolean) => {
+      if (valid) {
+        setRadioToken(radioToken);
+        setRadioAuthed(true);
+        setRadioAuthError("");
+      } else {
+        setRadioAuthError("Ongeldig token");
+      }
+    });
+  }
+
+  function handleRadioSkip() {
+    const token = getRadioToken();
+    if (!token) return;
+    getSocket().emit("track:skip", { isAdmin: true, token });
   }
 
   if (!authenticated) {
@@ -131,66 +254,210 @@ export default function AdminPage() {
 
   return (
     <div className="min-h-screen">
-      <header className="flex items-center justify-between border-b border-gray-800 bg-gray-900/80 px-6 py-4 backdrop-blur-sm">
-        <h1 className="text-lg font-bold text-white">Admin Dashboard</h1>
-        <div className="flex items-center gap-4">
-          <button
-            onClick={toggleAutoApprove}
-            className="flex items-center gap-2 rounded-lg border border-gray-700 px-3 py-1.5 text-sm transition hover:border-gray-600"
-          >
-            <span
-              className={`inline-block h-3 w-3 rounded-full ${autoApprove ? "bg-green-400 shadow-sm shadow-green-400/50" : "bg-gray-600"}`}
-            />
-            <span className={autoApprove ? "font-semibold text-green-400" : "text-gray-400"}>
-              {autoApprove ? "AUTO AAN" : "HANDMATIG"}
-            </span>
-          </button>
+      <header className="border-b border-gray-800 bg-gray-900/80 px-6 py-4 backdrop-blur-sm">
+        <div className="flex items-center justify-between">
+          <h1 className="text-lg font-bold text-white">Admin Dashboard</h1>
+          <div className="flex items-center gap-4">
+            {activeTab === "requests" && (
+              <button
+                onClick={toggleAutoApprove}
+                className="flex items-center gap-2 rounded-lg border border-gray-700 px-3 py-1.5 text-sm transition hover:border-gray-600"
+              >
+                <span
+                  className={`inline-block h-3 w-3 rounded-full ${autoApprove ? "bg-green-400 shadow-sm shadow-green-400/50" : "bg-gray-600"}`}
+                />
+                <span className={autoApprove ? "font-semibold text-green-400" : "text-gray-400"}>
+                  {autoApprove ? "AUTO AAN" : "HANDMATIG"}
+                </span>
+              </button>
+            )}
 
+            <button
+              onClick={() => {
+                sessionStorage.removeItem("admin_auth");
+                clearRadioToken();
+                setAuthenticated(false);
+                setRadioAuthed(false);
+              }}
+              className="rounded-lg border border-gray-700 px-3 py-1.5 text-sm text-gray-400 transition hover:border-gray-600 hover:text-white"
+            >
+              Uitloggen
+            </button>
+          </div>
+        </div>
+
+        {/* Tab bar */}
+        <div className="mt-3 flex gap-1 rounded-lg bg-gray-800/60 p-1">
           <button
-            onClick={() => {
-              sessionStorage.removeItem("admin_auth");
-              setAuthenticated(false);
-            }}
-            className="rounded-lg border border-gray-700 px-3 py-1.5 text-sm text-gray-400 transition hover:border-gray-600 hover:text-white"
+            onClick={() => setActiveTab("requests")}
+            className={`flex-1 rounded-md px-4 py-2 text-sm font-semibold transition ${
+              activeTab === "requests"
+                ? "bg-violet-600 text-white shadow-sm"
+                : "text-gray-400 hover:text-white"
+            }`}
           >
-            Uitloggen
+            Verzoekjes
+          </button>
+          <button
+            onClick={() => setActiveTab("radio")}
+            className={`flex-1 rounded-md px-4 py-2 text-sm font-semibold transition ${
+              activeTab === "radio"
+                ? "bg-violet-600 text-white shadow-sm"
+                : "text-gray-400 hover:text-white"
+            }`}
+          >
+            Radio
+            {radioConnected && (
+              <span className="ml-2 inline-block h-2 w-2 rounded-full bg-green-400" />
+            )}
           </button>
         </div>
       </header>
 
-      <main className="mx-auto max-w-4xl space-y-3 p-6">
-        {/* Icecast URL setting */}
-        <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
-          <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-gray-500">
-            Audio Stream URL (Icecast)
-          </label>
-          <div className="flex gap-2">
-            <input
-              type="url"
-              value={icecastUrl}
-              onChange={(e) => setIcecastUrl(e.target.value)}
-              placeholder="https://....trycloudflare.com/stream"
-              className="flex-1 rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
-            />
-            <button
-              onClick={saveIcecastUrl}
-              className="shrink-0 rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-violet-500"
-            >
-              {icecastSaved ? "Opgeslagen!" : "Opslaan"}
-            </button>
+      {/* Verzoekjes tab (existing) */}
+      {activeTab === "requests" && (
+        <main className="mx-auto max-w-4xl space-y-3 p-6">
+          <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
+            <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Audio Stream URL (Icecast)
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="url"
+                value={icecastUrl}
+                onChange={(e) => setIcecastUrl(e.target.value)}
+                placeholder="https://....trycloudflare.com/stream"
+                className="flex-1 rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
+              />
+              <button
+                onClick={saveIcecastUrl}
+                className="shrink-0 rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-violet-500"
+              >
+                {icecastSaved ? "Opgeslagen!" : "Opslaan"}
+              </button>
+            </div>
+            <p className="mt-1.5 text-xs text-gray-500">
+              {icecastUrl ? "Audio stream is actief op de website." : "Leeg = audio stream uit."}
+            </p>
           </div>
-          <p className="mt-1.5 text-xs text-gray-500">
-            {icecastUrl ? "Audio stream is actief op de website." : "Leeg = audio stream uit."}
-          </p>
-        </div>
 
-        {requests.length === 0 && (
-          <p className="py-20 text-center text-gray-500">Geen verzoekjes gevonden.</p>
-        )}
-        {requests.map((r) => (
-          <AdminRequestCard key={r.id} request={r} onUpdate={loadRequests} />
-        ))}
-      </main>
+          {requests.length === 0 && (
+            <p className="py-20 text-center text-gray-500">Geen verzoekjes gevonden.</p>
+          )}
+          {requests.map((r) => (
+            <AdminRequestCard key={r.id} request={r} onUpdate={loadRequests} />
+          ))}
+        </main>
+      )}
+
+      {/* Radio tab (new) */}
+      {activeTab === "radio" && (
+        <main className="mx-auto max-w-4xl space-y-4 p-6">
+          {/* Connection status */}
+          {!radioConnected && (
+            <div className="flex items-center gap-2 rounded-xl border border-yellow-500/20 bg-yellow-500/5 p-4">
+              <span className="h-2.5 w-2.5 rounded-full bg-yellow-500" />
+              <span className="text-sm text-yellow-400">
+                Niet verbonden met de radio server. Zorg dat de server draait op{" "}
+                {process.env.NEXT_PUBLIC_CONTROL_SERVER_URL ?? "localhost:3001"}.
+              </span>
+            </div>
+          )}
+
+          {/* Radio admin auth */}
+          {radioConnected && !radioAuthed && (
+            <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
+              <h3 className="mb-3 text-sm font-semibold text-white">Radio Admin Token</h3>
+              <form onSubmit={handleRadioAuth} className="flex gap-2">
+                <input
+                  type="password"
+                  value={radioToken}
+                  onChange={(e) => { setRadioTokenState(e.target.value); setRadioAuthError(""); }}
+                  placeholder="Admin token van de server"
+                  className="flex-1 rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
+                />
+                <button
+                  type="submit"
+                  className="shrink-0 rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-violet-500"
+                >
+                  Verifieer
+                </button>
+              </form>
+              {radioAuthError && <p className="mt-2 text-sm text-red-400">{radioAuthError}</p>}
+            </div>
+          )}
+
+          {/* Radio admin controls */}
+          {radioConnected && radioAuthed && (
+            <>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <ListenerCount />
+                <StreamStatus />
+              </div>
+
+              {/* Keep files toggle */}
+              <div className="flex items-center justify-between rounded-xl border border-gray-800 bg-gray-900 p-4">
+                <div>
+                  <p className="text-sm font-semibold text-white">Bestanden bewaren</p>
+                  <p className="text-xs text-gray-500">
+                    {keepFiles
+                      ? "Audio bestanden blijven staan na afspelen"
+                      : "Audio bestanden worden verwijderd na afspelen"}
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    const token = getRadioToken();
+                    if (!token) return;
+                    getSocket().emit("settings:keepFiles", { keep: !keepFiles, token });
+                  }}
+                  className="flex items-center gap-2 rounded-lg border border-gray-700 px-3 py-1.5 text-sm transition hover:border-gray-600"
+                >
+                  <span
+                    className={`inline-block h-3 w-3 rounded-full ${keepFiles ? "bg-green-400 shadow-sm shadow-green-400/50" : "bg-gray-600"}`}
+                  />
+                  <span className={keepFiles ? "font-semibold text-green-400" : "text-gray-400"}>
+                    {keepFiles ? "BEWAREN" : "VERWIJDEREN"}
+                  </span>
+                </button>
+              </div>
+
+              <ModeSelector />
+              <ModeSettings />
+
+              {/* Now playing + skip */}
+              {radioTrack && (
+                <div className="flex items-center gap-3 rounded-xl border border-gray-800 bg-gray-900 p-4">
+                  {radioTrack.thumbnail && (
+                    <img
+                      src={radioTrack.thumbnail}
+                      alt=""
+                      className="h-14 w-20 shrink-0 rounded-lg object-cover"
+                    />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Nu speelt</p>
+                    <p className="truncate text-sm font-medium text-white">
+                      {radioTrack.title ?? radioTrack.youtube_id}
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleRadioSkip}
+                    className="shrink-0 rounded-lg bg-red-600/20 px-4 py-2 text-sm font-semibold text-red-400 transition hover:bg-red-600/30"
+                  >
+                    Skip
+                  </button>
+                </div>
+              )}
+
+              <DurationVotePanel />
+              <QueueAdd />
+              <QueueManager />
+              <PlayedHistory />
+            </>
+          )}
+        </main>
+      )}
     </div>
   );
 }

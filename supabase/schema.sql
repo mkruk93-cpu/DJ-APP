@@ -50,7 +50,50 @@ INSERT INTO now_playing (id) VALUES (1);
 -- Migration for existing now_playing table:
 -- ALTER TABLE now_playing ADD COLUMN IF NOT EXISTS artwork_url text;
 
+-- =====================================================================
+-- RADIO MODE TABLES (added alongside existing tables)
+-- =====================================================================
+
+-- Radio queue — tracks waiting to be played by the control server
+CREATE TABLE queue (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  youtube_url text NOT NULL,
+  youtube_id  text NOT NULL,
+  title       text,
+  thumbnail   text,
+  added_by    text DEFAULT 'anonymous',
+  position    integer NOT NULL,
+  created_at  timestamptz DEFAULT now()
+);
+
+-- Radio settings — key-value store (separate from the existing settings table)
+CREATE TABLE radio_settings (
+  key   text PRIMARY KEY,
+  value jsonb NOT NULL
+);
+
+-- Default radio settings (run once)
+INSERT INTO radio_settings (key, value) VALUES
+  ('active_mode',         '"radio"'),
+  ('democracy_threshold', '51'),
+  ('democracy_timer',     '15'),
+  ('jukebox_max_per_user','5'),
+  ('party_skip_cooldown', '10'),
+  ('stream_url',          '""');
+
+-- Played history — log of tracks played by the radio server
+CREATE TABLE played_history (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  youtube_id  text NOT NULL,
+  title       text,
+  thumbnail   text,
+  played_at   timestamptz DEFAULT now(),
+  duration_s  integer
+);
+
 -- Enable Realtime on all tables (run in Supabase SQL editor)
 ALTER PUBLICATION supabase_realtime ADD TABLE chat_messages;
 ALTER PUBLICATION supabase_realtime ADD TABLE requests;
 ALTER PUBLICATION supabase_realtime ADD TABLE now_playing;
+ALTER PUBLICATION supabase_realtime ADD TABLE queue;
+ALTER PUBLICATION supabase_realtime ADD TABLE radio_settings;
