@@ -28,6 +28,7 @@ interface Request {
 }
 
 const ADMIN_PASSWORD = process.env.NEXT_PUBLIC_ADMIN_PASSWORD;
+const HAS_RADIO_SERVER = !!process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
 
 const statusOrder: Record<string, number> = { pending: 0, approved: 1, downloaded: 2, rejected: 3 };
 
@@ -298,19 +299,21 @@ export default function AdminPage() {
           >
             Verzoekjes
           </button>
-          <button
-            onClick={() => setActiveTab("radio")}
-            className={`flex-1 rounded-md px-4 py-2 text-sm font-semibold transition ${
-              activeTab === "radio"
-                ? "bg-violet-600 text-white shadow-sm"
-                : "text-gray-400 hover:text-white"
-            }`}
-          >
-            Radio
-            {radioConnected && (
-              <span className="ml-2 inline-block h-2 w-2 rounded-full bg-green-400" />
-            )}
-          </button>
+          {HAS_RADIO_SERVER && (
+            <button
+              onClick={() => setActiveTab("radio")}
+              className={`flex-1 rounded-md px-4 py-2 text-sm font-semibold transition ${
+                activeTab === "radio"
+                  ? "bg-violet-600 text-white shadow-sm"
+                  : "text-gray-400 hover:text-white"
+              }`}
+            >
+              Radio
+              {radioConnected && (
+                <span className="ml-2 inline-block h-2 w-2 rounded-full bg-green-400" />
+              )}
+            </button>
+          )}
         </div>
       </header>
 
@@ -350,8 +353,8 @@ export default function AdminPage() {
         </main>
       )}
 
-      {/* Radio tab (new) */}
-      {activeTab === "radio" && (
+      {/* Radio tab */}
+      {HAS_RADIO_SERVER && activeTab === "radio" && (
         <main className="mx-auto max-w-4xl space-y-4 p-6">
           {/* Connection status */}
           {!radioConnected && (
