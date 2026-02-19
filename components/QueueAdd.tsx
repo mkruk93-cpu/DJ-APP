@@ -37,10 +37,7 @@ export default function QueueAdd() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const serverUrl = useRadioStore((s) => s.serverUrl) ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
-
   const canAdd = canPerformAction(mode, "add_to_queue", isRadioAdmin());
-  if (!canAdd) return null;
-
   const isUrl = YT_URL_REGEX.test(input.trim());
 
   // Close dropdown on outside click
@@ -71,6 +68,8 @@ export default function QueueAdd() {
       .catch(() => setResults([]))
       .finally(() => setSearching(false));
   }, [serverUrl]);
+
+  if (!canAdd) return null;
 
   function handleInputChange(value: string) {
     setInput(value);
