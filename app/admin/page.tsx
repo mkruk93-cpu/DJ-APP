@@ -73,9 +73,10 @@ export default function AdminPage() {
   }, [authenticated, radioAuthed]);
 
   // Initialize Socket.io for radio admin
+  const effectiveServerUrl = radioServerUrl || process.env.NEXT_PUBLIC_CONTROL_SERVER_URL || "";
   useEffect(() => {
-    if (!authenticated || !radioServerUrl) return;
-    const serverUrl = radioServerUrl;
+    if (!authenticated || !effectiveServerUrl) return;
+    const serverUrl = effectiveServerUrl;
 
     let socket: ReturnType<typeof connectSocket>;
     try {
@@ -137,7 +138,7 @@ export default function AdminPage() {
     });
 
     return () => disconnectSocket();
-  }, [authenticated, radioServerUrl, store]);
+  }, [authenticated, effectiveServerUrl, store]);
 
   const loadRequests = useCallback(async () => {
     const { data } = await getSupabase()
@@ -151,13 +152,17 @@ export default function AdminPage() {
   }, []);
 
   const loadSettings = useCallback(async () => {
-    const { data } = await getSupabase()
+    const { data, error } = await getSupabase()
       .from("settings")
-      .select("auto_approve, icecast_url, radio_server_url")
+      .select("*")
       .eq("id", 1)
       .single();
+    if (error) {
+      console.warn("[admin] Failed to load settings:", error.message);
+      return;
+    }
     if (data) {
-      setAutoApprove(data.auto_approve);
+      setAutoApprove(data.auto_approve ?? false);
       setIcecastUrl(data.icecast_url ?? "");
       const rUrl = data.radio_server_url ?? "";
       setRadioServerUrl(rUrl);
@@ -395,7 +400,7 @@ export default function AdminPage() {
             <p className="mt-1.5 text-xs text-gray-500">
               {radioConnected
                 ? "Verbonden met de radio server."
-                : radioServerUrl
+                : effectiveServerUrl
                   ? "Niet verbonden — zorg dat de server en tunnel draaien."
                   : "Plak hier de Cloudflare Tunnel URL van je radio server."}
             </p>

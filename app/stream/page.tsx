@@ -149,7 +149,7 @@ export default function StreamPage() {
     async function pollExternal() {
       const [twitchRes, settingsRes] = await Promise.all([
         fetch("/api/twitch-live").then((r) => r.json()).catch(() => ({ live: false })),
-        getSupabase().from("settings").select("icecast_url, radio_server_url").eq("id", 1).single(),
+        getSupabase().from("settings").select("*").eq("id", 1).single(),
       ]);
       setTwitchLive(twitchRes.live ?? false);
       setIcecastUrl(settingsRes.data?.icecast_url || null);
