@@ -28,7 +28,6 @@ interface Request {
 }
 
 const ADMIN_PASSWORD = process.env.NEXT_PUBLIC_ADMIN_PASSWORD;
-const HAS_RADIO_SERVER = !!process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
 
 const statusOrder: Record<string, number> = { pending: 0, approved: 1, downloaded: 2, rejected: 3 };
 
@@ -42,6 +41,8 @@ export default function AdminPage() {
   const [autoApprove, setAutoApprove] = useState(false);
   const [icecastUrl, setIcecastUrl] = useState("");
   const [icecastSaved, setIcecastSaved] = useState(false);
+  const [radioServerUrl, setRadioServerUrl] = useState("");
+  const [radioUrlSaved, setRadioUrlSaved] = useState(false);
   const [activeTab, setActiveTab] = useState<AdminTab>("requests");
 
   // Radio admin auth
@@ -73,11 +74,13 @@ export default function AdminPage() {
 
   // Initialize Socket.io for radio admin
   useEffect(() => {
-    if (!authenticated) return;
-    const serverUrl = process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
-    if (!serverUrl) return;
+    if (!authenticated || !radioServerUrl) return;
+    const serverUrl = radioServerUrl;
 
-    const socket = connectSocket();
+    let socket: ReturnType<typeof connectSocket>;
+    try {
+      socket = connectSocket(serverUrl);
+    } catch { return; }
 
     function fetchState() {
       fetch(`${serverUrl}/state`)
@@ -134,7 +137,7 @@ export default function AdminPage() {
     });
 
     return () => disconnectSocket();
-  }, [authenticated, store]);
+  }, [authenticated, radioServerUrl, store]);
 
   const loadRequests = useCallback(async () => {
     const { data } = await getSupabase()
@@ -150,12 +153,15 @@ export default function AdminPage() {
   const loadSettings = useCallback(async () => {
     const { data } = await getSupabase()
       .from("settings")
-      .select("auto_approve, icecast_url")
+      .select("auto_approve, icecast_url, radio_server_url")
       .eq("id", 1)
       .single();
     if (data) {
       setAutoApprove(data.auto_approve);
       setIcecastUrl(data.icecast_url ?? "");
+      const rUrl = data.radio_server_url ?? "";
+      setRadioServerUrl(rUrl);
+      store.getState().setServerUrl(rUrl || null);
     }
   }, []);
 
@@ -205,6 +211,18 @@ export default function AdminPage() {
       .eq("id", 1);
     setIcecastSaved(true);
     setTimeout(() => setIcecastSaved(false), 2000);
+  }
+
+  async function saveRadioServerUrl() {
+    const url = radioServerUrl.trim().replace(/\/+$/, "") || null;
+    await getSupabase()
+      .from("settings")
+      .update({ radio_server_url: url })
+      .eq("id", 1);
+    setRadioServerUrl(url ?? "");
+    store.getState().setServerUrl(url);
+    setRadioUrlSaved(true);
+    setTimeout(() => setRadioUrlSaved(false), 2000);
   }
 
   function handleRadioAuth(e: React.FormEvent) {
@@ -299,21 +317,19 @@ export default function AdminPage() {
           >
             Verzoekjes
           </button>
-          {HAS_RADIO_SERVER && (
-            <button
-              onClick={() => setActiveTab("radio")}
-              className={`flex-1 rounded-md px-4 py-2 text-sm font-semibold transition ${
-                activeTab === "radio"
-                  ? "bg-violet-600 text-white shadow-sm"
-                  : "text-gray-400 hover:text-white"
-              }`}
-            >
-              Radio
-              {radioConnected && (
-                <span className="ml-2 inline-block h-2 w-2 rounded-full bg-green-400" />
-              )}
-            </button>
-          )}
+          <button
+            onClick={() => setActiveTab("radio")}
+            className={`flex-1 rounded-md px-4 py-2 text-sm font-semibold transition ${
+              activeTab === "radio"
+                ? "bg-violet-600 text-white shadow-sm"
+                : "text-gray-400 hover:text-white"
+            }`}
+          >
+            Radio
+            {radioConnected && (
+              <span className="ml-2 inline-block h-2 w-2 rounded-full bg-green-400" />
+            )}
+          </button>
         </div>
       </header>
 
@@ -354,18 +370,36 @@ export default function AdminPage() {
       )}
 
       {/* Radio tab */}
-      {HAS_RADIO_SERVER && activeTab === "radio" && (
+      {activeTab === "radio" && (
         <main className="mx-auto max-w-4xl space-y-4 p-6">
-          {/* Connection status */}
-          {!radioConnected && (
-            <div className="flex items-center gap-2 rounded-xl border border-yellow-500/20 bg-yellow-500/5 p-4">
-              <span className="h-2.5 w-2.5 rounded-full bg-yellow-500" />
-              <span className="text-sm text-yellow-400">
-                Niet verbonden met de radio server. Zorg dat de server draait op{" "}
-                {process.env.NEXT_PUBLIC_CONTROL_SERVER_URL ?? "localhost:3001"}.
-              </span>
+          {/* Radio server URL */}
+          <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
+            <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Radio Server URL (Cloudflare Tunnel)
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="url"
+                value={radioServerUrl}
+                onChange={(e) => setRadioServerUrl(e.target.value)}
+                placeholder="https://....trycloudflare.com"
+                className="flex-1 rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
+              />
+              <button
+                onClick={saveRadioServerUrl}
+                className="shrink-0 rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-violet-500"
+              >
+                {radioUrlSaved ? "Opgeslagen!" : "Opslaan"}
+              </button>
             </div>
-          )}
+            <p className="mt-1.5 text-xs text-gray-500">
+              {radioConnected
+                ? "Verbonden met de radio server."
+                : radioServerUrl
+                  ? "Niet verbonden — zorg dat de server en tunnel draaien."
+                  : "Plak hier de Cloudflare Tunnel URL van je radio server."}
+            </p>
+          </div>
 
           {/* Radio admin auth */}
           {radioConnected && !radioAuthed && (

@@ -9,9 +9,11 @@ export default function StreamStatus() {
   const [icecastOk, setIcecastOk] = useState<boolean | null>(null);
   const [uptime, setUptime] = useState<number | null>(null);
 
+  const serverUrl = useRadioStore((s) => s.serverUrl) ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
+
   useEffect(() => {
     async function checkHealth() {
-      const serverUrl = process.env.NEXT_PUBLIC_CONTROL_SERVER_URL ?? "http://localhost:3001";
+      if (!serverUrl) { setIcecastOk(false); return; }
       try {
         const res = await fetch(`${serverUrl}/health`, { signal: AbortSignal.timeout(5000) });
         if (res.ok) {
@@ -30,7 +32,7 @@ export default function StreamStatus() {
     checkHealth();
     const interval = setInterval(checkHealth, 15_000);
     return () => clearInterval(interval);
-  }, []);
+  }, [serverUrl]);
 
   function formatUptime(seconds: number): string {
     const h = Math.floor(seconds / 3600);

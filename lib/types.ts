@@ -58,6 +58,7 @@ export interface RadioState {
   streamOnline: boolean;
   voteState: VoteState | null;
   durationVote: DurationVote | null;
+  serverUrl: string | null;
 }
 
 export const MODE_LABELS: Record<Mode, string> = {

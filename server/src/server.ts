@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import http from 'node:http';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { Server as IOServer } from 'socket.io';
@@ -45,7 +46,7 @@ const httpServer = createServer(app);
 
 const io = new IOServer(httpServer, {
   cors: {
-    origin: [FRONTEND_URL, 'http://localhost:3000'],
+    origin: (_origin, callback) => callback(null, true),
     methods: ['GET', 'POST'],
   },
 });
@@ -172,6 +173,28 @@ app.get('/search', async (req, res) => {
     console.error('[rest] /search error:', err);
     res.status(500).json({ error: 'Search failed' });
   }
+});
+
+// Proxy Icecast stream so everything runs through one port
+app.get('/listen', (req, res) => {
+  const icecastStreamUrl = `http://${ICECAST.host}:${ICECAST.port}${ICECAST.mount}`;
+
+  const proxyReq = http.get(icecastStreamUrl, (proxyRes) => {
+    res.writeHead(proxyRes.statusCode ?? 200, {
+      'Content-Type': proxyRes.headers['content-type'] ?? 'audio/mpeg',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    });
+    proxyRes.pipe(res);
+  });
+
+  proxyReq.on('error', () => {
+    if (!res.headersSent) {
+      res.status(502).json({ error: 'Icecast stream not available' });
+    }
+  });
+
+  req.on('close', () => proxyReq.destroy());
 });
 
 // ── Vote skip state ──────────────────────────────────────────────────────────

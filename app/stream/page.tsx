@@ -39,6 +39,7 @@ export default function StreamPage() {
 
   const [suppressFallback, setSuppressFallback] = useState(false);
   const [twitchLive, setTwitchLive] = useState(false);
+  const [radioServerUrl, setRadioServerUrl] = useState<string | null>(null);
 
   const showRequests = twitchLive || (radioConnected && radioMode === "dj");
 
@@ -55,10 +56,13 @@ export default function StreamPage() {
 
   // Initialize Socket.io connection to radio control server
   useEffect(() => {
-    const serverUrl = process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
+    const serverUrl = radioServerUrl ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
     if (!serverUrl) return;
 
-    const socket = connectSocket();
+    let socket: ReturnType<typeof connectSocket>;
+    try {
+      socket = connectSocket(serverUrl);
+    } catch { return; }
 
     function fetchState() {
       fetch(`${serverUrl}/state`)
@@ -139,20 +143,23 @@ export default function StreamPage() {
     return () => {
       disconnectSocket();
     };
-  }, [store]);
+  }, [radioServerUrl, store]);
 
   useEffect(() => {
     async function pollExternal() {
       const [twitchRes, settingsRes] = await Promise.all([
         fetch("/api/twitch-live").then((r) => r.json()).catch(() => ({ live: false })),
-        getSupabase().from("settings").select("icecast_url").eq("id", 1).single(),
+        getSupabase().from("settings").select("icecast_url, radio_server_url").eq("id", 1).single(),
       ]);
       setTwitchLive(twitchRes.live ?? false);
       setIcecastUrl(settingsRes.data?.icecast_url || null);
+      const rUrl = settingsRes.data?.radio_server_url || null;
+      setRadioServerUrl(rUrl);
+      store.getState().setServerUrl(rUrl);
     }
 
     pollExternal();
-    const interval = setInterval(pollExternal, 60_000);
+    const interval = setInterval(pollExternal, 30_000);
     return () => clearInterval(interval);
   }, []);
 
@@ -170,7 +177,9 @@ export default function StreamPage() {
   }, [twitchLive, radioConnected, icecastUrl]);
 
   // Derive the audio source for radio mode
-  const radioStreamUrl = process.env.NEXT_PUBLIC_STREAM_URL ?? icecastUrl;
+  const radioStreamUrl = radioServerUrl
+    ? `${radioServerUrl}/listen`
+    : process.env.NEXT_PUBLIC_STREAM_URL ?? icecastUrl;
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
