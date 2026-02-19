@@ -4,7 +4,8 @@ import { useEffect, useState, useCallback } from "react";
 import { getSupabase } from "@/lib/supabaseClient";
 import { connectSocket, disconnectSocket, getSocket } from "@/lib/socket";
 import { useRadioStore } from "@/lib/radioStore";
-import { getRadioToken, setRadioToken, clearRadioToken, isRadioAdmin } from "@/lib/auth";
+import { getRadioToken, setRadioToken, clearRadioToken } from "@/lib/auth";
+import { skipTrack as apiSkipTrack, setKeepFiles as apiSetKeepFiles } from "@/lib/radioApi";
 import AdminRequestCard from "@/components/AdminRequestCard";
 import ModeSelector from "@/components/admin/ModeSelector";
 import ModeSettings from "@/components/admin/ModeSettings";
@@ -244,10 +245,12 @@ export default function AdminPage() {
     });
   }
 
-  function handleRadioSkip() {
-    const token = getRadioToken();
-    if (!token) return;
-    getSocket().emit("track:skip", { isAdmin: true, token });
+  async function handleRadioSkip() {
+    try {
+      await apiSkipTrack();
+    } catch (err) {
+      console.warn("[admin] skip failed:", err);
+    }
   }
 
   if (!authenticated) {
@@ -403,7 +406,6 @@ export default function AdminPage() {
                 : effectiveServerUrl
                   ? `Verbinden met ${effectiveServerUrl.slice(0, 40)}...`
                   : "Plak hier de Cloudflare Tunnel URL van je radio server."}
-              {" "}| authed: {radioAuthed ? "ja" : "nee"} | url: {effectiveServerUrl ? "ja" : "nee"}
             </p>
           </div>
 
@@ -449,10 +451,13 @@ export default function AdminPage() {
                   </p>
                 </div>
                 <button
-                  onClick={() => {
-                    const token = getRadioToken();
-                    if (!token) return;
-                    getSocket().emit("settings:keepFiles", { keep: !keepFiles, token });
+                  onClick={async () => {
+                    try {
+                      await apiSetKeepFiles(!keepFiles);
+                      setKeepFiles(!keepFiles);
+                    } catch (err) {
+                      console.warn("[admin] keepFiles failed:", err);
+                    }
                   }}
                   className="flex items-center gap-2 rounded-lg border border-gray-700 px-3 py-1.5 text-sm transition hover:border-gray-600"
                 >

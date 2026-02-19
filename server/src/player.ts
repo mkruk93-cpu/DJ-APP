@@ -285,7 +285,7 @@ async function playNext(
         title: item.title,
         thumbnail: item.thumbnail,
         duration_s: trackDuration,
-      }).then(() => {}).catch(() => {});
+      }).then(() => {}, () => {});
     }
   }
 }

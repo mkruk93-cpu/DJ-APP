@@ -197,6 +197,64 @@ app.get('/listen', (req, res) => {
   req.on('close', () => proxyReq.destroy());
 });
 
+// ── Admin REST endpoints (reliable through tunnels) ─────────────────────────
+
+app.post('/api/mode', async (req, res) => {
+  const { mode, token } = req.body ?? {};
+  if (!isAdmin(token)) return res.status(403).json({ error: 'Unauthorized' });
+
+  const validModes = ['dj', 'radio', 'democracy', 'jukebox', 'party'];
+  if (!validModes.includes(mode)) return res.status(400).json({ error: 'Invalid mode' });
+
+  try {
+    await setSetting(sb, 'active_mode', mode);
+    resetVotes();
+    const modeSettings = await getModeSettings(sb);
+    io.emit('mode:change', { mode: mode as Mode, settings: modeSettings });
+    console.log(`[rest] Mode changed to: ${mode}`);
+    res.json({ ok: true, mode });
+  } catch (err) {
+    console.error('[rest] mode error:', err);
+    res.status(500).json({ error: 'Failed to set mode' });
+  }
+});
+
+app.post('/api/settings', async (req, res) => {
+  const { key, value, token } = req.body ?? {};
+  if (!isAdmin(token)) return res.status(403).json({ error: 'Unauthorized' });
+
+  try {
+    await setSetting(sb, key, value);
+    const modeSettings = await getModeSettings(sb);
+    const mode = await getActiveMode(sb);
+    io.emit('mode:change', { mode, settings: modeSettings });
+    console.log(`[rest] Setting updated: ${key}`);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[rest] settings error:', err);
+    res.status(500).json({ error: 'Failed to update setting' });
+  }
+});
+
+app.post('/api/skip', async (req, res) => {
+  const { token } = req.body ?? {};
+  if (!isAdmin(token)) return res.status(403).json({ error: 'Unauthorized' });
+
+  skipCurrentTrack();
+  console.log('[rest] Track skipped by admin');
+  res.json({ ok: true });
+});
+
+app.post('/api/keep-files', async (req, res) => {
+  const { keep, token } = req.body ?? {};
+  if (!isAdmin(token)) return res.status(403).json({ error: 'Unauthorized' });
+
+  setKeepFiles(!!keep);
+  io.emit('settings:keepFilesChanged', { keep: !!keep });
+  console.log(`[rest] Keep files: ${keep}`);
+  res.json({ ok: true, keep: !!keep });
+});
+
 // ── Vote skip state ──────────────────────────────────────────────────────────
 
 let voteSkipSet = new Set<string>();

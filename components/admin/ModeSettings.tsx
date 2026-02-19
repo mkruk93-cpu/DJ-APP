@@ -1,17 +1,16 @@
 "use client";
 
 import { useRadioStore } from "@/lib/radioStore";
-import { getSocket } from "@/lib/socket";
-import { getRadioToken } from "@/lib/auth";
+import { updateSetting as apiUpdateSetting } from "@/lib/radioApi";
 
 export default function ModeSettings() {
   const mode = useRadioStore((s) => s.mode);
   const settings = useRadioStore((s) => s.modeSettings);
 
-  function updateSetting(key: string, value: number) {
-    const token = getRadioToken();
-    if (!token) return;
-    getSocket().emit("settings:update", { key, value, token });
+  function handleUpdate(key: string, value: number) {
+    apiUpdateSetting(key, value).catch((err) =>
+      console.warn("[ModeSettings]", err)
+    );
   }
 
   if (mode === "dj" || mode === "radio") {
@@ -42,7 +41,7 @@ export default function ModeSettings() {
               min={1}
               max={100}
               value={settings.democracy_threshold}
-              onChange={(e) => updateSetting("democracy_threshold", Number(e.target.value))}
+              onChange={(e) => handleUpdate("democracy_threshold", Number(e.target.value))}
               className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-gray-700 accent-violet-500"
             />
           </div>
@@ -56,7 +55,7 @@ export default function ModeSettings() {
               min={5}
               max={60}
               value={settings.democracy_timer}
-              onChange={(e) => updateSetting("democracy_timer", Number(e.target.value))}
+              onChange={(e) => handleUpdate("democracy_timer", Number(e.target.value))}
               className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-gray-700 accent-violet-500"
             />
           </div>
@@ -74,7 +73,7 @@ export default function ModeSettings() {
             min={1}
             max={20}
             value={settings.jukebox_max_per_user}
-            onChange={(e) => updateSetting("jukebox_max_per_user", Number(e.target.value))}
+            onChange={(e) => handleUpdate("jukebox_max_per_user", Number(e.target.value))}
             className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-gray-700 accent-violet-500"
           />
         </div>
@@ -91,7 +90,7 @@ export default function ModeSettings() {
             min={0}
             max={60}
             value={settings.party_skip_cooldown}
-            onChange={(e) => updateSetting("party_skip_cooldown", Number(e.target.value))}
+            onChange={(e) => handleUpdate("party_skip_cooldown", Number(e.target.value))}
             className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-gray-700 accent-violet-500"
           />
         </div>
