@@ -1,16 +1,25 @@
 "use client";
 
+import { useRef } from "react";
 import { useRadioStore } from "@/lib/radioStore";
 import { updateSetting as apiUpdateSetting } from "@/lib/radioApi";
 
 export default function ModeSettings() {
   const mode = useRadioStore((s) => s.mode);
   const settings = useRadioStore((s) => s.modeSettings);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function handleUpdate(key: string, value: number) {
-    apiUpdateSetting(key, value).catch((err) =>
-      console.warn("[ModeSettings]", err)
-    );
+    // Optimistic local update
+    useRadioStore.getState().setModeSettings({ ...settings, [key]: value });
+
+    // Debounce the HTTP call so dragging a slider doesn't spam requests
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      apiUpdateSetting(key, value).catch((err) =>
+        console.warn("[ModeSettings]", err)
+      );
+    }, 300);
   }
 
   if (mode === "dj" || mode === "radio") {

@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useRadioStore } from "@/lib/radioStore";
 import { setMode as apiSetMode } from "@/lib/radioApi";
 import type { Mode } from "@/lib/types";
@@ -16,21 +17,34 @@ const MODE_CONFIG: { mode: Mode; icon: string; description: string }[] = [
 export default function ModeSelector() {
   const currentMode = useRadioStore((s) => s.mode);
   const connected = useRadioStore((s) => s.connected);
+  const serverUrl = useRadioStore((s) => s.serverUrl);
+  const [status, setStatus] = useState<string | null>(null);
 
   async function selectMode(mode: Mode) {
-    if (!connected) return;
+    setStatus(`Wijzigen naar ${MODE_LABELS[mode]}...`);
     try {
       await apiSetMode(mode);
+      setStatus(`✓ ${MODE_LABELS[mode]} actief`);
     } catch (err) {
-      console.warn("[ModeSelector]", err);
+      const msg = err instanceof Error ? err.message : String(err);
+      setStatus(`✗ Fout: ${msg}`);
     }
+    setTimeout(() => setStatus(null), 4000);
   }
 
   return (
     <div className="space-y-3">
       <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500">
-        Modus
+        Modus {!connected && <span className="text-yellow-500">(socket offline)</span>}
       </h3>
+      {status && (
+        <p className={`text-xs ${status.startsWith("✓") ? "text-green-400" : status.startsWith("✗") ? "text-red-400" : "text-yellow-400"}`}>
+          {status}
+        </p>
+      )}
+      {!serverUrl && !process.env.NEXT_PUBLIC_CONTROL_SERVER_URL && (
+        <p className="text-xs text-red-400">Geen server URL geconfigureerd</p>
+      )}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
         {MODE_CONFIG.map(({ mode, icon, description }) => {
           const active = mode === currentMode;
