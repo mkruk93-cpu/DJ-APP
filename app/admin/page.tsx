@@ -399,10 +399,11 @@ export default function AdminPage() {
             </div>
             <p className="mt-1.5 text-xs text-gray-500">
               {radioConnected
-                ? "Verbonden met de radio server."
+                ? "✓ Verbonden met de radio server."
                 : effectiveServerUrl
-                  ? "Niet verbonden — zorg dat de server en tunnel draaien."
+                  ? `Verbinden met ${effectiveServerUrl.slice(0, 40)}...`
                   : "Plak hier de Cloudflare Tunnel URL van je radio server."}
+              {" "}| authed: {radioAuthed ? "ja" : "nee"} | url: {effectiveServerUrl ? "ja" : "nee"}
             </p>
           </div>
 
