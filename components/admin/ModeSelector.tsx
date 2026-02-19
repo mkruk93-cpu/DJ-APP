@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRadioStore } from "@/lib/radioStore";
 import { getSocket } from "@/lib/socket";
 import { getRadioToken } from "@/lib/auth";
@@ -19,17 +19,26 @@ export default function ModeSelector() {
   const currentMode = useRadioStore((s) => s.mode);
   const connected = useRadioStore((s) => s.connected);
   const [debugMsg, setDebugMsg] = useState("");
+  const [lastEvent, setLastEvent] = useState("");
+
+  useEffect(() => {
+    const s = getSocket();
+    function onMode(data: { mode: string }) {
+      setLastEvent(`Received mode:${data.mode} at ${new Date().toLocaleTimeString()}`);
+    }
+    s.on("mode:change", onMode);
+    return () => { s.off("mode:change", onMode); };
+  }, []);
 
   function selectMode(mode: Mode) {
     const token = getRadioToken();
     const s = getSocket();
-    const info = `token:${token ? "yes" : "no"} connected:${connected} sock:${s.connected} id:${s.id ?? "none"}`;
+    const info = `store:${currentMode} sock:${s.connected} id:${s.id ?? "none"}`;
 
-    if (!token) { setDebugMsg(`NO TOKEN | ${info}`); return; }
-    if (!connected) { setDebugMsg(`NOT CONNECTED | ${info}`); return; }
+    if (!token || !connected) { setDebugMsg(`BLOCKED | ${info}`); return; }
 
     s.emit("mode:set", { mode, token });
-    setDebugMsg(`Sent mode:${mode} | ${info}`);
+    setDebugMsg(`Sent ${mode} | ${info}`);
   }
 
   return (
@@ -38,6 +47,8 @@ export default function ModeSelector() {
         Modus
       </h3>
       {debugMsg && <p className="text-xs text-yellow-400 bg-yellow-500/10 rounded p-2 break-all">{debugMsg}</p>}
+      {lastEvent && <p className="text-xs text-green-400 bg-green-500/10 rounded p-2 break-all">{lastEvent}</p>}
+      <p className="text-xs text-gray-500">Store mode: {currentMode}</p>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
         {MODE_CONFIG.map(({ mode, icon, description }) => {
           const active = mode === currentMode;
