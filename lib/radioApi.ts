@@ -18,7 +18,8 @@ async function post(path: string, body: Record<string, unknown> = {}): Promise<R
 
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    throw new Error((data as Record<string, string>).error ?? `HTTP ${res.status}`);
+    const tokenHint = token ? `${token.slice(0, 4)}... (len=${token.length})` : 'NULL';
+    throw new Error(`${(data as Record<string, string>).error ?? `HTTP ${res.status}`} [token=${tokenHint}, url=${url}${path}]`);
   }
 
   return res.json();
