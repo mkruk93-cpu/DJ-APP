@@ -64,7 +64,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false }: A
 
     function tick() {
       if (!radioTrack?.started_at) return;
-      setElapsed(Math.floor((Date.now() - radioTrack.started_at) / 1000));
+      setElapsed(Math.max(0, Math.floor((Date.now() - radioTrack.started_at) / 1000)));
     }
     tick();
     const interval = setInterval(tick, 1000);

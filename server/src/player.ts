@@ -16,6 +16,8 @@ let encoder: ChildProcess | null = null;
 let isRunning = false;
 let keepFiles = false;
 
+const STREAM_DELAY_MS = parseInt(process.env.STREAM_DELAY_MS ?? '6000', 10);
+
 const MAX_PRELOAD = 5;
 
 interface PreloadedTrack {
@@ -262,7 +264,7 @@ async function playNext(
       title: item.title,
       thumbnail: item.thumbnail,
       duration: trackDuration,
-      started_at: Date.now(),
+      started_at: Date.now() + STREAM_DELAY_MS,
     };
     io.emit('track:change', currentTrack);
 
