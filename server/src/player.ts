@@ -128,10 +128,12 @@ export async function startPlayCycle(
   });
 
   console.log('[player] Play cycle started');
+  const failCounts = new Map<string, number>();
+  const MAX_RETRIES = 2;
 
   while (isRunning) {
     try {
-      await playNext(sb, io, cacheDir, icecast);
+      await playNext(sb, io, cacheDir, icecast, failCounts, MAX_RETRIES);
     } catch (err) {
       console.error('[player] Cycle error:', err);
       io.emit('error:toast', { message: 'Afspeelfout — volgende nummer wordt geladen' });
@@ -197,6 +199,8 @@ async function playNext(
   io: IOServer,
   cacheDir: string,
   icecast: { host: string; port: number; password: string; mount: string },
+  failCounts: Map<string, number>,
+  maxRetries: number,
 ): Promise<void> {
   let item = await getNextTrack(sb);
 
@@ -207,6 +211,17 @@ async function playNext(
     await waitForQueueAdd();
     item = await getNextTrack(sb);
     if (!item) return;
+  }
+
+  const fails = failCounts.get(item.youtube_id) ?? 0;
+  if (fails >= maxRetries) {
+    console.warn(`[player] Skipping ${item.title ?? item.youtube_id} after ${fails} failed attempts`);
+    io.emit('error:toast', { message: `Overgeslagen: ${item.title ?? item.youtube_id} (download mislukt)` });
+    failCounts.delete(item.youtube_id);
+    await clearQueueItem(sb, item.id);
+    const q = await getQueue(sb);
+    io.emit('queue:update', { items: q });
+    return;
   }
 
   let audioFile: string | null = null;
@@ -264,12 +279,17 @@ async function playNext(
 
     fillPreloadBuffer(sb, cacheDir, item.id);
 
+    failCounts.delete(item.youtube_id);
+
     const enc = ensureEncoder(icecast);
     await decodeToEncoder(audioFile, enc);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Onbekende fout';
     console.error(`[player] Error playing ${item.youtube_id}: ${message}`);
-    io.emit('error:toast', { message: `Fout bij afspelen: ${message}` });
+    const newFails = (failCounts.get(item.youtube_id) ?? 0) + 1;
+    failCounts.set(item.youtube_id, newFails);
+    console.warn(`[player] Fail ${newFails}/${maxRetries} for ${item.title ?? item.youtube_id}`);
+    io.emit('error:toast', { message: `Fout bij afspelen: ${item.title ?? item.youtube_id}` });
   } finally {
     currentDecoder = null;
     currentTrack = null;
@@ -367,8 +387,6 @@ function downloadAudio(item: QueueItem, cacheDir: string): Promise<string> {
       '--format', 'bestaudio',
       '--no-playlist',
       '--no-warnings',
-      '--age-limit', '99',
-      '--cookies-from-browser', 'chrome',
       '-o', outputTemplate,
       item.youtube_url,
     ]);
