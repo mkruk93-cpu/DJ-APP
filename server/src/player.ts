@@ -367,6 +367,8 @@ function downloadAudio(item: QueueItem, cacheDir: string): Promise<string> {
       '--format', 'bestaudio',
       '--no-playlist',
       '--no-warnings',
+      '--age-limit', '99',
+      '--cookies-from-browser', 'chrome',
       '-o', outputTemplate,
       item.youtube_url,
     ]);

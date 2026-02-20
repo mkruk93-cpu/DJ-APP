@@ -145,6 +145,8 @@ export function fetchVideoInfo(url: string): Promise<VideoInfo> {
       '--print', '%(title)s\n%(duration)s',
       '--no-warnings',
       '--no-playlist',
+      '--age-limit', '99',
+      '--cookies-from-browser', 'chrome',
       url,
     ], { timeout: 20_000 });
 
