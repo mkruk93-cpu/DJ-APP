@@ -88,7 +88,7 @@ async function getServerState(): Promise<ServerState> {
   };
 }
 
-// ── YouTube Search ──────────────────────────────────────────────────────────
+// ── YouTube Search (fast, direct API) ───────────────────────────────────────
 
 interface SearchResult {
   id: string;
@@ -99,7 +99,87 @@ interface SearchResult {
   channel: string;
 }
 
-function youtubeSearch(query: string, limit = 6): Promise<SearchResult[]> {
+const searchCache = new Map<string, { results: SearchResult[]; ts: number }>();
+const CACHE_TTL = 60_000;
+
+function parseDuration(text: string): number | null {
+  const parts = text.split(':').map(Number);
+  if (parts.some(isNaN)) return null;
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  return null;
+}
+
+async function youtubeSearch(query: string, limit = 6): Promise<SearchResult[]> {
+  const cacheKey = query.toLowerCase().trim();
+  const cached = searchCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.results;
+
+  try {
+    const payload = JSON.stringify({
+      context: {
+        client: {
+          clientName: 'WEB',
+          clientVersion: '2.20240101.00.00',
+          hl: 'nl',
+          gl: 'NL',
+        },
+      },
+      query,
+    });
+
+    const res = await fetch('https://www.youtube.com/youtubei/v1/search?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0',
+      },
+      body: payload,
+      signal: AbortSignal.timeout(5000),
+    });
+
+    if (!res.ok) return [];
+
+    const data = await res.json() as Record<string, unknown>;
+    const sections = (data as any)?.contents?.twoColumnSearchResultsRenderer
+      ?.primaryContents?.sectionListRenderer?.contents ?? [];
+
+    const results: SearchResult[] = [];
+
+    for (const section of sections) {
+      const items = section?.itemSectionRenderer?.contents ?? [];
+      for (const item of items) {
+        const v = item?.videoRenderer;
+        if (!v?.videoId) continue;
+
+        const title = v.title?.runs?.map((r: { text: string }) => r.text).join('') ?? 'Onbekend';
+        const channel = v.ownerText?.runs?.[0]?.text ?? v.shortBylineText?.runs?.[0]?.text ?? '';
+        const durText = v.lengthText?.simpleText ?? '';
+        const duration = durText ? parseDuration(durText) : null;
+
+        results.push({
+          id: v.videoId,
+          title,
+          url: `https://www.youtube.com/watch?v=${v.videoId}`,
+          duration,
+          thumbnail: `https://img.youtube.com/vi/${v.videoId}/mqdefault.jpg`,
+          channel,
+        });
+
+        if (results.length >= limit) break;
+      }
+      if (results.length >= limit) break;
+    }
+
+    searchCache.set(cacheKey, { results, ts: Date.now() });
+    return results;
+  } catch (err) {
+    console.warn('[search] Innertube failed, falling back to yt-dlp:', (err as Error).message);
+    return youtubeSearchFallback(query, limit);
+  }
+}
+
+function youtubeSearchFallback(query: string, limit = 6): Promise<SearchResult[]> {
   return new Promise((resolve) => {
     const proc = spawn('python', [
       '-m', 'yt_dlp',

@@ -85,7 +85,7 @@ export default function QueueAdd() {
 
     const query = value.trim();
     if (query.length >= 2) {
-      debounceRef.current = setTimeout(() => search(query), 500);
+      debounceRef.current = setTimeout(() => search(query), 300);
     } else {
       setResults([]);
       setShowResults(false);
