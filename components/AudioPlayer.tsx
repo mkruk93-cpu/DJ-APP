@@ -29,11 +29,55 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false }: A
   const [volume, setVolume] = useState(0.8);
   const [track, setTrack] = useState<NowPlayingData>({ title: null, artist: null, artwork_url: null });
   const [elapsed, setElapsed] = useState(0);
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
+  const userPaused = useRef(false);
   const connected = useRadioStore((s) => s.connected);
 
   useEffect(() => {
     if (audioRef.current) audioRef.current.volume = volume;
   }, [volume]);
+
+  // Autoplay when stream source becomes available
+  useEffect(() => {
+    if (!src || userPaused.current || playing) return;
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    audio.src = src;
+    audio.play()
+      .then(() => {
+        setPlaying(true);
+        setAutoplayBlocked(false);
+      })
+      .catch(() => {
+        setAutoplayBlocked(true);
+      });
+  }, [src, playing]);
+
+  // After autoplay block: start on first user interaction anywhere
+  useEffect(() => {
+    if (!autoplayBlocked) return;
+
+    function onInteraction() {
+      if (userPaused.current) return;
+      const audio = audioRef.current;
+      if (!audio || !src) return;
+      audio.src = src;
+      audio.play()
+        .then(() => {
+          setPlaying(true);
+          setAutoplayBlocked(false);
+        })
+        .catch(() => {});
+    }
+
+    document.addEventListener("click", onInteraction, { once: true });
+    document.addEventListener("touchstart", onInteraction, { once: true });
+    return () => {
+      document.removeEventListener("click", onInteraction);
+      document.removeEventListener("touchstart", onInteraction);
+    };
+  }, [autoplayBlocked, src]);
 
   useEffect(() => {
     const sb = getSupabase();
@@ -79,10 +123,14 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false }: A
       audio.pause();
       audio.src = "";
       setPlaying(false);
+      userPaused.current = true;
+      setAutoplayBlocked(false);
     } else {
+      userPaused.current = false;
       audio.src = src;
       audio.play().catch(() => {});
       setPlaying(true);
+      setAutoplayBlocked(false);
     }
   }
 
@@ -106,6 +154,20 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false }: A
   return (
     <div className="relative w-full overflow-hidden rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5">
       <audio ref={audioRef} onError={() => setPlaying(false)} />
+
+      {autoplayBlocked && !playing && (
+        <button
+          onClick={toggle}
+          className="absolute inset-0 z-10 flex items-center justify-center bg-black/60 backdrop-blur-sm transition hover:bg-black/50"
+        >
+          <div className="flex items-center gap-2 rounded-full bg-violet-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/30">
+            <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+            Tik om te luisteren
+          </div>
+        </button>
+      )}
 
       {/* Mobile: compact horizontal layout */}
       <div className="flex flex-col sm:hidden">
