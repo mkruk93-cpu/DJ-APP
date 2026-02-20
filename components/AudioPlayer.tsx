@@ -31,6 +31,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false }: A
   const [elapsed, setElapsed] = useState(0);
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);
   const userPaused = useRef(false);
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connected = useRadioStore((s) => s.connected);
 
   useEffect(() => {
@@ -120,6 +121,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false }: A
     if (!audio) return;
 
     if (playing) {
+      if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
       audio.pause();
       audio.src = "";
       setPlaying(false);
@@ -153,7 +155,33 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false }: A
 
   return (
     <div className="relative w-full overflow-hidden rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5">
-      <audio ref={audioRef} onError={() => setPlaying(false)} />
+      <audio
+        ref={audioRef}
+        onError={() => {
+          if (playing && !userPaused.current && src) {
+            if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+            reconnectTimer.current = setTimeout(() => {
+              const audio = audioRef.current;
+              if (!audio || userPaused.current) return;
+              audio.src = src;
+              audio.play().catch(() => {});
+            }, 2000);
+          } else {
+            setPlaying(false);
+          }
+        }}
+        onStalled={() => {
+          if (playing && !userPaused.current && src) {
+            if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+            reconnectTimer.current = setTimeout(() => {
+              const audio = audioRef.current;
+              if (!audio || userPaused.current || !audio.paused) return;
+              audio.src = src;
+              audio.play().catch(() => {});
+            }, 3000);
+          }
+        }}
+      />
 
       {autoplayBlocked && !playing && (
         <button
