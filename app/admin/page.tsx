@@ -187,7 +187,26 @@ export default function AdminPage() {
       )
       .subscribe();
 
-    return () => { sb.removeChannel(channel); };
+    const settingsChannel = sb
+      .channel("admin-settings")
+      .on(
+        "postgres_changes" as any,
+        { event: "UPDATE", schema: "public", table: "settings" },
+        (payload: any) => {
+          const rUrl = payload.new?.radio_server_url || "";
+          if (rUrl && rUrl !== radioServerUrl) {
+            console.log("[admin] Tunnel URL auto-updated:", rUrl);
+            setRadioServerUrl(rUrl);
+            store.getState().setServerUrl(rUrl || null);
+          }
+        },
+      )
+      .subscribe();
+
+    return () => {
+      sb.removeChannel(channel);
+      sb.removeChannel(settingsChannel);
+    };
   }, [authenticated, loadRequests, loadSettings]);
 
   function handleLogin(e: React.FormEvent) {

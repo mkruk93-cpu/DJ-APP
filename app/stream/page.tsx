@@ -161,7 +161,27 @@ export default function StreamPage() {
 
     pollExternal();
     const interval = setInterval(pollExternal, 30_000);
-    return () => clearInterval(interval);
+
+    const channel = getSupabase()
+      .channel("settings-watch")
+      .on(
+        "postgres_changes" as any,
+        { event: "UPDATE", schema: "public", table: "settings" },
+        (payload: any) => {
+          const rUrl = payload.new?.radio_server_url || null;
+          if (rUrl && rUrl !== radioServerUrl) {
+            console.log("[radio] Tunnel URL updated via realtime:", rUrl);
+            setRadioServerUrl(rUrl);
+            store.getState().setServerUrl(rUrl);
+          }
+        },
+      )
+      .subscribe();
+
+    return () => {
+      clearInterval(interval);
+      getSupabase().removeChannel(channel);
+    };
   }, []);
 
   useEffect(() => {

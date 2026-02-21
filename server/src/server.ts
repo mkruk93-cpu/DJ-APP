@@ -335,6 +335,24 @@ app.post('/api/keep-files', async (req, res) => {
   res.json({ ok: true, keep: !!keep });
 });
 
+app.post('/api/tunnel-url', async (req, res) => {
+  const { url, token } = req.body ?? {};
+  if (!isAdmin(token)) return res.status(403).json({ error: 'Unauthorized' });
+
+  const tunnelUrl = (url ?? '').replace(/\/+$/, '');
+  if (!tunnelUrl) return res.status(400).json({ error: 'Missing url' });
+
+  try {
+    await sb.from('settings').update({ radio_server_url: tunnelUrl }).eq('id', 1);
+    io.emit('tunnel:url', { url: tunnelUrl });
+    console.log(`[rest] Tunnel URL saved: ${tunnelUrl}`);
+    res.json({ ok: true, url: tunnelUrl });
+  } catch (err) {
+    console.error('[rest] tunnel-url error:', err);
+    res.status(500).json({ error: 'Failed to save tunnel URL' });
+  }
+});
+
 // ── Vote skip state ──────────────────────────────────────────────────────────
 
 let voteSkipSet = new Set<string>();
