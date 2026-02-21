@@ -17,6 +17,58 @@ let isRunning = false;
 let keepFiles = false;
 
 const STREAM_DELAY_MS = parseInt(process.env.STREAM_DELAY_MS ?? '8000', 10);
+const FALLBACK_MUSIC_DIR = process.env.FALLBACK_MUSIC_DIR ?? '';
+
+let fallbackFiles: string[] = [];
+
+function loadFallbackLibrary(): void {
+  if (!FALLBACK_MUSIC_DIR) return;
+  try {
+    const exts = new Set(['.mp3', '.flac', '.wav', '.m4a', '.ogg', '.aac', '.wma']);
+    function scan(dir: string): void {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) scan(full);
+        else if (exts.has(path.extname(entry.name).toLowerCase())) fallbackFiles.push(full);
+      }
+    }
+    scan(FALLBACK_MUSIC_DIR);
+    console.log(`[player] Fallback library: ${fallbackFiles.length} tracks from ${FALLBACK_MUSIC_DIR}`);
+  } catch (err) {
+    console.warn(`[player] Could not scan fallback dir: ${(err as Error).message}`);
+  }
+}
+
+function pickRandomFallback(): string | null {
+  if (fallbackFiles.length === 0) return null;
+  const idx = Math.floor(Math.random() * fallbackFiles.length);
+  return fallbackFiles[idx];
+}
+
+function titleFromFilename(filePath: string): string {
+  return path.basename(filePath, path.extname(filePath))
+    .replace(/^\d{2,4}\s*[-.]?\s*/, '')
+    .trim();
+}
+
+function getAudioDuration(filePath: string): Promise<number | null> {
+  return new Promise((resolve) => {
+    const proc = spawn('ffprobe', [
+      '-v', 'error',
+      '-show_entries', 'format=duration',
+      '-of', 'csv=p=0',
+      filePath,
+    ], { timeout: 10_000 });
+
+    let output = '';
+    proc.stdout.on('data', (chunk: Buffer) => { output += chunk.toString(); });
+    proc.on('close', () => {
+      const dur = parseFloat(output.trim());
+      resolve(isNaN(dur) ? null : Math.round(dur));
+    });
+    proc.on('error', () => resolve(null));
+  });
+}
 
 const MAX_PRELOAD = 5;
 
@@ -31,6 +83,19 @@ let preloading = false;
 
 let _sb: SupabaseClient | null = null;
 let _cacheDir = '';
+
+interface ReadyTrack {
+  audioFile: string;
+  title: string | null;
+  thumbnail: string | null;
+  youtubeId: string;
+  duration: number | null;
+  queueItemId: string | null;
+  isFallback: boolean;
+}
+
+let nextReady: ReadyTrack | null = null;
+let preparingNext = false;
 
 export function getCurrentTrack(): Track | null {
   return currentTrack;
@@ -123,9 +188,20 @@ export async function startPlayCycle(
   _sb = sb;
   _cacheDir = cacheDir;
 
+  loadFallbackLibrary();
+
   playerEvents.on('queue:add', () => {
+    // Invalidate fallback nextReady so queued track gets priority
+    if (nextReady?.isFallback) {
+      console.log('[prepare] Invalidated fallback — queue item added');
+      nextReady = null;
+    }
     if (currentTrack && !preloading && preloadBuffer.length < MAX_PRELOAD && _sb) {
       fillPreloadBuffer(_sb, _cacheDir, currentTrack.id);
+    }
+    // Re-prepare next with the new queue item
+    if (_sb && currentTrack) {
+      prepareNextTrack(_sb, _cacheDir, currentTrack.id);
     }
   });
 
@@ -204,86 +280,114 @@ async function playNext(
   failCounts: Map<string, number>,
   maxRetries: number,
 ): Promise<void> {
-  let item = await getNextTrack(sb);
-
-  if (!item) {
-    currentTrack = null;
-    io.emit('track:change', null);
-    console.log('[player] Queue empty — waiting for tracks...');
-    await waitForQueueAdd();
-    item = await getNextTrack(sb);
-    if (!item) return;
-  }
-
-  const fails = failCounts.get(item.youtube_id) ?? 0;
-  if (fails >= maxRetries) {
-    console.warn(`[player] Skipping ${item.title ?? item.youtube_id} after ${fails} failed attempts`);
-    io.emit('error:toast', { message: `Overgeslagen: ${item.title ?? item.youtube_id} (download mislukt)` });
-    failCounts.delete(item.youtube_id);
-    await clearQueueItem(sb, item.id);
-    const q = await getQueue(sb);
-    io.emit('queue:update', { items: q });
-    return;
-  }
-
   let audioFile: string | null = null;
+  let trackTitle: string | null = null;
+  let trackThumbnail: string | null = null;
+  let trackYoutubeId = '';
   let trackDuration: number | null = null;
-  let usedPreload = false;
+  let trackQueueId: string | null = null;
+  let isFallback = false;
+  let source = '';
+
+  // ── FAST PATH: use pre-prepared track (instant, no DB call) ──
+  if (nextReady) {
+    const ready = nextReady;
+    nextReady = null;
+    audioFile = ready.audioFile;
+    trackTitle = ready.title;
+    trackThumbnail = ready.thumbnail;
+    trackYoutubeId = ready.youtubeId;
+    trackDuration = ready.duration;
+    trackQueueId = ready.queueItemId;
+    isFallback = ready.isFallback;
+    source = isFallback ? 'ready/random' : 'ready/preloaded';
+  } else {
+    // ── NORMAL PATH: fetch from queue or fallback ──
+    const item = await getNextTrack(sb);
+
+    if (item) {
+      const fails = failCounts.get(item.youtube_id) ?? 0;
+      if (fails >= maxRetries) {
+        console.warn(`[player] Skipping ${item.title ?? item.youtube_id} after ${fails} failed attempts`);
+        io.emit('error:toast', { message: `Overgeslagen: ${item.title ?? item.youtube_id} (download mislukt)` });
+        failCounts.delete(item.youtube_id);
+        await clearQueueItem(sb, item.id);
+        const q = await getQueue(sb);
+        io.emit('queue:update', { items: q });
+        return;
+      }
+
+      const buffered = takeFromBuffer(item.id);
+      if (buffered) {
+        audioFile = buffered.audioFile;
+        trackDuration = buffered.duration;
+        if (buffered.item.title) item.title = buffered.item.title;
+        source = 'preloaded';
+      } else {
+        const info = await fetchVideoInfo(item.youtube_url);
+        trackDuration = info.duration;
+        if (info.title && !item.title) item.title = info.title;
+
+        // Show "loading" state while downloading
+        currentTrack = {
+          id: item.id, youtube_id: item.youtube_id,
+          title: item.title, thumbnail: item.thumbnail,
+          duration: trackDuration, started_at: 0,
+        };
+        io.emit('track:change', currentTrack);
+
+        console.log(`[player] Downloading: ${item.title ?? item.youtube_id}`);
+        audioFile = await downloadAudio(item, cacheDir);
+        source = 'downloaded';
+      }
+
+      trackTitle = item.title;
+      trackThumbnail = item.thumbnail;
+      trackYoutubeId = item.youtube_id;
+      trackQueueId = item.id;
+      failCounts.delete(item.youtube_id);
+    } else {
+      const fallbackFile = pickRandomFallback();
+      if (fallbackFile) {
+        audioFile = fallbackFile;
+        trackTitle = titleFromFilename(fallbackFile);
+        trackYoutubeId = 'local';
+        trackDuration = await getAudioDuration(fallbackFile);
+        isFallback = true;
+        source = 'random';
+      } else {
+        currentTrack = null;
+        io.emit('track:change', null);
+        console.log('[player] Queue empty — waiting for tracks...');
+        await waitForQueueAdd();
+        return;
+      }
+    }
+  }
+
+  if (!audioFile) return;
+
+  const trackId = trackQueueId ?? `fallback_${Date.now()}`;
 
   try {
-    const buffered = takeFromBuffer(item.id);
-
-    if (buffered) {
-      audioFile = buffered.audioFile;
-      trackDuration = buffered.duration;
-      if (buffered.item.title) item.title = buffered.item.title;
-      usedPreload = true;
-      console.log(`[player] Using preloaded: ${item.title ?? item.youtube_id}`);
-    } else {
-      const info = await fetchVideoInfo(item.youtube_url);
-      trackDuration = info.duration;
-      if (info.title && !item.title) item.title = info.title;
-
-      currentTrack = {
-        id: item.id,
-        youtube_id: item.youtube_id,
-        title: item.title,
-        thumbnail: item.thumbnail,
-        duration: trackDuration,
-        started_at: 0,
-      };
-      io.emit('track:change', currentTrack);
-
-      console.log(`[player] Downloading: ${item.title ?? item.youtube_id}`);
-      audioFile = await downloadAudio(item, cacheDir);
+    // Remove from queue in background
+    if (trackQueueId) {
+      clearQueueItem(sb, trackQueueId)
+        .then(() => getQueue(sb))
+        .then((q) => io.emit('queue:update', { items: q }))
+        .catch(() => {});
     }
 
-    // Show metadata immediately (started_at=0 means "loading")
-    currentTrack = {
-      id: item.id,
-      youtube_id: item.youtube_id,
-      title: item.title,
-      thumbnail: item.thumbnail,
-      duration: trackDuration,
-      started_at: 0,
-    };
-    io.emit('track:change', currentTrack);
-
-    // Remove from queue so it disappears from the list
-    clearQueueItem(sb, item.id)
-      .then(() => getQueue(sb))
-      .then((q) => io.emit('queue:update', { items: q }))
-      .catch(() => {});
-
-    fillPreloadBuffer(sb, cacheDir, item.id);
-    failCounts.delete(item.youtube_id);
-
-    // Prepare encoder BEFORE setting the timer
+    // Ensure encoder is ready
     const enc = ensureEncoder(icecast);
 
-    // NOW set started_at — audio is about to enter the pipeline
+    // NOW show track + set timer — audio is about to stream
     currentTrack = {
-      ...currentTrack,
+      id: trackId,
+      youtube_id: trackYoutubeId,
+      title: trackTitle,
+      thumbnail: trackThumbnail,
+      duration: trackDuration,
       started_at: Date.now() + STREAM_DELAY_MS,
     };
     io.emit('track:change', currentTrack);
@@ -291,30 +395,33 @@ async function playNext(
     const durStr = trackDuration
       ? `${Math.floor(trackDuration / 60)}:${String(Math.round(trackDuration % 60)).padStart(2, '0')}`
       : '?';
-    console.log(`[player] Streaming${usedPreload ? ' (preloaded)' : ''}: ${item.title ?? item.youtube_id} (${durStr})`);
+    console.log(`[player] Streaming (${source}): ${trackTitle ?? trackYoutubeId} (${durStr})`);
+
+    // Start preparing next track in background while this one plays
+    prepareNextTrack(sb, cacheDir, trackQueueId);
 
     await decodeToEncoder(audioFile, enc);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Onbekende fout';
-    console.error(`[player] Error playing ${item.youtube_id}: ${message}`);
-    const newFails = (failCounts.get(item.youtube_id) ?? 0) + 1;
-    failCounts.set(item.youtube_id, newFails);
-    console.warn(`[player] Fail ${newFails}/${maxRetries} for ${item.title ?? item.youtube_id}`);
-    io.emit('error:toast', { message: `Fout bij afspelen: ${item.title ?? item.youtube_id}` });
+    console.error(`[player] Error playing ${trackYoutubeId}: ${message}`);
+    if (!isFallback) {
+      const newFails = (failCounts.get(trackYoutubeId) ?? 0) + 1;
+      failCounts.set(trackYoutubeId, newFails);
+      console.warn(`[player] Fail ${newFails}/${maxRetries} for ${trackTitle ?? trackYoutubeId}`);
+    }
+    io.emit('error:toast', { message: `Fout bij afspelen: ${trackTitle ?? trackYoutubeId}` });
   } finally {
     currentDecoder = null;
-    currentTrack = null;
-    io.emit('track:change', null);
 
-    if (audioFile && !keepFiles) {
+    if (audioFile && !isFallback && !keepFiles) {
       cleanupFile(audioFile);
     }
 
-    if (audioFile) {
+    if (audioFile && !isFallback) {
       sb.from('played_history').insert({
-        youtube_id: item.youtube_id,
-        title: item.title,
-        thumbnail: item.thumbnail,
+        youtube_id: trackYoutubeId,
+        title: trackTitle,
+        thumbnail: trackThumbnail,
         duration_s: trackDuration,
       }).then(() => {}, () => {});
     }
@@ -435,6 +542,71 @@ function waitForQueueAdd(): Promise<void> {
   return new Promise((resolve) => {
     playerEvents.once('queue:add', () => resolve());
   });
+}
+
+async function prepareNextTrack(
+  sb: SupabaseClient,
+  cacheDir: string,
+  currentItemId: string | null,
+): Promise<void> {
+  if (preparingNext || nextReady) return;
+  preparingNext = true;
+
+  try {
+    const item = await getNextTrack(sb);
+
+    if (item && item.id !== currentItemId) {
+      const buffered = takeFromBuffer(item.id);
+      if (buffered) {
+        if (buffered.item.title) item.title = buffered.item.title;
+        nextReady = {
+          audioFile: buffered.audioFile,
+          title: item.title,
+          thumbnail: item.thumbnail,
+          youtubeId: item.youtube_id,
+          duration: buffered.duration,
+          queueItemId: item.id,
+          isFallback: false,
+        };
+        console.log(`[prepare] Next ready (preloaded): ${item.title ?? item.youtube_id}`);
+      } else {
+        const info = await fetchVideoInfo(item.youtube_url);
+        if (info.title && !item.title) item.title = info.title;
+        console.log(`[prepare] Downloading next: ${item.title ?? item.youtube_id}`);
+        const audioFile = await downloadAudio(item, cacheDir);
+        nextReady = {
+          audioFile,
+          title: item.title,
+          thumbnail: item.thumbnail,
+          youtubeId: item.youtube_id,
+          duration: info.duration,
+          queueItemId: item.id,
+          isFallback: false,
+        };
+        console.log(`[prepare] Next ready (downloaded): ${item.title ?? item.youtube_id}`);
+      }
+    } else {
+      const fallbackFile = pickRandomFallback();
+      if (fallbackFile) {
+        const title = titleFromFilename(fallbackFile);
+        const duration = await getAudioDuration(fallbackFile);
+        nextReady = {
+          audioFile: fallbackFile,
+          title,
+          thumbnail: null,
+          youtubeId: 'local',
+          duration,
+          queueItemId: null,
+          isFallback: true,
+        };
+        console.log(`[prepare] Next ready (random): ${title}`);
+      }
+    }
+  } catch (err) {
+    console.warn(`[prepare] Failed: ${(err as Error).message}`);
+  } finally {
+    preparingNext = false;
+  }
 }
 
 function sleep(ms: number): Promise<void> {

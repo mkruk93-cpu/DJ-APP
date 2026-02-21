@@ -107,6 +107,7 @@ export default function StreamPage() {
     socket.on("track:change", (track: Track | null) => {
       store.getState().setCurrentTrack(track);
       store.getState().setStreamOnline(track !== null);
+      store.getState().setVoteState(null);
     });
 
     socket.on("queue:update", (data: { items: QueueItem[] }) => {
@@ -118,7 +119,7 @@ export default function StreamPage() {
       store.getState().setMode(data.mode, data.settings);
     });
 
-    socket.on("vote:update", (data: VoteState) => {
+    socket.on("vote:update", (data: VoteState | null) => {
       store.getState().setVoteState(data);
     });
 

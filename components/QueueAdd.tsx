@@ -232,7 +232,7 @@ export default function QueueAdd() {
                   )}
                 </div>
               </div>
-              {r.duration !== null && r.duration > 600 && (
+              {r.duration !== null && r.duration > 3900 && (
                 <span className="shrink-0 rounded bg-red-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-red-400">
                   Te lang
                 </span>

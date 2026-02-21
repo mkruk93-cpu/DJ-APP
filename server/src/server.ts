@@ -350,8 +350,8 @@ function resetVotes(): void {
 
 // ── Duration vote state ─────────────────────────────────────────────────────
 
-const MAX_DURATION = 600;
-const VOTE_THRESHOLD = 300;
+const MAX_DURATION = 3900;
+const ANYONE_SKIP_AFTER = 300;
 const DURATION_VOTE_TIMEOUT = 30_000;
 
 let activeDurationVote: DurationVote | null = null;
@@ -466,18 +466,14 @@ io.on('connection', (socket) => {
 
       if (info.duration !== null && info.duration > MAX_DURATION) {
         socket.emit('error:toast', {
-          message: `Dit nummer is te lang (${Math.floor(info.duration / 60)}:${String(Math.round(info.duration % 60)).padStart(2, '0')}). Maximum is 10 minuten.`,
+          message: `Dit nummer is te lang (${Math.floor(info.duration / 60)}:${String(Math.round(info.duration % 60)).padStart(2, '0')}). Maximum is 65 minuten.`,
         });
         return;
       }
 
-      if (info.duration !== null && info.duration > VOTE_THRESHOLD && !admin) {
-        const mins = Math.floor(info.duration / 60);
-        const secs = String(Math.round(info.duration % 60)).padStart(2, '0');
-        socket.emit('info:toast', {
-          message: `Nummer is ${mins}:${secs} — er wordt gestemd!`,
-        });
-        startDurationVote(data.youtube_url, info.title, thumbnail, info.duration, data.added_by || 'anonymous');
+      if (false) {
+        // Duration voting removed — tracks up to 65 min are always accepted
+        startDurationVote(data.youtube_url, info.title, thumbnail, info.duration ?? 0, data.added_by || 'anonymous');
         return;
       }
 
@@ -527,21 +523,19 @@ io.on('connection', (socket) => {
       const mode = await getActiveMode(sb);
       const admin = isAdmin(data.token);
 
-      if (!canPerformAction(mode, 'skip', admin)) {
-        socket.emit('error:toast', { message: 'Je mag niet skippen in deze modus' });
-        return;
-      }
-
-      const queue = await getQueue(sb);
       const track = getCurrentTrack();
-      const nextItems = track ? queue.filter((q) => q.id !== track.id) : queue;
-      if (nextItems.length === 0) {
-        socket.emit('error:toast', { message: 'Kan niet skippen — geen volgend nummer in de wachtrij' });
+      const playingFor = track?.started_at ? (Date.now() - track.started_at) / 1000 : 0;
+      const isLongTrack = (track?.duration ?? 0) > 600;
+      const anyoneCanSkip = isLongTrack && playingFor >= ANYONE_SKIP_AFTER;
+
+      if (!anyoneCanSkip && !canPerformAction(mode, 'skip', admin)) {
+        socket.emit('error:toast', { message: 'Je mag niet skippen in deze modus' });
         return;
       }
 
       console.log(`[player] Skip requested by ${admin ? 'admin' : socket.id}`);
       resetVotes();
+      io.emit('vote:update', null);
       skipCurrentTrack();
     } catch (err) {
       console.error('[socket] track:skip error:', err);
@@ -579,17 +573,10 @@ io.on('connection', (socket) => {
       });
 
       if (voteSkipSet.size >= required) {
-        const queue = await getQueue(sb);
-        const track = getCurrentTrack();
-        const nextItems = track ? queue.filter((q) => q.id !== track.id) : queue;
-        if (nextItems.length === 0) {
-          io.emit('error:toast', { message: 'Kan niet skippen — geen volgend nummer in de wachtrij' });
-          resetVotes();
-        } else {
-          console.log('[vote] Threshold reached — skipping');
-          resetVotes();
-          skipCurrentTrack();
-        }
+        console.log('[vote] Threshold reached — skipping');
+        resetVotes();
+        io.emit('vote:update', null);
+        skipCurrentTrack();
       }
     } catch (err) {
       console.error('[socket] vote:skip error:', err);

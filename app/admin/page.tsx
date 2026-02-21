@@ -116,10 +116,11 @@ export default function AdminPage() {
     socket.on("track:change", (track: Track | null) => {
       store.getState().setCurrentTrack(track);
       store.getState().setStreamOnline(track !== null);
+      store.getState().setVoteState(null);
     });
     socket.on("queue:update", (data: { items: QueueItem[] }) => store.getState().setQueue(data.items));
     socket.on("mode:change", (data: { mode: Mode; settings: ModeSettingsType }) => store.getState().setMode(data.mode, data.settings));
-    socket.on("vote:update", (data: VoteState) => store.getState().setVoteState(data));
+    socket.on("vote:update", (data: VoteState | null) => store.getState().setVoteState(data));
     socket.on("stream:status", (data: { online: boolean; listeners: number }) => {
       store.getState().setStreamOnline(data.online);
       store.getState().setListenerCount(data.listeners);
