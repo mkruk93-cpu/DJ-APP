@@ -260,10 +260,13 @@ app.get('/listen', (req, res) => {
   const icecastStreamUrl = `http://${ICECAST.host}:${ICECAST.port}${ICECAST.mount}`;
 
   const proxyReq = http.get(icecastStreamUrl, (proxyRes) => {
+    const origin = req.headers.origin ?? '*';
     res.writeHead(proxyRes.statusCode ?? 200, {
       'Content-Type': proxyRes.headers['content-type'] ?? 'audio/mpeg',
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': origin,
+      'Access-Control-Allow-Methods': 'GET',
     });
     proxyRes.pipe(res);
   });

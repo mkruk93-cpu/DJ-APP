@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { getSupabase } from "@/lib/supabaseClient";
 import { useRadioStore } from "@/lib/radioStore";
+import AudioVisualizer from "@/components/AudioVisualizer";
 import type { Track } from "@/lib/types";
 
 interface NowPlayingData {
@@ -157,6 +158,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false }: A
     <div className="relative w-full overflow-hidden rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5">
       <audio
         ref={audioRef}
+        crossOrigin="anonymous"
         onError={() => {
           if (playing && !userPaused.current && src) {
             if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
@@ -270,6 +272,12 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false }: A
             </div>
           </div>
         )}
+
+        {playing && (
+          <div className="px-3 pb-2">
+            <AudioVisualizer audioRef={audioRef} playing={playing} barCount={24} className="h-8" />
+          </div>
+        )}
       </div>
 
       {/* Desktop: compact horizontal layout */}
@@ -365,6 +373,10 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false }: A
               </svg>
             </div>
           </div>
+
+          {playing && (
+            <AudioVisualizer audioRef={audioRef} playing={playing} barCount={48} className="h-10" />
+          )}
         </div>
       </div>
     </div>
