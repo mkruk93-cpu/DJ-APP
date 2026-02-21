@@ -187,25 +187,11 @@ export default function AdminPage() {
       )
       .subscribe();
 
-    const settingsChannel = sb
-      .channel("admin-settings")
-      .on(
-        "postgres_changes" as any,
-        { event: "UPDATE", schema: "public", table: "settings" },
-        (payload: any) => {
-          const rUrl = payload.new?.radio_server_url || "";
-          if (rUrl && rUrl !== radioServerUrl) {
-            console.log("[admin] Tunnel URL auto-updated:", rUrl);
-            setRadioServerUrl(rUrl);
-            store.getState().setServerUrl(rUrl || null);
-          }
-        },
-      )
-      .subscribe();
+    const settingsInterval = setInterval(() => { loadSettings(); }, 10_000);
 
     return () => {
       sb.removeChannel(channel);
-      sb.removeChannel(settingsChannel);
+      clearInterval(settingsInterval);
     };
   }, [authenticated, loadRequests, loadSettings]);
 
