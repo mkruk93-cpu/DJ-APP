@@ -343,10 +343,21 @@ app.post('/api/tunnel-url', async (req, res) => {
   if (!tunnelUrl) return res.status(400).json({ error: 'Missing url' });
 
   try {
-    await sb.from('settings').update({ radio_server_url: tunnelUrl }).eq('id', 1);
+    const { data, error: dbErr } = await sb
+      .from('settings')
+      .update({ radio_server_url: tunnelUrl })
+      .eq('id', 1)
+      .select('radio_server_url')
+      .single();
+
+    if (dbErr) {
+      console.error('[rest] Supabase update error:', dbErr.message, dbErr.details);
+      return res.status(500).json({ error: dbErr.message });
+    }
+
     io.emit('tunnel:url', { url: tunnelUrl });
-    console.log(`[rest] Tunnel URL saved: ${tunnelUrl}`);
-    res.json({ ok: true, url: tunnelUrl });
+    console.log(`[rest] Tunnel URL saved: ${data?.radio_server_url}`);
+    res.json({ ok: true, url: data?.radio_server_url });
   } catch (err) {
     console.error('[rest] tunnel-url error:', err);
     res.status(500).json({ error: 'Failed to save tunnel URL' });

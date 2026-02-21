@@ -106,8 +106,8 @@ export default function NowPlaying({ radioTrack, showFallback = false }: NowPlay
           />
         ) : (
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-gray-700/60">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5 text-gray-500">
-              <path d="M9 19c0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2 2 .9 2 2ZM19 15c0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2 2 .9 2 2ZM21 3v12.54a2.98 2.98 0 0 0-2-1.04c-1.1 0-2.13.6-2.67 1.5H16V6.3L10 7.83V17a2.98 2.98 0 0 0-2-1c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V9.12l6-1.5V13a2.98 2.98 0 0 0-2-1c-1.66 0-3 1.34-3 3s1.34 3 3 3c1.47 0 2.7-1.07 2.95-2.47L21 3Z" />
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="h-5 w-5 text-gray-400">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 9l10-4.5M9 9v10.5a3 3 0 1 1-3-3h3Zm10-4.5v10a3 3 0 1 1-3-3h3V4.5Z" />
             </svg>
           </div>
         )}
