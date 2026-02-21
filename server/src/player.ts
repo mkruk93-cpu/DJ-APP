@@ -16,7 +16,7 @@ let encoder: ChildProcess | null = null;
 let isRunning = false;
 let keepFiles = false;
 
-const STREAM_DELAY_MS = parseInt(process.env.STREAM_DELAY_MS ?? '6000', 10);
+const STREAM_DELAY_MS = parseInt(process.env.STREAM_DELAY_MS ?? '8000', 10);
 
 const MAX_PRELOAD = 5;
 
@@ -258,13 +258,14 @@ async function playNext(
       audioFile = await downloadAudio(item, cacheDir);
     }
 
+    // Show metadata immediately (started_at=0 means "loading")
     currentTrack = {
       id: item.id,
       youtube_id: item.youtube_id,
       title: item.title,
       thumbnail: item.thumbnail,
       duration: trackDuration,
-      started_at: Date.now() + STREAM_DELAY_MS,
+      started_at: 0,
     };
     io.emit('track:change', currentTrack);
 
@@ -274,16 +275,24 @@ async function playNext(
       .then((q) => io.emit('queue:update', { items: q }))
       .catch(() => {});
 
+    fillPreloadBuffer(sb, cacheDir, item.id);
+    failCounts.delete(item.youtube_id);
+
+    // Prepare encoder BEFORE setting the timer
+    const enc = ensureEncoder(icecast);
+
+    // NOW set started_at — audio is about to enter the pipeline
+    currentTrack = {
+      ...currentTrack,
+      started_at: Date.now() + STREAM_DELAY_MS,
+    };
+    io.emit('track:change', currentTrack);
+
     const durStr = trackDuration
       ? `${Math.floor(trackDuration / 60)}:${String(Math.round(trackDuration % 60)).padStart(2, '0')}`
       : '?';
     console.log(`[player] Streaming${usedPreload ? ' (preloaded)' : ''}: ${item.title ?? item.youtube_id} (${durStr})`);
 
-    fillPreloadBuffer(sb, cacheDir, item.id);
-
-    failCounts.delete(item.youtube_id);
-
-    const enc = ensureEncoder(icecast);
     await decodeToEncoder(audioFile, enc);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Onbekende fout';
