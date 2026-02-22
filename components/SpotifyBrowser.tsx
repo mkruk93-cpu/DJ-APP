@@ -54,9 +54,14 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
   }, [checkConnection]);
 
   async function loadUser() {
-    const data = await spotifyFetch<SpotifyUser>("/me");
-    if (data) setUser(data);
-    else setConnected(false);
+    try {
+      const data = await spotifyFetch<SpotifyUser>("/me");
+      if (data) setUser(data);
+      else setConnected(false);
+    } catch (err) {
+      console.warn("[spotify] Failed to load user:", err);
+      setConnected(false);
+    }
   }
 
   async function loadPlaylists() {
@@ -153,11 +158,15 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
   }
 
   function handleAddTrack(track: SpotifyTrackItem) {
-    const artists = track.artists?.map((a) => a.name).join(", ") ?? "Unknown";
-    const query = `${artists} - ${track.name}`;
-    setAddedTrackId(track.id);
-    onAddTrack(query);
-    setTimeout(() => setAddedTrackId(null), 3000);
+    try {
+      const artists = track.artists?.map((a) => a?.name).filter(Boolean).join(", ") || "Unknown";
+      const query = `${artists} - ${track.name ?? "Unknown"}`;
+      setAddedTrackId(track.id);
+      onAddTrack(query);
+      setTimeout(() => setAddedTrackId(null), 3000);
+    } catch (err) {
+      console.warn("[spotify] Failed to add track:", err);
+    }
   }
 
   function handleDisconnect() {
@@ -184,6 +193,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
           Koppel je Spotify om nummers uit je playlists toe te voegen
         </p>
         <button
+          type="button"
           onClick={loginWithSpotify}
           className="flex items-center gap-2 rounded-full bg-[#1DB954] px-5 py-2.5 text-sm font-semibold text-black transition hover:bg-[#1ed760] active:scale-[0.97]"
         >
@@ -199,7 +209,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
   // ── Connected state ──
 
   const filteredPlaylists = playlists.filter((p) =>
-    p.name.toLowerCase().includes(filter.toLowerCase()),
+    p?.name?.toLowerCase().includes(filter.toLowerCase()),
   );
 
   const filteredTracks = tracks.filter((t) => {
@@ -278,34 +288,37 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
             </div>
           </button>
 
-          {filteredPlaylists.map((pl) => (
-            <button
-              type="button"
-              key={pl.id}
-              onClick={() => openPlaylist(pl)}
-              className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left transition hover:bg-gray-800/80"
-            >
-              {pl.images[0] ? (
-                <img
-                  src={pl.images[0].url}
-                  alt=""
-                  className="h-10 w-10 shrink-0 rounded object-cover"
-                />
-              ) : (
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-gray-800">
-                  <svg className="h-5 w-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V4.5A2.25 2.25 0 0016.5 2.25h-1.875a2.25 2.25 0 00-2.25 2.25v13.5m0 0a2.25 2.25 0 01-2.25 2.25H8.25a2.25 2.25 0 01-2.25-2.25V6.75" />
-                  </svg>
+          {filteredPlaylists.map((pl) => {
+            const plImg = pl.images?.[0]?.url;
+            return (
+              <button
+                type="button"
+                key={pl.id}
+                onClick={() => openPlaylist(pl)}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left transition hover:bg-gray-800/80"
+              >
+                {plImg ? (
+                  <img
+                    src={plImg}
+                    alt=""
+                    className="h-10 w-10 shrink-0 rounded object-cover"
+                  />
+                ) : (
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-gray-800">
+                    <svg className="h-5 w-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V4.5A2.25 2.25 0 0016.5 2.25h-1.875a2.25 2.25 0 00-2.25 2.25v13.5m0 0a2.25 2.25 0 01-2.25 2.25H8.25a2.25 2.25 0 01-2.25-2.25V6.75" />
+                    </svg>
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-white">{pl.name}</p>
+                  <p className="text-xs text-gray-500">
+                    {pl.tracks?.total ?? 0} nummers &middot; {pl.owner?.display_name ?? ""}
+                  </p>
                 </div>
-              )}
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-white">{pl.name}</p>
-                <p className="text-xs text-gray-500">
-                  {pl.tracks.total} nummers &middot; {pl.owner.display_name}
-                </p>
-              </div>
-            </button>
-          ))}
+              </button>
+            );
+          })}
 
           {filteredPlaylists.length === 0 && !loading && (
             <p className="py-4 text-center text-xs text-gray-500">
@@ -319,8 +332,9 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
       {view === "tracks" && !loading && (
         <div className="max-h-64 space-y-0.5 overflow-y-auto">
           {filteredTracks.map((track) => {
-            const artists = track.artists?.map((a) => a.name).join(", ") ?? "";
-            const albumImg = track.album?.images?.[track.album.images.length - 1]?.url;
+            const artists = track.artists?.map((a) => a?.name).filter(Boolean).join(", ") || "";
+            const imgs = track.album?.images;
+            const albumImg = imgs?.[imgs.length - 1]?.url;
             const isAdded = addedTrackId === track.id;
 
             return (
@@ -350,7 +364,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   <span className="text-xs tabular-nums text-gray-500">
-                    {formatDuration(track.duration_ms)}
+                    {track.duration_ms ? formatDuration(track.duration_ms) : ""}
                   </span>
                   {isAdded ? (
                     <svg className="h-4 w-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

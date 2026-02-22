@@ -1,12 +1,45 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, Component, type ReactNode } from "react";
 import { getSocket } from "@/lib/socket";
 import { useRadioStore } from "@/lib/radioStore";
 import { canPerformAction } from "@/lib/types";
 import { isRadioAdmin, getRadioToken } from "@/lib/auth";
 import { isSpotifyConfigured } from "@/lib/spotify";
 import SpotifyBrowser from "@/components/SpotifyBrowser";
+
+class SpotifyErrorBoundary extends Component<
+  { children: ReactNode; onReset: () => void },
+  { hasError: boolean }
+> {
+  constructor(props: { children: ReactNode; onReset: () => void }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  componentDidCatch(error: Error) {
+    console.warn("[spotify] Render error:", error);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex flex-col items-center gap-2 py-4 text-center">
+          <p className="text-sm text-red-400">Er ging iets mis met Spotify.</p>
+          <button
+            type="button"
+            onClick={() => { this.setState({ hasError: false }); this.props.onReset(); }}
+            className="text-xs text-violet-400 transition hover:text-violet-300"
+          >
+            Opnieuw proberen
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 type SearchSource = "youtube" | "soundcloud" | "spotify";
 
@@ -268,7 +301,9 @@ export default function QueueAdd() {
         </div>
 
         {source === "spotify" ? (
-          <SpotifyBrowser onAddTrack={handleSpotifyAdd} submitting={submitting} />
+          <SpotifyErrorBoundary onReset={() => switchSource("youtube")}>
+            <SpotifyBrowser onAddTrack={handleSpotifyAdd} submitting={submitting} />
+          </SpotifyErrorBoundary>
         ) : (
           <>
             <div className="relative">
