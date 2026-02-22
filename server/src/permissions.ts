@@ -33,7 +33,7 @@ const RULES: Record<Mode, Record<Action, 'admin' | 'all' | 'none'>> = {
     skip: 'all',
     add_to_queue: 'all',
     reorder_queue: 'admin',
-    remove_from_queue: 'admin',
+    remove_from_queue: 'all',
     vote_skip: 'none',
   },
 };

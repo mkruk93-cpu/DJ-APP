@@ -11,6 +11,8 @@ const YT_URL_PATTERNS = [
   /(?:youtube\.com\/embed\/)([\w-]{11})/,
 ];
 
+const SC_URL_PATTERN = /soundcloud\.com\/([\w-]+)\/([\w-]+)/;
+
 export function extractYoutubeId(url: string): string | null {
   for (const pattern of YT_URL_PATTERNS) {
     const match = url.match(pattern);
@@ -19,8 +21,26 @@ export function extractYoutubeId(url: string): string | null {
   return null;
 }
 
+export function extractSoundcloudSlug(url: string): string | null {
+  const m = url.match(SC_URL_PATTERN);
+  if (!m) return null;
+  return `sc-${m[1]}-${m[2]}`;
+}
+
+export function extractSourceId(url: string): string | null {
+  return extractYoutubeId(url) ?? extractSoundcloudSlug(url);
+}
+
+export function isSupportedUrl(url: string): boolean {
+  return extractSourceId(url) !== null;
+}
+
 export function isValidYoutubeUrl(url: string): boolean {
   return extractYoutubeId(url) !== null;
+}
+
+export function isSoundcloudUrl(url: string): boolean {
+  return SC_URL_PATTERN.test(url);
 }
 
 export function getThumbnailUrl(youtubeId: string): string {
@@ -51,14 +71,16 @@ export async function getNextTrack(sb: SupabaseClient): Promise<QueueItem | null
 
 export async function addToQueue(
   sb: SupabaseClient,
-  youtubeUrl: string,
+  url: string,
   addedBy: string,
   title?: string | null,
+  thumbnailOverride?: string | null,
 ): Promise<QueueItem> {
-  const youtubeId = extractYoutubeId(youtubeUrl);
-  if (!youtubeId) throw new Error('Invalid YouTube URL');
+  const sourceId = extractSourceId(url);
+  if (!sourceId) throw new Error('Geen geldige YouTube of SoundCloud URL');
 
-  const thumbnail = getThumbnailUrl(youtubeId);
+  const ytId = extractYoutubeId(url);
+  const thumbnail = thumbnailOverride ?? (ytId ? getThumbnailUrl(ytId) : null);
 
   const { data: last } = await sb
     .from(TABLE)
@@ -72,8 +94,8 @@ export async function addToQueue(
   const { data, error } = await sb
     .from(TABLE)
     .insert({
-      youtube_url: youtubeUrl,
-      youtube_id: youtubeId,
+      youtube_url: url,
+      youtube_id: sourceId,
       title: title ?? null,
       thumbnail,
       added_by: addedBy,
@@ -85,10 +107,13 @@ export async function addToQueue(
   if (error) throw error;
   const item = data as QueueItem;
 
-  if (!title) {
-    fetchVideoInfo(youtubeUrl).then(async ({ title: fetchedTitle }) => {
-      if (fetchedTitle) {
-        await sb.from(TABLE).update({ title: fetchedTitle }).eq('id', item.id);
+  if (!title || !thumbnail) {
+    fetchVideoInfo(url).then(async (info) => {
+      const updates: Record<string, string> = {};
+      if (!title && info.title) updates.title = info.title;
+      if (!thumbnail && info.thumbnail) updates.thumbnail = info.thumbnail;
+      if (Object.keys(updates).length > 0) {
+        await sb.from(TABLE).update(updates).eq('id', item.id);
       }
     }).catch(() => {});
   }
@@ -136,13 +161,14 @@ async function recompactPositions(sb: SupabaseClient): Promise<void> {
 export interface VideoInfo {
   title: string | null;
   duration: number | null;
+  thumbnail: string | null;
 }
 
 export function fetchVideoInfo(url: string): Promise<VideoInfo> {
   return new Promise((resolve) => {
     const proc = spawn('python', [
       '-m', 'yt_dlp',
-      '--print', '%(title)s\n%(duration)s',
+      '--print', '%(title)s\n%(duration)s\n%(thumbnail)s',
       '--no-warnings',
       '--no-playlist',
       url,
@@ -155,16 +181,18 @@ export function fetchVideoInfo(url: string): Promise<VideoInfo> {
 
     proc.on('close', (code) => {
       if (code !== 0) {
-        resolve({ title: null, duration: null });
+        resolve({ title: null, duration: null, thumbnail: null });
         return;
       }
       const lines = output.trim().split('\n');
       const title = lines[0]?.trim() || null;
       const rawDur = lines[1]?.trim();
       const duration = rawDur ? Math.round(parseFloat(rawDur)) : null;
-      resolve({ title, duration: Number.isFinite(duration) ? duration : null });
+      const thumb = lines[2]?.trim() || null;
+      const thumbnail = thumb && thumb !== 'NA' ? thumb : null;
+      resolve({ title, duration: Number.isFinite(duration) ? duration : null, thumbnail });
     });
 
-    proc.on('error', () => resolve({ title: null, duration: null }));
+    proc.on('error', () => resolve({ title: null, duration: null, thumbnail: null }));
   });
 }

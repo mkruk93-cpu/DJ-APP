@@ -6,8 +6,12 @@ import { useRadioStore } from "@/lib/radioStore";
 import { canPerformAction } from "@/lib/types";
 import { isRadioAdmin, getRadioToken } from "@/lib/auth";
 
+type SearchSource = "youtube" | "soundcloud";
+
 const YT_URL_REGEX =
   /^https?:\/\/(www\.)?(youtube\.com\/(watch\?.*v=|shorts\/|embed\/)|youtu\.be\/)[\w-]+/i;
+const SC_URL_REGEX =
+  /^https?:\/\/(www\.|m\.)?soundcloud\.com\/[\w-]+\/[\w-]+/i;
 
 interface SearchResult {
   id: string;
@@ -25,6 +29,10 @@ function formatDuration(seconds: number | null): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+function isSupportedUrl(input: string): boolean {
+  return YT_URL_REGEX.test(input) || SC_URL_REGEX.test(input);
+}
+
 export default function QueueAdd() {
   const [input, setInput] = useState("");
   const [feedback, setFeedback] = useState<{ msg: string; ok: boolean } | null>(null);
@@ -32,13 +40,14 @@ export default function QueueAdd() {
   const [results, setResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [showResults, setShowResults] = useState(false);
+  const [source, setSource] = useState<SearchSource>("youtube");
   const mode = useRadioStore((s) => s.mode);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const serverUrl = useRadioStore((s) => s.serverUrl) ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
   const canAdd = canPerformAction(mode, "add_to_queue", isRadioAdmin());
-  const isUrl = YT_URL_REGEX.test(input.trim());
+  const isUrl = isSupportedUrl(input.trim());
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -59,7 +68,7 @@ export default function QueueAdd() {
     }
 
     setSearching(true);
-    fetch(`${serverUrl}/search?q=${encodeURIComponent(query)}`)
+    fetch(`${serverUrl}/search?q=${encodeURIComponent(query)}&source=${source}`)
       .then((r) => r.json())
       .then((data: SearchResult[]) => {
         setResults(data);
@@ -67,7 +76,7 @@ export default function QueueAdd() {
       })
       .catch(() => setResults([]))
       .finally(() => setSearching(false));
-  }, [serverUrl]);
+  }, [serverUrl, source]);
 
   if (!canAdd) return null;
 
@@ -77,7 +86,7 @@ export default function QueueAdd() {
 
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
-    if (YT_URL_REGEX.test(value.trim())) {
+    if (isSupportedUrl(value.trim())) {
       setResults([]);
       setShowResults(false);
       return;
@@ -98,7 +107,7 @@ export default function QueueAdd() {
     setTimeout(() => setFeedback(null), 5000);
   }
 
-  function submitUrl(youtubeUrl: string) {
+  function submitUrl(url: string, thumbnail?: string) {
     setSubmitting(true);
     setFeedback({ msg: "Even checken...", ok: true });
     setShowResults(false);
@@ -136,7 +145,12 @@ export default function QueueAdd() {
     socket.on("info:toast", onInfo);
     socket.on("queue:update", onQueueUpdate);
 
-    socket.emit("queue:add", { youtube_url: youtubeUrl, added_by: nickname, token: getRadioToken() });
+    socket.emit("queue:add", {
+      youtube_url: url,
+      added_by: nickname,
+      token: getRadioToken(),
+      ...(thumbnail ? { thumbnail } : {}),
+    });
 
     setTimeout(() => {
       if (submitting) {
@@ -150,11 +164,11 @@ export default function QueueAdd() {
     e.preventDefault();
     const trimmed = input.trim();
 
-    if (!YT_URL_REGEX.test(trimmed)) {
+    if (!isSupportedUrl(trimmed)) {
       if (results.length > 0) {
         selectResult(results[0]);
       } else {
-        setFeedback({ msg: "Plak een YouTube link of zoek een nummer.", ok: false });
+        setFeedback({ msg: "Zoek een nummer of plak een YouTube/SoundCloud link.", ok: false });
       }
       return;
     }
@@ -166,7 +180,29 @@ export default function QueueAdd() {
     setInput(result.title);
     setResults([]);
     setShowResults(false);
-    submitUrl(result.url);
+    submitUrl(result.url, result.thumbnail || undefined);
+  }
+
+  function switchSource(newSource: SearchSource) {
+    setSource(newSource);
+    setResults([]);
+    setShowResults(false);
+    const query = input.trim();
+    if (query.length >= 2 && !isSupportedUrl(query)) {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        setSearching(true);
+        const url = serverUrl ?? "";
+        fetch(`${url}/search?q=${encodeURIComponent(query)}&source=${newSource}`)
+          .then((r) => r.json())
+          .then((data: SearchResult[]) => {
+            setResults(data);
+            setShowResults(data.length > 0);
+          })
+          .catch(() => setResults([]))
+          .finally(() => setSearching(false));
+      }, 100);
+    }
   }
 
   return (
@@ -175,13 +211,50 @@ export default function QueueAdd() {
         <label className="block text-xs font-semibold uppercase tracking-wider text-violet-400">
           Nummer toevoegen
         </label>
+
+        {/* Source tabs */}
+        <div className="flex gap-1 rounded-lg bg-gray-800 p-0.5">
+          <button
+            type="button"
+            onClick={() => switchSource("youtube")}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+              source === "youtube"
+                ? "bg-red-500/20 text-red-400"
+                : "text-gray-400 hover:text-gray-200"
+            }`}
+          >
+            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M23.5 6.2a3.02 3.02 0 00-2.12-2.14C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.38.56A3.02 3.02 0 00.5 6.2 31.7 31.7 0 000 12a31.7 31.7 0 00.5 5.8 3.02 3.02 0 002.12 2.14c1.88.56 9.38.56 9.38.56s7.5 0 9.38-.56a3.02 3.02 0 002.12-2.14A31.7 31.7 0 0024 12a31.7 31.7 0 00-.5-5.8zM9.55 15.5V8.5l6.27 3.5-6.27 3.5z" />
+            </svg>
+            YouTube
+          </button>
+          <button
+            type="button"
+            onClick={() => switchSource("soundcloud")}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+              source === "soundcloud"
+                ? "bg-orange-500/20 text-orange-400"
+                : "text-gray-400 hover:text-gray-200"
+            }`}
+          >
+            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M1.175 12.225c-.05 0-.075.025-.075.075v4.4c0 .05.025.075.075.075s.075-.025.075-.075v-4.4c0-.05-.025-.075-.075-.075zm-.9.825c-.05 0-.075.025-.075.075v2.75c0 .05.025.075.075.075s.075-.025.075-.075v-2.75c0-.05-.025-.075-.075-.075zm1.8-.6c-.05 0-.075.025-.075.075v5c0 .05.025.075.075.075s.075-.025.075-.075v-5c0-.05-.025-.075-.075-.075zm.9-.75c-.05 0-.075.025-.075.075v6.5c0 .05.025.075.075.075s.075-.025.075-.075v-6.5c0-.05-.025-.075-.075-.075zm.9.275c-.05 0-.075.025-.075.075v5.95c0 .05.025.075.075.075s.075-.025.075-.075v-5.95c0-.05-.025-.075-.075-.075zm.9-.9c-.05 0-.075.025-.075.075v7.75c0 .05.025.075.075.075s.075-.025.075-.075v-7.75c0-.05-.025-.075-.075-.075zm.9 1.05c-.05 0-.075.025-.075.075v5.65c0 .05.025.075.075.075s.075-.025.075-.075v-5.65c0-.05-.025-.075-.075-.075zm.9-2.025c-.05 0-.075.025-.075.075v9.7c0 .05.025.075.075.075s.075-.025.075-.075v-9.7c0-.05-.025-.075-.075-.075zm.9-.475c-.05 0-.075.025-.075.075v10.65c0 .05.025.075.075.075s.075-.025.075-.075V9.55c0-.05-.025-.075-.075-.075zm.9.45c-.05 0-.075.025-.075.075v9.75c0 .05.025.075.075.075s.075-.025.075-.075v-9.75c0-.05-.025-.075-.075-.075zm1.3-.275c-.827 0-1.587.262-2.213.708a5.346 5.346 0 00-1.587-3.658A5.346 5.346 0 009.175 5C6.388 5 4.1 7.163 3.95 9.9c-.013.05-.013.1-.013.15 0 .05 0 .1.013.15h-.175c-.975 0-1.775.8-1.775 1.775v5.05c0 .975.8 1.775 1.775 1.775H12.5c2.375 0 4.3-1.925 4.3-4.3S14.875 10.2 12.5 10.2z" />
+            </svg>
+            SoundCloud
+          </button>
+        </div>
+
         <div className="relative">
           <input
             type="text"
             value={input}
             onChange={(e) => handleInputChange(e.target.value)}
             onFocus={() => { if (results.length > 0) setShowResults(true); }}
-            placeholder="Zoek op YouTube of plak een link..."
+            placeholder={
+              source === "youtube"
+                ? "Zoek op YouTube of plak een link..."
+                : "Zoek op SoundCloud of plak een link..."
+            }
             className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
           />
           {searching && (

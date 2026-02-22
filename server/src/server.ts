@@ -7,7 +7,7 @@ import { Server as IOServer } from 'socket.io';
 import { createClient } from '@supabase/supabase-js';
 import { initCache } from './cleanup.js';
 import { seedSettings, getActiveMode, getModeSettings, getSetting, setSetting } from './settings.js';
-import { getQueue, addToQueue, removeFromQueue, reorderQueue, fetchVideoInfo, extractYoutubeId, getThumbnailUrl } from './queue.js';
+import { getQueue, addToQueue, removeFromQueue, reorderQueue, fetchVideoInfo, extractYoutubeId, extractSourceId, isSoundcloudUrl, getThumbnailUrl } from './queue.js';
 import { canPerformAction } from './permissions.js';
 import { startPlayCycle, getCurrentTrack, skipCurrentTrack, playerEvents, setKeepFiles, invalidatePreload } from './player.js';
 import { startBridge } from './bridge.js';
@@ -218,6 +218,55 @@ function youtubeSearchFallback(query: string, limit = 6): Promise<SearchResult[]
   });
 }
 
+// ── SoundCloud Search (via yt-dlp) ──────────────────────────────────────────
+
+function soundcloudSearch(query: string, limit = 6): Promise<SearchResult[]> {
+  const cacheKey = `sc:${query.toLowerCase().trim()}`;
+  const cached = searchCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < CACHE_TTL) return Promise.resolve(cached.results);
+
+  return new Promise((resolve) => {
+    const proc = spawn('python', [
+      '-m', 'yt_dlp',
+      `scsearch${limit}:${query}`,
+      '--flat-playlist',
+      '-j',
+      '--no-warnings',
+    ], { timeout: 15_000 });
+
+    let output = '';
+    proc.stdout.on('data', (chunk: Buffer) => { output += chunk.toString(); });
+    proc.stderr?.on('data', () => {});
+
+    proc.on('close', (code) => {
+      if (code !== 0) { resolve([]); return; }
+
+      const results: SearchResult[] = [];
+      for (const line of output.trim().split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          const item = JSON.parse(line);
+          const thumbUrl = item.thumbnails?.length
+            ? item.thumbnails[item.thumbnails.length - 1]?.url ?? ''
+            : '';
+          results.push({
+            id: String(item.id ?? ''),
+            title: item.title ?? 'Onbekend',
+            url: item.url ?? item.webpage_url ?? '',
+            duration: typeof item.duration === 'number' ? Math.round(item.duration) : null,
+            thumbnail: thumbUrl,
+            channel: item.uploader ?? '',
+          });
+        } catch {}
+      }
+      searchCache.set(cacheKey, { results, ts: Date.now() });
+      resolve(results);
+    });
+
+    proc.on('error', () => resolve([]));
+  });
+}
+
 // ── REST Endpoints ───────────────────────────────────────────────────────────
 
 app.get('/state', async (_req, res) => {
@@ -241,13 +290,16 @@ app.get('/health', (_req, res) => {
 
 app.get('/search', async (req, res) => {
   const q = String(req.query.q ?? '').trim();
+  const source = String(req.query.source ?? 'youtube').toLowerCase();
   if (!q || q.length < 2) {
     res.json([]);
     return;
   }
 
   try {
-    const results = await youtubeSearch(q);
+    const results = source === 'soundcloud'
+      ? await soundcloudSearch(q)
+      : await youtubeSearch(q);
     res.json(results);
   } catch (err) {
     console.error('[rest] /search error:', err);
@@ -480,7 +532,7 @@ io.on('connection', (socket) => {
   });
 
   // ── queue:add ──
-  socket.on('queue:add', async (data: { youtube_url: string; added_by: string; token?: string }) => {
+  socket.on('queue:add', async (data: { youtube_url: string; added_by: string; token?: string; thumbnail?: string }) => {
     try {
       const mode = await getActiveMode(sb);
       const admin = isAdmin(data.token);
@@ -489,12 +541,19 @@ io.on('connection', (socket) => {
         return;
       }
 
+      const url = data.youtube_url;
+      const sourceId = extractSourceId(url);
+      if (!sourceId) {
+        socket.emit('error:toast', { message: 'Geen geldige YouTube of SoundCloud URL' });
+        return;
+      }
+
       socket.emit('info:toast', { message: 'Even checken...' });
 
-      const youtubeId = extractYoutubeId(data.youtube_url);
-      const thumbnail = youtubeId ? getThumbnailUrl(youtubeId) : null;
+      const ytId = extractYoutubeId(url);
+      const thumbnail = data.thumbnail ?? (ytId ? getThumbnailUrl(ytId) : null);
 
-      const info = await fetchVideoInfo(data.youtube_url);
+      const info = await fetchVideoInfo(url);
 
       if (info.duration !== null && info.duration > MAX_DURATION) {
         socket.emit('error:toast', {
@@ -503,13 +562,8 @@ io.on('connection', (socket) => {
         return;
       }
 
-      if (false) {
-        // Duration voting removed — tracks up to 65 min are always accepted
-        startDurationVote(data.youtube_url, info.title, thumbnail, info.duration ?? 0, data.added_by || 'anonymous');
-        return;
-      }
-
-      const item = await addToQueue(sb, data.youtube_url, data.added_by || 'anonymous', info.title);
+      const thumbForQueue = thumbnail ?? info.thumbnail;
+      const item = await addToQueue(sb, url, data.added_by || 'anonymous', info.title, thumbForQueue);
       const queue = await getQueue(sb);
       io.emit('queue:update', { items: queue });
       playerEvents.emit('queue:add');
@@ -677,8 +731,10 @@ io.on('connection', (socket) => {
 
   // ── queue:remove ──
   socket.on('queue:remove', async (data: { id: string; token: string }) => {
-    if (!isAdmin(data.token)) {
-      socket.emit('error:toast', { message: 'Geen admin rechten' });
+    const mode = await getActiveMode(sb);
+    const admin = isAdmin(data.token);
+    if (!canPerformAction(mode, 'remove_from_queue', admin)) {
+      socket.emit('error:toast', { message: 'Je mag geen nummers verwijderen in deze modus' });
       return;
     }
 
