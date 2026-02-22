@@ -124,17 +124,21 @@ export async function spotifyFetch<T>(endpoint: string): Promise<T | null> {
   const token = getSpotifyToken();
   if (!token) return null;
 
-  const res = await fetch(`https://api.spotify.com/v1${endpoint}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  try {
+    const res = await fetch(`https://api.spotify.com/v1${endpoint}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
 
-  if (res.status === 401) {
-    disconnectSpotify();
+    if (res.status === 401) {
+      disconnectSpotify();
+      return null;
+    }
+
+    if (res.status === 429 || !res.ok) return null;
+    return res.json() as Promise<T>;
+  } catch {
     return null;
   }
-
-  if (!res.ok) return null;
-  return res.json() as Promise<T>;
 }
 
 // ── Spotify API types ───────────────────────────────────────────────────────

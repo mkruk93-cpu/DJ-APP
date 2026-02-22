@@ -61,22 +61,33 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
 
   async function loadPlaylists() {
     setLoading(true);
-    const all: SpotifyPlaylist[] = [];
-    let url = "/me/playlists?limit=50";
+    try {
+      const all: SpotifyPlaylist[] = [];
+      let url = "/me/playlists?limit=50";
 
-    while (url) {
-      const data = await spotifyFetch<SpotifyPaginatedResponse<SpotifyPlaylist>>(url);
-      if (!data) break;
-      all.push(...data.items);
-      if (data.next) {
-        url = data.next.replace("https://api.spotify.com/v1", "");
-      } else {
-        break;
+      while (url) {
+        const data = await spotifyFetch<SpotifyPaginatedResponse<SpotifyPlaylist>>(url);
+        if (!data) { checkConnection(); break; }
+        for (const item of data.items) {
+          if (item?.id && item?.name) all.push(item);
+        }
+        if (data.next) {
+          url = data.next.replace("https://api.spotify.com/v1", "");
+        } else {
+          break;
+        }
       }
-    }
 
-    setPlaylists(all);
-    setLoading(false);
+      setPlaylists(all);
+    } catch (err) {
+      console.warn("[spotify] Failed to load playlists:", err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function isValidTrack(t: SpotifyTrackItem | null | undefined): t is SpotifyTrackItem {
+    return !!t && !!t.id && !!t.name && Array.isArray(t.artists) && !!t.album;
   }
 
   async function openPlaylist(playlist: SpotifyPlaylist) {
@@ -85,24 +96,29 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
     setFilter("");
     setLoading(true);
 
-    const all: SpotifyTrackItem[] = [];
-    let url = `/playlists/${playlist.id}/tracks?limit=50&fields=items(track(id,name,artists,album,duration_ms)),next,total`;
+    try {
+      const all: SpotifyTrackItem[] = [];
+      let url = `/playlists/${playlist.id}/tracks?limit=50&fields=items(track(id,name,artists,album,duration_ms)),next,total`;
 
-    while (url) {
-      const data = await spotifyFetch<SpotifyPaginatedResponse<SpotifyPlaylistTrack>>(url);
-      if (!data) break;
-      for (const item of data.items) {
-        if (item.track) all.push(item.track);
+      while (url) {
+        const data = await spotifyFetch<SpotifyPaginatedResponse<SpotifyPlaylistTrack>>(url);
+        if (!data) { checkConnection(); break; }
+        for (const item of data.items) {
+          if (isValidTrack(item?.track)) all.push(item.track);
+        }
+        if (data.next) {
+          url = data.next.replace("https://api.spotify.com/v1", "");
+        } else {
+          break;
+        }
       }
-      if (data.next) {
-        url = data.next.replace("https://api.spotify.com/v1", "");
-      } else {
-        break;
-      }
+
+      setTracks(all);
+    } catch (err) {
+      console.warn("[spotify] Failed to load playlist tracks:", err);
+    } finally {
+      setLoading(false);
     }
-
-    setTracks(all);
-    setLoading(false);
   }
 
   async function openLikedSongs() {
@@ -111,28 +127,33 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
     setFilter("");
     setLoading(true);
 
-    const all: SpotifyTrackItem[] = [];
-    let url = "/me/tracks?limit=50";
+    try {
+      const all: SpotifyTrackItem[] = [];
+      let url = "/me/tracks?limit=50";
 
-    while (url) {
-      const data = await spotifyFetch<SpotifyPaginatedResponse<{ track: SpotifyTrackItem }>>(url);
-      if (!data) break;
-      for (const item of data.items) {
-        if (item.track) all.push(item.track);
+      while (url) {
+        const data = await spotifyFetch<SpotifyPaginatedResponse<{ track: SpotifyTrackItem }>>(url);
+        if (!data) { checkConnection(); break; }
+        for (const item of data.items) {
+          if (isValidTrack(item?.track)) all.push(item.track);
+        }
+        if (data.next) {
+          url = data.next.replace("https://api.spotify.com/v1", "");
+        } else {
+          break;
+        }
       }
-      if (data.next) {
-        url = data.next.replace("https://api.spotify.com/v1", "");
-      } else {
-        break;
-      }
+
+      setTracks(all);
+    } catch (err) {
+      console.warn("[spotify] Failed to load liked songs:", err);
+    } finally {
+      setLoading(false);
     }
-
-    setTracks(all);
-    setLoading(false);
   }
 
   function handleAddTrack(track: SpotifyTrackItem) {
-    const artists = track.artists.map((a) => a.name).join(", ");
+    const artists = track.artists?.map((a) => a.name).join(", ") ?? "Unknown";
     const query = `${artists} - ${track.name}`;
     setAddedTrackId(track.id);
     onAddTrack(query);
@@ -182,10 +203,11 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
   );
 
   const filteredTracks = tracks.filter((t) => {
+    if (!t?.name) return false;
     const q = filter.toLowerCase();
     return (
       t.name.toLowerCase().includes(q) ||
-      t.artists.some((a) => a.name.toLowerCase().includes(q))
+      t.artists?.some((a) => a?.name?.toLowerCase().includes(q)) === true
     );
   });
 
@@ -198,6 +220,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
           {user?.display_name ?? "Spotify"}
         </div>
         <button
+          type="button"
           onClick={handleDisconnect}
           className="text-xs text-gray-500 transition hover:text-red-400"
         >
@@ -208,6 +231,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
       {/* Navigation */}
       {view === "tracks" && (
         <button
+          type="button"
           onClick={() => { setView("playlists"); setTracks([]); setFilter(""); }}
           className="flex items-center gap-1 text-xs text-violet-400 transition hover:text-violet-300"
         >
@@ -239,6 +263,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
         <div className="max-h-64 space-y-0.5 overflow-y-auto">
           {/* Liked Songs */}
           <button
+            type="button"
             onClick={openLikedSongs}
             className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left transition hover:bg-gray-800/80"
           >
@@ -255,6 +280,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
 
           {filteredPlaylists.map((pl) => (
             <button
+              type="button"
               key={pl.id}
               onClick={() => openPlaylist(pl)}
               className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left transition hover:bg-gray-800/80"
@@ -293,12 +319,13 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
       {view === "tracks" && !loading && (
         <div className="max-h-64 space-y-0.5 overflow-y-auto">
           {filteredTracks.map((track) => {
-            const artists = track.artists.map((a) => a.name).join(", ");
-            const albumImg = track.album.images[track.album.images.length - 1]?.url;
+            const artists = track.artists?.map((a) => a.name).join(", ") ?? "";
+            const albumImg = track.album?.images?.[track.album.images.length - 1]?.url;
             const isAdded = addedTrackId === track.id;
 
             return (
               <button
+                type="button"
                 key={track.id}
                 onClick={() => handleAddTrack(track)}
                 disabled={submitting || isAdded}
