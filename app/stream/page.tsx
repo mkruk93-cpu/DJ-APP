@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { getSupabase } from "@/lib/supabaseClient";
 import { connectSocket, disconnectSocket, getSocket } from "@/lib/socket";
 import { useRadioStore } from "@/lib/radioStore";
+import { handleSpotifyCallback } from "@/lib/spotify";
 import TwitchPlayer from "@/components/TwitchPlayer";
 import AudioPlayer from "@/components/AudioPlayer";
 import ChatBox from "@/components/ChatBox";
@@ -53,6 +54,14 @@ export default function StreamPage() {
     const nickname = localStorage.getItem("nickname");
     if (!nickname) router.replace("/");
   }, [router]);
+
+  // Handle Spotify OAuth callback (code in URL after redirect)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("code")) {
+      handleSpotifyCallback();
+    }
+  }, []);
 
   // Initialize Socket.io connection to radio control server
   useEffect(() => {

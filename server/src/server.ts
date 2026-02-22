@@ -541,11 +541,24 @@ io.on('connection', (socket) => {
         return;
       }
 
-      const url = data.youtube_url;
-      const sourceId = extractSourceId(url);
+      let url = data.youtube_url;
+      let sourceId = extractSourceId(url);
+
+      // If not a valid URL, treat as a search query (e.g. from Spotify: "Artist - Title")
       if (!sourceId) {
-        socket.emit('error:toast', { message: 'Geen geldige YouTube of SoundCloud URL' });
-        return;
+        socket.emit('info:toast', { message: `Zoeken: "${url}"...` });
+        const searchResults = await youtubeSearch(url, 1);
+        if (searchResults.length === 0) {
+          socket.emit('error:toast', { message: `Geen resultaat gevonden voor "${url}"` });
+          return;
+        }
+        url = searchResults[0].url;
+        sourceId = extractSourceId(url);
+        if (!sourceId) {
+          socket.emit('error:toast', { message: 'Kon geen geldig nummer vinden' });
+          return;
+        }
+        console.log(`[queue] Search "${data.youtube_url}" → ${searchResults[0].title} (${url})`);
       }
 
       socket.emit('info:toast', { message: 'Even checken...' });
