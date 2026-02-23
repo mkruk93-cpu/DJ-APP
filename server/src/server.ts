@@ -218,13 +218,91 @@ function youtubeSearchFallback(query: string, limit = 6): Promise<SearchResult[]
   });
 }
 
-// ── SoundCloud Search (via yt-dlp) ──────────────────────────────────────────
+// ── SoundCloud Search (fast, direct API with yt-dlp fallback) ───────────────
 
-function soundcloudSearch(query: string, limit = 6): Promise<SearchResult[]> {
-  const cacheKey = `sc:${query.toLowerCase().trim()}`;
-  const cached = searchCache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < CACHE_TTL) return Promise.resolve(cached.results);
+let scClientId: string | null = null;
+let scClientIdTs = 0;
+const SC_CLIENT_ID_TTL = 24 * 3600_000;
 
+async function getSoundCloudClientId(): Promise<string | null> {
+  if (scClientId && Date.now() - scClientIdTs < SC_CLIENT_ID_TTL) return scClientId;
+
+  try {
+    const pageRes = await fetch('https://soundcloud.com', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'text/html',
+      },
+    });
+    const html = await pageRes.text();
+
+    const scriptMatches = [...html.matchAll(/src="(https:\/\/a-v2\.sndcdn\.com\/assets\/[^"]+\.js)"/g)];
+
+    for (let i = scriptMatches.length - 1; i >= Math.max(0, scriptMatches.length - 5); i--) {
+      const scriptRes = await fetch(scriptMatches[i][1]);
+      const js = await scriptRes.text();
+      const match = js.match(/client_id\s*[:=]\s*"([a-zA-Z0-9]{20,})"/);
+      if (match) {
+        scClientId = match[1];
+        scClientIdTs = Date.now();
+        console.log(`[soundcloud] Got client_id: ${scClientId.slice(0, 8)}...`);
+        return scClientId;
+      }
+    }
+    console.warn('[soundcloud] Could not find client_id in scripts');
+  } catch (err) {
+    console.warn('[soundcloud] Failed to extract client_id:', (err as Error).message);
+  }
+  return null;
+}
+
+async function soundcloudSearchDirect(query: string, limit = 6): Promise<SearchResult[]> {
+  const clientId = await getSoundCloudClientId();
+  if (!clientId) throw new Error('No SoundCloud client_id');
+
+  const params = new URLSearchParams({
+    q: query,
+    client_id: clientId,
+    limit: String(limit),
+    offset: '0',
+    linked_partitioning: '1',
+  });
+
+  const res = await fetch(`https://api-v2.soundcloud.com/search/tracks?${params}`, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Accept': 'application/json',
+    },
+  });
+
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) scClientId = null;
+    throw new Error(`SoundCloud API ${res.status}`);
+  }
+
+  const data = await res.json() as { collection?: Array<Record<string, unknown>> };
+  const results: SearchResult[] = [];
+
+  for (const item of data.collection ?? []) {
+    if (!item?.permalink_url) continue;
+    const artwork = typeof item.artwork_url === 'string'
+      ? item.artwork_url.replace('-large', '-t300x300')
+      : '';
+    results.push({
+      id: String(item.id ?? ''),
+      title: String(item.title ?? 'Onbekend'),
+      url: String(item.permalink_url),
+      duration: typeof item.duration === 'number' ? Math.round(item.duration / 1000) : null,
+      thumbnail: artwork,
+      channel: (item.user as any)?.username ?? '',
+    });
+    if (results.length >= limit) break;
+  }
+
+  return results;
+}
+
+function soundcloudSearchFallback(query: string, limit = 6): Promise<SearchResult[]> {
   return new Promise((resolve) => {
     const proc = spawn('python', [
       '-m', 'yt_dlp',
@@ -259,12 +337,28 @@ function soundcloudSearch(query: string, limit = 6): Promise<SearchResult[]> {
           });
         } catch {}
       }
-      searchCache.set(cacheKey, { results, ts: Date.now() });
       resolve(results);
     });
 
     proc.on('error', () => resolve([]));
   });
+}
+
+async function soundcloudSearch(query: string, limit = 6): Promise<SearchResult[]> {
+  const cacheKey = `sc:${query.toLowerCase().trim()}`;
+  const cached = searchCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.results;
+
+  try {
+    const results = await soundcloudSearchDirect(query, limit);
+    searchCache.set(cacheKey, { results, ts: Date.now() });
+    return results;
+  } catch (err) {
+    console.warn('[soundcloud] Direct search failed, falling back to yt-dlp:', (err as Error).message);
+    const results = await soundcloudSearchFallback(query, limit);
+    searchCache.set(cacheKey, { results, ts: Date.now() });
+    return results;
+  }
 }
 
 // ── REST Endpoints ───────────────────────────────────────────────────────────
@@ -811,6 +905,9 @@ async function main(): Promise<void> {
 
   // Start now-playing watcher (RekordBox output files)
   startNowPlayingWatcher(sb, REKORDBOX_OUTPUT_PATH);
+
+  // Pre-load SoundCloud client_id in background
+  getSoundCloudClientId().catch(() => {});
 }
 
 main().catch((err) => {
