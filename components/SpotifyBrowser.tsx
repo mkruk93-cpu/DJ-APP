@@ -53,6 +53,18 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
     loadPlaylists();
   }, [checkConnection]);
 
+  useEffect(() => {
+    function onStorage(e: StorageEvent) {
+      if (e.key === "spotify_token" && e.newValue) {
+        setConnected(true);
+        loadUser();
+        loadPlaylists();
+      }
+    }
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
   async function loadUser() {
     try {
       const data = await spotifyFetch<SpotifyUser>("/me");
@@ -103,7 +115,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
 
     try {
       const all: SpotifyTrackItem[] = [];
-      let url = `/playlists/${playlist.id}/tracks?limit=50&fields=items(track(id,name,artists,album,duration_ms)),next,total`;
+      let url = `/playlists/${playlist.id}/tracks?limit=50`;
 
       while (url) {
         const data = await spotifyFetch<SpotifyPaginatedResponse<SpotifyPlaylistTrack>>(url);

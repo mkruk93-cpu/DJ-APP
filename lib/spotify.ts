@@ -66,7 +66,12 @@ export async function loginWithSpotify(): Promise<void> {
     code_challenge: challenge,
   });
 
-  window.location.href = `https://accounts.spotify.com/authorize?${params.toString()}`;
+  const url = `https://accounts.spotify.com/authorize?${params.toString()}`;
+  const w = 460;
+  const h = 700;
+  const left = window.screenX + (window.innerWidth - w) / 2;
+  const top = window.screenY + (window.innerHeight - h) / 2;
+  window.open(url, "spotify-auth", `width=${w},height=${h},left=${left},top=${top},popup=yes`);
 }
 
 export async function handleSpotifyCallback(): Promise<boolean> {
@@ -102,7 +107,11 @@ export async function handleSpotifyCallback(): Promise<boolean> {
     );
     localStorage.removeItem(VERIFIER_KEY);
 
-    // Clean the URL without reloading
+    if (window.opener) {
+      window.close();
+      return true;
+    }
+
     const url = new URL(window.location.href);
     url.searchParams.delete("code");
     url.searchParams.delete("state");
