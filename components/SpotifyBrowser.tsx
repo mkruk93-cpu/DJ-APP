@@ -264,7 +264,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
   });
 
   return (
-    <div className="flex max-h-[28vh] flex-col gap-1.5">
+    <div className="flex max-h-[36vh] flex-col gap-1.5 overflow-hidden">
       {/* Header + navigation */}
       <div className="flex shrink-0 items-center justify-between">
         {view === "tracks" ? (
@@ -318,8 +318,8 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
             onClick={openLikedSongs}
             className="flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left transition hover:bg-gray-800/80"
           >
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded bg-gradient-to-br from-[#450AF5] to-[#C4EFD9]">
-              <svg className="h-3.5 w-3.5 text-white" fill="currentColor" viewBox="0 0 24 24">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-gradient-to-br from-[#450AF5] to-[#C4EFD9]">
+              <svg className="h-4 w-4 text-white" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
               </svg>
             </div>
@@ -341,11 +341,11 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
                   <img
                     src={plImg}
                     alt=""
-                    className="h-7 w-7 shrink-0 rounded object-cover"
+                    className="h-8 w-8 shrink-0 rounded object-cover"
                   />
                 ) : (
-                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded bg-gray-800">
-                    <svg className="h-3.5 w-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-gray-800">
+                    <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V4.5A2.25 2.25 0 0016.5 2.25h-1.875a2.25 2.25 0 00-2.25 2.25v13.5m0 0a2.25 2.25 0 01-2.25 2.25H8.25a2.25 2.25 0 01-2.25-2.25V6.75" />
                     </svg>
                   </div>
@@ -407,10 +407,10 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
                   <img
                     src={albumImg}
                     alt=""
-                    className="h-7 w-7 shrink-0 rounded object-cover"
+                    className="h-8 w-8 shrink-0 rounded object-cover"
                   />
                 ) : (
-                  <div className="h-7 w-7 shrink-0 rounded bg-gray-800" />
+                  <div className="h-8 w-8 shrink-0 rounded bg-gray-800" />
                 )}
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-xs font-medium text-white">{track.name}</p>

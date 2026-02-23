@@ -315,16 +315,16 @@ export default function StreamPage() {
 
         {/* Content panels */}
         <div className="flex min-h-0 flex-1 flex-col gap-2 lg:flex-[2] lg:flex-row lg:gap-4">
-          <div className={`min-h-0 flex-1 ${activeTab === "chat" ? "" : "hidden"} lg:block`}>
+          <div className={`min-h-0 min-w-0 flex-1 ${activeTab === "chat" ? "" : "hidden"} lg:block`}>
             <ChatBox onNewMessage={() => { if (activeTabRef.current !== "chat") setChatBadge(true); }} />
           </div>
           {showRequests && (
-            <div className={`min-h-0 flex-1 ${activeTab === "requests" ? "" : "hidden"} lg:block`}>
+            <div className={`min-h-0 min-w-0 flex-1 ${activeTab === "requests" ? "" : "hidden"} lg:block`}>
               <RequestForm onNewRequest={() => { if (activeTabRef.current !== "requests") setRequestBadge(true); }} />
             </div>
           )}
           {radioConnected && (
-            <div className={`min-h-0 flex-1 overflow-y-auto flex flex-col gap-2 ${activeTab === "radio" ? "" : "hidden"} lg:block`}>
+            <div className={`min-h-0 min-w-0 flex-1 overflow-y-auto flex flex-col gap-2 ${activeTab === "radio" ? "" : "hidden"} lg:block`}>
               <QueueAdd />
               <Queue />
             </div>
