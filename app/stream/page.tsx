@@ -225,7 +225,7 @@ export default function StreamPage() {
 
       <main className="flex min-h-0 flex-1 flex-col gap-2 p-2 sm:gap-4 sm:p-4 lg:flex-row">
         {/* Player */}
-        <div className="shrink-0 lg:flex-1">
+        <div className="shrink-0 lg:flex-1 lg:min-h-0 lg:overflow-y-auto">
           {mode === "twitch" && <TwitchPlayer />}
           {mode === "audio" && icecastUrl && (
             <AudioPlayer src={icecastUrl} radioTrack={radioConnected ? radioTrack : undefined} showFallback={!suppressFallback} />
@@ -320,11 +320,9 @@ export default function StreamPage() {
             </div>
           )}
           {radioConnected && (
-            <div className={`min-h-0 flex-1 flex flex-col gap-2 ${activeTab === "radio" ? "" : "hidden"} lg:block`}>
+            <div className={`min-h-0 flex-1 overflow-y-auto flex flex-col gap-2 ${activeTab === "radio" ? "" : "hidden"} lg:block`}>
               <QueueAdd />
-              <div className="min-h-0 flex-1">
-                <Queue />
-              </div>
+              <Queue />
             </div>
           )}
         </div>

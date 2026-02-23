@@ -104,7 +104,8 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
   }
 
   function isValidTrack(t: SpotifyTrackItem | null | undefined): t is SpotifyTrackItem {
-    return !!t && !!t.id && !!t.name && Array.isArray(t.artists) && !!t.album;
+    if (!t) return false;
+    return !!(t.id || t.name);
   }
 
   async function openPlaylist(playlist: SpotifyPlaylist) {
@@ -119,9 +120,14 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
 
       while (url) {
         const data = await spotifyFetch<SpotifyPaginatedResponse<SpotifyPlaylistTrack>>(url);
-        if (!data) { checkConnection(); break; }
+        if (!data || !Array.isArray(data.items)) {
+          console.warn("[spotify] No data for playlist", playlist.id, data);
+          checkConnection();
+          break;
+        }
         for (const item of data.items) {
-          if (isValidTrack(item?.track)) all.push(item.track);
+          const t = (item as any)?.track ?? item;
+          if (isValidTrack(t)) all.push(t);
         }
         if (data.next) {
           url = data.next.replace("https://api.spotify.com/v1", "");
