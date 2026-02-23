@@ -131,21 +131,36 @@ export function disconnectSpotify(): void {
 
 export async function spotifyFetch<T>(endpoint: string): Promise<T | null> {
   const token = getSpotifyToken();
-  if (!token) return null;
+  if (!token) {
+    console.warn("[spotify] No token available for", endpoint);
+    return null;
+  }
 
   try {
-    const res = await fetch(`https://api.spotify.com/v1${endpoint}`, {
+    const url = `https://api.spotify.com/v1${endpoint}`;
+    console.log("[spotify] Fetching:", url);
+    const res = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
     });
 
     if (res.status === 401) {
+      console.warn("[spotify] 401 Unauthorized for", endpoint);
       disconnectSpotify();
       return null;
     }
 
-    if (res.status === 429 || !res.ok) return null;
-    return res.json() as Promise<T>;
-  } catch {
+    if (!res.ok) {
+      let body = "";
+      try { body = await res.text(); } catch {}
+      console.warn(`[spotify] ${res.status} ${res.statusText} for ${endpoint}:`, body.slice(0, 300));
+      return null;
+    }
+
+    const json = await res.json();
+    console.log(`[spotify] OK for ${endpoint}: items=${json?.items?.length ?? "N/A"}, total=${json?.total ?? "N/A"}`);
+    return json as T;
+  } catch (err) {
+    console.warn("[spotify] Fetch error for", endpoint, err);
     return null;
   }
 }

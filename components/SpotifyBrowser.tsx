@@ -38,6 +38,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState("");
   const [addedTrackId, setAddedTrackId] = useState<string | null>(null);
+  const [trackError, setTrackError] = useState<string | null>(null);
 
   const configured = isSpotifyConfigured();
 
@@ -113,32 +114,54 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
     setView("tracks");
     setFilter("");
     setLoading(true);
+    setTrackError(null);
 
     try {
       const all: SpotifyTrackItem[] = [];
-      let url = `/playlists/${playlist.id}/tracks?limit=50`;
+      let url = `/playlists/${playlist.id}/tracks?limit=100`;
+      let page = 0;
 
       while (url) {
-        const data = await spotifyFetch<SpotifyPaginatedResponse<SpotifyPlaylistTrack>>(url);
-        if (!data || !Array.isArray(data.items)) {
-          console.warn("[spotify] No data for playlist", playlist.id, data);
+        page++;
+        const raw = await spotifyFetch<Record<string, unknown>>(url);
+
+        if (!raw) {
+          setTrackError(`API gaf geen data terug voor playlist "${playlist.name}" (id: ${playlist.id}). Check browser console (F12).`);
           checkConnection();
           break;
         }
-        for (const item of data.items) {
-          const t = (item as any)?.track ?? item;
-          if (isValidTrack(t)) all.push(t);
+
+        const items = Array.isArray(raw.items) ? raw.items : [];
+        console.log(`[spotify] Playlist page ${page}: ${items.length} items, keys:`, Object.keys(raw));
+
+        if (items.length > 0) {
+          console.log("[spotify] First item keys:", Object.keys(items[0]), "has .track:", !!items[0]?.track);
         }
-        if (data.next) {
-          url = data.next.replace("https://api.spotify.com/v1", "");
+
+        for (const item of items) {
+          const t = (item as any)?.track;
+          if (t && (t.id || t.name)) {
+            all.push(t as SpotifyTrackItem);
+          }
+        }
+
+        const next = raw.next as string | null;
+        if (next) {
+          url = next.replace("https://api.spotify.com/v1", "");
         } else {
           break;
         }
       }
 
+      console.log(`[spotify] Total valid tracks for "${playlist.name}": ${all.length}`);
       setTracks(all);
+      if (all.length === 0 && !trackError) {
+        setTrackError(`Geen nummers gevonden in "${playlist.name}". Mogelijk zijn alle tracks lokale bestanden of niet beschikbaar.`);
+      }
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
       console.warn("[spotify] Failed to load playlist tracks:", err);
+      setTrackError(`Fout bij laden: ${msg}`);
     } finally {
       setLoading(false);
     }
@@ -148,6 +171,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
     setSelectedPlaylist({ id: "liked", name: "Liked Songs", images: [], tracks: { total: 0 }, owner: { display_name: "" } });
     setView("tracks");
     setFilter("");
+    setTrackError(null);
     setLoading(true);
 
     try {
@@ -260,7 +284,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
       {view === "tracks" && (
         <button
           type="button"
-          onClick={() => { setView("playlists"); setTracks([]); setFilter(""); }}
+          onClick={() => { setView("playlists"); setTracks([]); setFilter(""); setTrackError(null); }}
           className="flex items-center gap-1 text-xs text-violet-400 transition hover:text-violet-300"
         >
           <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -346,6 +370,20 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
         </div>
       )}
 
+      {/* Track error */}
+      {trackError && view === "tracks" && !loading && (
+        <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-3">
+          <p className="text-xs text-yellow-400">{trackError}</p>
+          <button
+            type="button"
+            onClick={() => { if (selectedPlaylist && selectedPlaylist.id !== "liked") openPlaylist(selectedPlaylist); }}
+            className="mt-2 text-xs text-violet-400 transition hover:text-violet-300"
+          >
+            Opnieuw proberen
+          </button>
+        </div>
+      )}
+
       {/* Track list */}
       {view === "tracks" && !loading && (
         <div className="max-h-64 space-y-0.5 overflow-y-auto">
@@ -398,7 +436,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
             );
           })}
 
-          {filteredTracks.length === 0 && !loading && (
+          {filteredTracks.length === 0 && !loading && !trackError && (
             <p className="py-4 text-center text-xs text-gray-500">
               Geen nummers gevonden
             </p>
