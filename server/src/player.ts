@@ -1,6 +1,7 @@
 import { spawn, ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { homedir } from 'node:os';
 import { EventEmitter } from 'node:events';
 import { SupabaseClient } from '@supabase/supabase-js';
 import type { Server as IOServer } from 'socket.io';
@@ -50,7 +51,10 @@ function setSkipLock(locked: boolean): void {
 }
 
 const STREAM_DELAY_MS = parseInt(process.env.STREAM_DELAY_MS ?? '8000', 10);
-const FALLBACK_MUSIC_DIR = process.env.FALLBACK_MUSIC_DIR ?? '';
+const FALLBACK_MUSIC_DIR_RAW = process.env.FALLBACK_MUSIC_DIR ?? '';
+const FALLBACK_MUSIC_DIR = FALLBACK_MUSIC_DIR_RAW.startsWith('~/')
+  ? path.join(homedir(), FALLBACK_MUSIC_DIR_RAW.slice(2))
+  : FALLBACK_MUSIC_DIR_RAW;
 
 let fallbackFiles: string[] = [];
 

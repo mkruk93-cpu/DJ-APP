@@ -87,7 +87,7 @@ echo "    Wachten op tunnel URL..."
 TUNNEL_URL=""
 for i in $(seq 1 60); do
   sleep 2
-  TUNNEL_URL=$(grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' "$TUNNEL_LOG" 2>/dev/null | head -1)
+  TUNNEL_URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$TUNNEL_LOG" 2>/dev/null | grep -v '^https://api\.trycloudflare\.com$' | head -1)
   if [ -n "$TUNNEL_URL" ]; then
     break
   fi
