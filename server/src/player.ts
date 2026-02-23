@@ -15,6 +15,26 @@ let currentDecoder: ChildProcess | null = null;
 let encoder: ChildProcess | null = null;
 let isRunning = false;
 let keepFiles = false;
+let silenceTimer: ReturnType<typeof setInterval> | null = null;
+
+// 44100 Hz × 2 ch × 2 bytes × 0.05s = 8820 bytes of silence per 50ms
+const SILENCE_CHUNK = Buffer.alloc(8820, 0);
+
+function startSilenceFill(): void {
+  if (silenceTimer) return;
+  silenceTimer = setInterval(() => {
+    if (encoder?.stdin && !encoder.stdin.destroyed) {
+      try { encoder.stdin.write(SILENCE_CHUNK); } catch {}
+    }
+  }, 50);
+}
+
+function stopSilenceFill(): void {
+  if (silenceTimer) {
+    clearInterval(silenceTimer);
+    silenceTimer = null;
+  }
+}
 
 const STREAM_DELAY_MS = parseInt(process.env.STREAM_DELAY_MS ?? '8000', 10);
 const FALLBACK_MUSIC_DIR = process.env.FALLBACK_MUSIC_DIR ?? '';
@@ -102,6 +122,7 @@ export function getCurrentTrack(): Track | null {
 }
 
 export function skipCurrentTrack(): void {
+  startSilenceFill();
   if (currentDecoder && currentDecoder.pid) {
     try {
       if (process.platform === 'win32') {
@@ -223,6 +244,7 @@ export async function startPlayCycle(
 
 export function stopPlayCycle(): void {
   isRunning = false;
+  stopSilenceFill();
   skipCurrentTrack();
   if (encoder && encoder.stdin) {
     encoder.stdin.end();
@@ -491,6 +513,7 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess): Promise<void> {
 
     decoder.stdout?.on('data', (chunk: Buffer) => {
       if (pipeError) return;
+      stopSilenceFill();
       if (enc.stdin && !enc.stdin.destroyed) {
         try {
           const ok = enc.stdin.write(chunk);
