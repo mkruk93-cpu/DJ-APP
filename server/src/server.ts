@@ -9,7 +9,7 @@ import { initCache } from './cleanup.js';
 import { seedSettings, getActiveMode, getModeSettings, getSetting, setSetting } from './settings.js';
 import { getQueue, addToQueue, removeFromQueue, reorderQueue, fetchVideoInfo, extractYoutubeId, extractSourceId, isSoundcloudUrl, getThumbnailUrl } from './queue.js';
 import { canPerformAction } from './permissions.js';
-import { startPlayCycle, getCurrentTrack, skipCurrentTrack, playerEvents, setKeepFiles, invalidatePreload } from './player.js';
+import { startPlayCycle, getCurrentTrack, skipCurrentTrack, isSkipLocked, playerEvents, setKeepFiles, invalidatePreload } from './player.js';
 import { startBridge } from './bridge.js';
 import { startNowPlayingWatcher } from './nowPlaying.js';
 import type { Mode, ServerState, DurationVote } from './types.js';
@@ -468,6 +468,7 @@ app.post('/api/settings', async (req, res) => {
 app.post('/api/skip', async (req, res) => {
   const { token } = req.body ?? {};
   if (!isAdmin(token)) return res.status(403).json({ error: 'Unauthorized' });
+  if (isSkipLocked()) return res.status(429).json({ error: 'Skip bezig — wacht tot het nieuwe nummer speelt' });
 
   skipCurrentTrack();
   console.log('[rest] Track skipped by admin');
@@ -717,6 +718,11 @@ io.on('connection', (socket) => {
       const admin = isAdmin(data.token);
 
       const track = getCurrentTrack();
+      if (isSkipLocked()) {
+        socket.emit('error:toast', { message: 'Skip bezig — wacht tot het nieuwe nummer speelt' });
+        return;
+      }
+
       const playingFor = track?.started_at ? (Date.now() - track.started_at) / 1000 : 0;
       const isLongTrack = (track?.duration ?? 0) > 600;
       const anyoneCanSkip = isLongTrack && playingFor >= ANYONE_SKIP_AFTER;
@@ -765,7 +771,7 @@ io.on('connection', (socket) => {
         timer: timerSeconds,
       });
 
-      if (voteSkipSet.size >= required) {
+      if (voteSkipSet.size >= required && !isSkipLocked()) {
         console.log('[vote] Threshold reached — skipping');
         resetVotes();
         io.emit('vote:update', null);

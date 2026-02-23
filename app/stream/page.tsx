@@ -150,6 +150,10 @@ export default function StreamPage() {
       store.getState().setDurationVote(null);
     });
 
+    socket.on("skip:lock", (data: { locked: boolean }) => {
+      store.getState().setSkipLocked(data.locked);
+    });
+
     return () => {
       disconnectSocket();
     };

@@ -12,6 +12,8 @@ interface RadioStore extends RadioState {
   setVoteState: (vote: VoteState | null) => void;
   setDurationVote: (vote: DurationVote | null) => void;
   setServerUrl: (url: string | null) => void;
+  skipLocked: boolean;
+  setSkipLocked: (locked: boolean) => void;
   resetAll: () => void;
   initFromServer: (state: Partial<RadioState>) => void;
 }
@@ -32,6 +34,7 @@ export const useRadioStore = create<RadioStore>((set) => ({
   voteState: null,
   durationVote: null,
   serverUrl: null,
+  skipLocked: false,
 
   setConnected: (connected) => set({ connected }),
   setCurrentTrack: (currentTrack) => set({ currentTrack }),
@@ -43,6 +46,7 @@ export const useRadioStore = create<RadioStore>((set) => ({
   setVoteState: (voteState) => set({ voteState }),
   setDurationVote: (durationVote) => set({ durationVote }),
   setServerUrl: (serverUrl) => set({ serverUrl }),
+  setSkipLocked: (skipLocked) => set({ skipLocked }),
   resetAll: () => set({
     connected: false,
     currentTrack: null,
@@ -51,6 +55,7 @@ export const useRadioStore = create<RadioStore>((set) => ({
     streamOnline: false,
     voteState: null,
     durationVote: null,
+    skipLocked: false,
   }),
   initFromServer: (state) => set(state),
 }));

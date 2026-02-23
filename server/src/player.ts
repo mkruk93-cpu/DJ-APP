@@ -15,25 +15,37 @@ let currentDecoder: ChildProcess | null = null;
 let encoder: ChildProcess | null = null;
 let isRunning = false;
 let keepFiles = false;
-let silenceTimer: ReturnType<typeof setInterval> | null = null;
 
-// 44100 Hz × 2 ch × 2 bytes × 0.05s = 8820 bytes of silence per 50ms
-const SILENCE_CHUNK = Buffer.alloc(8820, 0);
+// ── Seamless skip: hot-swap mechanism ──
+// When a skip is requested and a next track is ready, we pre-spawn
+// the new decoder while the OLD track keeps playing. Once the new
+// decoder produces its first audio chunk we atomically switch —
+// zero silence, zero gap.
 
-function startSilenceFill(): void {
-  if (silenceTimer) return;
-  silenceTimer = setInterval(() => {
-    if (encoder?.stdin && !encoder.stdin.destroyed) {
-      try { encoder.stdin.write(SILENCE_CHUNK); } catch {}
-    }
-  }, 50);
+interface PendingSwap {
+  newDecoder: ChildProcess;
+  ready: ReadyTrack;
+  firstChunk: Buffer | null;
 }
 
-function stopSilenceFill(): void {
-  if (silenceTimer) {
-    clearInterval(silenceTimer);
-    silenceTimer = null;
-  }
+interface CompletedSwap {
+  decoder: ChildProcess;
+  ready: ReadyTrack;
+}
+
+let pendingSwap: PendingSwap | null = null;
+let completedSwap: CompletedSwap | null = null;
+let skipLocked = false;
+let skipWhenReady = false;
+let _io: IOServer | null = null;
+
+export function isSkipLocked(): boolean {
+  return skipLocked;
+}
+
+function setSkipLock(locked: boolean): void {
+  skipLocked = locked;
+  _io?.emit('skip:lock', { locked });
 }
 
 const STREAM_DELAY_MS = parseInt(process.env.STREAM_DELAY_MS ?? '8000', 10);
@@ -121,18 +133,63 @@ export function getCurrentTrack(): Track | null {
   return currentTrack;
 }
 
-export function skipCurrentTrack(): void {
-  startSilenceFill();
-  if (currentDecoder && currentDecoder.pid) {
-    try {
-      if (process.platform === 'win32') {
-        spawn('taskkill', ['/pid', String(currentDecoder.pid), '/f', '/t']);
-      } else {
-        process.kill(currentDecoder.pid, 'SIGTERM');
-      }
-    } catch {
-      console.warn('[player] Could not kill decoder process');
+function killDecoderProcess(dec: ChildProcess | null): void {
+  if (!dec || !dec.pid || dec.exitCode !== null) return;
+  try {
+    if (process.platform === 'win32') {
+      spawn('taskkill', ['/pid', String(dec.pid), '/f', '/t']);
+    } else {
+      process.kill(dec.pid, 'SIGTERM');
     }
+  } catch {}
+}
+
+function beginSeamlessSwap(ready: ReadyTrack): void {
+  const newDecoder = spawn('ffmpeg', [
+    '-hide_banner', '-re',
+    '-i', ready.audioFile,
+    '-vn', '-f', 's16le', '-ar', '44100', '-ac', '2',
+    'pipe:1',
+  ]);
+
+  const swap: PendingSwap = { newDecoder, ready, firstChunk: null };
+  pendingSwap = swap;
+
+  newDecoder.stdout?.once('data', (chunk: Buffer) => {
+    swap.firstChunk = chunk;
+    newDecoder.stdout?.pause();
+  });
+
+  newDecoder.stderr?.on('data', () => {});
+  newDecoder.on('error', () => {
+    if (pendingSwap === swap) {
+      pendingSwap = null;
+      setSkipLock(false);
+    }
+  });
+}
+
+export function skipCurrentTrack(): void {
+  if (skipLocked) return;
+
+  // Cancel any in-flight swap first
+  if (pendingSwap) {
+    killDecoderProcess(pendingSwap.newDecoder);
+    pendingSwap = null;
+  }
+
+  setSkipLock(true);
+
+  if (nextReady && encoder?.stdin && !encoder.stdin.destroyed) {
+    // ── Seamless skip: pre-spawn new decoder, old track keeps playing ──
+    const ready = nextReady;
+    nextReady = null;
+    beginSeamlessSwap(ready);
+    console.log('[player] Skip: old track continues until new decoder is ready');
+  } else {
+    // No next track ready yet — old track keeps playing until prepareNextTrack finishes
+    skipWhenReady = true;
+    console.log('[player] Skip: waiting for next track to be ready (old track keeps playing)');
   }
 }
 
@@ -208,6 +265,7 @@ export async function startPlayCycle(
   if (isRunning) return;
   isRunning = true;
   _sb = sb;
+  _io = io;
   _cacheDir = cacheDir;
 
   loadFallbackLibrary();
@@ -244,8 +302,14 @@ export async function startPlayCycle(
 
 export function stopPlayCycle(): void {
   isRunning = false;
-  stopSilenceFill();
-  skipCurrentTrack();
+  skipWhenReady = false;
+  setSkipLock(false);
+  if (pendingSwap) {
+    killDecoderProcess(pendingSwap.newDecoder);
+    pendingSwap = null;
+  }
+  completedSwap = null;
+  killDecoderProcess(currentDecoder);
   if (encoder && encoder.stdin) {
     encoder.stdin.end();
   }
@@ -424,6 +488,62 @@ async function playNext(
     prepareNextTrack(sb, cacheDir, trackQueueId);
 
     await decodeToEncoder(audioFile, enc);
+
+    // ── Handle seamless swap chain ──
+    // After decodeToEncoder resolves (either track finished or swap happened),
+    // check if there's a completed swap. If so, set up the new track and keep
+    // piping. This loop supports chained skips (skip during a swapped track).
+    while (completedSwap) {
+      const swap = completedSwap;
+      completedSwap = null;
+
+      // Clean up old track
+      if (audioFile && !isFallback && !keepFiles) cleanupFile(audioFile);
+      if (audioFile && !isFallback) {
+        sb.from('played_history').insert({
+          youtube_id: trackYoutubeId, title: trackTitle,
+          thumbnail: trackThumbnail, duration_s: trackDuration,
+        }).then(() => {}, () => {});
+      }
+
+      // Set up new track metadata
+      audioFile = swap.ready.audioFile;
+      trackTitle = swap.ready.title;
+      trackThumbnail = swap.ready.thumbnail;
+      trackYoutubeId = swap.ready.youtubeId;
+      trackDuration = swap.ready.duration;
+      trackQueueId = swap.ready.queueItemId;
+      isFallback = swap.ready.isFallback;
+
+      const swapTrackId = trackQueueId ?? `fallback_${Date.now()}`;
+      const durStr = trackDuration
+        ? `${Math.floor(trackDuration / 60)}:${String(Math.round(trackDuration % 60)).padStart(2, '0')}`
+        : '?';
+
+      currentTrack = {
+        id: swapTrackId,
+        youtube_id: trackYoutubeId,
+        title: trackTitle,
+        thumbnail: trackThumbnail,
+        duration: trackDuration,
+        started_at: Date.now() + STREAM_DELAY_MS,
+      };
+      io.emit('track:change', currentTrack);
+      setSkipLock(false);
+      console.log(`[player] Seamless skip → ${trackTitle ?? trackYoutubeId} (${durStr})`);
+
+      if (trackQueueId) {
+        clearQueueItem(sb, trackQueueId)
+          .then(() => getQueue(sb))
+          .then((q) => io.emit('queue:update', { items: q }))
+          .catch(() => {});
+      }
+
+      prepareNextTrack(sb, cacheDir, trackQueueId);
+
+      // Continue piping from the swapped decoder (supports chained skips)
+      await pipeRunningDecoder(swap.decoder, ensureEncoder(icecast));
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Onbekende fout';
     const isEncoderCrash = !encoder || encoder.killed || encoder.exitCode !== null;
@@ -457,7 +577,13 @@ async function playNext(
   }
 }
 
-/** Decode an audio file to raw PCM and pipe it into the encoder's stdin. */
+/**
+ * Decode an audio file to raw PCM and pipe into the encoder stdin.
+ * Supports seamless hot-swap: while piping, if a pendingSwap becomes
+ * ready (its firstChunk is set) we write the new chunk, kill the old
+ * decoder, and resolve — the old track's audio plays right up to the
+ * switch point with zero silence.
+ */
 function decodeToEncoder(audioFile: string, enc: ChildProcess): Promise<void> {
   return new Promise((resolve, reject) => {
     if (!enc.stdin || enc.stdin.destroyed) {
@@ -480,40 +606,53 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess): Promise<void> {
     let pipeError = false;
     let settled = false;
 
-    function killDecoder() {
-      if (decoder.pid && decoder.exitCode === null) {
-        try {
-          if (process.platform === 'win32') {
-            spawn('taskkill', ['/pid', String(decoder.pid), '/f', '/t']);
-          } else {
-            process.kill(decoder.pid, 'SIGTERM');
-          }
-        } catch {}
-      }
-    }
-
-    function cleanup() {
+    function finish(err?: Error) {
+      if (settled) return;
+      settled = true;
+      currentDecoder = null;
       enc.stdin?.removeListener('error', onStdinError);
       enc.removeListener('close', onEncClose);
+      if (err) reject(err); else resolve();
     }
 
     function onStdinError(err: Error) {
       if (pipeError) return;
       pipeError = true;
       console.warn(`[encoder] stdin error during decode: ${err.message}`);
-      killDecoder();
+      killDecoderProcess(decoder);
     }
 
     function onEncClose() {
-      killDecoder();
+      killDecoderProcess(decoder);
     }
 
     enc.stdin.on('error', onStdinError);
     enc.on('close', onEncClose);
 
     decoder.stdout?.on('data', (chunk: Buffer) => {
-      if (pipeError) return;
-      stopSilenceFill();
+      if (settled || pipeError) return;
+
+      // ── Check for seamless swap ──
+      if (pendingSwap?.firstChunk) {
+        const swap = pendingSwap;
+        pendingSwap = null;
+
+        // Write the NEW track's first audio chunk to the encoder
+        if (enc.stdin && !enc.stdin.destroyed) {
+          try { enc.stdin.write(swap.firstChunk); } catch {}
+        }
+
+        // Kill old decoder — its last chunk was already written above (or skipped)
+        killDecoderProcess(decoder);
+
+        // Store completed swap for playNext to pick up
+        completedSwap = { decoder: swap.newDecoder, ready: swap.ready };
+        console.log('[player] Seamless swap complete — new audio flowing');
+        finish();
+        return;
+      }
+
+      // ── Normal: pipe old track's audio to encoder ──
       if (enc.stdin && !enc.stdin.destroyed) {
         try {
           const ok = enc.stdin.write(chunk);
@@ -533,24 +672,71 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess): Promise<void> {
     });
 
     decoder.on('close', (code) => {
-      currentDecoder = null;
-      cleanup();
       if (settled) return;
-      settled = true;
       if (pipeError || code === 0 || code === 255 || code === null) {
-        resolve();
+        finish();
       } else {
-        reject(new Error(`decoder exited ${code}: ${stderr.slice(-200)}`));
+        finish(new Error(`decoder exited ${code}: ${stderr.slice(-200)}`));
       }
     });
 
     decoder.on('error', (err) => {
-      currentDecoder = null;
-      cleanup();
+      finish(new Error(`Failed to start decoder: ${err.message}`));
+    });
+  });
+}
+
+/**
+ * Continue piping audio from an already-running decoder (post hot-swap).
+ * Also supports chained skips — the same swap logic applies.
+ */
+function pipeRunningDecoder(decoder: ChildProcess, enc: ChildProcess): Promise<void> {
+  return new Promise((resolve) => {
+    currentDecoder = decoder;
+    let settled = false;
+
+    function finish() {
       if (settled) return;
       settled = true;
-      reject(new Error(`Failed to start decoder: ${err.message}`));
+      currentDecoder = null;
+      resolve();
+    }
+
+    decoder.stdout?.on('data', (chunk: Buffer) => {
+      if (settled) return;
+
+      // Support chained skips during the swapped track
+      if (pendingSwap?.firstChunk) {
+        const swap = pendingSwap;
+        pendingSwap = null;
+
+        if (enc.stdin && !enc.stdin.destroyed) {
+          try { enc.stdin.write(swap.firstChunk); } catch {}
+        }
+
+        killDecoderProcess(decoder);
+        completedSwap = { decoder: swap.newDecoder, ready: swap.ready };
+        console.log('[player] Chained seamless swap complete');
+        finish();
+        return;
+      }
+
+      if (enc.stdin && !enc.stdin.destroyed) {
+        try {
+          const ok = enc.stdin.write(chunk);
+          if (!ok) {
+            decoder.stdout?.pause();
+            enc.stdin.once('drain', () => decoder.stdout?.resume());
+          }
+        } catch {}
+      }
     });
+
+    decoder.on('close', () => finish());
+    decoder.on('error', () => finish());
+
+    // Resume the paused stdout (it was paused after firstChunk capture)
+    decoder.stdout?.resume();
   });
 }
 
@@ -666,8 +852,22 @@ async function prepareNextTrack(
     }
   } catch (err) {
     console.warn(`[prepare] Failed: ${(err as Error).message}`);
+    if (skipWhenReady) {
+      skipWhenReady = false;
+      setSkipLock(false);
+      console.warn('[player] skipWhenReady aborted — prepare failed');
+    }
   } finally {
     preparingNext = false;
+  }
+
+  // If a skip is waiting for this track, trigger the seamless swap now
+  if (skipWhenReady && nextReady && encoder?.stdin && !encoder.stdin.destroyed) {
+    skipWhenReady = false;
+    const ready = nextReady;
+    nextReady = null;
+    beginSeamlessSwap(ready);
+    console.log('[player] skipWhenReady triggered — seamless swap started');
   }
 }
 
