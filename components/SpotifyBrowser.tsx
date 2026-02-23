@@ -264,9 +264,9 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
   });
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex max-h-[40vh] flex-col gap-2">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex shrink-0 items-center justify-between">
         <div className="flex items-center gap-2 text-xs text-gray-400">
           <span className="h-2 w-2 rounded-full bg-[#1DB954]" />
           {user?.display_name ?? "Spotify"}
@@ -285,7 +285,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
         <button
           type="button"
           onClick={() => { setView("playlists"); setTracks([]); setFilter(""); setTrackError(null); }}
-          className="flex items-center gap-1 text-xs text-violet-400 transition hover:text-violet-300"
+          className="flex shrink-0 items-center gap-1 text-xs text-violet-400 transition hover:text-violet-300"
         >
           <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
@@ -300,19 +300,19 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
         value={filter}
         onChange={(e) => setFilter(e.target.value)}
         placeholder={view === "playlists" ? "Filter playlists..." : "Filter nummers..."}
-        className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-1.5 text-sm text-white placeholder-gray-500 outline-none transition focus:border-[#1DB954]"
+        className="w-full shrink-0 rounded-lg border border-gray-700 bg-gray-800 px-3 py-1.5 text-sm text-white placeholder-gray-500 outline-none transition focus:border-[#1DB954]"
       />
 
       {/* Loading */}
       {loading && (
-        <div className="flex items-center justify-center py-6">
+        <div className="flex shrink-0 items-center justify-center py-4">
           <span className="block h-5 w-5 animate-spin rounded-full border-2 border-[#1DB954] border-t-transparent" />
         </div>
       )}
 
       {/* Playlist list */}
       {view === "playlists" && !loading && (
-        <div className="max-h-64 space-y-0.5 overflow-y-auto">
+        <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
           {/* Liked Songs */}
           <button
             type="button"
@@ -372,7 +372,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
 
       {/* Track error */}
       {trackError && view === "tracks" && !loading && (
-        <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-3">
+        <div className="shrink-0 rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-3">
           <p className="text-xs text-yellow-400">{trackError}</p>
           <button
             type="button"
@@ -386,7 +386,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
 
       {/* Track list */}
       {view === "tracks" && !loading && (
-        <div className="max-h-64 space-y-0.5 overflow-y-auto">
+        <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
           {filteredTracks.map((track) => {
             const artists = track.artists?.map((a) => a?.name).filter(Boolean).join(", ") || "";
             const imgs = track.album?.images;
