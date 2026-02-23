@@ -163,6 +163,7 @@ function ensureEncoder(
   ]);
 
   encoder.stderr?.on('data', () => {});
+  encoder.stdin?.on('error', () => {});
 
   encoder.on('close', (code) => {
     console.log(`[encoder] Exited with code ${code}`);
@@ -448,13 +449,51 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess): Promise<void> {
     ]);
 
     currentDecoder = decoder;
+    let pipeError = false;
+    let settled = false;
+
+    function killDecoder() {
+      if (decoder.pid && decoder.exitCode === null) {
+        try {
+          if (process.platform === 'win32') {
+            spawn('taskkill', ['/pid', String(decoder.pid), '/f', '/t']);
+          } else {
+            process.kill(decoder.pid, 'SIGTERM');
+          }
+        } catch {}
+      }
+    }
+
+    function cleanup() {
+      enc.stdin?.removeListener('error', onStdinError);
+      enc.removeListener('close', onEncClose);
+    }
+
+    function onStdinError(err: Error) {
+      if (pipeError) return;
+      pipeError = true;
+      console.warn(`[encoder] stdin error during decode: ${err.message}`);
+      killDecoder();
+    }
+
+    function onEncClose() {
+      killDecoder();
+    }
+
+    enc.stdin.on('error', onStdinError);
+    enc.on('close', onEncClose);
 
     decoder.stdout?.on('data', (chunk: Buffer) => {
+      if (pipeError) return;
       if (enc.stdin && !enc.stdin.destroyed) {
-        const ok = enc.stdin.write(chunk);
-        if (!ok) {
-          decoder.stdout?.pause();
-          enc.stdin.once('drain', () => decoder.stdout?.resume());
+        try {
+          const ok = enc.stdin.write(chunk);
+          if (!ok) {
+            decoder.stdout?.pause();
+            enc.stdin.once('drain', () => decoder.stdout?.resume());
+          }
+        } catch {
+          pipeError = true;
         }
       }
     });
@@ -466,7 +505,10 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess): Promise<void> {
 
     decoder.on('close', (code) => {
       currentDecoder = null;
-      if (code === 0 || code === 255 || code === null) {
+      cleanup();
+      if (settled) return;
+      settled = true;
+      if (pipeError || code === 0 || code === 255 || code === null) {
         resolve();
       } else {
         reject(new Error(`decoder exited ${code}: ${stderr.slice(-200)}`));
@@ -475,30 +517,21 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess): Promise<void> {
 
     decoder.on('error', (err) => {
       currentDecoder = null;
+      cleanup();
+      if (settled) return;
+      settled = true;
       reject(new Error(`Failed to start decoder: ${err.message}`));
-    });
-
-    // If the encoder dies, kill the decoder
-    enc.on('close', () => {
-      if (decoder.pid && decoder.exitCode === null) {
-        try {
-          if (process.platform === 'win32') {
-            spawn('taskkill', ['/pid', String(decoder.pid), '/f', '/t']);
-          } else {
-            process.kill(decoder.pid, 'SIGTERM');
-          }
-        } catch {}
-      }
     });
   });
 }
 
+let downloadCounter = 0;
+
 function downloadAudio(item: QueueItem, cacheDir: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const outputTemplate = path.join(
-      cacheDir,
-      `%(artist,uploader,creator|Unknown)s - %(title)s [${item.youtube_id}].%(ext)s`,
-    );
+    const safeId = item.youtube_id.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 30);
+    const uniqueTag = `${safeId}_${Date.now()}_${downloadCounter++}`;
+    const outputTemplate = path.join(cacheDir, `${uniqueTag}.%(ext)s`);
 
     const proc = spawn('python', [
       '-m', 'yt_dlp',
@@ -521,7 +554,7 @@ function downloadAudio(item: QueueItem, cacheDir: string): Promise<string> {
       }
 
       const files = fs.readdirSync(cacheDir)
-        .filter((f) => f.includes(item.youtube_id))
+        .filter((f) => f.startsWith(uniqueTag))
         .map((f) => path.join(cacheDir, f));
 
       if (files.length === 0) {
