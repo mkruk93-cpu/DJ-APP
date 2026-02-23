@@ -229,7 +229,7 @@ export default function StreamPage() {
 
       <main className="flex min-h-0 flex-1 flex-col gap-2 p-2 sm:gap-4 sm:p-4 lg:flex-row">
         {/* Player */}
-        <div className="shrink-0 lg:flex-[1.2] lg:min-h-0 lg:overflow-y-auto">
+        <div className="shrink-0 lg:flex-[2] lg:min-h-0 lg:overflow-y-auto">
           {mode === "twitch" && <TwitchPlayer />}
           {mode === "audio" && icecastUrl && (
             <AudioPlayer src={icecastUrl} radioTrack={radioConnected ? radioTrack : undefined} showFallback={!suppressFallback} />
@@ -314,7 +314,7 @@ export default function StreamPage() {
         </div>
 
         {/* Content panels */}
-        <div className="flex min-h-0 flex-1 flex-col gap-2 lg:flex-[1.8] lg:flex-row lg:gap-4">
+        <div className="flex min-h-0 flex-1 flex-col gap-2 lg:flex-[1.2] lg:flex-row lg:gap-4">
           <div className={`min-h-0 flex-1 ${activeTab === "chat" ? "" : "hidden"} lg:block`}>
             <ChatBox onNewMessage={() => { if (activeTabRef.current !== "chat") setChatBadge(true); }} />
           </div>

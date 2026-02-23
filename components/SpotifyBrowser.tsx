@@ -264,7 +264,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
   });
 
   return (
-    <div className="flex max-h-[40vh] flex-col gap-2">
+    <div className="flex max-h-[35vh] flex-col gap-2">
       {/* Header */}
       <div className="flex shrink-0 items-center justify-between">
         <div className="flex items-center gap-2 text-xs text-gray-400">
