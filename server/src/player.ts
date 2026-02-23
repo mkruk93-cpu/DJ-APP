@@ -7,6 +7,7 @@ import type { Server as IOServer } from 'socket.io';
 import type { QueueItem, Track } from './types.js';
 import { getNextTrack, clearQueueItem, getQueue, fetchVideoInfo } from './queue.js';
 import { cleanupFile } from './cleanup.js';
+import type { StreamHub } from './streamHub.js';
 
 export const playerEvents = new EventEmitter();
 
@@ -217,28 +218,49 @@ function isInBuffer(itemId: string): boolean {
   return preloadBuffer.some((p) => p.item.id === itemId);
 }
 
-// Persistent encoder: stays connected to Icecast across tracks
-function ensureEncoder(
-  icecast: { host: string; port: number; password: string; mount: string },
-): ChildProcess {
+export type IcecastConfig = { host: string; port: number; password: string; mount: string };
+
+let _streamHub: StreamHub | null = null;
+let _icecast: IcecastConfig | null = null;
+
+function ensureEncoder(): ChildProcess {
   if (encoder && !encoder.killed && encoder.exitCode === null) return encoder;
 
-  const icecastUrl = `icecast://source:${icecast.password}@${icecast.host}:${icecast.port}${icecast.mount}`;
+  if (_icecast) {
+    const icecastUrl = `icecast://source:${_icecast.password}@${_icecast.host}:${_icecast.port}${_icecast.mount}`;
+    console.log('[encoder] Starting persistent encoder → Icecast');
 
-  console.log('[encoder] Starting persistent encoder → Icecast');
+    encoder = spawn('ffmpeg', [
+      '-hide_banner',
+      '-f', 's16le',
+      '-ar', '44100',
+      '-ac', '2',
+      '-i', 'pipe:0',
+      '-acodec', 'libmp3lame',
+      '-b:a', '128k',
+      '-f', 'mp3',
+      '-content_type', 'audio/mpeg',
+      icecastUrl,
+    ]);
+  } else {
+    console.log('[encoder] Starting persistent encoder → StreamHub (stdout)');
 
-  encoder = spawn('ffmpeg', [
-    '-hide_banner',
-    '-f', 's16le',
-    '-ar', '44100',
-    '-ac', '2',
-    '-i', 'pipe:0',
-    '-acodec', 'libmp3lame',
-    '-b:a', '128k',
-    '-f', 'mp3',
-    '-content_type', 'audio/mpeg',
-    icecastUrl,
-  ]);
+    encoder = spawn('ffmpeg', [
+      '-hide_banner',
+      '-f', 's16le',
+      '-ar', '44100',
+      '-ac', '2',
+      '-i', 'pipe:0',
+      '-acodec', 'libmp3lame',
+      '-b:a', '128k',
+      '-f', 'mp3',
+      'pipe:1',
+    ]);
+
+    encoder.stdout?.on('data', (chunk: Buffer) => {
+      _streamHub?.broadcast(chunk);
+    });
+  }
 
   encoder.stderr?.on('data', () => {});
   encoder.stdin?.on('error', () => {});
@@ -260,13 +282,16 @@ export async function startPlayCycle(
   sb: SupabaseClient,
   io: IOServer,
   cacheDir: string,
-  icecast: { host: string; port: number; password: string; mount: string },
+  icecast: IcecastConfig | null,
+  streamHub?: StreamHub | null,
 ): Promise<void> {
   if (isRunning) return;
   isRunning = true;
   _sb = sb;
   _io = io;
   _cacheDir = cacheDir;
+  _icecast = icecast;
+  _streamHub = streamHub ?? null;
 
   loadFallbackLibrary();
 
@@ -291,7 +316,7 @@ export async function startPlayCycle(
 
   while (isRunning) {
     try {
-      await playNext(sb, io, cacheDir, icecast, failCounts, MAX_RETRIES);
+      await playNext(sb, io, cacheDir, failCounts, MAX_RETRIES);
     } catch (err) {
       console.error('[player] Cycle error:', err);
       io.emit('error:toast', { message: 'Afspeelfout — volgende nummer wordt geladen' });
@@ -363,7 +388,6 @@ async function playNext(
   sb: SupabaseClient,
   io: IOServer,
   cacheDir: string,
-  icecast: { host: string; port: number; password: string; mount: string },
   failCounts: Map<string, number>,
   maxRetries: number,
 ): Promise<void> {
@@ -465,8 +489,7 @@ async function playNext(
         .catch(() => {});
     }
 
-    // Ensure encoder is ready
-    const enc = ensureEncoder(icecast);
+    const enc = ensureEncoder();
 
     // NOW show track + set timer — audio is about to stream
     currentTrack = {
@@ -541,8 +564,7 @@ async function playNext(
 
       prepareNextTrack(sb, cacheDir, trackQueueId);
 
-      // Continue piping from the swapped decoder (supports chained skips)
-      await pipeRunningDecoder(swap.decoder, ensureEncoder(icecast));
+      await pipeRunningDecoder(swap.decoder, ensureEncoder());
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Onbekende fout';

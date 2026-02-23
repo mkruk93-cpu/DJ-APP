@@ -3,6 +3,8 @@ import express from 'express';
 import http from 'node:http';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join as pathJoin } from 'node:path';
 import { Server as IOServer } from 'socket.io';
 import { createClient } from '@supabase/supabase-js';
 import { initCache } from './cleanup.js';
@@ -12,25 +14,32 @@ import { canPerformAction } from './permissions.js';
 import { startPlayCycle, getCurrentTrack, skipCurrentTrack, isSkipLocked, playerEvents, setKeepFiles, invalidatePreload } from './player.js';
 import { startBridge } from './bridge.js';
 import { startNowPlayingWatcher } from './nowPlaying.js';
+import { StreamHub } from './streamHub.js';
 import type { Mode, ServerState, DurationVote } from './types.js';
 
 // ── Environment ──────────────────────────────────────────────────────────────
 
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? '';
-const CACHE_DIR = process.env.CACHE_DIR ?? 'C:/temp/radio_cache';
+const CACHE_DIR = process.env.CACHE_DIR ?? pathJoin(tmpdir(), 'radio_cache');
 const FRONTEND_URL = process.env.FRONTEND_URL ?? 'http://localhost:3000';
 
 const DOWNLOAD_PATH = process.env.DOWNLOAD_PATH ?? '';
 const REKORDBOX_OUTPUT_PATH = process.env.REKORDBOX_OUTPUT_PATH ?? '';
 const KEEP_FILES = process.env.KEEP_FILES === 'true';
 
-const ICECAST = {
-  host: process.env.ICECAST_HOST ?? 'localhost',
-  port: parseInt(process.env.ICECAST_PORT ?? '8000', 10),
-  password: process.env.ICECAST_PASSWORD ?? '',
-  mount: process.env.ICECAST_MOUNT ?? '/stream',
-};
+const useIcecast = !!process.env.ICECAST_HOST;
+
+const ICECAST = useIcecast
+  ? {
+      host: process.env.ICECAST_HOST!,
+      port: parseInt(process.env.ICECAST_PORT ?? '8000', 10),
+      password: process.env.ICECAST_PASSWORD ?? '',
+      mount: process.env.ICECAST_MOUNT ?? '/stream',
+    }
+  : null;
+
+const streamHub = useIcecast ? null : new StreamHub();
 
 if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
   console.error('Missing SUPABASE_URL or SUPABASE_SERVICE_KEY');
@@ -401,29 +410,52 @@ app.get('/search', async (req, res) => {
   }
 });
 
-// Proxy Icecast stream so everything runs through one port
 app.get('/listen', (req, res) => {
-  const icecastStreamUrl = `http://${ICECAST.host}:${ICECAST.port}${ICECAST.mount}`;
+  const origin = req.headers.origin ?? '*';
 
-  const proxyReq = http.get(icecastStreamUrl, (proxyRes) => {
-    const origin = req.headers.origin ?? '*';
-    res.writeHead(proxyRes.statusCode ?? 200, {
-      'Content-Type': proxyRes.headers['content-type'] ?? 'audio/mpeg',
+  if (ICECAST) {
+    const icecastStreamUrl = `http://${ICECAST.host}:${ICECAST.port}${ICECAST.mount}`;
+
+    const proxyReq = http.get(icecastStreamUrl, (proxyRes) => {
+      res.writeHead(proxyRes.statusCode ?? 200, {
+        'Content-Type': proxyRes.headers['content-type'] ?? 'audio/mpeg',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': origin,
+        'Access-Control-Allow-Methods': 'GET',
+      });
+      proxyRes.pipe(res);
+    });
+
+    proxyReq.on('error', () => {
+      if (!res.headersSent) {
+        res.status(502).json({ error: 'Icecast stream not available' });
+      }
+    });
+
+    req.on('close', () => proxyReq.destroy());
+  } else if (streamHub) {
+    res.writeHead(200, {
+      'Content-Type': 'audio/mpeg',
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
       'Access-Control-Allow-Origin': origin,
       'Access-Control-Allow-Methods': 'GET',
     });
-    proxyRes.pipe(res);
-  });
 
-  proxyReq.on('error', () => {
-    if (!res.headersSent) {
-      res.status(502).json({ error: 'Icecast stream not available' });
-    }
-  });
+    const backlog = streamHub.getBacklog();
+    if (backlog) res.write(backlog);
 
-  req.on('close', () => proxyReq.destroy());
+    const unsub = streamHub.subscribe((chunk) => {
+      if (!res.destroyed) {
+        try { res.write(chunk); } catch { unsub(); }
+      }
+    });
+
+    req.on('close', unsub);
+  } else {
+    res.status(503).json({ error: 'Stream not configured' });
+  }
 });
 
 // ── Admin REST endpoints (reliable through tunnels) ─────────────────────────
@@ -892,19 +924,20 @@ async function main(): Promise<void> {
   await seedSettings(sb);
   console.log('[server] Settings seeded');
 
-  // Start HTTP server
   httpServer.listen(PORT, () => {
     console.log(`[server] Listening on http://localhost:${PORT}`);
     console.log(`[server] CORS allowed: ${FRONTEND_URL}`);
-    console.log(`[server] Icecast target: ${ICECAST.host}:${ICECAST.port}${ICECAST.mount}`);
+    if (ICECAST) {
+      console.log(`[server] Streaming via Icecast: ${ICECAST.host}:${ICECAST.port}${ICECAST.mount}`);
+    } else {
+      console.log('[server] Streaming via built-in StreamHub (no Icecast)');
+    }
   });
 
-  // Apply keep-files setting
   setKeepFiles(KEEP_FILES);
   console.log(`[server] Keep files after streaming: ${KEEP_FILES}`);
 
-  // Start the play cycle
-  startPlayCycle(sb, io, CACHE_DIR, ICECAST);
+  startPlayCycle(sb, io, CACHE_DIR, ICECAST, streamHub);
 
   // Start the bridge (downloads approved requests)
   startBridge(sb, DOWNLOAD_PATH);
