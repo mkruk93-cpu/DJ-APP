@@ -404,13 +404,19 @@ async function playNext(
     await decodeToEncoder(audioFile, enc);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Onbekende fout';
-    console.error(`[player] Error playing ${trackYoutubeId}: ${message}`);
-    if (!isFallback) {
-      const newFails = (failCounts.get(trackYoutubeId) ?? 0) + 1;
-      failCounts.set(trackYoutubeId, newFails);
-      console.warn(`[player] Fail ${newFails}/${maxRetries} for ${trackTitle ?? trackYoutubeId}`);
+    const isEncoderCrash = !encoder || encoder.killed || encoder.exitCode !== null;
+
+    if (isEncoderCrash) {
+      console.warn(`[player] Encoder crashed during ${trackTitle ?? trackYoutubeId} — restarting encoder (not counting as track failure)`);
+    } else {
+      console.error(`[player] Error playing ${trackYoutubeId}: ${message}`);
+      if (!isFallback) {
+        const newFails = (failCounts.get(trackYoutubeId) ?? 0) + 1;
+        failCounts.set(trackYoutubeId, newFails);
+        console.warn(`[player] Fail ${newFails}/${maxRetries} for ${trackTitle ?? trackYoutubeId}`);
+      }
+      io.emit('error:toast', { message: `Fout bij afspelen: ${trackTitle ?? trackYoutubeId}` });
     }
-    io.emit('error:toast', { message: `Fout bij afspelen: ${trackTitle ?? trackYoutubeId}` });
   } finally {
     currentDecoder = null;
 
