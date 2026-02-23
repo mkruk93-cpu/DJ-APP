@@ -264,35 +264,34 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
   });
 
   return (
-    <div className="flex max-h-[35vh] flex-col gap-2">
-      {/* Header */}
+    <div className="flex max-h-[28vh] flex-col gap-1.5">
+      {/* Header + navigation */}
       <div className="flex shrink-0 items-center justify-between">
-        <div className="flex items-center gap-2 text-xs text-gray-400">
-          <span className="h-2 w-2 rounded-full bg-[#1DB954]" />
-          {user?.display_name ?? "Spotify"}
-        </div>
+        {view === "tracks" ? (
+          <button
+            type="button"
+            onClick={() => { setView("playlists"); setTracks([]); setFilter(""); setTrackError(null); }}
+            className="flex items-center gap-1 text-xs text-violet-400 transition hover:text-violet-300"
+          >
+            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+            </svg>
+            {selectedPlaylist?.name ?? "Terug"}
+          </button>
+        ) : (
+          <div className="flex items-center gap-1.5 text-[11px] text-gray-400">
+            <span className="h-1.5 w-1.5 rounded-full bg-[#1DB954]" />
+            {user?.display_name ?? "Spotify"}
+          </div>
+        )}
         <button
           type="button"
           onClick={handleDisconnect}
-          className="text-xs text-gray-500 transition hover:text-red-400"
+          className="text-[11px] text-gray-500 transition hover:text-red-400"
         >
           Ontkoppel
         </button>
       </div>
-
-      {/* Navigation */}
-      {view === "tracks" && (
-        <button
-          type="button"
-          onClick={() => { setView("playlists"); setTracks([]); setFilter(""); setTrackError(null); }}
-          className="flex shrink-0 items-center gap-1 text-xs text-violet-400 transition hover:text-violet-300"
-        >
-          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-          </svg>
-          {selectedPlaylist?.name ?? "Terug"}
-        </button>
-      )}
 
       {/* Filter */}
       <input
@@ -300,33 +299,32 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
         value={filter}
         onChange={(e) => setFilter(e.target.value)}
         placeholder={view === "playlists" ? "Filter playlists..." : "Filter nummers..."}
-        className="w-full shrink-0 rounded-lg border border-gray-700 bg-gray-800 px-3 py-1.5 text-sm text-white placeholder-gray-500 outline-none transition focus:border-[#1DB954]"
+        className="w-full shrink-0 rounded-md border border-gray-700 bg-gray-800 px-2.5 py-1 text-xs text-white placeholder-gray-500 outline-none transition focus:border-[#1DB954]"
       />
 
       {/* Loading */}
       {loading && (
-        <div className="flex shrink-0 items-center justify-center py-4">
-          <span className="block h-5 w-5 animate-spin rounded-full border-2 border-[#1DB954] border-t-transparent" />
+        <div className="flex shrink-0 items-center justify-center py-3">
+          <span className="block h-4 w-4 animate-spin rounded-full border-2 border-[#1DB954] border-t-transparent" />
         </div>
       )}
 
       {/* Playlist list */}
       {view === "playlists" && !loading && (
-        <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
+        <div className="min-h-0 flex-1 space-y-px overflow-y-auto">
           {/* Liked Songs */}
           <button
             type="button"
             onClick={openLikedSongs}
-            className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left transition hover:bg-gray-800/80"
+            className="flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left transition hover:bg-gray-800/80"
           >
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-gradient-to-br from-[#450AF5] to-[#C4EFD9]">
-              <svg className="h-5 w-5 text-white" fill="currentColor" viewBox="0 0 24 24">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded bg-gradient-to-br from-[#450AF5] to-[#C4EFD9]">
+              <svg className="h-3.5 w-3.5 text-white" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
               </svg>
             </div>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-white">Liked Songs</p>
-              <p className="text-xs text-gray-500">Je opgeslagen nummers</p>
+              <p className="truncate text-xs font-medium text-white">Liked Songs</p>
             </div>
           </button>
 
@@ -337,25 +335,25 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
                 type="button"
                 key={pl.id}
                 onClick={() => openPlaylist(pl)}
-                className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left transition hover:bg-gray-800/80"
+                className="flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left transition hover:bg-gray-800/80"
               >
                 {plImg ? (
                   <img
                     src={plImg}
                     alt=""
-                    className="h-10 w-10 shrink-0 rounded object-cover"
+                    className="h-7 w-7 shrink-0 rounded object-cover"
                   />
                 ) : (
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-gray-800">
-                    <svg className="h-5 w-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded bg-gray-800">
+                    <svg className="h-3.5 w-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V4.5A2.25 2.25 0 0016.5 2.25h-1.875a2.25 2.25 0 00-2.25 2.25v13.5m0 0a2.25 2.25 0 01-2.25 2.25H8.25a2.25 2.25 0 01-2.25-2.25V6.75" />
                     </svg>
                   </div>
                 )}
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-white">{pl.name}</p>
-                  <p className="text-xs text-gray-500">
-                    {pl.tracks?.total ?? 0} nummers &middot; {pl.owner?.display_name ?? ""}
+                  <p className="truncate text-xs font-medium text-white">{pl.name}</p>
+                  <p className="text-[10px] text-gray-500">
+                    {pl.tracks?.total ?? 0} nummers
                   </p>
                 </div>
               </button>
@@ -363,7 +361,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
           })}
 
           {filteredPlaylists.length === 0 && !loading && (
-            <p className="py-4 text-center text-xs text-gray-500">
+            <p className="py-2 text-center text-[11px] text-gray-500">
               Geen playlists gevonden
             </p>
           )}
@@ -372,12 +370,12 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
 
       {/* Track error */}
       {trackError && view === "tracks" && !loading && (
-        <div className="shrink-0 rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-3">
-          <p className="text-xs text-yellow-400">{trackError}</p>
+        <div className="shrink-0 rounded-md border border-yellow-500/30 bg-yellow-500/10 p-2">
+          <p className="text-[11px] text-yellow-400">{trackError}</p>
           <button
             type="button"
             onClick={() => { if (selectedPlaylist && selectedPlaylist.id !== "liked") openPlaylist(selectedPlaylist); }}
-            className="mt-2 text-xs text-violet-400 transition hover:text-violet-300"
+            className="mt-1 text-[11px] text-violet-400 transition hover:text-violet-300"
           >
             Opnieuw proberen
           </button>
@@ -386,7 +384,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
 
       {/* Track list */}
       {view === "tracks" && !loading && (
-        <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
+        <div className="min-h-0 flex-1 space-y-px overflow-y-auto">
           {filteredTracks.map((track) => {
             const artists = track.artists?.map((a) => a?.name).filter(Boolean).join(", ") || "";
             const imgs = track.album?.images;
@@ -399,7 +397,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
                 key={track.id}
                 onClick={() => handleAddTrack(track)}
                 disabled={submitting || isAdded}
-                className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left transition ${
+                className={`flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition ${
                   isAdded
                     ? "bg-green-500/10"
                     : "hover:bg-gray-800/80"
@@ -409,25 +407,25 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
                   <img
                     src={albumImg}
                     alt=""
-                    className="h-10 w-10 shrink-0 rounded object-cover"
+                    className="h-7 w-7 shrink-0 rounded object-cover"
                   />
                 ) : (
-                  <div className="h-10 w-10 shrink-0 rounded bg-gray-800" />
+                  <div className="h-7 w-7 shrink-0 rounded bg-gray-800" />
                 )}
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-white">{track.name}</p>
-                  <p className="truncate text-xs text-gray-400">{artists}</p>
+                  <p className="truncate text-xs font-medium text-white">{track.name}</p>
+                  <p className="truncate text-[10px] text-gray-400">{artists}</p>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <span className="text-xs tabular-nums text-gray-500">
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <span className="text-[10px] tabular-nums text-gray-500">
                     {track.duration_ms ? formatDuration(track.duration_ms) : ""}
                   </span>
                   {isAdded ? (
-                    <svg className="h-4 w-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <svg className="h-3.5 w-3.5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                     </svg>
                   ) : (
-                    <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <svg className="h-3.5 w-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
                     </svg>
                   )}
@@ -437,7 +435,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
           })}
 
           {filteredTracks.length === 0 && !loading && !trackError && (
-            <p className="py-4 text-center text-xs text-gray-500">
+            <p className="py-2 text-center text-[11px] text-gray-500">
               Geen nummers gevonden
             </p>
           )}
