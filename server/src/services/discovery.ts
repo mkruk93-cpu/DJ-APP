@@ -45,6 +45,43 @@ function normalizeGenreName(name: string): string {
   return name.trim().toLowerCase();
 }
 
+function getGenreHints(genre: string): { spotify: string; lastFmTag: string; deezer: string } {
+  const normalized = normalizeGenreName(genre);
+  const hints: Record<string, { spotify: string; lastFmTag: string; deezer: string }> = {
+    hardcore: {
+      spotify: 'gabber hardcore dance 180 bpm 190 bpm',
+      lastFmTag: 'gabber',
+      deezer: 'gabber hardcore dance',
+    },
+    hardstyle: {
+      spotify: 'hardstyle rawstyle euphoric hardstyle',
+      lastFmTag: 'hardstyle',
+      deezer: 'hardstyle',
+    },
+    techno: {
+      spotify: 'techno peak time techno',
+      lastFmTag: 'techno',
+      deezer: 'techno',
+    },
+    hiphop: {
+      spotify: 'hip hop rap',
+      lastFmTag: 'hip-hop',
+      deezer: 'hip hop',
+    },
+    nederlands: {
+      spotify: 'nederlandse hits dutch',
+      lastFmTag: 'dutch',
+      deezer: 'nederlandstalig',
+    },
+  };
+
+  return hints[normalized] ?? {
+    spotify: genre,
+    lastFmTag: genre,
+    deezer: genre,
+  };
+}
+
 function makeUniqueGenreMap(): Map<string, GenreItem> {
   const map = new Map<string, GenreItem>();
   for (const genre of DEFAULT_POPULAR_GENRES) {
@@ -173,6 +210,7 @@ async function getSpotifyAppToken(): Promise<string | null> {
 async function fetchSpotifyTracksByGenre(genre: string, limit: number, offset: number): Promise<GenreHitItem[]> {
   const token = await getSpotifyAppToken();
   if (!token) return [];
+  const hints = getGenreHints(genre);
 
   const buildQuery = (q: string): string => {
     const params = new URLSearchParams({
@@ -221,21 +259,22 @@ async function fetchSpotifyTracksByGenre(genre: string, limit: number, offset: n
   };
 
   try {
-    const tagged = await run(`genre:"${genre}"`);
+    const tagged = await run(`genre:"${hints.lastFmTag}" ${hints.spotify}`);
     if (tagged.length > 0) return tagged;
   } catch (err) {
     console.warn('[discovery] Spotify tagged genre search failed:', (err as Error).message);
   }
 
-  return run(genre);
+  return run(hints.spotify);
 }
 
 async function fetchLastFmTopTracksByGenre(genre: string, limit: number, offset: number): Promise<GenreHitItem[]> {
   if (!LASTFM_API_KEY) return [];
+  const hints = getGenreHints(genre);
   const page = Math.floor(offset / Math.max(1, limit)) + 1;
   const params = new URLSearchParams({
     method: 'tag.gettoptracks',
-    tag: genre,
+    tag: hints.lastFmTag,
     api_key: LASTFM_API_KEY,
     format: 'json',
     limit: String(limit),
@@ -286,6 +325,7 @@ export async function getTopTracksByGenre(genre: string, limit = 20, offset = 0)
   const normalizedGenre = genre.trim();
   const safeLimit = Math.max(1, Math.min(limit, 50));
   const safeOffset = Math.max(0, offset);
+  const hints = getGenreHints(normalizedGenre);
   if (!normalizedGenre) return [];
 
   try {
@@ -303,14 +343,14 @@ export async function getTopTracksByGenre(genre: string, limit = 20, offset = 0)
   }
 
   try {
-    const strict = await searchTopTracks(`genre:"${normalizedGenre}"`, safeLimit, safeOffset);
+    const strict = await searchTopTracks(`genre:"${hints.deezer}"`, safeLimit, safeOffset);
     if (strict.length > 0) return strict;
   } catch (err) {
     console.warn('[discovery] Strict genre search failed:', (err as Error).message);
   }
 
   try {
-    return await searchTopTracks(normalizedGenre, safeLimit, safeOffset);
+    return await searchTopTracks(hints.deezer, safeLimit, safeOffset);
   } catch (err) {
     console.warn('[discovery] Fallback genre search failed:', (err as Error).message);
     return [];

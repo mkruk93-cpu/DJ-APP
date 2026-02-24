@@ -41,6 +41,7 @@ export default function StreamPage() {
   const [suppressFallback, setSuppressFallback] = useState(false);
   const [twitchLive, setTwitchLive] = useState(false);
   const [radioServerUrl, setRadioServerUrl] = useState<string | null>(null);
+  const [preferRadioUi, setPreferRadioUi] = useState(false);
 
   const showRequests = twitchLive || (radioConnected && radioMode === "dj");
   const showRadioPanel = true;
@@ -105,12 +106,13 @@ export default function StreamPage() {
 
     socket.on("connect", () => {
       store.getState().setConnected(true);
+      setPreferRadioUi(true);
       setSuppressFallback(false);
       fetchState();
     });
 
     socket.on("disconnect", () => {
-      store.getState().resetAll();
+      store.getState().setConnected(false);
       setSuppressFallback(true);
     });
 
@@ -185,14 +187,14 @@ export default function StreamPage() {
     if (twitchLive) {
       setSuppressFallback(false);
       setMode("twitch");
-    } else if (radioConnected) {
+    } else if (preferRadioUi || radioConnected || !!radioServerUrl) {
       setMode("radio");
     } else if (icecastUrl) {
       setMode("audio");
     } else {
       setMode("offline");
     }
-  }, [twitchLive, radioConnected, icecastUrl]);
+  }, [twitchLive, radioConnected, icecastUrl, preferRadioUi, radioServerUrl]);
 
   // Derive the audio source for radio mode
   const radioStreamUrl = radioServerUrl
@@ -325,11 +327,6 @@ export default function StreamPage() {
             </div>
           )}
           <div className={`min-h-0 min-w-0 flex-1 overflow-y-auto flex-col gap-2 ${activeTab === "radio" ? "flex" : "hidden"} lg:flex`}>
-            {!radioConnected && (
-              <p className="rounded-lg border border-amber-700/40 bg-amber-950/20 px-3 py-2 text-xs text-amber-300">
-                Radio verbinding herstelt... UI blijft zichtbaar.
-              </p>
-            )}
             <QueueAdd />
             <Queue />
           </div>

@@ -8,7 +8,6 @@ import {
   disconnectSpotify,
   spotifyFetch,
   type SpotifyPlaylist,
-  type SpotifyPlaylistTrack,
   type SpotifyTrackItem,
   type SpotifyPaginatedResponse,
   type SpotifyUser,
@@ -71,8 +70,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
       const data = await spotifyFetch<SpotifyUser>("/me");
       if (data) setUser(data);
       else setConnected(false);
-    } catch (err) {
-      console.warn("[spotify] Failed to load user:", err);
+    } catch {
       setConnected(false);
     }
   }
@@ -97,8 +95,6 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
       }
 
       setPlaylists(all);
-    } catch (err) {
-      console.warn("[spotify] Failed to load playlists:", err);
     } finally {
       setLoading(false);
     }
@@ -119,24 +115,17 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
     try {
       const all: SpotifyTrackItem[] = [];
       let url = `/playlists/${playlist.id}/tracks?limit=100`;
-      let page = 0;
 
       while (url) {
-        page++;
         const raw = await spotifyFetch<Record<string, unknown>>(url);
 
         if (!raw) {
-          setTrackError(`API gaf geen data terug voor playlist "${playlist.name}" (id: ${playlist.id}). Check browser console (F12).`);
+          setTrackError(`Kan playlist "${playlist.name}" nu niet laden.`);
           checkConnection();
           break;
         }
 
         const items = Array.isArray(raw.items) ? raw.items : [];
-        console.log(`[spotify] Playlist page ${page}: ${items.length} items, keys:`, Object.keys(raw));
-
-        if (items.length > 0) {
-          console.log("[spotify] First item keys:", Object.keys(items[0]), "has .track:", !!items[0]?.track);
-        }
 
         for (const item of items) {
           const t = (item as any)?.track;
@@ -153,14 +142,12 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
         }
       }
 
-      console.log(`[spotify] Total valid tracks for "${playlist.name}": ${all.length}`);
       setTracks(all);
       if (all.length === 0 && !trackError) {
         setTrackError(`Geen nummers gevonden in "${playlist.name}". Mogelijk zijn alle tracks lokale bestanden of niet beschikbaar.`);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn("[spotify] Failed to load playlist tracks:", err);
       setTrackError(`Fout bij laden: ${msg}`);
     } finally {
       setLoading(false);
@@ -192,8 +179,6 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
       }
 
       setTracks(all);
-    } catch (err) {
-      console.warn("[spotify] Failed to load liked songs:", err);
     } finally {
       setLoading(false);
     }
@@ -206,9 +191,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
       setAddedTrackId(track.id);
       onAddTrack(query);
       setTimeout(() => setAddedTrackId(null), 3000);
-    } catch (err) {
-      console.warn("[spotify] Failed to add track:", err);
-    }
+    } catch {}
   }
 
   function handleDisconnect() {
