@@ -234,6 +234,10 @@ ADMIN_TOKEN="$(read_env ADMIN_TOKEN)"
 NAMED_TUNNEL_TOKEN="$(read_env CLOUDFLARED_TUNNEL_TOKEN)"
 NAMED_TUNNEL_URL="$(read_env RADIO_SERVER_URL)"
 NGROK_AUTHTOKEN="$(read_env NGROK_AUTHTOKEN)"
+TUNNEL_MODE="$(read_env TUNNEL_MODE)"
+if [ -z "$TUNNEL_MODE" ]; then
+  TUNNEL_MODE="ssh"
+fi
 
 if [ -z "$ADMIN_TOKEN" ]; then
   echo "[FOUT] Geen ADMIN_TOKEN gevonden in .env"
@@ -302,31 +306,25 @@ echo "    OK — server draait"
 
 # ── Start Cloudflare tunnel ──
 
-echo "[+] Cloudflare Tunnel starten..."
-ensure_dns || exit 1
-
 echo "    Wachten op tunnel URL..."
-if [ -n "$NAMED_TUNNEL_TOKEN" ]; then
-  if [ -z "$NAMED_TUNNEL_URL" ]; then
-    echo "[FOUT] CLOUDFLARED_TUNNEL_TOKEN is gezet, maar RADIO_SERVER_URL ontbreekt in .env"
-    echo "       Zet bv: RADIO_SERVER_URL=https://radio.jouwdomein.nl"
-    cleanup
-    exit 1
+if [ "$TUNNEL_MODE" = "ssh" ]; then
+  echo "[+] SSH tunnel mode actief (zonder Cloudflare/ngrok)..."
+  if ! start_tunnel_localhostrun; then
+    echo "    localhost.run mislukt, tweede SSH fallback starten..."
+    start_tunnel_pinggy || true
   fi
-  start_tunnel_named "$NAMED_TUNNEL_TOKEN" "$NAMED_TUNNEL_URL" || {
-    echo "    Named tunnel mislukt, quick/fallback proberen..."
-    if ! start_tunnel_cloudflare; then
-      echo "    Cloudflare quick tunnel mislukt, fallback starten..."
-      if ! start_tunnel_localhostrun; then
-        echo "    localhost.run mislukt, tweede fallback starten..."
-        start_tunnel_pinggy || true
-      fi
-    fi
-  }
 else
-  if [ -n "$NGROK_AUTHTOKEN" ]; then
-    if ! start_tunnel_ngrok; then
-      echo "    ngrok mislukt, cloudflare/fallback proberen..."
+  echo "[+] Auto tunnel mode actief (named/ngrok/cloudflare + ssh fallback)..."
+  ensure_dns || true
+  if [ -n "$NAMED_TUNNEL_TOKEN" ]; then
+    if [ -z "$NAMED_TUNNEL_URL" ]; then
+      echo "[FOUT] CLOUDFLARED_TUNNEL_TOKEN is gezet, maar RADIO_SERVER_URL ontbreekt in .env"
+      echo "       Zet bv: RADIO_SERVER_URL=https://radio.jouwdomein.nl"
+      cleanup
+      exit 1
+    fi
+    start_tunnel_named "$NAMED_TUNNEL_TOKEN" "$NAMED_TUNNEL_URL" || {
+      echo "    Named tunnel mislukt, quick/fallback proberen..."
       if ! start_tunnel_cloudflare; then
         echo "    Cloudflare quick tunnel mislukt, fallback starten..."
         if ! start_tunnel_localhostrun; then
@@ -334,15 +332,28 @@ else
           start_tunnel_pinggy || true
         fi
       fi
-    fi
+    }
   else
-    if ! start_tunnel_cloudflare; then
-      echo "    Cloudflare quick tunnel mislukt, fallback starten..."
-      if ! start_tunnel_localhostrun; then
-        echo "    localhost.run mislukt, tweede fallback starten..."
-        if ! start_tunnel_pinggy; then
-          echo "    pinggy mislukt, ngrok proberen..."
-          start_tunnel_ngrok || true
+    if [ -n "$NGROK_AUTHTOKEN" ]; then
+      if ! start_tunnel_ngrok; then
+        echo "    ngrok mislukt, cloudflare/fallback proberen..."
+        if ! start_tunnel_cloudflare; then
+          echo "    Cloudflare quick tunnel mislukt, fallback starten..."
+          if ! start_tunnel_localhostrun; then
+            echo "    localhost.run mislukt, tweede fallback starten..."
+            start_tunnel_pinggy || true
+          fi
+        fi
+      fi
+    else
+      if ! start_tunnel_cloudflare; then
+        echo "    Cloudflare quick tunnel mislukt, fallback starten..."
+        if ! start_tunnel_localhostrun; then
+          echo "    localhost.run mislukt, tweede fallback starten..."
+          if ! start_tunnel_pinggy; then
+            echo "    pinggy mislukt, ngrok proberen..."
+            start_tunnel_ngrok || true
+          fi
         fi
       fi
     fi
