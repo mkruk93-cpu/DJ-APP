@@ -11,6 +11,21 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
+ensure_dns() {
+  if getent hosts api.trycloudflare.com >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "[!] DNS lijkt kapot in Termux — herstel proberen..."
+  printf "nameserver 1.1.1.1\nnameserver 8.8.8.8\n" > "$PREFIX/etc/resolv.conf" || true
+  sleep 1
+  if ! getent hosts api.trycloudflare.com >/dev/null 2>&1; then
+    echo "[FOUT] DNS werkt nog niet. Zet Android Private DNS op Automatisch/Uit en probeer opnieuw."
+    return 1
+  fi
+  echo "[+] DNS hersteld"
+  return 0
+}
+
 # ── Read ADMIN_TOKEN from .env ──
 
 ADMIN_TOKEN=""
@@ -78,6 +93,7 @@ echo "    OK — server draait"
 # ── Start Cloudflare tunnel ──
 
 echo "[+] Cloudflare Tunnel starten..."
+ensure_dns || exit 1
 
 TUNNEL_LOG=$(mktemp)
 cloudflared tunnel --url http://localhost:3001 > "$TUNNEL_LOG" 2>&1 &
@@ -95,7 +111,8 @@ done
 
 if [ -z "$TUNNEL_URL" ]; then
   echo "[FOUT] Kon tunnel URL niet uitlezen na 2 minuten"
-  echo "    Controleer of cloudflared correct is geinstalleerd"
+  echo "    Controleer cloudflared output hieronder:"
+  tail -n 30 "$TUNNEL_LOG" || true
   rm -f "$TUNNEL_LOG"
   cleanup
   exit 1
