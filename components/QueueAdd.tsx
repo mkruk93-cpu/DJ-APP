@@ -6,6 +6,7 @@ import { useRadioStore } from "@/lib/radioStore";
 import { canPerformAction } from "@/lib/types";
 import { isRadioAdmin, getRadioToken } from "@/lib/auth";
 import { isSpotifyConfigured } from "@/lib/spotify";
+import { getGenres, getGenreHits, type GenreOption, type GenreHit } from "@/lib/radioApi";
 import SpotifyBrowser from "@/components/SpotifyBrowser";
 
 class SpotifyErrorBoundary extends Component<
@@ -41,7 +42,7 @@ class SpotifyErrorBoundary extends Component<
   }
 }
 
-type SearchSource = "youtube" | "soundcloud" | "spotify";
+type SearchSource = "youtube" | "soundcloud" | "spotify" | "genres";
 
 const YT_URL_REGEX =
   /^https?:\/\/(www\.)?(youtube\.com\/(watch\?.*v=|shorts\/|embed\/)|youtu\.be\/)[\w-]+/i;
@@ -55,6 +56,10 @@ interface SearchResult {
   duration: number | null;
   thumbnail: string;
   channel: string;
+}
+
+interface GenreHitRow extends GenreHit {
+  query: string;
 }
 
 function formatDuration(seconds: number | null): string {
@@ -76,6 +81,12 @@ export default function QueueAdd() {
   const [searching, setSearching] = useState(false);
   const [showResults, setShowResults] = useState(false);
   const [source, setSource] = useState<SearchSource>("youtube");
+  const [genreQuery, setGenreQuery] = useState("");
+  const [genres, setGenres] = useState<GenreOption[]>([]);
+  const [genresLoading, setGenresLoading] = useState(false);
+  const [genreHits, setGenreHits] = useState<GenreHitRow[]>([]);
+  const [genreHitsLoading, setGenreHitsLoading] = useState(false);
+  const [activeGenre, setActiveGenre] = useState<string | null>(null);
   const mode = useRadioStore((s) => s.mode);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -112,6 +123,41 @@ export default function QueueAdd() {
       .catch(() => setResults([]))
       .finally(() => setSearching(false));
   }, [serverUrl, source]);
+
+  const loadGenres = useCallback((query: string) => {
+    if (!serverUrl) return;
+    setGenresLoading(true);
+    getGenres(query)
+      .then((items) => setGenres(items))
+      .catch(() => setGenres([]))
+      .finally(() => setGenresLoading(false));
+  }, [serverUrl]);
+
+  const loadGenreHits = useCallback((genre: string) => {
+    if (!serverUrl) return;
+    setGenreHitsLoading(true);
+    setActiveGenre(genre);
+    getGenreHits(genre, 20)
+      .then((items) => {
+        setGenreHits(
+          items.map((item) => ({
+            ...item,
+            query: `${item.artist} - ${item.title}`,
+          })),
+        );
+      })
+      .catch(() => setGenreHits([]))
+      .finally(() => setGenreHitsLoading(false));
+  }, [serverUrl]);
+
+  useEffect(() => {
+    if (source !== "genres") return;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => loadGenres(genreQuery), 250);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [genreQuery, source, loadGenres]);
 
   if (!canAdd) return null;
 
@@ -197,6 +243,7 @@ export default function QueueAdd() {
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (source === "spotify" || source === "genres") return;
     const trimmed = input.trim();
 
     if (!isSupportedUrl(trimmed)) {
@@ -222,6 +269,14 @@ export default function QueueAdd() {
     setSource(newSource);
     setResults([]);
     setShowResults(false);
+    setFeedback(null);
+    if (newSource === "genres") {
+      setInput("");
+      setGenreHits([]);
+      setActiveGenre(null);
+      loadGenres(genreQuery);
+      return;
+    }
     if (newSource === "spotify") return;
     const query = input.trim();
     if (query.length >= 2 && !isSupportedUrl(query)) {
@@ -282,6 +337,21 @@ export default function QueueAdd() {
             </svg>
             SoundCloud
           </button>
+          <button
+            type="button"
+            onClick={() => switchSource("genres")}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+              source === "genres"
+                ? "bg-fuchsia-500/20 text-fuchsia-300"
+                : "text-gray-400 hover:text-gray-200"
+            }`}
+          >
+            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 3v18M3 12h18" />
+            </svg>
+            Genres
+          </button>
           {isSpotifyConfigured() && (
             <button
               type="button"
@@ -304,6 +374,70 @@ export default function QueueAdd() {
           <SpotifyErrorBoundary onReset={() => switchSource("youtube")}>
             <SpotifyBrowser onAddTrack={handleSpotifyAdd} submitting={submitting} />
           </SpotifyErrorBoundary>
+        ) : source === "genres" ? (
+          <div className="space-y-2">
+            <input
+              type="text"
+              value={genreQuery}
+              onChange={(e) => setGenreQuery(e.target.value)}
+              placeholder="Zoek genre (hardstyle, techno, hiphop, nederlands...)"
+              className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-fuchsia-500"
+            />
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {genres.map((genre) => (
+                <button
+                  key={genre.id}
+                  type="button"
+                  onClick={() => loadGenreHits(genre.name)}
+                  className={`shrink-0 rounded-full border px-3 py-1 text-xs font-semibold transition ${
+                    activeGenre === genre.name
+                      ? "border-fuchsia-400 bg-fuchsia-500/20 text-fuchsia-200"
+                      : "border-gray-700 bg-gray-800 text-gray-300 hover:border-fuchsia-500/60 hover:text-white"
+                  }`}
+                >
+                  {genre.name}
+                </button>
+              ))}
+            </div>
+            {genresLoading && (
+              <p className="text-xs text-gray-400">Genres laden...</p>
+            )}
+            {!genresLoading && genres.length === 0 && (
+              <p className="text-xs text-gray-400">Geen genres gevonden. Probeer een andere zoekterm.</p>
+            )}
+
+            <div className="max-h-64 overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70">
+              {genreHitsLoading ? (
+                <p className="px-3 py-3 text-xs text-gray-400">Hitlijst laden...</p>
+              ) : genreHits.length === 0 ? (
+                <p className="px-3 py-3 text-xs text-gray-400">
+                  Kies een genre om relevante tracks te tonen.
+                </p>
+              ) : (
+                genreHits.map((item) => (
+                  <div key={item.id} className="flex items-center gap-3 border-b border-gray-800/80 px-3 py-2 last:border-b-0">
+                    {item.thumbnail ? (
+                      <img src={item.thumbnail} alt="" className="h-10 w-10 rounded object-cover" />
+                    ) : (
+                      <div className="h-10 w-10 rounded bg-gray-800" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-white">{item.title}</p>
+                      <p className="truncate text-xs text-gray-400">{item.artist}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => submitUrl(item.query, item.thumbnail || undefined)}
+                      disabled={submitting}
+                      className="rounded-md bg-violet-600 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-violet-500 disabled:opacity-50"
+                    >
+                      Toevoegen
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         ) : (
           <>
             <div className="relative">

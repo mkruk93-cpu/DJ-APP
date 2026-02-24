@@ -16,6 +16,7 @@ import { startBridge } from './bridge.js';
 import { startNowPlayingWatcher } from './nowPlaying.js';
 import { StreamHub } from './streamHub.js';
 import type { Mode, ServerState, DurationVote } from './types.js';
+import { searchGenres, getTopTracksByGenre, type GenreItem, type GenreHitItem } from './services/discovery.js';
 
 // ── Environment ──────────────────────────────────────────────────────────────
 
@@ -110,6 +111,9 @@ interface SearchResult {
 
 const searchCache = new Map<string, { results: SearchResult[]; ts: number }>();
 const CACHE_TTL = 60_000;
+const DISCOVERY_CACHE_TTL = 180_000;
+const genreCache = new Map<string, { results: GenreItem[]; ts: number }>();
+const genreHitsCache = new Map<string, { results: GenreHitItem[]; ts: number }>();
 
 function parseDuration(text: string): number | null {
   const parts = text.split(':').map(Number);
@@ -407,6 +411,51 @@ app.get('/search', async (req, res) => {
   } catch (err) {
     console.error('[rest] /search error:', err);
     res.status(500).json({ error: 'Search failed' });
+  }
+});
+
+app.get('/api/genres', async (req, res) => {
+  const q = String(req.query.q ?? '').trim().toLowerCase();
+  const cacheKey = q || '__all__';
+  const cached = genreCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < DISCOVERY_CACHE_TTL) {
+    res.json(cached.results);
+    return;
+  }
+
+  try {
+    const results = await searchGenres(q);
+    genreCache.set(cacheKey, { results, ts: Date.now() });
+    res.json(results);
+  } catch (err) {
+    console.error('[rest] /api/genres error:', err);
+    res.status(500).json({ error: 'Genres lookup failed' });
+  }
+});
+
+app.get('/api/genre-hits', async (req, res) => {
+  const genre = String(req.query.genre ?? '').trim();
+  if (genre.length < 2) {
+    res.status(400).json({ error: 'Missing or invalid genre' });
+    return;
+  }
+
+  const parsedLimit = parseInt(String(req.query.limit ?? '20'), 10);
+  const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(parsedLimit, 50)) : 20;
+  const cacheKey = `${genre.toLowerCase()}::${limit}`;
+  const cached = genreHitsCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < DISCOVERY_CACHE_TTL) {
+    res.json(cached.results);
+    return;
+  }
+
+  try {
+    const results = await getTopTracksByGenre(genre, limit);
+    genreHitsCache.set(cacheKey, { results, ts: Date.now() });
+    res.json(results);
+  } catch (err) {
+    console.error('[rest] /api/genre-hits error:', err);
+    res.status(500).json({ error: 'Genre hitlist lookup failed' });
   }
 });
 

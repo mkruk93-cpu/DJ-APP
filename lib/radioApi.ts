@@ -1,8 +1,33 @@
 import { getRadioToken } from './auth';
 import { useRadioStore } from './radioStore';
 
+export interface GenreOption {
+  id: string;
+  name: string;
+}
+
+export interface GenreHit {
+  id: string;
+  title: string;
+  artist: string;
+  thumbnail: string;
+  sourceHint: string;
+}
+
 function getServerUrl(): string | null {
   return useRadioStore.getState().serverUrl ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL ?? null;
+}
+
+async function get<T>(path: string): Promise<T> {
+  const url = getServerUrl();
+  if (!url) throw new Error('No server URL configured');
+
+  const res = await fetch(`${url}${path}`);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as Record<string, string>).error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<T>;
 }
 
 async function post(path: string, body: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
@@ -42,6 +67,19 @@ export async function skipTrack(): Promise<void> {
 
 export async function setKeepFiles(keep: boolean): Promise<void> {
   await post('/api/keep-files', { keep });
+}
+
+export async function getGenres(query = ''): Promise<GenreOption[]> {
+  const q = query.trim();
+  const path = q ? `/api/genres?q=${encodeURIComponent(q)}` : '/api/genres';
+  return get<GenreOption[]>(path);
+}
+
+export async function getGenreHits(genre: string, limit = 20): Promise<GenreHit[]> {
+  const trimmed = genre.trim();
+  if (!trimmed) return [];
+  const path = `/api/genre-hits?genre=${encodeURIComponent(trimmed)}&limit=${Math.max(1, Math.min(limit, 50))}`;
+  return get<GenreHit[]>(path);
 }
 
 function refreshState(): void {
