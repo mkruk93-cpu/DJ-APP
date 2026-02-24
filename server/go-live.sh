@@ -123,6 +123,44 @@ start_tunnel_named() {
   return 0
 }
 
+start_tunnel_ngrok() {
+  echo "    Tunnel provider: ngrok"
+  if ! command -v ngrok >/dev/null 2>&1; then
+    return 1
+  fi
+
+  if [ -n "$NGROK_AUTHTOKEN" ]; then
+    ngrok config add-authtoken "$NGROK_AUTHTOKEN" >/dev/null 2>&1 || true
+  fi
+
+  TUNNEL_LOG=$(mktemp)
+  ngrok http 3001 --log=stdout > "$TUNNEL_LOG" 2>&1 &
+  TUNNEL_PID=$!
+
+  for i in $(seq 1 25); do
+    sleep 1
+    TUNNEL_URL=$(
+      curl -s http://127.0.0.1:4040/api/tunnels 2>/dev/null \
+        | python -c "import sys,json
+try:
+ d=json.load(sys.stdin)
+ print(next((t.get('public_url','') for t in d.get('tunnels',[]) if str(t.get('public_url','')).startswith('https://')), ''))
+except Exception:
+ print('')" 2>/dev/null
+    )
+    if [ -n "$TUNNEL_URL" ]; then
+      TUNNEL_URL=$(normalize_url "$TUNNEL_URL")
+      return 0
+    fi
+  done
+
+  kill "$TUNNEL_PID" >/dev/null 2>&1 || true
+  TUNNEL_PID=""
+  rm -f "$TUNNEL_LOG"
+  TUNNEL_LOG=""
+  return 1
+}
+
 start_tunnel_localhostrun() {
   echo "    Tunnel provider: localhost.run (fallback)"
   if ! command -v ssh >/dev/null 2>&1; then
@@ -195,6 +233,7 @@ start_tunnel_pinggy() {
 ADMIN_TOKEN="$(read_env ADMIN_TOKEN)"
 NAMED_TUNNEL_TOKEN="$(read_env CLOUDFLARED_TUNNEL_TOKEN)"
 NAMED_TUNNEL_URL="$(read_env RADIO_SERVER_URL)"
+NGROK_AUTHTOKEN="$(read_env NGROK_AUTHTOKEN)"
 
 if [ -z "$ADMIN_TOKEN" ]; then
   echo "[FOUT] Geen ADMIN_TOKEN gevonden in .env"
@@ -237,6 +276,7 @@ echo ""
 # Stop leftovers from previous runs so port 3001 is always free.
 pkill -f "tsx src/server.ts" >/dev/null 2>&1 || true
 pkill -f "cloudflared tunnel" >/dev/null 2>&1 || true
+pkill -f "ngrok http 3001" >/dev/null 2>&1 || true
 
 echo "[+] Server starten..."
 npx tsx src/server.ts &
@@ -284,11 +324,27 @@ if [ -n "$NAMED_TUNNEL_TOKEN" ]; then
     fi
   }
 else
-  if ! start_tunnel_cloudflare; then
-    echo "    Cloudflare quick tunnel mislukt, fallback starten..."
-    if ! start_tunnel_localhostrun; then
-      echo "    localhost.run mislukt, tweede fallback starten..."
-      start_tunnel_pinggy || true
+  if [ -n "$NGROK_AUTHTOKEN" ]; then
+    if ! start_tunnel_ngrok; then
+      echo "    ngrok mislukt, cloudflare/fallback proberen..."
+      if ! start_tunnel_cloudflare; then
+        echo "    Cloudflare quick tunnel mislukt, fallback starten..."
+        if ! start_tunnel_localhostrun; then
+          echo "    localhost.run mislukt, tweede fallback starten..."
+          start_tunnel_pinggy || true
+        fi
+      fi
+    fi
+  else
+    if ! start_tunnel_cloudflare; then
+      echo "    Cloudflare quick tunnel mislukt, fallback starten..."
+      if ! start_tunnel_localhostrun; then
+        echo "    localhost.run mislukt, tweede fallback starten..."
+        if ! start_tunnel_pinggy; then
+          echo "    pinggy mislukt, ngrok proberen..."
+          start_tunnel_ngrok || true
+        fi
+      fi
     fi
   fi
 fi

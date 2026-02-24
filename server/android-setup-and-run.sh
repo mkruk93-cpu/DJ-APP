@@ -23,7 +23,7 @@ echo ""
 
 echo "[1/6] Packages installeren/updaten..."
 pkg update -y >/dev/null 2>&1 || true
-pkg install -y nodejs-lts python ffmpeg git curl termux-tools dnsutils openssh >/dev/null 2>&1 || true
+pkg install -y nodejs-lts python ffmpeg git curl termux-tools dnsutils openssh wget unzip >/dev/null 2>&1 || true
 pip install -q yt-dlp || true
 
 if ! command -v cloudflared >/dev/null 2>&1; then
@@ -33,6 +33,19 @@ if ! command -v cloudflared >/dev/null 2>&1; then
   ln -sf ~/cloudflared "$PREFIX/bin/cloudflared"
 else
   echo "[2/6] cloudflared is al geinstalleerd"
+fi
+
+if ! command -v ngrok >/dev/null 2>&1; then
+  echo "[2b/6] ngrok installeren..."
+  wget -q -O /tmp/ngrok.zip https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-arm64.zip || true
+  unzip -o -q /tmp/ngrok.zip -d /tmp || true
+  if [ -f /tmp/ngrok ]; then
+    chmod +x /tmp/ngrok
+    mv /tmp/ngrok "$PREFIX/bin/ngrok"
+  fi
+  rm -f /tmp/ngrok.zip
+else
+  echo "[2b/6] ngrok is al geinstalleerd"
 fi
 
 echo "[3/6] Storage permissie controleren..."
@@ -59,6 +72,7 @@ if [ "${RESET_ENV:-n}" = "y" ] || [ "${RESET_ENV:-n}" = "Y" ]; then
   read -r -p "KEEP_FILES [false]: " KEEP_FILES
   read -r -p "CLOUDFLARED_TUNNEL_TOKEN (optioneel, named tunnel): " CLOUDFLARED_TUNNEL_TOKEN
   read -r -p "RADIO_SERVER_URL (optioneel, bijv https://radio.jouwdomein.nl): " RADIO_SERVER_URL
+  read -r -p "NGROK_AUTHTOKEN (optioneel, aanrader zonder Cloudflare): " NGROK_AUTHTOKEN
 
   ADMIN_TOKEN="${ADMIN_TOKEN:-Buikspek93.!}"
   FRONTEND_URL="${FRONTEND_URL:-https://krukkex.vercel.app}"
@@ -87,6 +101,7 @@ REKORDBOX_OUTPUT_PATH=
 FALLBACK_MUSIC_DIR=$FALLBACK_MUSIC_DIR
 CLOUDFLARED_TUNNEL_TOKEN=$CLOUDFLARED_TUNNEL_TOKEN
 RADIO_SERVER_URL=$RADIO_SERVER_URL
+NGROK_AUTHTOKEN=$NGROK_AUTHTOKEN
 EOF
 
   echo "    .env opgeslagen"
