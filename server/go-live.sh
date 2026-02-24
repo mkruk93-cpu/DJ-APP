@@ -63,8 +63,9 @@ extract_cloudflare_url() {
 
 extract_localhostrun_url() {
   local log_file="$1"
-  grep -oE 'https://[A-Za-z0-9._-]+\.(localhost\.run|lhr\.life)' "$log_file" 2>/dev/null \
-    | grep -vE '^https://(admin|www)\.localhost\.run$' \
+  grep -oE 'https://[A-Za-z0-9._/-]+' "$log_file" 2>/dev/null \
+    | grep -E '(localhost\.run|lhr\.life)' \
+    | grep -vE '^https://(admin|www)\.localhost\.run($|/)' \
     | head -1
 }
 
@@ -167,16 +168,11 @@ start_tunnel_localhostrun() {
     return 1
   fi
   TUNNEL_LOG=$(mktemp)
-  # Keep this close to the known-working manual command:
-  # ssh -o StrictHostKeyChecking=no -N -R 80:localhost:3001 nokey@localhost.run
-  ssh -o StrictHostKeyChecking=no \
-    -o UserKnownHostsFile=/dev/null \
-    -o ServerAliveInterval=30 \
-    -o ConnectTimeout=15 \
-    -N -R 80:localhost:3001 nokey@localhost.run > "$TUNNEL_LOG" 2>&1 &
+  # Use the exact command that worked manually for this device/network.
+  ssh -o StrictHostKeyChecking=no -N -R 80:localhost:3001 nokey@localhost.run > "$TUNNEL_LOG" 2>&1 &
   TUNNEL_PID=$!
 
-  for i in $(seq 1 20); do
+  for i in $(seq 1 45); do
     sleep 2
     TUNNEL_URL=$(extract_localhostrun_url "$TUNNEL_LOG")
     if [ -n "$TUNNEL_URL" ]; then
