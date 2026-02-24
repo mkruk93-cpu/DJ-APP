@@ -11,6 +11,8 @@ export interface GenreHitItem {
   sourceHint: string;
 }
 
+const LASTFM_API_KEY = process.env.LASTFM_API_KEY?.trim() ?? '';
+
 const DEFAULT_POPULAR_GENRES = [
   'hardcore',
   'hardstyle',
@@ -113,11 +115,12 @@ function mapTrackToHit(item: Record<string, unknown>): GenreHitItem | null {
   };
 }
 
-async function searchTopTracks(query: string, limit: number): Promise<GenreHitItem[]> {
+async function searchTopTracks(query: string, limit: number, offset: number): Promise<GenreHitItem[]> {
   const params = new URLSearchParams({
     q: query,
     order: 'RANKING',
     limit: String(limit),
+    index: String(offset),
   });
 
   const res = await fetch(`https://api.deezer.com/search/track?${params}`, {
@@ -135,20 +138,80 @@ async function searchTopTracks(query: string, limit: number): Promise<GenreHitIt
     .slice(0, limit);
 }
 
-export async function getTopTracksByGenre(genre: string, limit = 20): Promise<GenreHitItem[]> {
+async function fetchLastFmTopTracksByGenre(genre: string, limit: number, offset: number): Promise<GenreHitItem[]> {
+  if (!LASTFM_API_KEY) return [];
+  const page = Math.floor(offset / Math.max(1, limit)) + 1;
+  const params = new URLSearchParams({
+    method: 'tag.gettoptracks',
+    tag: genre,
+    api_key: LASTFM_API_KEY,
+    format: 'json',
+    limit: String(limit),
+    page: String(page),
+  });
+
+  const res = await fetch(`https://ws.audioscrobbler.com/2.0/?${params}`, {
+    signal: AbortSignal.timeout(7000),
+  });
+  if (!res.ok) {
+    throw new Error(`Last.fm HTTP ${res.status}`);
+  }
+
+  const data = await res.json() as {
+    tracks?: {
+      track?: Array<{
+        name?: string;
+        url?: string;
+        artist?: { name?: string };
+        image?: Array<{ '#text'?: string; size?: string }>;
+      }>;
+    };
+  };
+
+  return (data.tracks?.track ?? [])
+    .map((track) => {
+      const title = (track.name ?? '').trim();
+      const artist = (track.artist?.name ?? '').trim();
+      if (!title || !artist) return null;
+      const image = track.image ?? [];
+      const bestImage = image.find((img) => img.size === 'extralarge' && img['#text'])?.['#text']
+        ?? image.find((img) => img.size === 'large' && img['#text'])?.['#text']
+        ?? image.find((img) => img['#text'])?.['#text']
+        ?? '';
+      return {
+        id: `${artist}-${title}`.toLowerCase(),
+        title,
+        artist,
+        thumbnail: bestImage,
+        sourceHint: track.url ?? '',
+      } satisfies GenreHitItem;
+    })
+    .filter((item): item is GenreHitItem => item !== null)
+    .slice(0, limit);
+}
+
+export async function getTopTracksByGenre(genre: string, limit = 20, offset = 0): Promise<GenreHitItem[]> {
   const normalizedGenre = genre.trim();
   const safeLimit = Math.max(1, Math.min(limit, 50));
+  const safeOffset = Math.max(0, offset);
   if (!normalizedGenre) return [];
 
   try {
-    const strict = await searchTopTracks(`genre:"${normalizedGenre}"`, safeLimit);
+    const lastFm = await fetchLastFmTopTracksByGenre(normalizedGenre, safeLimit, safeOffset);
+    if (lastFm.length > 0) return lastFm;
+  } catch (err) {
+    console.warn('[discovery] Last.fm genre search failed:', (err as Error).message);
+  }
+
+  try {
+    const strict = await searchTopTracks(`genre:"${normalizedGenre}"`, safeLimit, safeOffset);
     if (strict.length > 0) return strict;
   } catch (err) {
     console.warn('[discovery] Strict genre search failed:', (err as Error).message);
   }
 
   try {
-    return await searchTopTracks(normalizedGenre, safeLimit);
+    return await searchTopTracks(normalizedGenre, safeLimit, safeOffset);
   } catch (err) {
     console.warn('[discovery] Fallback genre search failed:', (err as Error).message);
     return [];

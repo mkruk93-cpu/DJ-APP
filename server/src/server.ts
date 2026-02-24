@@ -441,8 +441,10 @@ app.get('/api/genre-hits', async (req, res) => {
   }
 
   const parsedLimit = parseInt(String(req.query.limit ?? '20'), 10);
+  const parsedOffset = parseInt(String(req.query.offset ?? '0'), 10);
   const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(parsedLimit, 50)) : 20;
-  const cacheKey = `${genre.toLowerCase()}::${limit}`;
+  const offset = Number.isFinite(parsedOffset) ? Math.max(0, parsedOffset) : 0;
+  const cacheKey = `${genre.toLowerCase()}::${limit}::${offset}`;
   const cached = genreHitsCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < DISCOVERY_CACHE_TTL) {
     res.json(cached.results);
@@ -450,7 +452,7 @@ app.get('/api/genre-hits', async (req, res) => {
   }
 
   try {
-    const results = await getTopTracksByGenre(genre, limit);
+    const results = await getTopTracksByGenre(genre, limit, offset);
     genreHitsCache.set(cacheKey, { results, ts: Date.now() });
     res.json(results);
   } catch (err) {

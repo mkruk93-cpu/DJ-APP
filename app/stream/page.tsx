@@ -43,6 +43,7 @@ export default function StreamPage() {
   const [radioServerUrl, setRadioServerUrl] = useState<string | null>(null);
 
   const showRequests = twitchLive || (radioConnected && radioMode === "dj");
+  const showRadioPanel = true;
 
   useEffect(() => {
     if (!showRequests && activeTab === "requests") {
@@ -296,7 +297,7 @@ export default function StreamPage() {
               )}
             </button>
           )}
-          {radioConnected && (
+          {showRadioPanel && (
             <button
               onClick={() => { setActiveTab("radio"); setRadioBadge(false); }}
               className={`relative flex-1 rounded-md px-3 py-2 text-xs font-semibold uppercase tracking-wider transition ${
@@ -323,12 +324,15 @@ export default function StreamPage() {
               <RequestForm onNewRequest={() => { if (activeTabRef.current !== "requests") setRequestBadge(true); }} />
             </div>
           )}
-          {radioConnected && (
-            <div className={`min-h-0 min-w-0 flex-1 overflow-y-auto flex flex-col gap-2 ${activeTab === "radio" ? "" : "hidden"} lg:block`}>
-              <QueueAdd />
-              <Queue />
-            </div>
-          )}
+          <div className={`min-h-0 min-w-0 flex-1 overflow-y-auto flex-col gap-2 ${activeTab === "radio" ? "flex" : "hidden"} lg:flex`}>
+            {!radioConnected && (
+              <p className="rounded-lg border border-amber-700/40 bg-amber-950/20 px-3 py-2 text-xs text-amber-300">
+                Radio verbinding herstelt... UI blijft zichtbaar.
+              </p>
+            )}
+            <QueueAdd />
+            <Queue />
+          </div>
         </div>
       </main>
     </div>

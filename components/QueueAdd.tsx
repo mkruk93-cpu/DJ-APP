@@ -140,11 +140,16 @@ export default function QueueAdd() {
   const [genresLoading, setGenresLoading] = useState(false);
   const [genreHits, setGenreHits] = useState<GenreHitRow[]>([]);
   const [genreHitsLoading, setGenreHitsLoading] = useState(false);
+  const [genreHitsLoadingMore, setGenreHitsLoadingMore] = useState(false);
+  const [genreHitsOffset, setGenreHitsOffset] = useState(0);
+  const [genreHasMore, setGenreHasMore] = useState(false);
   const [activeGenre, setActiveGenre] = useState<string | null>(null);
   const [genreError, setGenreError] = useState<string | null>(null);
   const mode = useRadioStore((s) => s.mode);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const genreListRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const GENRE_PAGE_SIZE = 20;
 
   const serverUrl = useRadioStore((s) => s.serverUrl) ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
   const canAdd = canPerformAction(mode, "add_to_queue", isRadioAdmin());
@@ -212,26 +217,69 @@ export default function QueueAdd() {
       .finally(() => setGenresLoading(false));
   }, [serverUrl]);
 
-  const loadGenreHits = useCallback((genre: string) => {
+  const loadGenreHits = useCallback((genre: string, append = false) => {
     if (!serverUrl) return;
-    setGenreHitsLoading(true);
+    const offset = append ? genreHitsOffset : 0;
+    if (append) {
+      setGenreHitsLoadingMore(true);
+    } else {
+      setGenreHitsLoading(true);
+      setGenreHits([]);
+      setGenreHitsOffset(0);
+      setGenreHasMore(false);
+    }
     setActiveGenre(genre);
-    getGenreHits(genre, 20)
+    getGenreHits(genre, GENRE_PAGE_SIZE, offset)
       .then((items) => {
         const normalized = items.filter(
           (item): item is GenreHit =>
             !!item?.id && !!item?.title && !!item?.artist,
         );
-        setGenreHits(
-          normalized.map((item) => ({
-            ...item,
-            query: `${item.artist} - ${item.title}`,
-          })),
-        );
+        const mapped = normalized.map((item) => ({
+          ...item,
+          query: `${item.artist} - ${item.title}`,
+        }));
+        setGenreHits((prev) => {
+          if (!append) return mapped;
+          const merged = [...prev, ...mapped];
+          const deduped = Array.from(
+            new Map(merged.map((track) => [`${track.artist}-${track.title}`.toLowerCase(), track])).values(),
+          );
+          return deduped;
+        });
+        setGenreHitsOffset(offset + mapped.length);
+        setGenreHasMore(mapped.length >= GENRE_PAGE_SIZE);
       })
-      .catch(() => setGenreHits([]))
-      .finally(() => setGenreHitsLoading(false));
-  }, [serverUrl]);
+      .catch(() => {
+        if (!append) {
+          setGenreHits([]);
+        }
+        setGenreHasMore(false);
+      })
+      .finally(() => {
+        setGenreHitsLoading(false);
+        setGenreHitsLoadingMore(false);
+      });
+  }, [serverUrl, genreHitsOffset]);
+
+  useEffect(() => {
+    if (source !== "genres" || !activeGenre) return;
+    const genre = activeGenre;
+    const listEl = genreListRef.current;
+    if (!listEl) return;
+
+    function onScroll() {
+      if (!listEl) return;
+      if (!genreHasMore || genreHitsLoading || genreHitsLoadingMore) return;
+      const remaining = listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight;
+      if (remaining < 80) {
+        loadGenreHits(genre, true);
+      }
+    }
+
+    listEl.addEventListener("scroll", onScroll);
+    return () => listEl.removeEventListener("scroll", onScroll);
+  }, [source, activeGenre, genreHasMore, genreHitsLoading, genreHitsLoadingMore, loadGenreHits]);
 
   useEffect(() => {
     if (source !== "genres") return;
@@ -356,6 +404,8 @@ export default function QueueAdd() {
     if (newSource === "genres") {
       setInput("");
       setGenreHits([]);
+      setGenreHitsOffset(0);
+      setGenreHasMore(false);
       setActiveGenre(null);
       loadGenres(genreQuery);
       return;
@@ -472,7 +522,7 @@ export default function QueueAdd() {
                 <button
                   key={genre.id}
                   type="button"
-                  onClick={() => loadGenreHits(genre.name)}
+                  onClick={() => loadGenreHits(genre.name, false)}
                   className={`shrink-0 rounded-full border px-3 py-1 text-xs font-semibold transition ${
                     activeGenre === genre.name
                       ? "border-fuchsia-400 bg-fuchsia-500/20 text-fuchsia-200"
@@ -493,7 +543,7 @@ export default function QueueAdd() {
               <p className="text-xs text-gray-400">Geen genres gevonden. Probeer een andere zoekterm.</p>
             )}
 
-            <div className="max-h-64 overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70">
+            <div ref={genreListRef} className="max-h-64 overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70">
               {genreHitsLoading ? (
                 <p className="px-3 py-3 text-xs text-gray-400">Hitlijst laden...</p>
               ) : genreHits.length === 0 ? (
@@ -522,6 +572,9 @@ export default function QueueAdd() {
                     </button>
                   </div>
                 ))
+              )}
+              {genreHitsLoadingMore && (
+                <p className="px-3 py-2 text-xs text-gray-400">Meer tracks laden...</p>
               )}
             </div>
           </div>
