@@ -39,9 +39,9 @@ ensure_dns() {
 
 extract_url_from_log() {
   local log_file="$1"
-  grep -oE 'https://[A-Za-z0-9._-]+' "$log_file" 2>/dev/null \
-    | grep -v '^https://api\.trycloudflare\.com$' \
-    | grep -v '/$' \
+  grep -oE 'https://[A-Za-z0-9._/-]+' "$log_file" 2>/dev/null \
+    | grep -E '(trycloudflare\.com|localhost\.run|pinggy\.link|pinggy\.io)' \
+    | grep -vE '^https://(api\.trycloudflare\.com|www\.cloudflare\.com|developers\.cloudflare\.com)($|/)' \
     | head -1
 }
 
