@@ -23,7 +23,7 @@ echo ""
 
 echo "[1/6] Packages installeren/updaten..."
 pkg update -y >/dev/null 2>&1 || true
-pkg install -y nodejs-lts python ffmpeg git curl termux-tools dnsutils >/dev/null 2>&1 || true
+pkg install -y nodejs-lts python ffmpeg git curl termux-tools dnsutils openssh >/dev/null 2>&1 || true
 pip install -q yt-dlp || true
 
 if ! command -v cloudflared >/dev/null 2>&1; then

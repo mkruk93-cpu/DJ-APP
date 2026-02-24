@@ -37,6 +37,92 @@ ensure_dns() {
   return 0
 }
 
+extract_url_from_log() {
+  local log_file="$1"
+  grep -oE 'https://[A-Za-z0-9._-]+' "$log_file" 2>/dev/null \
+    | grep -v '^https://api\.trycloudflare\.com$' \
+    | grep -v '/$' \
+    | head -1
+}
+
+start_tunnel_cloudflare() {
+  echo "    Tunnel provider: Cloudflare quick tunnel"
+  TUNNEL_LOG=$(mktemp)
+  cloudflared tunnel --url http://localhost:3001 > "$TUNNEL_LOG" 2>&1 &
+  TUNNEL_PID=$!
+
+  for i in $(seq 1 60); do
+    sleep 2
+    TUNNEL_URL=$(extract_url_from_log "$TUNNEL_LOG")
+    if [ -n "$TUNNEL_URL" ]; then
+      return 0
+    fi
+  done
+
+  kill "$TUNNEL_PID" >/dev/null 2>&1 || true
+  TUNNEL_PID=""
+  rm -f "$TUNNEL_LOG"
+  TUNNEL_LOG=""
+  return 1
+}
+
+start_tunnel_localhostrun() {
+  echo "    Tunnel provider: localhost.run (fallback)"
+  if ! command -v ssh >/dev/null 2>&1; then
+    return 1
+  fi
+  TUNNEL_LOG=$(mktemp)
+  ssh -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    -o ServerAliveInterval=30 \
+    -o ExitOnForwardFailure=yes \
+    -N -R 80:localhost:3001 nokey@localhost.run > "$TUNNEL_LOG" 2>&1 &
+  TUNNEL_PID=$!
+
+  for i in $(seq 1 45); do
+    sleep 2
+    TUNNEL_URL=$(extract_url_from_log "$TUNNEL_LOG")
+    if [ -n "$TUNNEL_URL" ]; then
+      return 0
+    fi
+  done
+
+  kill "$TUNNEL_PID" >/dev/null 2>&1 || true
+  TUNNEL_PID=""
+  rm -f "$TUNNEL_LOG"
+  TUNNEL_LOG=""
+  return 1
+}
+
+start_tunnel_pinggy() {
+  echo "    Tunnel provider: pinggy (fallback)"
+  if ! command -v ssh >/dev/null 2>&1; then
+    return 1
+  fi
+  TUNNEL_LOG=$(mktemp)
+  ssh -p 443 \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    -o ServerAliveInterval=30 \
+    -o ExitOnForwardFailure=yes \
+    -N -R0:localhost:3001 a.pinggy.io > "$TUNNEL_LOG" 2>&1 &
+  TUNNEL_PID=$!
+
+  for i in $(seq 1 45); do
+    sleep 2
+    TUNNEL_URL=$(extract_url_from_log "$TUNNEL_LOG")
+    if [ -n "$TUNNEL_URL" ]; then
+      return 0
+    fi
+  done
+
+  kill "$TUNNEL_PID" >/dev/null 2>&1 || true
+  TUNNEL_PID=""
+  rm -f "$TUNNEL_LOG"
+  TUNNEL_LOG=""
+  return 1
+}
+
 # ── Read ADMIN_TOKEN from .env ──
 
 ADMIN_TOKEN=""
@@ -53,12 +139,15 @@ fi
 
 SERVER_PID=""
 TUNNEL_PID=""
+TUNNEL_LOG=""
+TUNNEL_URL=""
 
 cleanup() {
   echo ""
   echo "[stop] Alles afsluiten..."
   [ -n "$TUNNEL_PID" ] && kill "$TUNNEL_PID" 2>/dev/null
   [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null
+  [ -n "$TUNNEL_LOG" ] && rm -f "$TUNNEL_LOG" 2>/dev/null
   exit 0
 }
 
@@ -110,24 +199,19 @@ echo "    OK — server draait"
 echo "[+] Cloudflare Tunnel starten..."
 ensure_dns || exit 1
 
-TUNNEL_LOG=$(mktemp)
-cloudflared tunnel --url http://localhost:3001 > "$TUNNEL_LOG" 2>&1 &
-TUNNEL_PID=$!
-
 echo "    Wachten op tunnel URL..."
-TUNNEL_URL=""
-for i in $(seq 1 60); do
-  sleep 2
-  TUNNEL_URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$TUNNEL_LOG" 2>/dev/null | grep -v '^https://api\.trycloudflare\.com$' | head -1)
-  if [ -n "$TUNNEL_URL" ]; then
-    break
+if ! start_tunnel_cloudflare; then
+  echo "    Cloudflare quick tunnel mislukt, fallback starten..."
+  if ! start_tunnel_localhostrun; then
+    echo "    localhost.run mislukt, tweede fallback starten..."
+    start_tunnel_pinggy || true
   fi
-done
+fi
 
 if [ -z "$TUNNEL_URL" ]; then
-  echo "[FOUT] Kon tunnel URL niet uitlezen na 2 minuten"
+  echo "[FOUT] Kon tunnel URL niet ophalen via alle providers"
   echo "    Controleer cloudflared output hieronder:"
-  tail -n 30 "$TUNNEL_LOG" || true
+  [ -n "$TUNNEL_LOG" ] && tail -n 30 "$TUNNEL_LOG" || true
   rm -f "$TUNNEL_LOG"
   cleanup
   exit 1
