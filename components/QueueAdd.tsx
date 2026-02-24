@@ -42,6 +42,35 @@ class SpotifyErrorBoundary extends Component<
   }
 }
 
+class QueueAddErrorBoundary extends Component<
+  { children: ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error) {
+    console.warn("[queue-add] Render error:", error);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="rounded-xl border border-red-900/60 bg-red-950/30 p-3 text-sm text-red-200">
+          Genres kon niet geladen worden door een UI-fout. Herlaad de pagina.
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 type SearchSource = "youtube" | "soundcloud" | "spotify" | "genres";
 
 const YT_URL_REGEX =
@@ -61,6 +90,31 @@ interface SearchResult {
 interface GenreHitRow extends GenreHit {
   query: string;
 }
+
+const FALLBACK_GENRES: GenreOption[] = [
+  "hardcore",
+  "hardstyle",
+  "house",
+  "techno",
+  "hiphop",
+  "metal",
+  "nederlands",
+  "drum and bass",
+  "trance",
+  "dance",
+  "pop",
+  "rock",
+  "reggaeton",
+  "r&b",
+  "afrobeats",
+  "latin",
+  "edm",
+  "psytrance",
+  "uptempo",
+  "rawstyle",
+  "frenchcore",
+  "gabber",
+].map((name) => ({ id: name, name }));
 
 function formatDuration(seconds: number | null): string {
   if (!seconds) return "";
@@ -87,6 +141,7 @@ export default function QueueAdd() {
   const [genreHits, setGenreHits] = useState<GenreHitRow[]>([]);
   const [genreHitsLoading, setGenreHitsLoading] = useState(false);
   const [activeGenre, setActiveGenre] = useState<string | null>(null);
+  const [genreError, setGenreError] = useState<string | null>(null);
   const mode = useRadioStore((s) => s.mode);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -125,11 +180,35 @@ export default function QueueAdd() {
   }, [serverUrl, source]);
 
   const loadGenres = useCallback((query: string) => {
-    if (!serverUrl) return;
+    if (!serverUrl) {
+      setGenres(FALLBACK_GENRES);
+      setGenreError("Server niet bereikbaar, fallback genres geladen.");
+      return;
+    }
     setGenresLoading(true);
+    setGenreError(null);
     getGenres(query)
-      .then((items) => setGenres(items))
-      .catch(() => setGenres([]))
+      .then((items) => {
+        const normalized = items.filter(
+          (item): item is GenreOption => !!item?.id && !!item?.name,
+        );
+        if (normalized.length > 0) {
+          setGenres(normalized);
+          return;
+        }
+        // Keep UI usable when remote provider returns no genres.
+        setGenres(FALLBACK_GENRES.filter((genre) =>
+          genre.name.toLowerCase().includes(query.trim().toLowerCase()),
+        ));
+      })
+      .catch(() => {
+        const q = query.trim().toLowerCase();
+        const fallback = q
+          ? FALLBACK_GENRES.filter((genre) => genre.name.toLowerCase().includes(q))
+          : FALLBACK_GENRES;
+        setGenres(fallback);
+        setGenreError("Kon genres niet laden van de server, fallback actief.");
+      })
       .finally(() => setGenresLoading(false));
   }, [serverUrl]);
 
@@ -139,8 +218,12 @@ export default function QueueAdd() {
     setActiveGenre(genre);
     getGenreHits(genre, 20)
       .then((items) => {
+        const normalized = items.filter(
+          (item): item is GenreHit =>
+            !!item?.id && !!item?.title && !!item?.artist,
+        );
         setGenreHits(
-          items.map((item) => ({
+          normalized.map((item) => ({
             ...item,
             query: `${item.artist} - ${item.title}`,
           })),
@@ -301,7 +384,8 @@ export default function QueueAdd() {
   }
 
   return (
-    <div ref={wrapperRef} className="relative">
+    <QueueAddErrorBoundary>
+      <div ref={wrapperRef} className="relative">
       <form onSubmit={handleSubmit} className="space-y-2 rounded-xl border border-gray-800 bg-gray-900 p-3 shadow-lg shadow-violet-500/5 sm:p-4">
         <label className="block text-xs font-semibold uppercase tracking-wider text-violet-400">
           Nummer toevoegen
@@ -401,6 +485,9 @@ export default function QueueAdd() {
             </div>
             {genresLoading && (
               <p className="text-xs text-gray-400">Genres laden...</p>
+            )}
+            {genreError && (
+              <p className="text-xs text-amber-300">{genreError}</p>
             )}
             {!genresLoading && genres.length === 0 && (
               <p className="text-xs text-gray-400">Geen genres gevonden. Probeer een andere zoekterm.</p>
@@ -512,6 +599,7 @@ export default function QueueAdd() {
           ))}
         </div>
       )}
-    </div>
+      </div>
+    </QueueAddErrorBoundary>
   );
 }
