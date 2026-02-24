@@ -23,7 +23,7 @@ echo ""
 
 echo "[1/6] Packages installeren/updaten..."
 pkg update -y >/dev/null 2>&1 || true
-pkg install -y nodejs-lts python ffmpeg git curl >/dev/null 2>&1 || true
+pkg install -y nodejs-lts python ffmpeg git curl termux-tools dnsutils >/dev/null 2>&1 || true
 pip install -q yt-dlp || true
 
 if ! command -v cloudflared >/dev/null 2>&1; then
@@ -91,6 +91,18 @@ fi
 echo "[5/6] Scripts uitvoerbaar maken..."
 chmod +x go-live.sh
 mkdir -p /data/data/com.termux/files/home/radio_cache
+mkdir -p "$HOME/bin"
+cat > "$HOME/bin/radio" <<'EOF'
+#!/data/data/com.termux/files/usr/bin/bash
+cd ~/radio-server/server || exit 1
+bash ./go-live.sh
+EOF
+chmod +x "$HOME/bin/radio"
+echo "export PATH=\"$HOME/bin:$PATH\"" > "$HOME/.radio_path_tmp"
+if ! grep -q 'HOME/bin' "$HOME/.bashrc" 2>/dev/null; then
+  cat "$HOME/.radio_path_tmp" >> "$HOME/.bashrc"
+fi
+rm -f "$HOME/.radio_path_tmp"
 
 echo "[6/6] Server starten..."
 echo ""

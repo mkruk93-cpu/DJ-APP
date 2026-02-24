@@ -12,13 +12,24 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
 ensure_dns() {
-  if getent hosts api.trycloudflare.com >/dev/null 2>&1; then
+  if command -v getent >/dev/null 2>&1 && getent hosts api.trycloudflare.com >/dev/null 2>&1; then
+    return 0
+  fi
+  if command -v nslookup >/dev/null 2>&1 && nslookup api.trycloudflare.com >/dev/null 2>&1; then
     return 0
   fi
   echo "[!] DNS lijkt kapot in Termux — herstel proberen..."
   printf "nameserver 1.1.1.1\nnameserver 8.8.8.8\n" > "$PREFIX/etc/resolv.conf" || true
   sleep 1
-  if ! getent hosts api.trycloudflare.com >/dev/null 2>&1; then
+  if command -v getent >/dev/null 2>&1 && getent hosts api.trycloudflare.com >/dev/null 2>&1; then
+    echo "[+] DNS hersteld"
+    return 0
+  fi
+  if command -v nslookup >/dev/null 2>&1 && nslookup api.trycloudflare.com >/dev/null 2>&1; then
+    echo "[+] DNS hersteld"
+    return 0
+  fi
+  if ! ping -c 1 -W 2 api.trycloudflare.com >/dev/null 2>&1; then
     echo "[FOUT] DNS werkt nog niet. Zet Android Private DNS op Automatisch/Uit en probeer opnieuw."
     return 1
   fi
@@ -67,6 +78,10 @@ echo "============================================"
 echo "     Radio Server starten (Termux)..."
 echo "============================================"
 echo ""
+
+# Stop leftovers from previous runs so port 3001 is always free.
+pkill -f "tsx src/server.ts" >/dev/null 2>&1 || true
+pkill -f "cloudflared tunnel --url http://localhost:3001" >/dev/null 2>&1 || true
 
 echo "[+] Server starten..."
 npx tsx src/server.ts &
