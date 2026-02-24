@@ -50,7 +50,9 @@ normalize_url() {
 
 extract_cloudflare_url() {
   local log_file="$1"
-  grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$log_file" 2>/dev/null | head -1
+  grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$log_file" 2>/dev/null \
+    | grep -vE '^https://api\.trycloudflare\.com$' \
+    | head -1
 }
 
 extract_localhostrun_url() {
