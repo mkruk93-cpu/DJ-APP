@@ -39,10 +39,30 @@ ensure_dns() {
 
 extract_url_from_log() {
   local log_file="$1"
-  grep -oE 'https://[A-Za-z0-9._/-]+' "$log_file" 2>/dev/null \
-    | grep -E '(trycloudflare\.com|localhost\.run|pinggy\.link|pinggy\.io)' \
-    | grep -vE '^https://(api\.trycloudflare\.com|www\.cloudflare\.com|developers\.cloudflare\.com)($|/)' \
+  grep -oE 'https://[A-Za-z0-9._/-]+' "$log_file" 2>/dev/null | head -1
+}
+
+normalize_url() {
+  local url="$1"
+  url="${url%%/}"
+  echo "$url"
+}
+
+extract_cloudflare_url() {
+  local log_file="$1"
+  grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$log_file" 2>/dev/null | head -1
+}
+
+extract_localhostrun_url() {
+  local log_file="$1"
+  grep -oE 'https://[A-Za-z0-9-]+\.localhost\.run' "$log_file" 2>/dev/null \
+    | grep -vE '^https://admin\.localhost\.run$' \
     | head -1
+}
+
+extract_pinggy_url() {
+  local log_file="$1"
+  grep -oE 'https://[A-Za-z0-9.-]*pinggy\.(link|io)' "$log_file" 2>/dev/null | head -1
 }
 
 start_tunnel_cloudflare() {
@@ -51,10 +71,11 @@ start_tunnel_cloudflare() {
   cloudflared tunnel --url http://localhost:3001 > "$TUNNEL_LOG" 2>&1 &
   TUNNEL_PID=$!
 
-  for i in $(seq 1 60); do
+  for i in $(seq 1 10); do
     sleep 2
-    TUNNEL_URL=$(extract_url_from_log "$TUNNEL_LOG")
+    TUNNEL_URL=$(extract_cloudflare_url "$TUNNEL_LOG")
     if [ -n "$TUNNEL_URL" ]; then
+      TUNNEL_URL=$(normalize_url "$TUNNEL_URL")
       return 0
     fi
   done
@@ -79,10 +100,11 @@ start_tunnel_localhostrun() {
     -N -R 80:localhost:3001 nokey@localhost.run > "$TUNNEL_LOG" 2>&1 &
   TUNNEL_PID=$!
 
-  for i in $(seq 1 45); do
+  for i in $(seq 1 20); do
     sleep 2
-    TUNNEL_URL=$(extract_url_from_log "$TUNNEL_LOG")
+    TUNNEL_URL=$(extract_localhostrun_url "$TUNNEL_LOG")
     if [ -n "$TUNNEL_URL" ]; then
+      TUNNEL_URL=$(normalize_url "$TUNNEL_URL")
       return 0
     fi
   done
@@ -108,10 +130,11 @@ start_tunnel_pinggy() {
     -N -R0:localhost:3001 a.pinggy.io > "$TUNNEL_LOG" 2>&1 &
   TUNNEL_PID=$!
 
-  for i in $(seq 1 45); do
+  for i in $(seq 1 20); do
     sleep 2
-    TUNNEL_URL=$(extract_url_from_log "$TUNNEL_LOG")
+    TUNNEL_URL=$(extract_pinggy_url "$TUNNEL_LOG")
     if [ -n "$TUNNEL_URL" ]; then
+      TUNNEL_URL=$(normalize_url "$TUNNEL_URL")
       return 0
     fi
   done
