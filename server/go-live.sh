@@ -63,8 +63,7 @@ extract_cloudflare_url() {
 
 extract_localhostrun_url() {
   local log_file="$1"
-  grep -oE 'https://[A-Za-z0-9.-]+' "$log_file" 2>/dev/null \
-    | grep -E '\.(localhost\.run|lhr\.life)$' \
+  grep -oE 'https://[A-Za-z0-9._-]+\.(localhost\.run|lhr\.life)' "$log_file" 2>/dev/null \
     | grep -vE '^https://(admin|www)\.localhost\.run$' \
     | head -1
 }
@@ -168,14 +167,12 @@ start_tunnel_localhostrun() {
     return 1
   fi
   TUNNEL_LOG=$(mktemp)
+  # Keep this close to the known-working manual command:
+  # ssh -o StrictHostKeyChecking=no -N -R 80:localhost:3001 nokey@localhost.run
   ssh -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null \
     -o ServerAliveInterval=30 \
-    -o BatchMode=yes \
-    -o PasswordAuthentication=no \
-    -o NumberOfPasswordPrompts=0 \
-    -o ConnectTimeout=10 \
-    -o ExitOnForwardFailure=yes \
+    -o ConnectTimeout=15 \
     -N -R 80:localhost:3001 nokey@localhost.run > "$TUNNEL_LOG" 2>&1 &
   TUNNEL_PID=$!
 
@@ -363,7 +360,7 @@ fi
 
 if [ -z "$TUNNEL_URL" ]; then
   echo "[FOUT] Kon tunnel URL niet ophalen via alle providers"
-  echo "    Controleer cloudflared output hieronder:"
+  echo "    Controleer tunnel output hieronder:"
   [ -n "$TUNNEL_LOG" ] && tail -n 30 "$TUNNEL_LOG" || true
   rm -f "$TUNNEL_LOG"
   cleanup
