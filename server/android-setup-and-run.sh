@@ -57,6 +57,8 @@ if [ "${RESET_ENV:-n}" = "y" ] || [ "${RESET_ENV:-n}" = "Y" ]; then
   read -r -p "FRONTEND_URL [https://krukkex.vercel.app]: " FRONTEND_URL
   read -r -p "FALLBACK_MUSIC_DIR [~/storage/shared/Music/Krukkex Mixes]: " FALLBACK_MUSIC_DIR
   read -r -p "KEEP_FILES [false]: " KEEP_FILES
+  read -r -p "CLOUDFLARED_TUNNEL_TOKEN (optioneel, named tunnel): " CLOUDFLARED_TUNNEL_TOKEN
+  read -r -p "RADIO_SERVER_URL (optioneel, bijv https://radio.jouwdomein.nl): " RADIO_SERVER_URL
 
   ADMIN_TOKEN="${ADMIN_TOKEN:-Buikspek93.!}"
   FRONTEND_URL="${FRONTEND_URL:-https://krukkex.vercel.app}"
@@ -83,6 +85,8 @@ FRONTEND_URL=$FRONTEND_URL
 DOWNLOAD_PATH=
 REKORDBOX_OUTPUT_PATH=
 FALLBACK_MUSIC_DIR=$FALLBACK_MUSIC_DIR
+CLOUDFLARED_TUNNEL_TOKEN=$CLOUDFLARED_TUNNEL_TOKEN
+RADIO_SERVER_URL=$RADIO_SERVER_URL
 EOF
 
   echo "    .env opgeslagen"

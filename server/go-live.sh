@@ -11,6 +11,12 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
+read_env() {
+  local key="$1"
+  [ -f .env ] || return 0
+  grep -E "^${key}=" .env | cut -d'=' -f2- | tr -d '\r' | head -1
+}
+
 ensure_dns() {
   if command -v getent >/dev/null 2>&1 && getent hosts api.trycloudflare.com >/dev/null 2>&1; then
     return 0
@@ -89,6 +95,34 @@ start_tunnel_cloudflare() {
   return 1
 }
 
+start_tunnel_named() {
+  local token="$1"
+  local public_url="$2"
+  echo "    Tunnel provider: Cloudflare named tunnel"
+  TUNNEL_LOG=$(mktemp)
+  cloudflared tunnel --no-autoupdate run --token "$token" > "$TUNNEL_LOG" 2>&1 &
+  TUNNEL_PID=$!
+
+  for i in $(seq 1 20); do
+    sleep 1
+    if ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
+      break
+    fi
+  done
+
+  if ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
+    echo "    Named tunnel startte niet goed:"
+    tail -n 30 "$TUNNEL_LOG" || true
+    rm -f "$TUNNEL_LOG"
+    TUNNEL_LOG=""
+    TUNNEL_PID=""
+    return 1
+  fi
+
+  TUNNEL_URL=$(normalize_url "$public_url")
+  return 0
+}
+
 start_tunnel_localhostrun() {
   echo "    Tunnel provider: localhost.run (fallback)"
   if ! command -v ssh >/dev/null 2>&1; then
@@ -158,10 +192,9 @@ start_tunnel_pinggy() {
 
 # ── Read ADMIN_TOKEN from .env ──
 
-ADMIN_TOKEN=""
-if [ -f .env ]; then
-  ADMIN_TOKEN=$(grep -E '^ADMIN_TOKEN=' .env | cut -d'=' -f2- | tr -d '\r')
-fi
+ADMIN_TOKEN="$(read_env ADMIN_TOKEN)"
+NAMED_TUNNEL_TOKEN="$(read_env CLOUDFLARED_TUNNEL_TOKEN)"
+NAMED_TUNNEL_URL="$(read_env RADIO_SERVER_URL)"
 
 if [ -z "$ADMIN_TOKEN" ]; then
   echo "[FOUT] Geen ADMIN_TOKEN gevonden in .env"
@@ -203,7 +236,7 @@ echo ""
 
 # Stop leftovers from previous runs so port 3001 is always free.
 pkill -f "tsx src/server.ts" >/dev/null 2>&1 || true
-pkill -f "cloudflared tunnel --url http://localhost:3001" >/dev/null 2>&1 || true
+pkill -f "cloudflared tunnel" >/dev/null 2>&1 || true
 
 echo "[+] Server starten..."
 npx tsx src/server.ts &
@@ -233,11 +266,30 @@ echo "[+] Cloudflare Tunnel starten..."
 ensure_dns || exit 1
 
 echo "    Wachten op tunnel URL..."
-if ! start_tunnel_cloudflare; then
-  echo "    Cloudflare quick tunnel mislukt, fallback starten..."
-  if ! start_tunnel_localhostrun; then
-    echo "    localhost.run mislukt, tweede fallback starten..."
-    start_tunnel_pinggy || true
+if [ -n "$NAMED_TUNNEL_TOKEN" ]; then
+  if [ -z "$NAMED_TUNNEL_URL" ]; then
+    echo "[FOUT] CLOUDFLARED_TUNNEL_TOKEN is gezet, maar RADIO_SERVER_URL ontbreekt in .env"
+    echo "       Zet bv: RADIO_SERVER_URL=https://radio.jouwdomein.nl"
+    cleanup
+    exit 1
+  fi
+  start_tunnel_named "$NAMED_TUNNEL_TOKEN" "$NAMED_TUNNEL_URL" || {
+    echo "    Named tunnel mislukt, quick/fallback proberen..."
+    if ! start_tunnel_cloudflare; then
+      echo "    Cloudflare quick tunnel mislukt, fallback starten..."
+      if ! start_tunnel_localhostrun; then
+        echo "    localhost.run mislukt, tweede fallback starten..."
+        start_tunnel_pinggy || true
+      fi
+    fi
+  }
+else
+  if ! start_tunnel_cloudflare; then
+    echo "    Cloudflare quick tunnel mislukt, fallback starten..."
+    if ! start_tunnel_localhostrun; then
+      echo "    localhost.run mislukt, tweede fallback starten..."
+      start_tunnel_pinggy || true
+    fi
   fi
 fi
 
