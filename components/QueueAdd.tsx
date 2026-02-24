@@ -148,6 +148,7 @@ export default function QueueAdd() {
   const mode = useRadioStore((s) => s.mode);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const genreListRef = useRef<HTMLDivElement>(null);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const GENRE_PAGE_SIZE = 20;
 
@@ -247,7 +248,7 @@ export default function QueueAdd() {
           );
           return deduped;
         });
-        setGenreHitsOffset(offset + mapped.length);
+        setGenreHitsOffset(offset + GENRE_PAGE_SIZE);
         setGenreHasMore(mapped.length >= GENRE_PAGE_SIZE);
       })
       .catch(() => {
@@ -265,20 +266,22 @@ export default function QueueAdd() {
   useEffect(() => {
     if (source !== "genres" || !activeGenre) return;
     const genre = activeGenre;
-    const listEl = genreListRef.current;
-    if (!listEl) return;
+    const root = genreListRef.current;
+    const sentinel = loadMoreRef.current;
+    if (!root || !sentinel) return;
 
-    function onScroll() {
-      if (!listEl) return;
-      if (!genreHasMore || genreHitsLoading || genreHitsLoadingMore) return;
-      const remaining = listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight;
-      if (remaining < 80) {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries.some((entry) => entry.isIntersecting);
+        if (!visible) return;
+        if (!genreHasMore || genreHitsLoading || genreHitsLoadingMore) return;
         loadGenreHits(genre, true);
-      }
-    }
+      },
+      { root, rootMargin: "120px" },
+    );
 
-    listEl.addEventListener("scroll", onScroll);
-    return () => listEl.removeEventListener("scroll", onScroll);
+    observer.observe(sentinel);
+    return () => observer.disconnect();
   }, [source, activeGenre, genreHasMore, genreHitsLoading, genreHitsLoadingMore, loadGenreHits]);
 
   useEffect(() => {
@@ -576,6 +579,7 @@ export default function QueueAdd() {
               {genreHitsLoadingMore && (
                 <p className="px-3 py-2 text-xs text-gray-400">Meer tracks laden...</p>
               )}
+              <div ref={loadMoreRef} className="h-1 w-full" />
             </div>
           </div>
         ) : (

@@ -12,6 +12,9 @@ export interface GenreHitItem {
 }
 
 const LASTFM_API_KEY = process.env.LASTFM_API_KEY?.trim() ?? '';
+const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID?.trim() ?? '';
+const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET?.trim() ?? '';
+let spotifyTokenCache: { token: string; expiresAt: number } | null = null;
 
 const DEFAULT_POPULAR_GENRES = [
   'hardcore',
@@ -138,6 +141,95 @@ async function searchTopTracks(query: string, limit: number, offset: number): Pr
     .slice(0, limit);
 }
 
+async function getSpotifyAppToken(): Promise<string | null> {
+  if (!SPOTIFY_CLIENT_ID || !SPOTIFY_CLIENT_SECRET) return null;
+  if (spotifyTokenCache && Date.now() < spotifyTokenCache.expiresAt) {
+    return spotifyTokenCache.token;
+  }
+
+  const basic = Buffer.from(`${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`).toString('base64');
+  const body = new URLSearchParams({ grant_type: 'client_credentials' });
+  const res = await fetch('https://accounts.spotify.com/api/token', {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${basic}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body,
+    signal: AbortSignal.timeout(6000),
+  });
+  if (!res.ok) {
+    throw new Error(`Spotify token HTTP ${res.status}`);
+  }
+
+  const data = await res.json() as { access_token?: string; expires_in?: number };
+  const token = data.access_token ?? '';
+  if (!token) return null;
+  const ttlMs = Math.max(60, (data.expires_in ?? 3600) - 60) * 1000;
+  spotifyTokenCache = { token, expiresAt: Date.now() + ttlMs };
+  return token;
+}
+
+async function fetchSpotifyTracksByGenre(genre: string, limit: number, offset: number): Promise<GenreHitItem[]> {
+  const token = await getSpotifyAppToken();
+  if (!token) return [];
+
+  const buildQuery = (q: string): string => {
+    const params = new URLSearchParams({
+      q,
+      type: 'track',
+      market: 'NL',
+      limit: String(limit),
+      offset: String(offset),
+    });
+    return `https://api.spotify.com/v1/search?${params}`;
+  };
+
+  const mapItems = (items: Array<Record<string, unknown>>): GenreHitItem[] =>
+    items
+      .map((item) => {
+        const title = String(item.name ?? '').trim();
+        const artists = Array.isArray(item.artists)
+          ? item.artists
+              .map((a) => String((a as { name?: string }).name ?? '').trim())
+              .filter(Boolean)
+              .join(', ')
+          : '';
+        if (!title || !artists) return null;
+        const album = (item.album as { images?: Array<{ url?: string }> } | undefined);
+        const image = album?.images?.[1]?.url ?? album?.images?.[0]?.url ?? '';
+        return {
+          id: String(item.id ?? `${artists}-${title}`).toLowerCase(),
+          title,
+          artist: artists,
+          thumbnail: image,
+          sourceHint: String(((item.external_urls as { spotify?: string } | undefined)?.spotify) ?? ''),
+        } satisfies GenreHitItem;
+      })
+      .filter((hit): hit is GenreHitItem => hit !== null);
+
+  const run = async (q: string): Promise<GenreHitItem[]> => {
+    const res = await fetch(buildQuery(q), {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(7000),
+    });
+    if (!res.ok) {
+      throw new Error(`Spotify search HTTP ${res.status}`);
+    }
+    const data = await res.json() as { tracks?: { items?: Array<Record<string, unknown>> } };
+    return mapItems(data.tracks?.items ?? []).slice(0, limit);
+  };
+
+  try {
+    const tagged = await run(`genre:"${genre}"`);
+    if (tagged.length > 0) return tagged;
+  } catch (err) {
+    console.warn('[discovery] Spotify tagged genre search failed:', (err as Error).message);
+  }
+
+  return run(genre);
+}
+
 async function fetchLastFmTopTracksByGenre(genre: string, limit: number, offset: number): Promise<GenreHitItem[]> {
   if (!LASTFM_API_KEY) return [];
   const page = Math.floor(offset / Math.max(1, limit)) + 1;
@@ -195,6 +287,13 @@ export async function getTopTracksByGenre(genre: string, limit = 20, offset = 0)
   const safeLimit = Math.max(1, Math.min(limit, 50));
   const safeOffset = Math.max(0, offset);
   if (!normalizedGenre) return [];
+
+  try {
+    const spotify = await fetchSpotifyTracksByGenre(normalizedGenre, safeLimit, safeOffset);
+    if (spotify.length > 0) return spotify;
+  } catch (err) {
+    console.warn('[discovery] Spotify genre search failed:', (err as Error).message);
+  }
 
   try {
     const lastFm = await fetchLastFmTopTracksByGenre(normalizedGenre, safeLimit, safeOffset);
