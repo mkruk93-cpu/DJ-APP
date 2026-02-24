@@ -63,8 +63,9 @@ extract_cloudflare_url() {
 
 extract_localhostrun_url() {
   local log_file="$1"
-  grep -oE 'https://[A-Za-z0-9-]+\.localhost\.run' "$log_file" 2>/dev/null \
-    | grep -vE '^https://admin\.localhost\.run$' \
+  grep -oE 'https://[A-Za-z0-9.-]+' "$log_file" 2>/dev/null \
+    | grep -E '\.(localhost\.run|lhr\.life)$' \
+    | grep -vE '^https://(admin|www)\.localhost\.run$' \
     | head -1
 }
 
