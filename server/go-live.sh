@@ -98,6 +98,10 @@ start_tunnel_localhostrun() {
   ssh -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null \
     -o ServerAliveInterval=30 \
+    -o BatchMode=yes \
+    -o PasswordAuthentication=no \
+    -o NumberOfPasswordPrompts=0 \
+    -o ConnectTimeout=10 \
     -o ExitOnForwardFailure=yes \
     -N -R 80:localhost:3001 nokey@localhost.run > "$TUNNEL_LOG" 2>&1 &
   TUNNEL_PID=$!
@@ -128,6 +132,10 @@ start_tunnel_pinggy() {
     -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null \
     -o ServerAliveInterval=30 \
+    -o BatchMode=yes \
+    -o PasswordAuthentication=no \
+    -o NumberOfPasswordPrompts=0 \
+    -o ConnectTimeout=10 \
     -o ExitOnForwardFailure=yes \
     -N -R0:localhost:3001 a.pinggy.io > "$TUNNEL_LOG" 2>&1 &
   TUNNEL_PID=$!
