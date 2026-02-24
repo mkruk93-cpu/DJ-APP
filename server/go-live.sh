@@ -63,16 +63,25 @@ extract_cloudflare_url() {
 
 extract_localhostrun_url() {
   local log_file="$1"
-  local lhr_url
-  lhr_url=$(grep -oE 'https://[A-Za-z0-9.-]+\.lhr\.life' "$log_file" 2>/dev/null | head -1)
-  if [ -n "$lhr_url" ]; then
-    echo "$lhr_url"
-    return 0
-  fi
+  awk '
+    {
+      line = $0
+      while (match(line, /https:\/\/[^[:space:]]+/)) {
+        url = substr(line, RSTART, RLENGTH)
+        sub(/[),.;]+$/, "", url)
+        host = url
+        sub(/^https:\/\//, "", host)
+        sub(/\/.*/, "", host)
 
-  grep -oE 'https://[A-Za-z0-9-]+\.localhost\.run' "$log_file" 2>/dev/null \
-    | grep -vE '^https://(admin|www)\.localhost\.run$' \
-    | head -1
+        if ((host ~ /\.lhr\.life$/ || host ~ /\.localhost\.run$/) && host !~ /^(admin|www)\.localhost\.run$/) {
+          print "https://" host
+          exit
+        }
+
+        line = substr(line, RSTART + RLENGTH)
+      }
+    }
+  ' "$log_file" 2>/dev/null | head -1
 }
 
 extract_pinggy_url() {
