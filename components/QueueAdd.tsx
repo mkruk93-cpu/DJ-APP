@@ -93,27 +93,25 @@ interface GenreHitRow extends GenreHit {
 
 const FALLBACK_GENRES: GenreOption[] = [
   "hardcore",
-  "hardstyle",
-  "house",
-  "techno",
-  "hiphop",
-  "metal",
-  "nederlands",
-  "drum and bass",
-  "trance",
-  "dance",
-  "pop",
-  "rock",
-  "reggaeton",
-  "r&b",
-  "afrobeats",
-  "latin",
-  "edm",
-  "psytrance",
   "uptempo",
+  "gabber",
+  "hardstyle",
   "rawstyle",
   "frenchcore",
-  "gabber",
+  "techno",
+  "hard techno",
+  "trance",
+  "psytrance",
+  "house",
+  "tech house",
+  "drum and bass",
+  "edm",
+  "dance",
+  "hiphop",
+  "nederlandse hiphop",
+  "nederlands",
+  "top 40",
+  "pop",
 ].map((name) => ({ id: name, name }));
 
 function formatDuration(seconds: number | null): string {
@@ -193,7 +191,8 @@ export default function QueueAdd() {
     }
     setGenresLoading(true);
     setGenreError(null);
-    getGenres(query)
+    Promise.resolve()
+      .then(() => getGenres(query))
       .then((items) => {
         const normalized = items.filter(
           (item): item is GenreOption => !!item?.id && !!item?.name,
@@ -230,7 +229,8 @@ export default function QueueAdd() {
       setGenreHasMore(false);
     }
     setActiveGenre(genre);
-    getGenreHits(genre, GENRE_PAGE_SIZE, offset)
+    Promise.resolve()
+      .then(() => getGenreHits(genre, GENRE_PAGE_SIZE, offset))
       .then((items) => {
         const normalized = items.filter(
           (item): item is GenreHit =>

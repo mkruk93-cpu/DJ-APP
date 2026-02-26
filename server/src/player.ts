@@ -51,6 +51,7 @@ function setSkipLock(locked: boolean): void {
 }
 
 const STREAM_DELAY_MS = parseInt(process.env.STREAM_DELAY_MS ?? '8000', 10);
+const STREAM_BITRATE = process.env.STREAM_BITRATE ?? '256k';
 const FALLBACK_MUSIC_DIR_RAW = process.env.FALLBACK_MUSIC_DIR ?? '';
 const FALLBACK_MUSIC_DIR = FALLBACK_MUSIC_DIR_RAW.startsWith('~/')
   ? path.join(homedir(), FALLBACK_MUSIC_DIR_RAW.slice(2))
@@ -241,7 +242,7 @@ function ensureEncoder(): ChildProcess {
       '-ac', '2',
       '-i', 'pipe:0',
       '-acodec', 'libmp3lame',
-      '-b:a', '128k',
+      '-b:a', STREAM_BITRATE,
       '-f', 'mp3',
       '-content_type', 'audio/mpeg',
       icecastUrl,
@@ -256,7 +257,7 @@ function ensureEncoder(): ChildProcess {
       '-ac', '2',
       '-i', 'pipe:0',
       '-acodec', 'libmp3lame',
-      '-b:a', '128k',
+      '-b:a', STREAM_BITRATE,
       '-f', 'mp3',
       'pipe:1',
     ]);

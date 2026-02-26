@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   isSpotifyConnected,
   isSpotifyConfigured,
@@ -26,6 +26,7 @@ function formatDuration(ms: number): string {
 }
 
 type View = "playlists" | "tracks";
+type TrackSource = "liked" | "playlist" | null;
 
 export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowserProps) {
   const [connected, setConnected] = useState(false);
@@ -35,9 +36,15 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
   const [view, setView] = useState<View>("playlists");
   const [selectedPlaylist, setSelectedPlaylist] = useState<SpotifyPlaylist | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [filter, setFilter] = useState("");
   const [addedTrackId, setAddedTrackId] = useState<string | null>(null);
   const [trackError, setTrackError] = useState<string | null>(null);
+  const [playlistsNext, setPlaylistsNext] = useState<string | null>(null);
+  const [tracksNext, setTracksNext] = useState<string | null>(null);
+  const [trackSource, setTrackSource] = useState<TrackSource>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
 
   const configured = isSpotifyConfigured();
 
@@ -50,7 +57,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
   useEffect(() => {
     if (!checkConnection()) return;
     loadUser();
-    loadPlaylists();
+    void loadPlaylists(false);
   }, [checkConnection]);
 
   useEffect(() => {
@@ -58,7 +65,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
       if (e.key === "spotify_token" && e.newValue) {
         setConnected(true);
         loadUser();
-        loadPlaylists();
+        void loadPlaylists(false);
       }
     }
     window.addEventListener("storage", onStorage);
@@ -75,28 +82,49 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
     }
   }
 
-  async function loadPlaylists() {
-    setLoading(true);
-    try {
-      const all: SpotifyPlaylist[] = [];
-      let url = "/me/playlists?limit=50";
+  const appendUniquePlaylists = useCallback((incoming: SpotifyPlaylist[], append: boolean) => {
+    setPlaylists((prev) => {
+      if (!append) return incoming;
+      const map = new Map<string, SpotifyPlaylist>();
+      for (const p of prev) map.set(p.id, p);
+      for (const p of incoming) map.set(p.id, p);
+      return [...map.values()];
+    });
+  }, []);
 
-      while (url) {
-        const data = await spotifyFetch<SpotifyPaginatedResponse<SpotifyPlaylist>>(url);
-        if (!data) { checkConnection(); break; }
-        for (const item of data.items) {
-          if (item?.id && item?.name) all.push(item);
-        }
-        if (data.next) {
-          url = data.next.replace("https://api.spotify.com/v1", "");
-        } else {
-          break;
-        }
+  const appendUniqueTracks = useCallback((incoming: SpotifyTrackItem[], append: boolean) => {
+    setTracks((prev) => {
+      if (!append) return incoming;
+      const map = new Map<string, SpotifyTrackItem>();
+      for (const t of prev) {
+        const key = (t.id || `${t.name}-${t.artists?.map((a) => a?.name).join(",") || "unknown"}`).toLowerCase();
+        map.set(key, t);
       }
+      for (const t of incoming) {
+        const key = (t.id || `${t.name}-${t.artists?.map((a) => a?.name).join(",") || "unknown"}`).toLowerCase();
+        map.set(key, t);
+      }
+      return [...map.values()];
+    });
+  }, []);
 
-      setPlaylists(all);
+  async function loadPlaylists(append: boolean) {
+    if (append) setLoadingMore(true);
+    else setLoading(true);
+    try {
+      const url = append ? playlistsNext : "/me/playlists?limit=30";
+      if (!url) return;
+      const data = await spotifyFetch<SpotifyPaginatedResponse<SpotifyPlaylist>>(url);
+      if (!data) {
+        checkConnection();
+        return;
+      }
+      const items = data.items.filter((item) => !!item?.id && !!item?.name);
+      appendUniquePlaylists(items, append);
+      setPlaylistsNext(data.next ? data.next.replace("https://api.spotify.com/v1", "") : null);
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   }
 
@@ -105,83 +133,78 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
     return !!(t.id || t.name);
   }
 
-  async function openPlaylist(playlist: SpotifyPlaylist) {
-    setSelectedPlaylist(playlist);
-    setView("tracks");
-    setFilter("");
-    setLoading(true);
+  async function loadPlaylistTracks(playlist: SpotifyPlaylist, append: boolean) {
+    if (append) setLoadingMore(true);
+    else setLoading(true);
     setTrackError(null);
-
     try {
-      const all: SpotifyTrackItem[] = [];
-      let url = `/playlists/${playlist.id}/tracks?limit=100`;
-
-      while (url) {
-        const raw = await spotifyFetch<Record<string, unknown>>(url);
-
-        if (!raw) {
-          setTrackError(`Kan playlist "${playlist.name}" nu niet laden.`);
-          checkConnection();
-          break;
-        }
-
-        const items = Array.isArray(raw.items) ? raw.items : [];
-
-        for (const item of items) {
-          const t = (item as any)?.track;
-          if (t && (t.id || t.name)) {
-            all.push(t as SpotifyTrackItem);
-          }
-        }
-
-        const next = raw.next as string | null;
-        if (next) {
-          url = next.replace("https://api.spotify.com/v1", "");
-        } else {
-          break;
-        }
+      const initialUrl = `/playlists/${playlist.id}/tracks?limit=50&additional_types=track&market=from_token`;
+      const url = append ? tracksNext : initialUrl;
+      if (!url) return;
+      const data = await spotifyFetch<SpotifyPaginatedResponse<{ track: SpotifyTrackItem | null }>>(url);
+      if (!data) {
+        setTrackError(`Kan playlist "${playlist.name}" nu niet laden.`);
+        checkConnection();
+        return;
       }
-
-      setTracks(all);
-      if (all.length === 0 && !trackError) {
-        setTrackError(`Geen nummers gevonden in "${playlist.name}". Mogelijk zijn alle tracks lokale bestanden of niet beschikbaar.`);
+      const items = data.items
+        .map((item) => item?.track)
+        .filter((t): t is SpotifyTrackItem => isValidTrack(t));
+      appendUniqueTracks(items, append);
+      setTracksNext(data.next ? data.next.replace("https://api.spotify.com/v1", "") : null);
+      if (!append && items.length === 0) {
+        setTrackError(`Geen nummers gevonden in "${playlist.name}".`);
       }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setTrackError(`Fout bij laden: ${msg}`);
     } finally {
       setLoading(false);
+      setLoadingMore(false);
+    }
+  }
+
+  async function openPlaylist(playlist: SpotifyPlaylist) {
+    setSelectedPlaylist(playlist);
+    setTrackSource("playlist");
+    setView("tracks");
+    setFilter("");
+    setTracks([]);
+    setTracksNext(null);
+    await loadPlaylistTracks(playlist, false);
+  }
+
+  async function loadLikedSongs(append: boolean) {
+    if (append) setLoadingMore(true);
+    else setLoading(true);
+    setTrackError(null);
+    try {
+      const url = append ? tracksNext : "/me/tracks?limit=50";
+      if (!url) return;
+      const data = await spotifyFetch<SpotifyPaginatedResponse<{ track: SpotifyTrackItem | null }>>(url);
+      if (!data) {
+        checkConnection();
+        return;
+      }
+      const items = data.items
+        .map((item) => item?.track)
+        .filter((t): t is SpotifyTrackItem => isValidTrack(t));
+      appendUniqueTracks(items, append);
+      setTracksNext(data.next ? data.next.replace("https://api.spotify.com/v1", "") : null);
+      if (!append && items.length === 0) {
+        setTrackError("Geen nummers gevonden in Liked Songs.");
+      }
+    } finally {
+      setLoading(false);
+      setLoadingMore(false);
     }
   }
 
   async function openLikedSongs() {
     setSelectedPlaylist({ id: "liked", name: "Liked Songs", images: [], tracks: { total: 0 }, owner: { display_name: "" } });
+    setTrackSource("liked");
     setView("tracks");
     setFilter("");
-    setTrackError(null);
-    setLoading(true);
-
-    try {
-      const all: SpotifyTrackItem[] = [];
-      let url = "/me/tracks?limit=50";
-
-      while (url) {
-        const data = await spotifyFetch<SpotifyPaginatedResponse<{ track: SpotifyTrackItem }>>(url);
-        if (!data) { checkConnection(); break; }
-        for (const item of data.items) {
-          if (isValidTrack(item?.track)) all.push(item.track);
-        }
-        if (data.next) {
-          url = data.next.replace("https://api.spotify.com/v1", "");
-        } else {
-          break;
-        }
-      }
-
-      setTracks(all);
-    } finally {
-      setLoading(false);
-    }
+    setTracks([]);
+    setTracksNext(null);
+    await loadLikedSongs(false);
   }
 
   function handleAddTrack(track: SpotifyTrackItem) {
@@ -200,8 +223,46 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
     setUser(null);
     setPlaylists([]);
     setTracks([]);
+    setPlaylistsNext(null);
+    setTracksNext(null);
+    setTrackSource(null);
     setView("playlists");
   }
+
+  async function loadMore() {
+    if (loading || loadingMore) return;
+    if (view === "playlists") {
+      if (!playlistsNext) return;
+      await loadPlaylists(true);
+      return;
+    }
+    if (!tracksNext) return;
+    if (trackSource === "liked") {
+      await loadLikedSongs(true);
+      return;
+    }
+    if (trackSource === "playlist" && selectedPlaylist) {
+      await loadPlaylistTracks(selectedPlaylist, true);
+    }
+  }
+
+  useEffect(() => {
+    const root = listRef.current;
+    const sentinel = loadMoreRef.current;
+    if (!root || !sentinel) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries.some((entry) => entry.isIntersecting);
+        if (!visible) return;
+        void loadMore();
+      },
+      { root, rootMargin: "140px" },
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [view, playlistsNext, tracksNext, trackSource, selectedPlaylist, loading, loadingMore]);
 
   if (!configured) {
     return (
@@ -247,13 +308,20 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
   });
 
   return (
-    <div className="flex max-h-[36vh] flex-col gap-1.5 overflow-hidden">
+    <div className="flex max-h-[40vh] flex-col gap-1.5 overflow-hidden">
       {/* Header + navigation */}
       <div className="flex shrink-0 items-center justify-between">
         {view === "tracks" ? (
           <button
             type="button"
-            onClick={() => { setView("playlists"); setTracks([]); setFilter(""); setTrackError(null); }}
+            onClick={() => {
+              setView("playlists");
+              setTracks([]);
+              setTracksNext(null);
+              setTrackSource(null);
+              setFilter("");
+              setTrackError(null);
+            }}
             className="flex items-center gap-1 text-xs text-violet-400 transition hover:text-violet-300"
           >
             <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -294,11 +362,11 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
 
       {/* Playlist list */}
       {view === "playlists" && !loading && (
-        <div className="min-h-0 flex-1 space-y-px overflow-y-auto">
+        <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto">
           {/* Liked Songs */}
           <button
             type="button"
-            onClick={openLikedSongs}
+            onClick={() => { void openLikedSongs(); }}
             className="flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left transition hover:bg-gray-800/80"
           >
             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-gradient-to-br from-[#450AF5] to-[#C4EFD9]">
@@ -317,7 +385,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
               <button
                 type="button"
                 key={pl.id}
-                onClick={() => openPlaylist(pl)}
+                onClick={() => { void openPlaylist(pl); }}
                 className="flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left transition hover:bg-gray-800/80"
               >
                 {plImg ? (
@@ -348,6 +416,12 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
               Geen playlists gevonden
             </p>
           )}
+          {loadingMore && (
+            <p className="py-2 text-center text-[11px] text-gray-500">
+              Meer playlists laden...
+            </p>
+          )}
+          <div ref={loadMoreRef} className="h-1 w-full" />
         </div>
       )}
 
@@ -357,7 +431,10 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
           <p className="text-[11px] text-yellow-400">{trackError}</p>
           <button
             type="button"
-            onClick={() => { if (selectedPlaylist && selectedPlaylist.id !== "liked") openPlaylist(selectedPlaylist); }}
+            onClick={() => {
+              if (trackSource === "liked") void loadLikedSongs(false);
+              if (trackSource === "playlist" && selectedPlaylist) void openPlaylist(selectedPlaylist);
+            }}
             className="mt-1 text-[11px] text-violet-400 transition hover:text-violet-300"
           >
             Opnieuw proberen
@@ -367,11 +444,11 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
 
       {/* Track list */}
       {view === "tracks" && !loading && (
-        <div className="min-h-0 flex-1 space-y-px overflow-y-auto">
+        <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto">
           {filteredTracks.map((track) => {
             const artists = track.artists?.map((a) => a?.name).filter(Boolean).join(", ") || "";
             const imgs = track.album?.images;
-            const albumImg = imgs?.[imgs.length - 1]?.url;
+            const albumImg = imgs?.[0]?.url ?? imgs?.[imgs.length - 1]?.url;
             const isAdded = addedTrackId === track.id;
 
             return (
@@ -390,10 +467,10 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
                   <img
                     src={albumImg}
                     alt=""
-                    className="h-8 w-8 shrink-0 rounded object-cover"
+                    className="h-10 w-10 shrink-0 rounded object-cover"
                   />
                 ) : (
-                  <div className="h-8 w-8 shrink-0 rounded bg-gray-800" />
+                  <div className="h-10 w-10 shrink-0 rounded bg-gray-800" />
                 )}
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-xs font-medium text-white">{track.name}</p>
@@ -422,6 +499,12 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
               Geen nummers gevonden
             </p>
           )}
+          {loadingMore && (
+            <p className="py-2 text-center text-[11px] text-gray-500">
+              Meer nummers laden...
+            </p>
+          )}
+          <div ref={loadMoreRef} className="h-1 w-full" />
         </div>
       )}
     </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, Component, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { getSupabase } from "@/lib/supabaseClient";
 import { connectSocket, disconnectSocket, getSocket } from "@/lib/socket";
@@ -21,6 +21,42 @@ import type { Track, QueueItem, Mode, ModeSettings, VoteState, DurationVote } fr
 
 type StreamMode = "twitch" | "audio" | "radio" | "offline";
 type MobileTab = "chat" | "requests" | "radio";
+
+class RadioPanelErrorBoundary extends Component<
+  { children: ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error) {
+    console.warn("[radio-panel] Render error:", error);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="rounded-xl border border-red-900/60 bg-red-950/30 p-3 text-sm text-red-200">
+          Er ging iets mis in het radio-paneel.
+          <button
+            type="button"
+            onClick={() => this.setState({ hasError: false })}
+            className="ml-2 text-xs text-violet-300 transition hover:text-violet-200"
+          >
+            Opnieuw proberen
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export default function StreamPage() {
   const router = useRouter();
@@ -232,7 +268,7 @@ export default function StreamPage() {
 
       <main className="flex min-h-0 flex-1 flex-col gap-2 p-2 sm:gap-4 sm:p-4 lg:flex-row">
         {/* Player */}
-        <div className="shrink-0 lg:flex-1 lg:min-h-0 lg:overflow-y-auto">
+        <div className="shrink-0 lg:min-w-0 lg:flex-1 lg:min-h-0 lg:overflow-y-auto">
           {mode === "twitch" && <TwitchPlayer />}
           {mode === "audio" && icecastUrl && (
             <AudioPlayer src={icecastUrl} radioTrack={radioConnected ? radioTrack : undefined} showFallback={!suppressFallback} />
@@ -317,7 +353,7 @@ export default function StreamPage() {
         </div>
 
         {/* Content panels */}
-        <div className="flex min-h-0 flex-1 flex-col gap-2 lg:flex-[2] lg:flex-row lg:gap-4">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 lg:min-w-0 lg:flex-[2] lg:flex-row lg:gap-4">
           <div className={`min-h-0 min-w-0 flex-1 ${activeTab === "chat" ? "" : "hidden"} lg:block`}>
             <ChatBox onNewMessage={() => { if (activeTabRef.current !== "chat") setChatBadge(true); }} />
           </div>
@@ -327,8 +363,10 @@ export default function StreamPage() {
             </div>
           )}
           <div className={`min-h-0 min-w-0 flex-1 overflow-y-auto flex-col gap-2 ${activeTab === "radio" ? "flex" : "hidden"} lg:flex`}>
-            <QueueAdd />
-            <Queue />
+            <RadioPanelErrorBoundary>
+              <QueueAdd />
+              <Queue />
+            </RadioPanelErrorBoundary>
           </div>
         </div>
       </main>

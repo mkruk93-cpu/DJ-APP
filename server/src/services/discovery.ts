@@ -18,28 +18,28 @@ let spotifyTokenCache: { token: string; expiresAt: number } | null = null;
 
 const DEFAULT_POPULAR_GENRES = [
   'hardcore',
-  'hardstyle',
-  'house',
-  'techno',
-  'hiphop',
-  'metal',
-  'nederlands',
-  'drum and bass',
-  'trance',
-  'dance',
-  'pop',
-  'rock',
-  'reggaeton',
-  'r&b',
-  'afrobeats',
-  'latin',
-  'edm',
-  'psytrance',
   'uptempo',
+  'gabber',
+  'hardstyle',
   'rawstyle',
   'frenchcore',
-  'gabber',
+  'techno',
+  'hard techno',
+  'trance',
+  'psytrance',
+  'house',
+  'tech house',
+  'drum and bass',
+  'edm',
+  'dance',
+  'hiphop',
+  'nederlandse hiphop',
+  'nederlands',
+  'top 40',
+  'pop',
 ];
+
+const ALLOWED_GENRE_SET = new Set(DEFAULT_POPULAR_GENRES.map((g) => normalizeGenreName(g)));
 
 function normalizeGenreName(name: string): string {
   return name.trim().toLowerCase();
@@ -116,16 +116,6 @@ async function fetchDeezerGenres(): Promise<GenreItem[]> {
 
 export async function searchGenres(query?: string): Promise<GenreItem[]> {
   const uniqueGenres = makeUniqueGenreMap();
-
-  try {
-    const deezerGenres = await fetchDeezerGenres();
-    for (const genre of deezerGenres) {
-      uniqueGenres.set(normalizeGenreName(genre.name), genre);
-    }
-  } catch (err) {
-    console.warn('[discovery] Genre provider failed, using fallback list:', (err as Error).message);
-  }
-
   const q = normalizeGenreName(query ?? '');
   let items = [...uniqueGenres.values()];
   if (q) {
@@ -325,8 +315,8 @@ export async function getTopTracksByGenre(genre: string, limit = 20, offset = 0)
   const normalizedGenre = genre.trim();
   const safeLimit = Math.max(1, Math.min(limit, 50));
   const safeOffset = Math.max(0, offset);
-  const hints = getGenreHints(normalizedGenre);
   if (!normalizedGenre) return [];
+  if (!ALLOWED_GENRE_SET.has(normalizeGenreName(normalizedGenre))) return [];
 
   try {
     const spotify = await fetchSpotifyTracksByGenre(normalizedGenre, safeLimit, safeOffset);
@@ -334,25 +324,5 @@ export async function getTopTracksByGenre(genre: string, limit = 20, offset = 0)
   } catch (err) {
     console.warn('[discovery] Spotify genre search failed:', (err as Error).message);
   }
-
-  try {
-    const lastFm = await fetchLastFmTopTracksByGenre(normalizedGenre, safeLimit, safeOffset);
-    if (lastFm.length > 0) return lastFm;
-  } catch (err) {
-    console.warn('[discovery] Last.fm genre search failed:', (err as Error).message);
-  }
-
-  try {
-    const strict = await searchTopTracks(`genre:"${hints.deezer}"`, safeLimit, safeOffset);
-    if (strict.length > 0) return strict;
-  } catch (err) {
-    console.warn('[discovery] Strict genre search failed:', (err as Error).message);
-  }
-
-  try {
-    return await searchTopTracks(hints.deezer, safeLimit, safeOffset);
-  } catch (err) {
-    console.warn('[discovery] Fallback genre search failed:', (err as Error).message);
-    return [];
-  }
+  return [];
 }
