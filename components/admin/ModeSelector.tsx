@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRadioStore } from "@/lib/radioStore";
 import { setMode as apiSetMode } from "@/lib/radioApi";
+import { getSupabase } from "@/lib/supabaseClient";
 import type { Mode } from "@/lib/types";
 import { MODE_LABELS } from "@/lib/types";
 
@@ -20,9 +21,31 @@ export default function ModeSelector() {
   const serverUrl = useRadioStore((s) => s.serverUrl);
   const [status, setStatus] = useState<string | null>(null);
 
+  async function ensureFreshServerUrl(): Promise<boolean> {
+    try {
+      const { data } = await getSupabase()
+        .from("settings")
+        .select("radio_server_url")
+        .eq("id", 1)
+        .single();
+      const freshUrl = (data?.radio_server_url ?? "").trim().replace(/\/+$/, "");
+      if (freshUrl) {
+        useRadioStore.getState().setServerUrl(freshUrl);
+        return true;
+      }
+    } catch {}
+    return !!(useRadioStore.getState().serverUrl ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL);
+  }
+
   async function selectMode(mode: Mode) {
     setStatus(`Wijzigen naar ${MODE_LABELS[mode]}...`);
     try {
+      const hasUrl = await ensureFreshServerUrl();
+      if (!hasUrl) {
+        setStatus("✗ Fout: geen radio server URL gevonden");
+        setTimeout(() => setStatus(null), 4000);
+        return;
+      }
       await apiSetMode(mode);
       setStatus(`✓ ${MODE_LABELS[mode]} actief`);
     } catch (err) {
