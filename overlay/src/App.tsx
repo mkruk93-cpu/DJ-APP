@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { Rnd } from "react-rnd";
 import type {
@@ -61,6 +61,8 @@ function App() {
   const [resolvedIds, setResolvedIds] = useState<Record<string, string>>({});
   const [lastError, setLastError] = useState<string>("");
   const [connectionText, setConnectionText] = useState("Connecting...");
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const clickThroughRef = useRef<boolean | null>(null);
 
   const supabase: SupabaseClient | null = useMemo(() => {
     if (!settings.supabaseUrl || !settings.supabaseAnonKey) return null;
@@ -135,8 +137,34 @@ function App() {
 
   useEffect(() => {
     saveSettings(settings);
-    window.overlayHost?.setClickThrough(settings.clickThrough);
   }, [settings]);
+
+  useEffect(() => {
+    function applyClickThrough(enabled: boolean) {
+      if (clickThroughRef.current === enabled) return;
+      clickThroughRef.current = enabled;
+      window.overlayHost?.setClickThrough(enabled);
+    }
+
+    if (settings.clickThrough) {
+      applyClickThrough(true);
+      return;
+    }
+
+    // Smart passthrough: interactive panels remain clickable, transparent regions click through.
+    const onMouseMove = (e: MouseEvent) => {
+      const target = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+      const isInteractive = !!target?.closest('[data-overlay-interactive="true"]');
+      applyClickThrough(!isInteractive);
+    };
+
+    applyClickThrough(true);
+    window.addEventListener("mousemove", onMouseMove);
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      applyClickThrough(false);
+    };
+  }, [settings.clickThrough]);
 
   useEffect(() => {
     if (!settings.apiBaseUrl) return;
@@ -280,6 +308,12 @@ function App() {
   }, [nowPlaying, openRequests]);
 
   useEffect(() => {
+    const el = chatScrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [chatMessages]);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) && e.key !== "Escape") return;
       if (e.key === "Escape") {
@@ -323,7 +357,10 @@ function App() {
     <div className="h-full w-full p-3">
       {settings.showTopBar && (
         <>
-          <div className="mb-3 flex items-center gap-2 rounded-lg border border-gray-700/70 bg-gray-900/85 px-3 py-2 text-xs">
+          <div
+            data-overlay-interactive="true"
+            className="mb-3 flex items-center gap-2 rounded-lg border border-gray-700/70 bg-gray-900/85 px-3 py-2 text-xs"
+          >
             <span className="font-semibold text-violet-300">DJ Overlay</span>
             <span className={connectionText === "Connected" ? "text-green-300" : "text-yellow-300"}>
               {connectionText}
@@ -354,7 +391,10 @@ function App() {
             </button>
           </div>
 
-          <div className="mb-3 grid grid-cols-1 gap-2 rounded-lg border border-gray-700/70 bg-gray-900/85 p-3 text-xs md:grid-cols-4">
+          <div
+            data-overlay-interactive="true"
+            className="mb-3 grid grid-cols-1 gap-2 rounded-lg border border-gray-700/70 bg-gray-900/85 p-3 text-xs md:grid-cols-4"
+          >
             <input
               className="rounded border border-gray-700 bg-gray-800 px-2 py-1"
               value={settings.apiBaseUrl}
@@ -391,6 +431,7 @@ function App() {
 
       {settings.showChat && (
         <Rnd
+          data-overlay-interactive="true"
           bounds="window"
           size={{ width: chatLayout.width, height: chatLayout.height }}
           position={{ x: chatLayout.x, y: chatLayout.y }}
@@ -406,11 +447,11 @@ function App() {
           disableDragging={settings.lockLayout || settings.clickThrough}
           enableResizing={!settings.lockLayout && !settings.clickThrough}
         >
-          <div className="overlay-panel flex h-full flex-col overflow-hidden">
+          <div data-overlay-interactive="true" className="overlay-panel flex h-full flex-col overflow-hidden">
             <div className="border-b border-gray-700/70 px-3 py-2 text-sm font-semibold text-violet-300">
               Chat
             </div>
-            <div className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-2 text-sm">
+            <div ref={chatScrollRef} className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-2 text-sm">
               {chatMessages.map((m) => (
                 <div key={m.id}>
                   <span className="font-semibold text-violet-300">{m.nickname}</span>
@@ -425,6 +466,7 @@ function App() {
 
       {settings.showRequests && (
         <Rnd
+          data-overlay-interactive="true"
           bounds="window"
           size={{ width: requestLayout.width, height: requestLayout.height }}
           position={{ x: requestLayout.x, y: requestLayout.y }}
@@ -440,7 +482,7 @@ function App() {
           disableDragging={settings.lockLayout || settings.clickThrough}
           enableResizing={!settings.lockLayout && !settings.clickThrough}
         >
-          <div className="overlay-panel flex h-full flex-col overflow-hidden">
+          <div data-overlay-interactive="true" className="overlay-panel flex h-full flex-col overflow-hidden">
             <div className="border-b border-gray-700/70 px-3 py-2">
               <div className="text-sm font-semibold text-violet-300">Verzoekjes ({openRequests.length} open)</div>
               <div className="mt-1 text-xs text-gray-300">
