@@ -419,8 +419,8 @@ export default function QueueAdd() {
     }
   }
 
-  function handleSpotifyAdd(searchQuery: string) {
-    submitUrl(searchQuery);
+  function handleSpotifyAdd(track: { query: string; artist?: string | null; title?: string | null }) {
+    submitUrl(track.query);
   }
 
   return (
