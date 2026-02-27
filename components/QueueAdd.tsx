@@ -324,7 +324,7 @@ export default function QueueAdd() {
 
   function submitUrl(url: string, thumbnail?: string) {
     setSubmitting(true);
-    setFeedback({ msg: "Even checken...", ok: true });
+    setFeedback({ msg: "Aanvraag verstuurd...", ok: true });
     setShowResults(false);
 
     const nickname =
@@ -340,25 +340,11 @@ export default function QueueAdd() {
       cleanup();
     }
 
-    function onInfo(data: { message: string }) {
-      setFeedback({ msg: data.message, ok: true });
-    }
-
-    function onQueueUpdate() {
-      showFeedback("Toegevoegd aan de wachtrij!", true);
-      setInput("");
-      cleanup();
-    }
-
     function cleanup() {
       socket.off("error:toast", onError);
-      socket.off("info:toast", onInfo);
-      socket.off("queue:update", onQueueUpdate);
     }
 
     socket.on("error:toast", onError);
-    socket.on("info:toast", onInfo);
-    socket.on("queue:update", onQueueUpdate);
 
     socket.emit("queue:add", {
       youtube_url: url,
@@ -367,12 +353,13 @@ export default function QueueAdd() {
       ...(thumbnail ? { thumbnail } : {}),
     });
 
+    // Do not block consecutive submissions while server validates this one.
+    setSubmitting(false);
+    setInput("");
+
     setTimeout(() => {
-      if (submitting) {
-        cleanup();
-        setSubmitting(false);
-      }
-    }, 30_000);
+      cleanup();
+    }, 10_000);
   }
 
   function handleSubmit(e: React.FormEvent) {
