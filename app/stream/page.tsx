@@ -244,7 +244,11 @@ export default function StreamPage() {
     : process.env.NEXT_PUBLIC_STREAM_URL ?? icecastUrl;
 
   return (
-    <div className="flex h-dvh flex-col overflow-hidden">
+    <div className="relative flex h-dvh flex-col overflow-hidden">
+      <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
+        <div className="player-ambient absolute -left-20 top-10 h-72 w-72 rounded-full bg-violet-500/15 blur-3xl" />
+        <div className="player-ambient absolute bottom-0 right-0 h-80 w-80 rounded-full bg-fuchsia-500/10 blur-3xl" />
+      </div>
       {/* Header */}
       <header className="relative z-50 border-b border-gray-800 bg-gray-900/80 px-3 py-2 backdrop-blur-sm sm:px-6 sm:py-3">
         <div className="flex items-center justify-between">

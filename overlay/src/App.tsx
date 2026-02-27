@@ -63,6 +63,7 @@ function App() {
   const [connectionText, setConnectionText] = useState("Connecting...");
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const clickThroughRef = useRef<boolean | null>(null);
+  const [sessionStartedAt] = useState<string>(() => new Date().toISOString());
 
   const supabase: SupabaseClient | null = useMemo(() => {
     if (!settings.supabaseUrl || !settings.supabaseAnonKey) return null;
@@ -75,11 +76,19 @@ function App() {
 
   const openRequests = useMemo(() => {
     return requests.filter(
-      (r) =>
-        (r.status === "pending" || r.status === "approved" || r.status === "downloaded") &&
-        !resolvedIds[r.id],
+      (r) => {
+        const requestTs = Date.parse(r.created_at ?? "");
+        const sessionTs = Date.parse(sessionStartedAt);
+        const isFromThisSession =
+          Number.isFinite(requestTs) && Number.isFinite(sessionTs) ? requestTs >= sessionTs : false;
+        return (
+          isFromThisSession &&
+          (r.status === "pending" || r.status === "approved" || r.status === "downloaded") &&
+          !resolvedIds[r.id]
+        );
+      },
     );
-  }, [requests, resolvedIds]);
+  }, [requests, resolvedIds, sessionStartedAt]);
 
   const selectedRequest = useMemo(
     () => openRequests.find((r) => r.id === selectedId) ?? openRequests[0] ?? null,

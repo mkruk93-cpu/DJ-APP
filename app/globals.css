@@ -22,3 +22,97 @@ body {
   background: #4c1d95;
   border-radius: 3px;
 }
+
+@keyframes player-cover-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes player-ambient-float {
+  0%,
+  100% {
+    transform: translateY(0px) scale(1);
+  }
+  50% {
+    transform: translateY(-6px) scale(1.03);
+  }
+}
+
+.player-cover-ring {
+  animation: player-cover-spin 16s linear infinite;
+}
+
+@keyframes player-cover-drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(0, -2px, 0) scale(1.02);
+  }
+}
+
+@keyframes player-cover-flip-30s {
+  0%,
+  90% {
+    transform: rotateY(0deg);
+  }
+  100% {
+    transform: rotateY(360deg);
+  }
+}
+
+.player-cover-glow {
+  animation: player-ambient-float 4.8s ease-in-out infinite;
+}
+
+.player-cover-art {
+  animation:
+    player-cover-drift 8s ease-in-out infinite,
+    player-cover-flip-30s 30s cubic-bezier(0.22, 0.62, 0.2, 1) infinite;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+.player-ambient {
+  animation: player-ambient-float 7s ease-in-out infinite;
+}
+
+.audio-player-shell {
+  --player-bass: 0;
+  --kick-hit: 0;
+  --kick-phase: 0;
+}
+
+.player-kick-sweep {
+  background:
+    repeating-radial-gradient(
+      140% 120% at 100% 100%,
+      rgba(196, 181, 253, 0.26) 0 2px,
+      rgba(196, 181, 253, 0) 2px 18px
+    ),
+    radial-gradient(78% 95% at 100% 100%, rgba(236, 72, 153, 0.26), transparent 70%);
+  mix-blend-mode: screen;
+  opacity: calc(0.04 + (var(--kick-hit) * 0.3));
+  background-position-x: calc(var(--kick-phase) * -2px), calc(var(--kick-phase) * -1px);
+  transform-origin: 100% 100%;
+  filter: blur(0.3px) saturate(calc(1 + (var(--kick-hit) * 0.55)));
+  transition: opacity 65ms linear, filter 75ms ease-out, background-position 65ms linear;
+}
+
+.player-bass-wash {
+  background:
+    radial-gradient(135% 95% at 10% 100%, rgba(168, 85, 247, 0.34), transparent 53%),
+    radial-gradient(135% 95% at 90% 100%, rgba(236, 72, 153, 0.28), transparent 56%),
+    linear-gradient(to top, rgba(139, 92, 246, 0.14), transparent 64%);
+  mix-blend-mode: screen;
+  opacity: calc(0.08 + (var(--player-bass) * 0.7));
+  transform: scale(calc(1 + (var(--player-bass) * 0.06)));
+  transform-origin: 50% 100%;
+  filter: saturate(calc(1 + (var(--player-bass) * 0.75))) brightness(calc(0.96 + (var(--player-bass) * 0.12)));
+  transition: opacity 55ms linear, transform 70ms ease-out, filter 70ms ease-out;
+}

@@ -616,11 +616,17 @@ export default function QueueAdd() {
               onClick={() => selectResult(r)}
               className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition hover:bg-gray-800/80 first:rounded-t-xl last:rounded-b-xl"
             >
-              <img
-                src={r.thumbnail}
-                alt=""
-                className="h-12 w-16 shrink-0 rounded-md object-cover"
-              />
+              {r.thumbnail ? (
+                <img
+                  src={r.thumbnail}
+                  alt=""
+                  className="h-12 w-16 shrink-0 rounded-md object-cover"
+                />
+              ) : (
+                <div className="flex h-12 w-16 shrink-0 items-center justify-center rounded-md bg-gray-800 text-[10px] text-gray-500">
+                  no art
+                </div>
+              )}
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium text-white">{r.title}</p>
                 <div className="flex items-center gap-2">

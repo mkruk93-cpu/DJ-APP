@@ -61,8 +61,35 @@ export function startBridge(sb: SupabaseClient, downloadPath: string): void {
   fs.mkdirSync(downloadPath, { recursive: true });
   console.log(`[bridge] Started — download folder: ${downloadPath}`);
   const inFlight = new Set<string>();
+  const lockDir = path.join(downloadPath, '.bridge-locks');
+  fs.mkdirSync(lockDir, { recursive: true });
+  let pollRunning = false;
+
+  function acquireLock(id: string): string | null {
+    const lockPath = path.join(lockDir, `${id}.lock`);
+    try {
+      const fd = fs.openSync(lockPath, 'wx');
+      fs.closeSync(fd);
+      return lockPath;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (code === 'EEXIST') return null;
+      throw err;
+    }
+  }
+
+  function releaseLock(lockPath: string | null): void {
+    if (!lockPath) return;
+    try {
+      fs.unlinkSync(lockPath);
+    } catch {
+      /* ignore */
+    }
+  }
 
   async function poll(): Promise<void> {
+    if (pollRunning) return;
+    pollRunning = true;
     try {
       const { data, error } = await sb
         .from('requests')
@@ -76,26 +103,58 @@ export function startBridge(sb: SupabaseClient, downloadPath: string): void {
 
       for (const row of (data ?? []) as RequestRow[]) {
         if (inFlight.has(row.id)) continue;
+        const lockPath = acquireLock(row.id);
+        if (!lockPath) continue;
         inFlight.add(row.id);
         console.log(`[bridge] Downloading: ${row.url} voor ${row.nickname}`);
         try {
+          const { data: stillApproved, error: checkErr } = await sb
+            .from('requests')
+            .select('id,status')
+            .eq('id', row.id)
+            .eq('status', 'approved')
+            .maybeSingle();
+          if (checkErr) {
+            console.error(`[bridge] Check error for ${row.id}: ${checkErr.message}`);
+            continue;
+          }
+          if (!stillApproved) {
+            continue;
+          }
+
           await downloadRequest(row, downloadPath);
-          await sb.from('requests').update({ status: 'downloaded' }).eq('id', row.id);
+          const { error: updateErr } = await sb
+            .from('requests')
+            .update({ status: 'downloaded' })
+            .eq('id', row.id);
+          if (updateErr) {
+            console.error(`[bridge] Failed to mark downloaded for ${row.id}: ${updateErr.message}`);
+            continue;
+          }
           console.log(`[bridge] Done: ${row.url}`);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           console.error(`[bridge] Download error: ${msg}`);
           try {
-            await sb.from('requests').update({ status: 'rejected' }).eq('id', row.id);
+            const { error: rejectErr } = await sb
+              .from('requests')
+              .update({ status: 'rejected' })
+              .eq('id', row.id);
+            if (rejectErr) {
+              console.error(`[bridge] Failed to mark rejected for ${row.id}: ${rejectErr.message}`);
+            }
           } catch {
             /* ignore */
           }
         } finally {
           inFlight.delete(row.id);
+          releaseLock(lockPath);
         }
       }
     } catch (err) {
       console.error('[bridge] Poll error:', err);
+    } finally {
+      pollRunning = false;
     }
   }
 

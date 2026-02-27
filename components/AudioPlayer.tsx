@@ -27,6 +27,7 @@ function formatTime(seconds: number): string {
 
 export default function AudioPlayer({ src, radioTrack, showFallback = false, preferSupabase = false }: AudioPlayerProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const playerRef = useRef<HTMLDivElement>(null);
   const [playing, setPlaying] = useState(false);
   const [volume, setVolume] = useState(0.8);
   const [track, setTrack] = useState<NowPlayingData>({ title: null, artist: null, artwork_url: null });
@@ -157,7 +158,33 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   );
 
   return (
-    <div className="relative w-full overflow-hidden rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5">
+    <div
+      ref={playerRef}
+      className="audio-player-shell relative w-full overflow-hidden rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5"
+    >
+      <div className="player-kick-sweep pointer-events-none absolute inset-0 z-0" />
+      <div className="player-bass-wash pointer-events-none absolute inset-0 z-0" />
+      {displayArtwork && (
+        <>
+          <div className="pointer-events-none absolute inset-y-0 left-0 z-0 w-[62%] max-w-[260px] overflow-hidden sm:w-[48%] sm:max-w-[320px]">
+            <img
+              src={displayArtwork}
+              alt=""
+              className="h-full w-full scale-105 object-cover blur-2xl"
+              style={{
+                opacity: 0.16,
+                filter: "saturate(1.05)",
+                WebkitMaskImage:
+                  "linear-gradient(to right, rgba(0,0,0,0.95), rgba(0,0,0,0.5) 72%, rgba(0,0,0,0))",
+                maskImage:
+                  "linear-gradient(to right, rgba(0,0,0,0.95), rgba(0,0,0,0.5) 72%, rgba(0,0,0,0))",
+              }}
+            />
+            <div className="absolute inset-0 bg-gradient-to-r from-gray-900/25 via-gray-900/10 to-transparent" />
+          </div>
+          <div className={`player-ambient pointer-events-none absolute -inset-8 rounded-[2rem] bg-violet-500/15 blur-3xl ${playing ? "opacity-100" : "opacity-50"}`} />
+        </>
+      )}
       <audio
         ref={audioRef}
         crossOrigin="anonymous"
@@ -202,15 +229,23 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
       )}
 
       {/* Mobile: compact horizontal layout */}
-      <div className="flex flex-col sm:hidden">
+      <div className="relative z-[1] flex flex-col sm:hidden">
         <div className="flex items-center gap-3 p-3">
-          {displayArtwork ? (
-            <img src={displayArtwork} alt="" className="h-14 w-14 shrink-0 rounded-lg object-cover" />
-          ) : (
-            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-gray-800">
-              {artworkFallback}
-            </div>
-          )}
+          <div className="relative shrink-0" style={{ perspective: "900px" }}>
+            {playing && <div className="player-cover-glow absolute -inset-1 rounded-xl bg-violet-500/30 blur-md" />}
+            {displayArtwork ? (
+              <img
+                src={displayArtwork}
+                alt=""
+                className={`relative h-14 w-14 rounded-lg object-cover ${playing ? "player-cover-art" : ""}`}
+              />
+            ) : (
+              <div className="relative flex h-14 w-14 items-center justify-center rounded-lg bg-gray-800">
+                {artworkFallback}
+              </div>
+            )}
+            {playing && <div className="player-cover-ring absolute -inset-1 rounded-xl border border-violet-300/50" />}
+          </div>
 
           <div className="min-w-0 flex-1">
             {hasTrack ? (
@@ -277,28 +312,38 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
 
         {playing && (
           <div className="px-3 pb-2">
-            <AudioVisualizer audioRef={audioRef} playing={playing} barCount={24} className="h-8" />
+            <AudioVisualizer audioRef={audioRef} hostRef={playerRef} playing={playing} barCount={24} className="h-8" />
           </div>
         )}
       </div>
 
       {/* Desktop: compact horizontal layout */}
-      <div className="hidden items-center gap-4 px-4 py-4 sm:flex">
-        {displayArtwork ? (
-          <img
-            src={displayArtwork}
-            alt=""
-            className={`h-24 w-24 shrink-0 rounded-xl object-cover shadow-lg ${
-              playing ? "shadow-violet-500/20" : "shadow-black/30"
-            }`}
-          />
-        ) : (
-          <div className={`flex h-24 w-24 shrink-0 items-center justify-center rounded-xl bg-gray-800 ${
-            playing ? "shadow-lg shadow-violet-500/20" : ""
-          }`}>
-            {artworkFallback}
-          </div>
-        )}
+      <div className="relative z-[1] hidden items-center gap-4 px-4 py-4 sm:flex">
+        <div className="relative shrink-0" style={{ perspective: "1100px" }}>
+          {playing && <div className="player-cover-glow absolute -inset-2 rounded-2xl bg-violet-500/30 blur-xl" />}
+          {displayArtwork ? (
+            <img
+              src={displayArtwork}
+              alt=""
+              className={`relative h-24 w-24 rounded-xl object-cover shadow-lg ${playing ? "player-cover-art" : ""} ${
+                playing ? "shadow-violet-500/20" : "shadow-black/30"
+              }`}
+            />
+          ) : (
+            <div className={`relative flex h-24 w-24 items-center justify-center rounded-xl bg-gray-800 ${
+              playing ? "shadow-lg shadow-violet-500/20" : ""
+            }`}>
+              {artworkFallback}
+            </div>
+          )}
+          {playing && (
+            <div className="player-cover-ring absolute -inset-1 rounded-2xl border border-violet-300/40" />
+          )}
+          {playing && (
+            <div className="player-cover-ring absolute -inset-3 rounded-[1.15rem] border border-fuchsia-300/30" />
+          )}
+          <div className="pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-t from-black/30 to-transparent" />
+        </div>
 
         <div className="flex min-w-0 flex-1 flex-col gap-2">
           {hasTrack && (
@@ -377,7 +422,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
           </div>
 
           {playing && (
-            <AudioVisualizer audioRef={audioRef} playing={playing} barCount={48} className="h-10" />
+            <AudioVisualizer audioRef={audioRef} hostRef={playerRef} playing={playing} barCount={48} className="h-10" />
           )}
         </div>
       </div>
