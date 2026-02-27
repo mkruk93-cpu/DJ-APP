@@ -6,7 +6,6 @@ import { connectSocket, disconnectSocket, getSocket } from "@/lib/socket";
 import { useRadioStore } from "@/lib/radioStore";
 import { getRadioToken, setRadioToken, clearRadioToken } from "@/lib/auth";
 import { skipTrack as apiSkipTrack, setKeepFiles as apiSetKeepFiles } from "@/lib/radioApi";
-import AdminRequestCard from "@/components/AdminRequestCard";
 import ModeSelector from "@/components/admin/ModeSelector";
 import ModeSettings from "@/components/admin/ModeSettings";
 import QueueManager from "@/components/admin/QueueManager";
@@ -17,34 +16,15 @@ import PlayedHistory from "@/components/admin/PlayedHistory";
 import DurationVotePanel from "@/components/DurationVote";
 import type { Track, QueueItem, Mode, ModeSettings as ModeSettingsType, VoteState, DurationVote } from "@/lib/types";
 
-interface Request {
-  id: string;
-  nickname: string;
-  url: string;
-  title: string | null;
-  artist: string | null;
-  thumbnail: string | null;
-  status: string;
-  created_at: string;
-}
-
 const ADMIN_PASSWORD = process.env.NEXT_PUBLIC_ADMIN_PASSWORD;
-
-const statusOrder: Record<string, number> = { pending: 0, approved: 1, downloaded: 2, rejected: 3 };
-
-type AdminTab = "requests" | "radio";
 
 export default function AdminPage() {
   const [authenticated, setAuthenticated] = useState(false);
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const [requests, setRequests] = useState<Request[]>([]);
   const [autoApprove, setAutoApprove] = useState(false);
-  const [icecastUrl, setIcecastUrl] = useState("");
-  const [icecastSaved, setIcecastSaved] = useState(false);
   const [radioServerUrl, setRadioServerUrl] = useState("");
   const [radioUrlSaved, setRadioUrlSaved] = useState(false);
-  const [activeTab, setActiveTab] = useState<AdminTab>("requests");
 
   // Radio admin auth
   const [radioToken, setRadioTokenState] = useState("");
@@ -154,17 +134,6 @@ export default function AdminPage() {
     store.getState().setServerUrl(nextUrl || null);
   }, [radioServerUrl, store]);
 
-  const loadRequests = useCallback(async () => {
-    const { data } = await getSupabase()
-      .from("requests")
-      .select("*")
-      .order("created_at", { ascending: false });
-    if (data) {
-      const sorted = [...data].sort((a, b) => (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9));
-      setRequests(sorted);
-    }
-  }, []);
-
   const loadSettings = useCallback(async () => {
     const { data, error } = await getSupabase()
       .from("settings")
@@ -177,7 +146,6 @@ export default function AdminPage() {
     }
     if (data) {
       setAutoApprove(data.auto_approve ?? false);
-      setIcecastUrl(data.icecast_url ?? "");
       const rUrl = data.radio_server_url ?? "";
       setRadioServerUrl(rUrl);
       store.getState().setServerUrl(rUrl || null);
@@ -186,26 +154,14 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (!authenticated) return;
-    loadRequests();
     loadSettings();
-
-    const sb = getSupabase();
-    const channel = sb
-      .channel("admin-requests")
-      .on<Request>(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "requests" },
-        () => { loadRequests(); }
-      )
-      .subscribe();
 
     const settingsInterval = setInterval(() => { loadSettings(); }, 10_000);
 
     return () => {
-      sb.removeChannel(channel);
       clearInterval(settingsInterval);
     };
-  }, [authenticated, loadRequests, loadSettings]);
+  }, [authenticated, loadSettings]);
 
   function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -226,15 +182,6 @@ export default function AdminPage() {
       .from("settings")
       .update({ auto_approve: next })
       .eq("id", 1);
-  }
-
-  async function saveIcecastUrl() {
-    await getSupabase()
-      .from("settings")
-      .update({ icecast_url: icecastUrl.trim() || null })
-      .eq("id", 1);
-    setIcecastSaved(true);
-    setTimeout(() => setIcecastSaved(false), 2000);
   }
 
   async function saveRadioServerUrl() {
@@ -302,104 +249,44 @@ export default function AdminPage() {
       <header className="border-b border-gray-800 bg-gray-900/80 px-6 py-4 backdrop-blur-sm">
         <div className="flex items-center justify-between">
           <h1 className="text-lg font-bold text-white">Admin Dashboard</h1>
-          <div className="flex items-center gap-4">
-            {activeTab === "requests" && (
-              <button
-                onClick={toggleAutoApprove}
-                className="flex items-center gap-2 rounded-lg border border-gray-700 px-3 py-1.5 text-sm transition hover:border-gray-600"
-              >
-                <span
-                  className={`inline-block h-3 w-3 rounded-full ${autoApprove ? "bg-green-400 shadow-sm shadow-green-400/50" : "bg-gray-600"}`}
-                />
-                <span className={autoApprove ? "font-semibold text-green-400" : "text-gray-400"}>
-                  {autoApprove ? "AUTO AAN" : "HANDMATIG"}
-                </span>
-              </button>
-            )}
-
-            <button
-              onClick={() => {
-                sessionStorage.removeItem("admin_auth");
-                clearRadioToken();
-                setAuthenticated(false);
-                setRadioAuthed(false);
-              }}
-              className="rounded-lg border border-gray-700 px-3 py-1.5 text-sm text-gray-400 transition hover:border-gray-600 hover:text-white"
-            >
-              Uitloggen
-            </button>
-          </div>
-        </div>
-
-        {/* Tab bar */}
-        <div className="mt-3 flex gap-1 rounded-lg bg-gray-800/60 p-1">
           <button
-            onClick={() => setActiveTab("requests")}
-            className={`flex-1 rounded-md px-4 py-2 text-sm font-semibold transition ${
-              activeTab === "requests"
-                ? "bg-violet-600 text-white shadow-sm"
-                : "text-gray-400 hover:text-white"
-            }`}
+            onClick={() => {
+              sessionStorage.removeItem("admin_auth");
+              clearRadioToken();
+              setAuthenticated(false);
+              setRadioAuthed(false);
+            }}
+            className="rounded-lg border border-gray-700 px-3 py-1.5 text-sm text-gray-400 transition hover:border-gray-600 hover:text-white"
           >
-            Verzoekjes
-          </button>
-          <button
-            onClick={() => setActiveTab("radio")}
-            className={`flex-1 rounded-md px-4 py-2 text-sm font-semibold transition ${
-              activeTab === "radio"
-                ? "bg-violet-600 text-white shadow-sm"
-                : "text-gray-400 hover:text-white"
-            }`}
-          >
-            Radio
-            {radioConnected && (
-              <span className="ml-2 inline-block h-2 w-2 rounded-full bg-green-400" />
-            )}
+            Uitloggen
           </button>
         </div>
       </header>
 
-      {/* Verzoekjes tab (existing) */}
-      {activeTab === "requests" && (
-        <main className="mx-auto max-w-4xl space-y-3 p-6">
-          <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
-            <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-gray-500">
-              Audio Stream URL (Icecast)
-            </label>
-            <div className="flex gap-2">
-              <input
-                type="url"
-                value={icecastUrl}
-                onChange={(e) => setIcecastUrl(e.target.value)}
-                placeholder="https://....trycloudflare.com/stream"
-                className="flex-1 rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
-              />
-              <button
-                onClick={saveIcecastUrl}
-                className="shrink-0 rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-violet-500"
-              >
-                {icecastSaved ? "Opgeslagen!" : "Opslaan"}
-              </button>
-            </div>
-            <p className="mt-1.5 text-xs text-gray-500">
-              {icecastUrl ? "Audio stream is actief op de website." : "Leeg = audio stream uit."}
+      <main className="mx-auto max-w-4xl space-y-4 p-6">
+        <div className="flex items-center justify-between rounded-xl border border-gray-800 bg-gray-900 p-4">
+          <div>
+            <p className="text-sm font-semibold text-white">DJ verzoekjes intake</p>
+            <p className="text-xs text-gray-500">
+              {autoApprove
+                ? "Automatisch binnenhalen (direct approved)"
+                : "Handmatig accepteren/afwijzen (blijft pending)"}
             </p>
           </div>
+          <button
+            onClick={toggleAutoApprove}
+            className="flex items-center gap-2 rounded-lg border border-gray-700 px-3 py-1.5 text-sm transition hover:border-gray-600"
+          >
+            <span
+              className={`inline-block h-3 w-3 rounded-full ${autoApprove ? "bg-green-400 shadow-sm shadow-green-400/50" : "bg-gray-600"}`}
+            />
+            <span className={autoApprove ? "font-semibold text-green-400" : "text-gray-400"}>
+              {autoApprove ? "AUTOMATISCH" : "HANDMATIG"}
+            </span>
+          </button>
+        </div>
 
-          {requests.length === 0 && (
-            <p className="py-20 text-center text-gray-500">Geen verzoekjes gevonden.</p>
-          )}
-          {requests.map((r) => (
-            <AdminRequestCard key={r.id} request={r} onUpdate={loadRequests} />
-          ))}
-        </main>
-      )}
-
-      {/* Radio tab */}
-      {activeTab === "radio" && (
-        <main className="mx-auto max-w-4xl space-y-4 p-6">
-          {/* Radio server URL */}
-          <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
+        <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
             <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-gray-500">
               Radio Server URL (Cloudflare Tunnel)
             </label>
@@ -425,38 +312,38 @@ export default function AdminPage() {
                   ? `Verbinden met ${effectiveServerUrl.slice(0, 40)}...`
                   : "Plak hier de Cloudflare Tunnel URL van je radio server."}
             </p>
-          </div>
+        </div>
 
           {/* Radio admin auth */}
-          {radioConnected && !radioAuthed && (
-            <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
-              <h3 className="mb-3 text-sm font-semibold text-white">Radio Admin Token</h3>
-              <form onSubmit={handleRadioAuth} className="flex gap-2">
-                <input
-                  type="password"
-                  value={radioToken}
-                  onChange={(e) => { setRadioTokenState(e.target.value); setRadioAuthError(""); }}
-                  placeholder="Admin token van de server"
-                  className="flex-1 rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
-                />
-                <button
-                  type="submit"
-                  className="shrink-0 rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-violet-500"
-                >
-                  Verifieer
-                </button>
-              </form>
-              {radioAuthError && <p className="mt-2 text-sm text-red-400">{radioAuthError}</p>}
-            </div>
-          )}
+        {radioConnected && !radioAuthed && (
+          <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
+            <h3 className="mb-3 text-sm font-semibold text-white">Radio Admin Token</h3>
+            <form onSubmit={handleRadioAuth} className="flex gap-2">
+              <input
+                type="password"
+                value={radioToken}
+                onChange={(e) => { setRadioTokenState(e.target.value); setRadioAuthError(""); }}
+                placeholder="Admin token van de server"
+                className="flex-1 rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
+              />
+              <button
+                type="submit"
+                className="shrink-0 rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-violet-500"
+              >
+                Verifieer
+              </button>
+            </form>
+            {radioAuthError && <p className="mt-2 text-sm text-red-400">{radioAuthError}</p>}
+          </div>
+        )}
 
           {/* Radio admin controls */}
-          {radioConnected && radioAuthed && (
-            <>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <ListenerCount />
-                <StreamStatus />
-              </div>
+        {radioConnected && radioAuthed && (
+          <>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <ListenerCount />
+              <StreamStatus />
+            </div>
 
               {/* Keep files toggle */}
               <div className="flex items-center justify-between rounded-xl border border-gray-800 bg-gray-900 p-4">
@@ -488,8 +375,8 @@ export default function AdminPage() {
                 </button>
               </div>
 
-              <ModeSelector />
-              <ModeSettings />
+            <ModeSelector />
+            <ModeSettings />
 
               {/* Now playing + skip */}
               {radioTrack && (
@@ -516,14 +403,13 @@ export default function AdminPage() {
                 </div>
               )}
 
-              <DurationVotePanel />
-              <QueueAdd />
-              <QueueManager />
-              <PlayedHistory />
-            </>
-          )}
-        </main>
-      )}
+            <DurationVotePanel />
+            <QueueAdd />
+            <QueueManager />
+            <PlayedHistory />
+          </>
+        )}
+      </main>
     </div>
   );
 }

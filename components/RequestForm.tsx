@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback, useId } from "react";
-import { getSupabase } from "@/lib/supabaseClient";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useRadioStore } from "@/lib/radioStore";
 import { isSpotifyConfigured } from "@/lib/spotify";
 import { getGenres, getGenreHits, type GenreOption, type GenreHit } from "@/lib/radioApi";
@@ -34,9 +33,7 @@ interface GenreHitRow extends GenreHit {
 }
 
 const URL_REGEX = /^https?:\/\/(www\.)?(youtube\.com|youtu\.be|soundcloud\.com)\/.+$/i;
-const MAX_QUEUE = 3;
 const COOLDOWN_SEC = 20;
-const MAX_DURATION_SEC = 10 * 60;
 const GENRE_PAGE_SIZE = 20;
 
 const FALLBACK_GENRES: GenreOption[] = [
@@ -95,21 +92,16 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
   const genreListRef = useRef<HTMLDivElement>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const channelId = useId();
   const nickname = typeof window !== "undefined" ? localStorage.getItem("nickname") ?? "anon" : "anon";
   const serverUrl = useRadioStore((s) => s.serverUrl) ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
 
-  const myActiveRequests = allRequests.filter(
-    (r) => r.nickname === nickname && (r.status === "pending" || r.status === "approved")
-  );
-
   const load = useCallback(async () => {
-    const { data } = await getSupabase()
-      .from("requests")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(15);
-    if (data) setAllRequests(data);
+    try {
+      const res = await fetch("/api/requests");
+      if (!res.ok) return;
+      const payload = (await res.json()) as { items?: Request[] };
+      setAllRequests(payload.items ?? []);
+    } catch {}
   }, []);
 
   const search = useCallback((query: string) => {
@@ -203,19 +195,11 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
   }, [serverUrl, genreHitsOffset]);
 
   useEffect(() => {
-    const sb = getSupabase();
     load();
-
-    const channel = sb
-      .channel(`requests-${channelId}`)
-      .on<Request>(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "requests" },
-        () => { load(); onNewRequest?.(); }
-      )
-      .subscribe();
-
-    return () => { sb.removeChannel(channel); };
+    const interval = setInterval(() => {
+      load();
+    }, 5000);
+    return () => clearInterval(interval);
   }, [load]);
 
   useEffect(() => {
@@ -293,7 +277,6 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
     }
 
     setSubmitting(true);
-    const sb = getSupabase();
     let finalUrl = trimmed;
     let finalThumb: string | null = providedThumb ?? null;
 
@@ -308,49 +291,21 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
       finalThumb = finalThumb ?? resolved.thumbnail ?? null;
     }
 
-    let meta = { title: null as string | null, artist: null as string | null, thumbnail: null as string | null, duration_seconds: null as number | null };
-    try {
-      const res = await fetch(`/api/metadata?url=${encodeURIComponent(finalUrl)}`);
-      if (res.ok) meta = await res.json();
-    } catch { /* proceed without metadata */ }
-
-    if (meta.duration_seconds && meta.duration_seconds > MAX_DURATION_SEC) {
-      const mins = Math.ceil(meta.duration_seconds / 60);
-      setSubmitting(false);
-      setFeedback({ msg: `Dit nummer is ${mins} minuten — maximaal 10 minuten toegestaan.`, ok: false });
-      return;
-    }
-
-    if (myActiveRequests.length >= MAX_QUEUE) {
-      const oldest = [...myActiveRequests].sort(
-        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-      )[0];
-      if (oldest) {
-        await sb.from("requests").delete().eq("id", oldest.id);
-      }
-    }
-
-    let initialStatus = "pending";
-    const { data: settings } = await sb
-      .from("settings")
-      .select("auto_approve")
-      .eq("id", 1)
-      .single();
-    if (settings?.auto_approve) initialStatus = "approved";
-
-    const { error } = await sb.from("requests").insert({
-      nickname,
-      url: finalUrl,
-      title: meta.title,
-      artist: meta.artist,
-      thumbnail: finalThumb ?? meta.thumbnail,
-      status: initialStatus,
+    const res = await fetch("/api/requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        nickname,
+        url: finalUrl,
+        thumbnail: finalThumb ?? null,
+      }),
     });
 
     setSubmitting(false);
 
-    if (error) {
-      setFeedback({ msg: "Er ging iets mis. Probeer opnieuw.", ok: false });
+    if (!res.ok) {
+      const payload = (await res.json().catch(() => ({}))) as { error?: string };
+      setFeedback({ msg: payload.error ?? "Er ging iets mis. Probeer opnieuw.", ok: false });
       return;
     }
 
@@ -360,6 +315,8 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
     setCooldownLeft(COOLDOWN_SEC);
     setFeedback({ msg: "Verzoekje ingediend!", ok: true });
     setTimeout(() => setFeedback(null), 3000);
+    load();
+    onNewRequest?.();
   }
 
   async function handleSubmit(e: React.FormEvent) {
