@@ -14,6 +14,9 @@ CREATE TABLE requests (
   title       text,
   artist      text,
   thumbnail   text,
+  source      text,
+  genre       text,
+  genre_confidence text CHECK (genre_confidence IN ('explicit', 'artist_based', 'unknown')),
   status      text DEFAULT 'pending'
                    CHECK (status IN ('pending', 'approved', 'downloaded', 'rejected', 'error')),
   created_at  timestamptz DEFAULT now()
@@ -23,6 +26,11 @@ CREATE TABLE requests (
 -- ALTER TABLE requests ADD COLUMN IF NOT EXISTS title text;
 -- ALTER TABLE requests ADD COLUMN IF NOT EXISTS artist text;
 -- ALTER TABLE requests ADD COLUMN IF NOT EXISTS thumbnail text;
+-- ALTER TABLE requests ADD COLUMN IF NOT EXISTS source text;
+-- ALTER TABLE requests ADD COLUMN IF NOT EXISTS genre text;
+-- ALTER TABLE requests ADD COLUMN IF NOT EXISTS genre_confidence text;
+-- ALTER TABLE requests DROP CONSTRAINT IF EXISTS requests_genre_confidence_check;
+-- ALTER TABLE requests ADD CONSTRAINT requests_genre_confidence_check CHECK (genre_confidence IN ('explicit', 'artist_based', 'unknown'));
 -- ALTER TABLE requests DROP CONSTRAINT IF EXISTS requests_status_check;
 -- ALTER TABLE requests ADD CONSTRAINT requests_status_check CHECK (status IN ('pending', 'approved', 'downloaded', 'rejected', 'error'));
 

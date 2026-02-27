@@ -13,6 +13,9 @@ interface Request {
   title: string | null;
   artist: string | null;
   thumbnail: string | null;
+  source?: string | null;
+  genre?: string | null;
+  genre_confidence?: "explicit" | "artist_based" | "unknown" | null;
   status: string;
   created_at: string;
 }
@@ -268,7 +271,17 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
     }
   }
 
-  async function submitRequest(rawInput: string, preferredSource: "youtube" | "soundcloud", providedThumb?: string) {
+  async function submitRequest(
+    rawInput: string,
+    preferredSource: "youtube" | "soundcloud",
+    options?: {
+      providedThumb?: string;
+      source?: string;
+      genre?: string | null;
+      artist?: string | null;
+      title?: string | null;
+    },
+  ) {
     const trimmed = rawInput.trim();
 
     if (cooldownLeft > 0) {
@@ -278,7 +291,7 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
 
     setSubmitting(true);
     let finalUrl = trimmed;
-    let finalThumb: string | null = providedThumb ?? null;
+    let finalThumb: string | null = options?.providedThumb ?? null;
 
     if (!URL_REGEX.test(trimmed)) {
       const resolved = await resolveToUrl(trimmed, preferredSource);
@@ -297,6 +310,10 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
       body: JSON.stringify({
         nickname,
         url: finalUrl,
+        source: options?.source ?? preferredSource,
+        genre: options?.genre ?? null,
+        artist: options?.artist ?? null,
+        title: options?.title ?? null,
         thumbnail: finalThumb ?? null,
       }),
     });
@@ -353,7 +370,12 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
     setResults([]);
     setShowResults(false);
     const preferredSource = source === "soundcloud" ? "soundcloud" : "youtube";
-    await submitRequest(result.url, preferredSource, result.thumbnail || undefined);
+    await submitRequest(result.url, preferredSource, {
+      providedThumb: result.thumbnail || undefined,
+      source: preferredSource,
+      title: result.title,
+      artist: result.channel,
+    });
   }
 
   function switchSource(newSource: SearchSource) {
@@ -378,8 +400,12 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
     }
   }
 
-  async function handleSpotifyAdd(searchQuery: string) {
-    await submitRequest(searchQuery, "youtube");
+  async function handleSpotifyAdd(track: { query: string; artist?: string | null; title?: string | null }) {
+    await submitRequest(track.query, "youtube", {
+      source: "spotify",
+      artist: track.artist ?? null,
+      title: track.title ?? null,
+    });
   }
 
   return (
@@ -484,7 +510,15 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
                     </div>
                     <button
                       type="button"
-                      onClick={() => submitRequest(item.query, "youtube", item.thumbnail || undefined)}
+                      onClick={() =>
+                        submitRequest(item.query, "youtube", {
+                          providedThumb: item.thumbnail || undefined,
+                          source: "genres",
+                          genre: activeGenre ?? null,
+                          artist: item.artist,
+                          title: item.title,
+                        })
+                      }
                       disabled={submitting}
                       className="rounded-md bg-violet-600 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-violet-500 disabled:opacity-50"
                     >
@@ -574,6 +608,12 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
                       <p className="truncate text-sm font-medium text-white">{r.title}</p>
                       {r.artist && (
                         <p className="truncate text-xs text-gray-400">{r.artist}</p>
+                      )}
+                      {r.genre && (
+                        <p className="truncate text-xs text-fuchsia-300">
+                          Genre: {r.genre}
+                          {r.genre_confidence === "artist_based" ? " (op artiest)" : ""}
+                        </p>
                       )}
                     </>
                   ) : (

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getRequestMetadata } from "@/app/api/_lib/metadata";
+import { resolveGenre, type GenreConfidence } from "@/app/api/_lib/genre";
 
 const MAX_QUEUE = 3;
 const COOLDOWN_SEC = 20;
@@ -15,6 +16,9 @@ interface RequestRow {
   title: string | null;
   artist: string | null;
   thumbnail: string | null;
+  source: string | null;
+  genre: string | null;
+  genre_confidence: GenreConfidence | null;
   status: RequestStatus;
   created_at: string;
 }
@@ -66,7 +70,10 @@ export async function POST(request: NextRequest) {
       title?: string | null;
       artist?: string | null;
       thumbnail?: string | null;
+      source?: string | null;
+      genre?: string | null;
     };
+    const source = (body.source ?? "").trim() || "direct";
 
     const nickname = (body.nickname ?? "").trim() || "anon";
     const inputUrl = (body.url ?? "").trim();
@@ -112,6 +119,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const resolvedArtist = (body.artist ?? metadata.artist ?? "").trim() || null;
+    const resolvedTitle = (body.title ?? metadata.title ?? "").trim() || null;
+    const genreInfo = resolveGenre({
+      explicitGenre: body.genre,
+      artist: resolvedArtist,
+    });
+
     const active = recent.filter(
       (row) => row.status === "pending" || row.status === "approved",
     );
@@ -137,9 +151,12 @@ export async function POST(request: NextRequest) {
       .insert({
         nickname,
         url: inputUrl,
-        title: body.title ?? metadata.title,
-        artist: body.artist ?? metadata.artist,
+        title: resolvedTitle,
+        artist: resolvedArtist,
         thumbnail: body.thumbnail ?? metadata.thumbnail,
+        source,
+        genre: genreInfo.genre,
+        genre_confidence: genreInfo.confidence,
         status,
       })
       .select("*")

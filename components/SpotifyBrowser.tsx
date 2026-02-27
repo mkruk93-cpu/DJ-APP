@@ -14,7 +14,7 @@ import {
 } from "@/lib/spotify";
 
 interface SpotifyBrowserProps {
-  onAddTrack: (searchQuery: string) => void;
+  onAddTrack: (track: { query: string; artist?: string | null; title?: string | null }) => void;
   submitting: boolean;
 }
 
@@ -220,7 +220,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
       const artists = track.artists?.map((a) => a?.name).filter(Boolean).join(", ") || "Unknown";
       const query = `${artists} - ${track.name ?? "Unknown"}`;
       setAddedTrackId(track.id);
-      onAddTrack(query);
+      onAddTrack({ query, artist: artists, title: track.name ?? null });
       setTimeout(() => setAddedTrackId(null), 3000);
     } catch {}
   }

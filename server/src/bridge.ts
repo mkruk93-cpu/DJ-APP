@@ -60,6 +60,7 @@ export function startBridge(sb: SupabaseClient, downloadPath: string): void {
 
   fs.mkdirSync(downloadPath, { recursive: true });
   console.log(`[bridge] Started — download folder: ${downloadPath}`);
+  const inFlight = new Set<string>();
 
   async function poll(): Promise<void> {
     try {
@@ -74,6 +75,8 @@ export function startBridge(sb: SupabaseClient, downloadPath: string): void {
       }
 
       for (const row of (data ?? []) as RequestRow[]) {
+        if (inFlight.has(row.id)) continue;
+        inFlight.add(row.id);
         console.log(`[bridge] Downloading: ${row.url} voor ${row.nickname}`);
         try {
           await downloadRequest(row, downloadPath);
@@ -87,6 +90,8 @@ export function startBridge(sb: SupabaseClient, downloadPath: string): void {
           } catch {
             /* ignore */
           }
+        } finally {
+          inFlight.delete(row.id);
         }
       }
     } catch (err) {

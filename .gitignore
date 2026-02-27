@@ -8,6 +8,7 @@ out/
 # Environment
 .env.local
 bridge/.env
+overlay/.env
 
 # OS
 .DS_Store
