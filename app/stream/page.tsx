@@ -80,13 +80,19 @@ export default function StreamPage() {
   const [preferRadioUi, setPreferRadioUi] = useState(false);
 
   const showRequests = twitchLive || (radioConnected && radioMode === "dj");
-  const showRadioPanel = true;
+  const showRadioPanel = radioMode !== "dj";
 
   useEffect(() => {
     if (!showRequests && activeTab === "requests") {
       setActiveTab(radioConnected ? "radio" : "chat");
     }
   }, [showRequests, activeTab, radioConnected]);
+
+  useEffect(() => {
+    if (!showRadioPanel && activeTab === "radio") {
+      setActiveTab(showRequests ? "requests" : "chat");
+    }
+  }, [showRadioPanel, activeTab, showRequests]);
 
   useEffect(() => {
     const nickname = localStorage.getItem("nickname");
@@ -97,7 +103,7 @@ export default function StreamPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.has("code")) {
-      handleSpotifyCallback();
+      void handleSpotifyCallback();
     }
   }, []);
 
@@ -261,7 +267,11 @@ export default function StreamPage() {
         </div>
         {mode !== "offline" && (
           <div className={mode === "audio" || mode === "radio" ? "hidden sm:block" : ""}>
-            <NowPlaying radioTrack={radioConnected ? radioTrack : null} showFallback={(mode === "twitch" || mode === "audio") && !suppressFallback} />
+            <NowPlaying
+              radioTrack={radioConnected && radioMode !== "dj" ? radioTrack : null}
+              showFallback={((mode === "twitch" || mode === "audio") && !suppressFallback) || radioMode === "dj" || (mode === "radio" && !radioTrack)}
+              preferSupabase={radioMode === "dj" || (mode === "radio" && !radioTrack)}
+            />
           </div>
         )}
       </header>
@@ -274,7 +284,12 @@ export default function StreamPage() {
             <AudioPlayer src={icecastUrl} radioTrack={radioConnected ? radioTrack : undefined} showFallback={!suppressFallback} />
           )}
           {mode === "radio" && radioStreamUrl && (
-            <AudioPlayer src={radioStreamUrl} radioTrack={radioTrack} />
+            <AudioPlayer
+              src={radioStreamUrl}
+              radioTrack={radioMode === "dj" ? null : radioTrack}
+              showFallback={radioMode === "dj" || !radioTrack}
+              preferSupabase={radioMode === "dj" || !radioTrack}
+            />
           )}
           {mode === "radio" && !radioStreamUrl && (
             <div className="flex items-center justify-center gap-2 rounded-xl border border-gray-800 bg-gray-900 px-4 py-4 shadow-lg shadow-violet-500/5 sm:py-16">
@@ -362,12 +377,14 @@ export default function StreamPage() {
               <RequestForm onNewRequest={() => { if (activeTabRef.current !== "requests") setRequestBadge(true); }} />
             </div>
           )}
-          <div className={`min-h-0 min-w-0 flex-1 overflow-y-auto flex-col gap-2 ${activeTab === "radio" ? "flex" : "hidden"} lg:flex`}>
-            <RadioPanelErrorBoundary>
-              <QueueAdd />
-              <Queue />
-            </RadioPanelErrorBoundary>
-          </div>
+          {showRadioPanel && (
+            <div className={`min-h-0 min-w-0 flex-1 overflow-y-auto flex-col gap-2 ${activeTab === "radio" ? "flex" : "hidden"} lg:flex`}>
+              <RadioPanelErrorBoundary>
+                <QueueAdd />
+                <Queue />
+              </RadioPanelErrorBoundary>
+            </div>
+          )}
         </div>
       </main>
     </div>

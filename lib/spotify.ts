@@ -6,7 +6,9 @@ const REDIRECT_URI =
 const SCOPES = "playlist-read-private playlist-read-collaborative user-library-read";
 const TOKEN_KEY = "spotify_token";
 const EXPIRY_KEY = "spotify_token_expiry";
+const REFRESH_TOKEN_KEY = "spotify_refresh_token";
 const VERIFIER_KEY = "spotify_code_verifier";
+const TOKEN_REFRESH_BUFFER_MS = 60_000;
 
 // ── PKCE helpers ────────────────────────────────────────────────────────────
 
@@ -42,14 +44,46 @@ export function isSpotifyConfigured(): boolean {
 export function isSpotifyConnected(): boolean {
   if (typeof window === "undefined") return false;
   const token = localStorage.getItem(TOKEN_KEY);
-  const expiry = localStorage.getItem(EXPIRY_KEY);
-  if (!token || !expiry) return false;
-  return Date.now() < parseInt(expiry, 10);
+  if (!token) return false;
+  const expiry = parseTokenExpiry();
+  if (!expiry) return false;
+  if (Date.now() < expiry) return true;
+  return !!localStorage.getItem(REFRESH_TOKEN_KEY);
 }
 
 export function getSpotifyToken(): string | null {
-  if (!isSpotifyConnected()) return null;
+  if (typeof window === "undefined") return null;
   return localStorage.getItem(TOKEN_KEY);
+}
+
+function parseTokenExpiry(): number | null {
+  if (typeof window === "undefined") return null;
+  const expiryRaw = localStorage.getItem(EXPIRY_KEY);
+  if (!expiryRaw) return null;
+  const expiry = Number.parseInt(expiryRaw, 10);
+  return Number.isFinite(expiry) ? expiry : null;
+}
+
+function shouldRefreshTokenSoon(): boolean {
+  const expiry = parseTokenExpiry();
+  if (!expiry) return false;
+  return Date.now() >= expiry - TOKEN_REFRESH_BUFFER_MS;
+}
+
+function saveSpotifyTokens(data: { access_token?: string; expires_in?: number; refresh_token?: string }): boolean {
+  if (typeof window === "undefined") return false;
+  const accessToken = data.access_token ?? "";
+  if (!accessToken) return false;
+
+  localStorage.setItem(TOKEN_KEY, accessToken);
+  localStorage.setItem(
+    EXPIRY_KEY,
+    String(Date.now() + (data.expires_in ?? 3600) * 1000),
+  );
+  if (data.refresh_token) {
+    localStorage.setItem(REFRESH_TOKEN_KEY, data.refresh_token);
+  }
+  return true;
 }
 
 export async function loginWithSpotify(): Promise<void> {
@@ -99,13 +133,11 @@ export async function handleSpotifyCallback(): Promise<boolean> {
 
     if (!res.ok) return false;
 
-    const data = await res.json();
-    localStorage.setItem(TOKEN_KEY, data.access_token);
-    localStorage.setItem(
-      EXPIRY_KEY,
-      String(Date.now() + data.expires_in * 1000),
-    );
+    const data = await res.json() as { access_token?: string; expires_in?: number; refresh_token?: string };
+    const saved = saveSpotifyTokens(data);
+    if (!saved) return false;
     localStorage.removeItem(VERIFIER_KEY);
+    window.dispatchEvent(new CustomEvent("spotify:connected"));
 
     if (window.opener) {
       window.close();
@@ -126,22 +158,76 @@ export async function handleSpotifyCallback(): Promise<boolean> {
 export function disconnectSpotify(): void {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(EXPIRY_KEY);
+  localStorage.removeItem(REFRESH_TOKEN_KEY);
   localStorage.removeItem(VERIFIER_KEY);
 }
 
+export async function refreshSpotifyToken(): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
+  if (!refreshToken || !CLIENT_ID) return false;
+
+  try {
+    const res = await fetch("https://accounts.spotify.com/api/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+        client_id: CLIENT_ID,
+      }),
+    });
+    if (!res.ok) return false;
+    const data = await res.json() as { access_token?: string; expires_in?: number; refresh_token?: string };
+    const saved = saveSpotifyTokens(data);
+    if (saved) {
+      window.dispatchEvent(new CustomEvent("spotify:token_refreshed"));
+    }
+    return saved;
+  } catch {
+    return false;
+  }
+}
+
 export async function spotifyFetch<T>(endpoint: string): Promise<T | null> {
-  const token = getSpotifyToken();
+  let token = getSpotifyToken();
   if (!token) return null;
 
   try {
-    const url = `https://api.spotify.com/v1${endpoint}`;
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}` },
+    const url = endpoint.startsWith("http")
+      ? endpoint
+      : `https://api.spotify.com/v1${endpoint}`;
+
+    if (shouldRefreshTokenSoon()) {
+      const refreshed = await refreshSpotifyToken();
+      if (refreshed) {
+        token = getSpotifyToken();
+      }
+    }
+    if (!token) return null;
+
+    const sendWithToken = async (bearer: string) => fetch(url, {
+      headers: { Authorization: `Bearer ${bearer}` },
     });
 
+    let res = await sendWithToken(token);
+
     if (res.status === 401) {
-      disconnectSpotify();
-      return null;
+      const refreshed = await refreshSpotifyToken();
+      if (!refreshed) {
+        disconnectSpotify();
+        return null;
+      }
+      const retriedToken = getSpotifyToken();
+      if (!retriedToken) {
+        disconnectSpotify();
+        return null;
+      }
+      res = await sendWithToken(retriedToken);
+      if (res.status === 401) {
+        disconnectSpotify();
+        return null;
+      }
     }
 
     if (!res.ok) {

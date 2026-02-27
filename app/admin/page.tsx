@@ -138,9 +138,21 @@ export default function AdminPage() {
     socket.on("durationVote:end", () => {
       store.getState().setDurationVote(null);
     });
+    socket.on("tunnel:url", (data: { url: string }) => {
+      const nextUrl = (data.url ?? "").trim().replace(/\/+$/, "");
+      setRadioServerUrl(nextUrl);
+      store.getState().setServerUrl(nextUrl || null);
+      setRadioUrlSaved(true);
+      setTimeout(() => setRadioUrlSaved(false), 2000);
+    });
 
     return () => disconnectSocket();
   }, [authenticated, effectiveServerUrl, store]);
+
+  useEffect(() => {
+    const nextUrl = radioServerUrl.trim().replace(/\/+$/, "");
+    store.getState().setServerUrl(nextUrl || null);
+  }, [radioServerUrl, store]);
 
   const loadRequests = useCallback(async () => {
     const { data } = await getSupabase()

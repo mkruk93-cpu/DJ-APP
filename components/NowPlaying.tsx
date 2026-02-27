@@ -14,6 +14,7 @@ interface NowPlayingData {
 interface NowPlayingProps {
   radioTrack?: Track | null;
   showFallback?: boolean;
+  preferSupabase?: boolean;
 }
 
 function formatTime(seconds: number): string {
@@ -22,7 +23,7 @@ function formatTime(seconds: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-export default function NowPlaying({ radioTrack, showFallback = false }: NowPlayingProps = {}) {
+export default function NowPlaying({ radioTrack, showFallback = false, preferSupabase = false }: NowPlayingProps = {}) {
   const [track, setTrack] = useState<NowPlayingData>({ title: null, artist: null, artwork_url: null });
   const [animate, setAnimate] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -80,9 +81,10 @@ export default function NowPlaying({ radioTrack, showFallback = false }: NowPlay
 
   const isRadioMode = !!radioTrack;
   const isLoading = isRadioMode && radioTrack.started_at === 0;
-  const showSupabaseData = showFallback && !connected;
+  const radioHasMetadata = !!(radioTrack?.title || radioTrack?.thumbnail);
+  const showSupabaseData = (showFallback && (!connected || preferSupabase)) || !radioHasMetadata;
   const displayTitle = radioTrack?.title ?? (showSupabaseData ? track.title : null);
-  const displayArtist = radioTrack ? null : (showSupabaseData ? track.artist : null);
+  const displayArtist = radioHasMetadata ? null : (showSupabaseData ? track.artist : null);
   const displayArtwork = radioTrack?.thumbnail ?? (showSupabaseData ? track.artwork_url : null);
   const hasData = displayTitle || displayArtist;
 

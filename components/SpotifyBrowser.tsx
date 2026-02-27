@@ -40,6 +40,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
   const [filter, setFilter] = useState("");
   const [addedTrackId, setAddedTrackId] = useState<string | null>(null);
   const [trackError, setTrackError] = useState<string | null>(null);
+  const [authStatus, setAuthStatus] = useState<string | null>(null);
   const [playlistsNext, setPlaylistsNext] = useState<string | null>(null);
   const [tracksNext, setTracksNext] = useState<string | null>(null);
   const [trackSource, setTrackSource] = useState<TrackSource>(null);
@@ -62,8 +63,9 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
 
   useEffect(() => {
     function onStorage(e: StorageEvent) {
-      if (e.key === "spotify_token" && e.newValue) {
+      if ((e.key === "spotify_token" || e.key === "spotify_refresh_token") && e.newValue) {
         setConnected(true);
+        setAuthStatus(null);
         loadUser();
         void loadPlaylists(false);
       }
@@ -116,9 +118,11 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
       if (!url) return;
       const data = await spotifyFetch<SpotifyPaginatedResponse<SpotifyPlaylist>>(url);
       if (!data) {
+        setAuthStatus("Spotify sessie verversen... probeer opnieuw.");
         checkConnection();
         return;
       }
+      setAuthStatus(null);
       const items = data.items.filter((item) => !!item?.id && !!item?.name);
       appendUniquePlaylists(items, append);
       setPlaylistsNext(data.next ? data.next.replace("https://api.spotify.com/v1", "") : null);
@@ -143,10 +147,12 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
       if (!url) return;
       const data = await spotifyFetch<SpotifyPaginatedResponse<{ track: SpotifyTrackItem | null }>>(url);
       if (!data) {
+        setAuthStatus("Spotify sessie verversen... probeer opnieuw.");
         setTrackError(`Kan playlist "${playlist.name}" nu niet laden.`);
         checkConnection();
         return;
       }
+      setAuthStatus(null);
       const items = data.items
         .map((item) => item?.track)
         .filter((t): t is SpotifyTrackItem => isValidTrack(t));
@@ -180,9 +186,11 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
       if (!url) return;
       const data = await spotifyFetch<SpotifyPaginatedResponse<{ track: SpotifyTrackItem | null }>>(url);
       if (!data) {
+        setAuthStatus("Spotify sessie verversen... probeer opnieuw.");
         checkConnection();
         return;
       }
+      setAuthStatus(null);
       const items = data.items
         .map((item) => item?.track)
         .filter((t): t is SpotifyTrackItem => isValidTrack(t));
@@ -263,6 +271,31 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
     observer.observe(sentinel);
     return () => observer.disconnect();
   }, [view, playlistsNext, tracksNext, trackSource, selectedPlaylist, loading, loadingMore]);
+
+  useEffect(() => {
+    const onTokenRefresh = () => {
+      setConnected(checkConnection());
+      setAuthStatus("Spotify sessie vernieuwd.");
+      if (view === "playlists") {
+        void loadPlaylists(false);
+        return;
+      }
+      if (trackSource === "liked") {
+        void loadLikedSongs(false);
+        return;
+      }
+      if (trackSource === "playlist" && selectedPlaylist) {
+        void loadPlaylistTracks(selectedPlaylist, false);
+      }
+    };
+
+    window.addEventListener("spotify:token_refreshed", onTokenRefresh);
+    window.addEventListener("spotify:connected", onTokenRefresh);
+    return () => {
+      window.removeEventListener("spotify:token_refreshed", onTokenRefresh);
+      window.removeEventListener("spotify:connected", onTokenRefresh);
+    };
+  }, [checkConnection, view, trackSource, selectedPlaylist]);
 
   if (!configured) {
     return (
@@ -352,6 +385,9 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
         placeholder={view === "playlists" ? "Filter playlists..." : "Filter nummers..."}
         className="w-full shrink-0 rounded-md border border-gray-700 bg-gray-800 px-2.5 py-1 text-xs text-white placeholder-gray-500 outline-none transition focus:border-[#1DB954]"
       />
+      {authStatus && (
+        <p className="shrink-0 text-[11px] text-amber-300">{authStatus}</p>
+      )}
 
       {/* Loading */}
       {loading && (
