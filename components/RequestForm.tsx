@@ -13,6 +13,7 @@ interface Request {
   title: string | null;
   artist: string | null;
   thumbnail: string | null;
+  duration?: number | null;
   source?: string | null;
   genre?: string | null;
   genre_confidence?: "explicit" | "artist_based" | "unknown" | null;
@@ -276,6 +277,7 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
     preferredSource: "youtube" | "soundcloud",
     options?: {
       providedThumb?: string;
+      duration?: number | null;
       source?: string;
       genre?: string | null;
       artist?: string | null;
@@ -292,6 +294,7 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
     setSubmitting(true);
     let finalUrl = trimmed;
     let finalThumb: string | null = options?.providedThumb ?? null;
+    let finalDuration: number | null = options?.duration ?? null;
 
     if (!URL_REGEX.test(trimmed)) {
       const resolved = await resolveToUrl(trimmed, preferredSource);
@@ -302,6 +305,7 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
       }
       finalUrl = resolved.url;
       finalThumb = finalThumb ?? resolved.thumbnail ?? null;
+      finalDuration = finalDuration ?? resolved.duration ?? null;
     }
 
     const res = await fetch("/api/requests", {
@@ -315,6 +319,7 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
         artist: options?.artist ?? null,
         title: options?.title ?? null,
         thumbnail: finalThumb ?? null,
+        duration: finalDuration,
       }),
     });
 
@@ -372,6 +377,7 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
     const preferredSource = source === "soundcloud" ? "soundcloud" : "youtube";
     await submitRequest(result.url, preferredSource, {
       providedThumb: result.thumbnail || undefined,
+      duration: result.duration,
       source: preferredSource,
       title: result.title,
       artist: result.channel,
@@ -409,7 +415,7 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
   }
 
   return (
-    <div ref={wrapperRef} className="flex h-full flex-col rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5">
+    <div ref={wrapperRef} className="relative flex h-full flex-col overflow-hidden rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5">
       <div className="border-b border-gray-800 px-3 py-2 sm:px-4 sm:py-3">
         <h2 className="text-xs font-semibold uppercase tracking-wider text-violet-400 sm:text-sm">
           Verzoekjes
@@ -566,6 +572,32 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
         )}
       </form>
 
+      {showResults && results.length > 0 && (
+        <div className="mx-3 mb-2 -mt-1 max-h-80 overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50 sm:mx-4">
+          {results.map((r) => (
+            <button
+              key={r.id}
+              type="button"
+              onClick={() => { void selectResult(r); }}
+              className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition hover:bg-gray-800/80 first:rounded-t-xl last:rounded-b-xl"
+            >
+              <img src={r.thumbnail} alt="" className="h-12 w-16 shrink-0 rounded-md object-cover" />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-white">{r.title}</p>
+                <div className="flex items-center gap-2">
+                  {r.channel && <span className="truncate text-xs text-gray-400">{r.channel}</span>}
+                  {r.duration !== null && (
+                    <span className="shrink-0 text-xs tabular-nums text-gray-500">
+                      {Math.floor(r.duration / 60)}:{String(r.duration % 60).padStart(2, "0")}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="chat-scroll min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-2 sm:px-4 sm:py-3">
         {allRequests.length === 0 && (
           <p className="text-center text-sm text-gray-500">Nog geen verzoekjes</p>
@@ -609,6 +641,11 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
                       {r.artist && (
                         <p className="truncate text-xs text-gray-400">{r.artist}</p>
                       )}
+                      {typeof r.duration === "number" && r.duration > 0 && (
+                        <p className="truncate text-xs text-gray-500">
+                          Lengte: {Math.floor(r.duration / 60)}:{String(r.duration % 60).padStart(2, "0")}
+                        </p>
+                      )}
                       {r.genre && (
                         <p className="truncate text-xs text-fuchsia-300">
                           Genre: {r.genre}
@@ -633,31 +670,6 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
         })}
       </div>
 
-      {showResults && results.length > 0 && (
-        <div className="absolute left-3 right-3 top-40 z-50 max-h-80 overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50 sm:left-4 sm:right-4">
-          {results.map((r) => (
-            <button
-              key={r.id}
-              type="button"
-              onClick={() => { void selectResult(r); }}
-              className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition hover:bg-gray-800/80 first:rounded-t-xl last:rounded-b-xl"
-            >
-              <img src={r.thumbnail} alt="" className="h-12 w-16 shrink-0 rounded-md object-cover" />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-white">{r.title}</p>
-                <div className="flex items-center gap-2">
-                  {r.channel && <span className="truncate text-xs text-gray-400">{r.channel}</span>}
-                  {r.duration !== null && (
-                    <span className="shrink-0 text-xs tabular-nums text-gray-500">
-                      {Math.floor(r.duration / 60)}:{String(r.duration % 60).padStart(2, "0")}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

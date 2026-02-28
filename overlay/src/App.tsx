@@ -108,6 +108,17 @@ function joinBase(base: string, path: string): string {
   return `${trimmed.replace(/\/+$/, "")}${path}`;
 }
 
+function uniqueStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
 function parsePollOptions(input: string): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -230,7 +241,7 @@ function App() {
       if (supabase) {
         const { data, error } = await supabase
           .from("requests")
-          .select("id,nickname,url,title,artist,thumbnail,source,genre,genre_confidence,status,created_at")
+          .select("id,nickname,url,title,artist,thumbnail,duration,source,genre,genre_confidence,status,created_at")
           .order("created_at", { ascending: false })
           .limit(50);
         if (!error) {
@@ -313,6 +324,7 @@ function App() {
         title: item.title ?? null,
         artist: item.channel ?? null,
         thumbnail: item.thumbnail ?? null,
+        duration: item.duration ?? null,
         source: searchSource,
       });
       const candidates = [
@@ -349,7 +361,7 @@ function App() {
         // Last-resort fallback: direct insert via Supabase (keeps overlay usable even if Next API base is unreachable).
         if (supabase) {
           const fallbackStatus = autoApproveOnAdd ? "approved" : "pending";
-          const { data, error } = await supabase
+          let insertResult = await supabase
             .from("requests")
             .insert({
               nickname,
@@ -357,15 +369,33 @@ function App() {
               title: item.title ?? null,
               artist: item.channel ?? null,
               thumbnail: item.thumbnail ?? null,
+              duration: item.duration ?? null,
               source: searchSource,
               status: fallbackStatus,
             })
             .select("id")
             .single();
-          if (error) {
-            throw new Error(error.message || lastErr);
+
+          if (insertResult.error && /duration/i.test(insertResult.error.message)) {
+            insertResult = await supabase
+              .from("requests")
+              .insert({
+                nickname,
+                url: item.url,
+                title: item.title ?? null,
+                artist: item.channel ?? null,
+                thumbnail: item.thumbnail ?? null,
+                source: searchSource,
+                status: fallbackStatus,
+              })
+              .select("id")
+              .single();
           }
-          createdId = data?.id ?? "";
+
+          if (insertResult.error) {
+            throw new Error(insertResult.error.message || lastErr);
+          }
+          createdId = insertResult.data?.id ?? "";
           created = true;
         } else {
           throw new Error(lastErr);
@@ -388,14 +418,26 @@ function App() {
   }
 
   async function refreshLivePoll() {
-    try {
-      const url = joinBase(settings.apiBaseUrl, "/api/live-polls");
-      const res = await fetch(url, { cache: "no-store" });
-      const data = (await res.json().catch(() => ({}))) as { poll?: LivePollState | null };
-      setActivePoll(data.poll ?? null);
-    } catch {
-      setActivePoll(null);
+    const runsOverHttp = typeof window !== "undefined" && window.location.protocol.startsWith("http");
+    const candidates = uniqueStrings([
+      runsOverHttp ? "/api/live-polls" : "",
+      joinBase(settings.apiBaseUrl, "/api/live-polls"),
+      "http://localhost:3000/api/live-polls",
+      "http://localhost:3002/api/live-polls",
+      "http://localhost:3003/api/live-polls",
+    ]);
+    for (const url of candidates) {
+      try {
+        const res = await fetch(url, { cache: "no-store" });
+        if (!res.ok) continue;
+        const data = (await res.json().catch(() => ({}))) as { poll?: LivePollState | null };
+        setActivePoll(data.poll ?? null);
+        return;
+      } catch {
+        // Try next candidate.
+      }
     }
+    setActivePoll(null);
   }
 
   async function createLivePoll() {
@@ -405,37 +447,69 @@ function App() {
       setPollFeedback("Vul een vraag + minimaal 2 opties in.");
       return;
     }
-    try {
-      const res = await fetch(joinBase(settings.apiBaseUrl, "/api/live-polls"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-admin-token": settings.adminToken },
-        body: JSON.stringify({ question, options }),
-      });
-      const data = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) throw new Error(data.error ?? `Poll starten mislukt (${res.status})`);
-      setPollFeedback("Live poll gestart.");
-      setPollQuestion("");
-      await refreshLivePoll();
-    } catch (err) {
-      setPollFeedback(err instanceof Error ? err.message : "Poll starten mislukt");
+    const runsOverHttp = typeof window !== "undefined" && window.location.protocol.startsWith("http");
+    const candidates = uniqueStrings([
+      runsOverHttp ? "/api/live-polls" : "",
+      joinBase(settings.apiBaseUrl, "/api/live-polls"),
+      "http://localhost:3000/api/live-polls",
+      "http://localhost:3002/api/live-polls",
+      "http://localhost:3003/api/live-polls",
+    ]);
+    let lastError = "Poll starten mislukt";
+    for (const url of candidates) {
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-admin-token": settings.adminToken },
+          body: JSON.stringify({ question, options }),
+        });
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        if (!res.ok) {
+          lastError = data.error ?? `Poll starten mislukt (${res.status})`;
+          continue;
+        }
+        setPollFeedback("Live poll gestart.");
+        setPollQuestion("");
+        await refreshLivePoll();
+        return;
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : "Poll starten mislukt";
+      }
     }
+    setPollFeedback(lastError);
   }
 
   async function closeLivePoll() {
     if (!activePoll) return;
-    try {
-      const res = await fetch(joinBase(settings.apiBaseUrl, `/api/live-polls/${activePoll.id}`), {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json", "x-admin-token": settings.adminToken },
-        body: JSON.stringify({ status: "closed" }),
-      });
-      const data = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) throw new Error(data.error ?? `Poll sluiten mislukt (${res.status})`);
-      setPollFeedback("Poll gesloten.");
-      await refreshLivePoll();
-    } catch (err) {
-      setPollFeedback(err instanceof Error ? err.message : "Poll sluiten mislukt");
+    const runsOverHttp = typeof window !== "undefined" && window.location.protocol.startsWith("http");
+    const candidates = uniqueStrings([
+      runsOverHttp ? `/api/live-polls/${activePoll.id}` : "",
+      joinBase(settings.apiBaseUrl, `/api/live-polls/${activePoll.id}`),
+      `http://localhost:3000/api/live-polls/${activePoll.id}`,
+      `http://localhost:3002/api/live-polls/${activePoll.id}`,
+      `http://localhost:3003/api/live-polls/${activePoll.id}`,
+    ]);
+    let lastError = "Poll sluiten mislukt";
+    for (const url of candidates) {
+      try {
+        const res = await fetch(url, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", "x-admin-token": settings.adminToken },
+          body: JSON.stringify({ status: "closed" }),
+        });
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        if (!res.ok) {
+          lastError = data.error ?? `Poll sluiten mislukt (${res.status})`;
+          continue;
+        }
+        setPollFeedback("Poll gesloten.");
+        await refreshLivePoll();
+        return;
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : "Poll sluiten mislukt";
+      }
     }
+    setPollFeedback(lastError);
   }
 
   async function sendShoutout(targetNickname?: string) {
@@ -445,19 +519,35 @@ function App() {
       setShoutoutFeedback("Kies een nickname en vul een bericht in.");
       return;
     }
-    try {
-      const res = await fetch(joinBase(settings.apiBaseUrl, "/api/shoutouts"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-admin-token": settings.adminToken },
-        body: JSON.stringify({ nickname: nick, message: msg, durationSeconds: 18 }),
-      });
-      const data = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) throw new Error(data.error ?? `Shoutout mislukt (${res.status})`);
-      setShoutoutFeedback(`Shoutout live voor ${nick}`);
-      setShoutoutMessage("");
-    } catch (err) {
-      setShoutoutFeedback(err instanceof Error ? err.message : "Shoutout mislukt");
+    const runsOverHttp = typeof window !== "undefined" && window.location.protocol.startsWith("http");
+    const candidates = uniqueStrings([
+      runsOverHttp ? "/api/shoutouts" : "",
+      joinBase(settings.apiBaseUrl, "/api/shoutouts"),
+      "http://localhost:3000/api/shoutouts",
+      "http://localhost:3002/api/shoutouts",
+      "http://localhost:3003/api/shoutouts",
+    ]);
+    let lastError = "Shoutout mislukt";
+    for (const url of candidates) {
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-admin-token": settings.adminToken },
+          body: JSON.stringify({ nickname: nick, message: msg, durationSeconds: 18 }),
+        });
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        if (!res.ok) {
+          lastError = data.error ?? `Shoutout mislukt (${res.status})`;
+          continue;
+        }
+        setShoutoutFeedback(`Shoutout live voor ${nick}`);
+        setShoutoutMessage("");
+        return;
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : "Shoutout mislukt";
+      }
     }
+    setShoutoutFeedback(lastError);
   }
 
   function applyPollTemplate(question: string, options: string[]) {
@@ -679,7 +769,7 @@ function App() {
   useEffect(() => {
     if (!supabase) return;
 
-    const presenceChannel = supabase.channel("overlay-online-users", {
+    const presenceChannel = supabase.channel("online-users", {
       config: { presence: { key: nickname } },
     });
 
@@ -1304,6 +1394,9 @@ function App() {
                   >
                     <div className="font-semibold text-violet-200">{r.nickname}</div>
                     <div className="truncate text-gray-200">{r.title ?? r.url}</div>
+                    {typeof r.duration === "number" && r.duration > 0 && (
+                      <div className="truncate text-[11px] text-gray-500">Lengte: {formatDuration(r.duration)}</div>
+                    )}
                     {r.genre && <div className="truncate text-[11px] text-fuchsia-300">Genre: {r.genre}</div>}
                     <div className="mt-1">
                       <span
@@ -1343,6 +1436,9 @@ function App() {
                           {selectedRequest.title ?? "Onbekende titel"}
                         </div>
                         <div className="text-xs text-gray-300">{selectedRequest.artist ?? selectedRequest.nickname}</div>
+                        {typeof selectedRequest.duration === "number" && selectedRequest.duration > 0 && (
+                          <div className="text-xs text-gray-500">Lengte: {formatDuration(selectedRequest.duration)}</div>
+                        )}
                         {selectedRequest.genre && (
                           <div className="text-xs text-fuchsia-300">
                             Genre: {selectedRequest.genre}

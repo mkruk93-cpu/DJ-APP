@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { getSupabase } from "@/lib/supabaseClient";
 import { useRadioStore } from "@/lib/radioStore";
 import AudioVisualizer from "@/components/AudioVisualizer";
+import { parseTrackDisplay } from "@/lib/trackDisplay";
 import type { Track } from "@/lib/types";
 
 interface NowPlayingData {
@@ -143,8 +144,11 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const isLoading = isRadioMode && radioTrack.started_at === 0;
   const radioHasMetadata = !!(radioTrack?.title || radioTrack?.thumbnail);
   const showSupabaseData = (showFallback && (!connected || preferSupabase)) || !radioHasMetadata;
-  const displayTitle = radioTrack?.title ?? (showSupabaseData ? track.title : null);
-  const displayArtist = radioHasMetadata ? null : (showSupabaseData ? track.artist : null);
+  const parsedRadio = parseTrackDisplay(radioTrack?.title);
+  const radioTitle = parsedRadio.title ?? radioTrack?.title ?? null;
+  const radioArtist = parsedRadio.artist;
+  const displayTitle = radioTrack ? radioTitle : (showSupabaseData ? track.title : null);
+  const displayArtist = radioTrack ? radioArtist : (showSupabaseData ? track.artist : null);
   const displayArtwork = radioTrack?.thumbnail ?? (showSupabaseData ? track.artwork_url : null);
   const hasTrack = displayTitle || displayArtist;
 
@@ -160,10 +164,21 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   return (
     <div
       ref={playerRef}
-      className="audio-player-shell relative w-full overflow-hidden rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5"
+      className="audio-player-shell relative w-full overflow-visible rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5"
     >
-      <div className="player-kick-sweep pointer-events-none absolute inset-0 z-0" />
-      <div className="player-bass-wash pointer-events-none absolute inset-0 z-0" />
+      <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-xl">
+        <div className="player-kick-sweep absolute inset-0" />
+        {playing && (
+          <AudioVisualizer
+            audioRef={audioRef}
+            playing={playing}
+            mode="waveBackdrop"
+            barCount={33}
+            className="absolute inset-0 h-full opacity-55"
+          />
+        )}
+        <div className="player-bass-wash absolute inset-0" />
+      </div>
       {displayArtwork && (
         <>
           <div className="pointer-events-none absolute inset-y-0 left-0 z-0 w-[62%] max-w-[260px] overflow-hidden sm:w-[48%] sm:max-w-[320px]">
@@ -182,7 +197,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
             />
             <div className="absolute inset-0 bg-gradient-to-r from-gray-900/25 via-gray-900/10 to-transparent" />
           </div>
-          <div className={`player-ambient pointer-events-none absolute -inset-8 rounded-[2rem] bg-violet-500/15 blur-3xl ${playing ? "opacity-100" : "opacity-50"}`} />
+          <div className={`player-ambient pointer-events-none absolute inset-0 rounded-xl bg-violet-500/15 blur-2xl ${playing ? "opacity-100" : "opacity-50"}`} />
         </>
       )}
       <audio
@@ -237,14 +252,19 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
               <img
                 src={displayArtwork}
                 alt=""
-                className={`relative h-14 w-14 rounded-lg object-cover ${playing ? "player-cover-art" : ""}`}
+                className={`relative z-10 h-14 w-14 rounded-lg object-cover ${playing ? "player-cover-art" : ""}`}
               />
             ) : (
-              <div className="relative flex h-14 w-14 items-center justify-center rounded-lg bg-gray-800">
+              <div className="player-fallback-note relative z-10 flex h-14 w-14 items-center justify-center rounded-lg bg-gray-800">
                 {artworkFallback}
               </div>
             )}
-            {playing && <div className="player-cover-ring absolute -inset-1 rounded-xl border border-violet-300/50" />}
+            {playing && (
+              <div className="player-cover-ring player-cover-ring--inner absolute -inset-1 rounded-xl border border-violet-300/50" />
+            )}
+            {playing && (
+              <div className="player-cover-ring player-cover-ring--outer absolute -inset-[6px] rounded-[0.85rem] border border-fuchsia-300/32" />
+            )}
           </div>
 
           <div className="min-w-0 flex-1">
@@ -319,28 +339,28 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
 
       {/* Desktop: compact horizontal layout */}
       <div className="relative z-[1] hidden items-center gap-4 px-4 py-4 sm:flex">
-        <div className="relative shrink-0" style={{ perspective: "1100px" }}>
+        <div className="relative -ml-2 shrink-0 overflow-visible" style={{ perspective: "1100px" }}>
           {playing && <div className="player-cover-glow absolute -inset-2 rounded-2xl bg-violet-500/30 blur-xl" />}
           {displayArtwork ? (
             <img
               src={displayArtwork}
               alt=""
-              className={`relative h-24 w-24 rounded-xl object-cover shadow-lg ${playing ? "player-cover-art" : ""} ${
+              className={`relative z-10 h-24 w-24 rounded-xl object-cover shadow-lg ${playing ? "player-cover-art" : ""} ${
                 playing ? "shadow-violet-500/20" : "shadow-black/30"
               }`}
             />
           ) : (
-            <div className={`relative flex h-24 w-24 items-center justify-center rounded-xl bg-gray-800 ${
+            <div className={`player-fallback-note relative z-10 flex h-24 w-24 items-center justify-center rounded-xl bg-gray-800 ${
               playing ? "shadow-lg shadow-violet-500/20" : ""
             }`}>
               {artworkFallback}
             </div>
           )}
           {playing && (
-            <div className="player-cover-ring absolute -inset-1 rounded-2xl border border-violet-300/40" />
+            <div className="player-cover-ring player-cover-ring--inner absolute -inset-2 z-20 rounded-[1.05rem] border-2 border-violet-300/55" />
           )}
           {playing && (
-            <div className="player-cover-ring absolute -inset-3 rounded-[1.15rem] border border-fuchsia-300/30" />
+            <div className="player-cover-ring player-cover-ring--outer absolute -inset-4 z-20 rounded-[1.3rem] border border-fuchsia-300/45" />
           )}
           <div className="pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-t from-black/30 to-transparent" />
         </div>

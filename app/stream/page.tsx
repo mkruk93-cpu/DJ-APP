@@ -284,7 +284,7 @@ export default function StreamPage() {
 
       <main className="flex min-h-0 flex-1 flex-col gap-2 p-2 sm:gap-4 sm:p-4 lg:flex-row">
         {/* Player */}
-        <div className="shrink-0 lg:min-w-0 lg:flex-1 lg:min-h-0 lg:overflow-y-auto">
+        <div className="shrink-0 lg:min-w-0 lg:flex-1 lg:min-h-0 lg:overflow-visible">
           <ShoutoutBanner />
           {mode === "twitch" && <TwitchPlayer />}
           {mode === "audio" && icecastUrl && (

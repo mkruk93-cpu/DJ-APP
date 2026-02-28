@@ -14,6 +14,7 @@ CREATE TABLE requests (
   title       text,
   artist      text,
   thumbnail   text,
+  duration    integer,
   source      text,
   genre       text,
   genre_confidence text CHECK (genre_confidence IN ('explicit', 'artist_based', 'unknown')),
@@ -26,6 +27,7 @@ CREATE TABLE requests (
 -- ALTER TABLE requests ADD COLUMN IF NOT EXISTS title text;
 -- ALTER TABLE requests ADD COLUMN IF NOT EXISTS artist text;
 -- ALTER TABLE requests ADD COLUMN IF NOT EXISTS thumbnail text;
+-- ALTER TABLE requests ADD COLUMN IF NOT EXISTS duration integer;
 -- ALTER TABLE requests ADD COLUMN IF NOT EXISTS source text;
 -- ALTER TABLE requests ADD COLUMN IF NOT EXISTS genre text;
 -- ALTER TABLE requests ADD COLUMN IF NOT EXISTS genre_confidence text;

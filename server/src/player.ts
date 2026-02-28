@@ -109,6 +109,7 @@ function getAudioDuration(filePath: string): Promise<number | null> {
 }
 
 const MAX_PRELOAD = 5;
+const PRELOAD_REFRESH_MS = 3000;
 
 interface PreloadedTrack {
   item: QueueItem;
@@ -118,6 +119,7 @@ interface PreloadedTrack {
 
 let preloadBuffer: PreloadedTrack[] = [];
 let preloading = false;
+let preloadRefreshTimer: ReturnType<typeof setInterval> | null = null;
 
 let _sb: SupabaseClient | null = null;
 let _cacheDir = '';
@@ -204,6 +206,10 @@ export function setKeepFiles(keep: boolean): void {
 }
 
 export function invalidatePreload(): void {
+  if (nextReady && !nextReady.isFallback && !keepFiles) {
+    cleanupFile(nextReady.audioFile);
+  }
+  nextReady = null;
   if (preloadBuffer.length === 0) return;
   for (const p of preloadBuffer) {
     if (!keepFiles) cleanupFile(p.audioFile);
@@ -306,14 +312,19 @@ export async function startPlayCycle(
       console.log('[prepare] Invalidated fallback — queue item added');
       nextReady = null;
     }
-    if (currentTrack && !preloading && preloadBuffer.length < MAX_PRELOAD && _sb) {
-      fillPreloadBuffer(_sb, _cacheDir, currentTrack.id);
-    }
-    // Re-prepare next with the new queue item
-    if (_sb && currentTrack) {
-      prepareNextTrack(_sb, _cacheDir, currentTrack.id);
+    if (_sb) {
+      void fillPreloadBuffer(_sb, _cacheDir, currentTrack?.id ?? null);
+      void prepareNextTrack(_sb, _cacheDir, currentTrack?.id ?? null);
     }
   });
+
+  if (!preloadRefreshTimer) {
+    preloadRefreshTimer = setInterval(() => {
+      if (!_sb || !isRunning) return;
+      void fillPreloadBuffer(_sb, _cacheDir, currentTrack?.id ?? null);
+      void prepareNextTrack(_sb, _cacheDir, currentTrack?.id ?? null);
+    }, PRELOAD_REFRESH_MS);
+  }
 
   console.log('[player] Play cycle started');
   const failCounts = new Map<string, number>();
@@ -343,18 +354,38 @@ export function stopPlayCycle(): void {
   if (encoder && encoder.stdin) {
     encoder.stdin.end();
   }
+  if (preloadRefreshTimer) {
+    clearInterval(preloadRefreshTimer);
+    preloadRefreshTimer = null;
+  }
 }
 
-async function fillPreloadBuffer(sb: SupabaseClient, cacheDir: string, currentId: string): Promise<void> {
+async function fillPreloadBuffer(sb: SupabaseClient, cacheDir: string, currentId: string | null): Promise<void> {
   if (preloading) return;
   preloading = true;
 
   try {
     const queue = await getQueue(sb);
-    const upcoming = queue.filter((q) => q.id !== currentId && !isInBuffer(q.id));
+    const upcoming = queue
+      .filter((q) => q.id !== currentId)
+      .slice(0, MAX_PRELOAD);
+    const upcomingIds = new Set(upcoming.map((q) => q.id));
 
-    const slotsAvailable = MAX_PRELOAD - preloadBuffer.length;
-    const toPreload = upcoming.slice(0, slotsAvailable);
+    // Keep only tracks that are still in the first 5 upcoming queue slots.
+    const stale = preloadBuffer.filter((p) => !upcomingIds.has(p.item.id));
+    if (stale.length > 0) {
+      for (const p of stale) {
+        if (!keepFiles) cleanupFile(p.audioFile);
+      }
+      preloadBuffer = preloadBuffer.filter((p) => upcomingIds.has(p.item.id));
+      console.log(`[preload] Dropped ${stale.length} stale preloaded track(s)`);
+    }
+
+    const readyCount = preloadBuffer.length + (nextReady?.queueItemId ? 1 : 0);
+    const slotsAvailable = Math.max(0, MAX_PRELOAD - readyCount);
+    const toPreload = upcoming
+      .filter((q) => !isInBuffer(q.id) && q.id !== nextReady?.queueItemId)
+      .slice(0, slotsAvailable);
 
     for (const next of toPreload) {
       if (!isRunning) break;

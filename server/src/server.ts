@@ -11,7 +11,7 @@ import { initCache } from './cleanup.js';
 import { seedSettings, getActiveMode, getModeSettings, getSetting, setSetting } from './settings.js';
 import { getQueue, addToQueue, removeFromQueue, reorderQueue, fetchVideoInfo, extractYoutubeId, extractSourceId, isSoundcloudUrl, getThumbnailUrl } from './queue.js';
 import { canPerformAction } from './permissions.js';
-import { startPlayCycle, getCurrentTrack, skipCurrentTrack, isSkipLocked, playerEvents, setKeepFiles, invalidatePreload } from './player.js';
+import { startPlayCycle, stopPlayCycle, getCurrentTrack, skipCurrentTrack, isSkipLocked, playerEvents, setKeepFiles, invalidatePreload } from './player.js';
 import { startBridge } from './bridge.js';
 import { startNowPlayingWatcher } from './nowPlaying.js';
 import { StreamHub } from './streamHub.js';
@@ -77,6 +77,21 @@ function isAdmin(token?: string): boolean {
   return !!token && token === ADMIN_TOKEN;
 }
 
+let appliedPlaybackMode: Mode | null = null;
+
+function applyPlaybackForMode(mode: Mode): void {
+  if (appliedPlaybackMode === mode) return;
+  appliedPlaybackMode = mode;
+
+  if (mode === 'dj') {
+    stopPlayCycle();
+    io.emit('track:change', null);
+    console.log('[mode] DJ active — internal player paused (Icecast source takes over)');
+    return;
+  }
+  startPlayCycle(sb, io, CACHE_DIR, ICECAST, streamHub);
+}
+
 const startTime = Date.now();
 
 async function getServerState(): Promise<ServerState> {
@@ -109,28 +124,34 @@ interface SearchResult {
   channel: string;
 }
 
-const MAX_LONG_CONTENT_SECONDS = 35 * 60;
-const MAX_SET_LIKE_SECONDS = 15 * 60;
-const MIN_SOUNDCLOUD_SECONDS = 60;
+const MAX_LONG_CONTENT_SECONDS = 65 * 60;
+const MAX_SET_LIKE_SECONDS = 12 * 60;
+const MIN_SOUNDCLOUD_SECONDS = 30;
 
 function isSetLikeTitle(title: string): boolean {
-  return /\b(set|mix|liveset|live set|podcast|radio show|megamix|full mix|extended mix)\b/i.test(title);
+  return /\b(set|mix|liveset|live set|podcast|radio show|megamix|full mix|extended mix|dj set|hour mix|hours mix)\b/i.test(title);
 }
 
 function scoreResult(item: SearchResult, source: 'youtube' | 'soundcloud'): number {
   let score = 0;
   const title = item.title ?? '';
   const duration = item.duration;
+  const setLike = isSetLikeTitle(title);
 
   if (duration !== null) {
-    if (duration >= 120 && duration <= 8 * 60) score += 35;
-    else if (duration > 8 * 60 && duration <= 12 * 60) score += 18;
-    else if (duration < 90) score -= source === 'soundcloud' ? 20 : 8;
-    else if (duration > MAX_SET_LIKE_SECONDS) score -= 16;
+    if (duration >= 120 && duration <= 6 * 60) score += 55;
+    else if (duration > 6 * 60 && duration <= 10 * 60) score += 35;
+    else if (duration > 10 * 60 && duration <= 15 * 60) score += 12;
+    else if (duration < 30) score -= source === 'soundcloud' ? 45 : 20;
+    else if (duration < 90) score -= source === 'soundcloud' ? 18 : 8;
+    else if (duration > MAX_SET_LIKE_SECONDS) score -= 28;
+    if (duration > 20 * 60) score -= 18;
+    if (duration > 30 * 60) score -= 20;
   }
 
-  if (isSetLikeTitle(title)) score -= 28;
-  if (/\b(official|audio|video|track)\b/i.test(title)) score += 6;
+  if (setLike) score -= 34;
+  if (/\b(official|audio|video|track|lyric video)\b/i.test(title)) score += 8;
+  if (/\b(remix|bootleg|edit|vip)\b/i.test(title)) score += 2;
 
   return score;
 }
@@ -143,7 +164,6 @@ function postProcessResults(
     const duration = item.duration;
     if (duration !== null && duration > MAX_LONG_CONTENT_SECONDS) return false;
     if (source === 'soundcloud' && duration !== null && duration < MIN_SOUNDCLOUD_SECONDS) return false;
-    if (duration !== null && duration > MAX_SET_LIKE_SECONDS && isSetLikeTitle(item.title)) return false;
     return true;
   });
 
@@ -164,7 +184,7 @@ function parseDuration(text: string): number | null {
   return null;
 }
 
-async function youtubeSearch(query: string, limit = 6): Promise<SearchResult[]> {
+async function youtubeSearch(query: string, limit = 12): Promise<SearchResult[]> {
   const cacheKey = query.toLowerCase().trim();
   const cached = searchCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.results;
@@ -234,7 +254,7 @@ async function youtubeSearch(query: string, limit = 6): Promise<SearchResult[]> 
   }
 }
 
-function youtubeSearchFallback(query: string, limit = 6): Promise<SearchResult[]> {
+function youtubeSearchFallback(query: string, limit = 12): Promise<SearchResult[]> {
   return new Promise((resolve) => {
     const proc = spawn('python', [
       '-m', 'yt_dlp',
@@ -311,7 +331,7 @@ async function getSoundCloudClientId(): Promise<string | null> {
   return null;
 }
 
-async function soundcloudSearchDirect(query: string, limit = 6): Promise<SearchResult[]> {
+async function soundcloudSearchDirect(query: string, limit = 12): Promise<SearchResult[]> {
   const clientId = await getSoundCloudClientId();
   if (!clientId) throw new Error('No SoundCloud client_id');
 
@@ -357,7 +377,7 @@ async function soundcloudSearchDirect(query: string, limit = 6): Promise<SearchR
   return postProcessResults(results, 'soundcloud');
 }
 
-function soundcloudSearchFallback(query: string, limit = 6): Promise<SearchResult[]> {
+function soundcloudSearchFallback(query: string, limit = 12): Promise<SearchResult[]> {
   return new Promise((resolve) => {
     const proc = spawn('python', [
       '-m', 'yt_dlp',
@@ -399,7 +419,7 @@ function soundcloudSearchFallback(query: string, limit = 6): Promise<SearchResul
   });
 }
 
-async function soundcloudSearch(query: string, limit = 6): Promise<SearchResult[]> {
+async function soundcloudSearch(query: string, limit = 12): Promise<SearchResult[]> {
   const cacheKey = `sc:${query.toLowerCase().trim()}`;
   const cached = searchCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.results;
@@ -562,6 +582,7 @@ app.post('/api/mode', async (req, res) => {
 
   try {
     await setSetting(sb, 'active_mode', mode);
+    applyPlaybackForMode(mode as Mode);
     resetVotes();
     const modeSettings = await getModeSettings(sb);
     io.emit('mode:change', { mode: mode as Mode, settings: modeSettings });
@@ -922,6 +943,7 @@ io.on('connection', (socket) => {
 
     try {
       await setSetting(sb, 'active_mode', data.mode);
+      applyPlaybackForMode(data.mode as Mode);
       resetVotes();
       const modeSettings = await getModeSettings(sb);
       io.emit('mode:change', { mode: data.mode as Mode, settings: modeSettings });
@@ -959,6 +981,7 @@ io.on('connection', (socket) => {
     try {
       await reorderQueue(sb, data.id, data.newPosition);
       invalidatePreload();
+      playerEvents.emit('queue:add');
       const queue = await getQueue(sb);
       io.emit('queue:update', { items: queue });
       console.log(`[queue] Reordered: ${data.id} → position ${data.newPosition}`);
@@ -979,6 +1002,7 @@ io.on('connection', (socket) => {
     try {
       await removeFromQueue(sb, data.id);
       invalidatePreload();
+      playerEvents.emit('queue:add');
       const queue = await getQueue(sb);
       io.emit('queue:update', { items: queue });
       console.log(`[queue] Removed: ${data.id}`);
@@ -1030,7 +1054,23 @@ async function main(): Promise<void> {
   setKeepFiles(KEEP_FILES);
   console.log(`[server] Keep files after streaming: ${KEEP_FILES}`);
 
-  startPlayCycle(sb, io, CACHE_DIR, ICECAST, streamHub);
+  const initialMode = await getActiveMode(sb);
+  console.log(`[mode] Initial mode: ${initialMode}`);
+  applyPlaybackForMode(initialMode);
+
+  let lastSyncedMode = initialMode;
+  setInterval(() => {
+    getActiveMode(sb)
+      .then(async (mode) => {
+        if (mode === lastSyncedMode) return;
+        lastSyncedMode = mode;
+        applyPlaybackForMode(mode);
+        const modeSettings = await getModeSettings(sb);
+        io.emit('mode:change', { mode, settings: modeSettings });
+        console.log(`[mode] Synced mode from settings: ${mode}`);
+      })
+      .catch(() => {});
+  }, 2000);
 
   // Start the bridge (downloads approved requests)
   startBridge(sb, DOWNLOAD_PATH);

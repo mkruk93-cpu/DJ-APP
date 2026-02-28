@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import { getSupabase } from "@/lib/supabaseClient";
 import { useRadioStore } from "@/lib/radioStore";
+import { parseTrackDisplay } from "@/lib/trackDisplay";
 import type { Track } from "@/lib/types";
 
 interface NowPlayingData {
@@ -83,8 +84,11 @@ export default function NowPlaying({ radioTrack, showFallback = false, preferSup
   const isLoading = isRadioMode && radioTrack.started_at === 0;
   const radioHasMetadata = !!(radioTrack?.title || radioTrack?.thumbnail);
   const showSupabaseData = (showFallback && (!connected || preferSupabase)) || !radioHasMetadata;
-  const displayTitle = radioTrack?.title ?? (showSupabaseData ? track.title : null);
-  const displayArtist = radioHasMetadata ? null : (showSupabaseData ? track.artist : null);
+  const parsedRadio = parseTrackDisplay(radioTrack?.title);
+  const radioTitle = parsedRadio.title ?? radioTrack?.title ?? null;
+  const radioArtist = parsedRadio.artist;
+  const displayTitle = radioTrack ? radioTitle : (showSupabaseData ? track.title : null);
+  const displayArtist = radioTrack ? radioArtist : (showSupabaseData ? track.artist : null);
   const displayArtwork = radioTrack?.thumbnail ?? (showSupabaseData ? track.artwork_url : null);
   const hasData = displayTitle || displayArtist;
 

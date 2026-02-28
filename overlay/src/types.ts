@@ -14,6 +14,7 @@ export interface RequestItem {
   title: string | null;
   artist: string | null;
   thumbnail: string | null;
+  duration?: number | null;
   source?: string | null;
   genre?: string | null;
   genre_confidence?: "explicit" | "artist_based" | "unknown" | null;

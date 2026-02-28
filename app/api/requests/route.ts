@@ -16,6 +16,7 @@ interface RequestRow {
   title: string | null;
   artist: string | null;
   thumbnail: string | null;
+  duration: number | null;
   source: string | null;
   genre: string | null;
   genre_confidence: GenreConfidence | null;
@@ -70,6 +71,7 @@ export async function POST(request: NextRequest) {
       title?: string | null;
       artist?: string | null;
       thumbnail?: string | null;
+      duration?: number | null;
       source?: string | null;
       genre?: string | null;
     };
@@ -121,6 +123,10 @@ export async function POST(request: NextRequest) {
 
     const resolvedArtist = (body.artist ?? metadata.artist ?? "").trim() || null;
     const resolvedTitle = (body.title ?? metadata.title ?? "").trim() || null;
+    const resolvedDuration =
+      typeof body.duration === "number" && Number.isFinite(body.duration)
+        ? Math.max(0, Math.floor(body.duration))
+        : (metadata.duration_seconds ?? null);
     const genreInfo = resolveGenre({
       explicitGenre: body.genre,
       artist: resolvedArtist,
@@ -146,21 +152,37 @@ export async function POST(request: NextRequest) {
       .single();
 
     const status: RequestStatus = settings?.auto_approve ? "approved" : "pending";
-    const { data, error } = await sb
+    const insertBase = {
+      nickname,
+      url: inputUrl,
+      title: resolvedTitle,
+      artist: resolvedArtist,
+      thumbnail: body.thumbnail ?? metadata.thumbnail,
+      source,
+      genre: genreInfo.genre,
+      genre_confidence: genreInfo.confidence,
+      status,
+    };
+
+    // Some deployments may not have the duration column yet.
+    let insertResult = await sb
       .from("requests")
       .insert({
-        nickname,
-        url: inputUrl,
-        title: resolvedTitle,
-        artist: resolvedArtist,
-        thumbnail: body.thumbnail ?? metadata.thumbnail,
-        source,
-        genre: genreInfo.genre,
-        genre_confidence: genreInfo.confidence,
-        status,
+        ...insertBase,
+        duration: resolvedDuration,
       })
       .select("*")
       .single();
+
+    if (insertResult.error && /duration/i.test(insertResult.error.message)) {
+      insertResult = await sb
+        .from("requests")
+        .insert(insertBase)
+        .select("*")
+        .single();
+    }
+
+    const { data, error } = insertResult;
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ item: data as RequestRow }, { status: 201 });

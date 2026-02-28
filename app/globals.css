@@ -42,9 +42,62 @@ body {
   }
 }
 
+@keyframes player-note-drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0px, 0) rotate(0deg);
+  }
+  25% {
+    transform: translate3d(0, -8px, 0) rotate(-1.8deg);
+  }
+  75% {
+    transform: translate3d(0, 7px, 0) rotate(1.7deg);
+  }
+}
+
 .player-cover-ring {
   animation: player-cover-spin 16s linear infinite;
+  transform-origin: center;
+  backface-visibility: hidden;
+  will-change: transform;
 }
+
+.player-cover-ring--inner {
+  animation:
+    player-cover-spin 16s linear infinite,
+    player-ring-layer-inner 32s steps(1, end) infinite;
+  opacity: 0.66;
+}
+
+.player-cover-ring--outer {
+  animation:
+    player-cover-spin 16s linear infinite reverse,
+    player-ring-layer-outer 32s steps(1, end) infinite;
+  opacity: 0.58;
+}
+
+@keyframes player-ring-layer-inner {
+  0%,
+  49.999% {
+    z-index: 20;
+  }
+  50%,
+  100% {
+    z-index: 0;
+  }
+}
+
+@keyframes player-ring-layer-outer {
+  0%,
+  49.999% {
+    z-index: 0;
+  }
+  50%,
+  100% {
+    z-index: 20;
+  }
+}
+
 
 @keyframes player-cover-drift {
   0%,
@@ -78,6 +131,11 @@ body {
   will-change: transform;
 }
 
+.player-fallback-note {
+  animation: player-note-drift 4.6s ease-in-out infinite;
+  will-change: transform;
+}
+
 .player-ambient {
   animation: player-ambient-float 7s ease-in-out infinite;
 }
@@ -86,33 +144,44 @@ body {
   --player-bass: 0;
   --kick-hit: 0;
   --kick-phase: 0;
+  --kick-wave: 0;
+  --kick-wave-x: 0;
+  --kick-wave-y: 0;
 }
 
 .player-kick-sweep {
   background:
-    repeating-radial-gradient(
-      140% 120% at 100% 100%,
-      rgba(196, 181, 253, 0.26) 0 2px,
-      rgba(196, 181, 253, 0) 2px 18px
-    ),
-    radial-gradient(78% 95% at 100% 100%, rgba(236, 72, 153, 0.26), transparent 70%);
+    radial-gradient(120% 100% at 82% 100%, rgba(196, 181, 253, 0.34), transparent 62%),
+    radial-gradient(90% 90% at 92% 100%, rgba(236, 72, 153, 0.26), transparent 68%);
   mix-blend-mode: screen;
-  opacity: calc(0.04 + (var(--kick-hit) * 0.3));
-  background-position-x: calc(var(--kick-phase) * -2px), calc(var(--kick-phase) * -1px);
+  opacity: calc(0.03 + (var(--kick-wave) * 0.2));
+  transform: translate3d(
+      calc(var(--kick-wave-x) * 9px),
+      calc(var(--kick-wave-y) * -6px),
+      0
+    )
+    scale(calc(1 + (var(--kick-wave) * 0.03)));
   transform-origin: 100% 100%;
-  filter: blur(0.3px) saturate(calc(1 + (var(--kick-hit) * 0.55)));
-  transition: opacity 65ms linear, filter 75ms ease-out, background-position 65ms linear;
+  filter: blur(0.5px) saturate(calc(1 + (var(--kick-wave) * 0.35)));
+  transition: opacity 220ms ease, transform 220ms ease, filter 240ms ease;
 }
 
 .player-bass-wash {
   background:
-    radial-gradient(135% 95% at 10% 100%, rgba(168, 85, 247, 0.34), transparent 53%),
-    radial-gradient(135% 95% at 90% 100%, rgba(236, 72, 153, 0.28), transparent 56%),
+    radial-gradient(140% 100% at 12% 100%, rgba(168, 85, 247, 0.34), transparent 54%),
+    radial-gradient(130% 96% at 88% 100%, rgba(236, 72, 153, 0.28), transparent 57%),
     linear-gradient(to top, rgba(139, 92, 246, 0.14), transparent 64%);
   mix-blend-mode: screen;
-  opacity: calc(0.08 + (var(--player-bass) * 0.7));
-  transform: scale(calc(1 + (var(--player-bass) * 0.06)));
+  opacity: calc(0.06 + (var(--player-bass) * 0.4) + (var(--kick-wave) * 0.12));
+  transform:
+    translate3d(
+      calc(var(--kick-wave-x) * -5px),
+      calc(var(--kick-wave-y) * -4px),
+      0
+    )
+    scale(calc(1 + (var(--player-bass) * 0.03) + (var(--kick-wave) * 0.01)));
   transform-origin: 50% 100%;
-  filter: saturate(calc(1 + (var(--player-bass) * 0.75))) brightness(calc(0.96 + (var(--player-bass) * 0.12)));
-  transition: opacity 55ms linear, transform 70ms ease-out, filter 70ms ease-out;
+  filter: saturate(calc(1 + (var(--player-bass) * 0.62) + (var(--kick-wave) * 0.25)))
+    brightness(calc(0.96 + (var(--player-bass) * 0.1)));
+  transition: opacity 200ms ease, transform 220ms ease, filter 230ms ease;
 }
