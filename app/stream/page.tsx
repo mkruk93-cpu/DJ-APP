@@ -272,7 +272,7 @@ export default function StreamPage() {
           </div>
         </div>
         {mode !== "offline" && (
-          <div className={mode === "audio" || mode === "radio" ? "hidden sm:block" : ""}>
+          <div>
             <NowPlaying
               radioTrack={radioConnected && radioMode !== "dj" ? radioTrack : null}
               showFallback={((mode === "twitch" || mode === "audio") && !suppressFallback) || radioMode === "dj" || (mode === "radio" && !radioTrack)}

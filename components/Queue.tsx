@@ -4,6 +4,20 @@ import { useRadioStore } from "@/lib/radioStore";
 import { getSocket } from "@/lib/socket";
 import { getRadioToken } from "@/lib/auth";
 
+function deriveTitleFromId(sourceId: string): string {
+  if (!sourceId) return "Nummer wordt geladen...";
+  if (sourceId.startsWith("sc-")) {
+    const slug = sourceId.slice(3);
+    const parts = slug.split("-");
+    if (parts.length >= 2) {
+      const artist = parts[0].replace(/[-_]+/g, " ").trim();
+      const title = parts.slice(1).join(" ").replace(/[-_]+/g, " ").trim();
+      if (artist && title) return `${artist} - ${title}`;
+    }
+  }
+  return "Nummer wordt geladen...";
+}
+
 export default function Queue() {
   const queue = useRadioStore((s) => s.queue);
   const mode = useRadioStore((s) => s.mode);
@@ -47,7 +61,7 @@ export default function Queue() {
 
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium text-white">
-                {item.title ?? "Laden..."}
+                {item.title ?? deriveTitleFromId(item.youtube_id)}
               </p>
               <p className="truncate text-xs text-gray-400">
                 {item.added_by}

@@ -6,7 +6,7 @@ import { EventEmitter } from 'node:events';
 import { SupabaseClient } from '@supabase/supabase-js';
 import type { Server as IOServer } from 'socket.io';
 import type { QueueItem, Track } from './types.js';
-import { getNextTrack, clearQueueItem, getQueue, fetchVideoInfo } from './queue.js';
+import { clearQueueItem, getQueue, fetchVideoInfo } from './queue.js';
 import { cleanupFile } from './cleanup.js';
 import type { StreamHub } from './streamHub.js';
 
@@ -227,6 +227,11 @@ function takeFromBuffer(itemId: string): PreloadedTrack | null {
 
 function isInBuffer(itemId: string): boolean {
   return preloadBuffer.some((p) => p.item.id === itemId);
+}
+
+function pickNextQueueItem(queue: QueueItem[], currentItemId: string | null): QueueItem | null {
+  const next = queue.find((q) => q.id !== currentItemId);
+  return next ?? null;
 }
 
 export type IcecastConfig = { host: string; port: number; password: string; mount: string };
@@ -450,7 +455,8 @@ async function playNext(
     source = isFallback ? 'ready/random' : 'ready/preloaded';
   } else {
     // ── NORMAL PATH: fetch from queue or fallback ──
-    const item = await getNextTrack(sb);
+    const queue = await getQueue(sb);
+    const item = pickNextQueueItem(queue, currentTrack?.id ?? null);
 
     if (item) {
       const fails = failCounts.get(item.youtube_id) ?? 0;
@@ -494,6 +500,12 @@ async function playNext(
       trackQueueId = item.id;
       failCounts.delete(item.youtube_id);
     } else {
+      // Queue may still contain only the current track while async deletion catches up.
+      if (queue.length > 0) {
+        console.log('[player] Queue head still syncing — waiting before fallback');
+        await sleep(500);
+        return;
+      }
       const fallbackFile = pickRandomFallback();
       if (fallbackFile) {
         audioFile = fallbackFile;
@@ -859,9 +871,10 @@ async function prepareNextTrack(
   preparingNext = true;
 
   try {
-    const item = await getNextTrack(sb);
+    const queue = await getQueue(sb);
+    const item = pickNextQueueItem(queue, currentItemId);
 
-    if (item && item.id !== currentItemId) {
+    if (item) {
       const buffered = takeFromBuffer(item.id);
       if (buffered) {
         if (buffered.item.title) item.title = buffered.item.title;
@@ -892,6 +905,11 @@ async function prepareNextTrack(
         console.log(`[prepare] Next ready (downloaded): ${item.title ?? item.youtube_id}`);
       }
     } else {
+      // Never pick random while queue still has items (usually current-track DB lag).
+      if (queue.length > 0) {
+        console.log('[prepare] Queue still contains current track only — skip random fallback');
+        return;
+      }
       const fallbackFile = pickRandomFallback();
       if (fallbackFile) {
         const title = titleFromFilename(fallbackFile);

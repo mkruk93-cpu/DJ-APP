@@ -703,7 +703,14 @@ function finalizeDurationVote(): void {
   console.log(`[duration-vote] Result: ${vote.yes} ja / ${vote.no} nee → ${accepted ? 'GEACCEPTEERD' : 'GEWEIGERD'}`);
 
   if (accepted) {
-    addToQueue(sb, vote.youtube_url, vote.added_by)
+    fetchVideoInfo(vote.youtube_url)
+      .catch(() => ({ title: null, duration: null, thumbnail: null }))
+      .then((info) => {
+        const fallbackTitle = vote.title ?? `Track ${Date.now().toString().slice(-4)}`;
+        const resolvedTitle = info.title ?? fallbackTitle;
+        const resolvedThumb = info.thumbnail ?? vote.thumbnail ?? null;
+        return addToQueue(sb, vote.youtube_url, vote.added_by, resolvedTitle, resolvedThumb);
+      })
       .then(async (item) => {
         const queue = await getQueue(sb);
         io.emit('queue:update', { items: queue });
@@ -773,7 +780,7 @@ io.on('connection', (socket) => {
   });
 
   // ── queue:add ──
-  socket.on('queue:add', async (data: { youtube_url: string; added_by: string; token?: string; thumbnail?: string }) => {
+  socket.on('queue:add', async (data: { youtube_url: string; added_by: string; token?: string; thumbnail?: string; title?: string; artist?: string }) => {
     try {
       const mode = await getActiveMode(sb);
       const admin = isAdmin(data.token);
@@ -784,6 +791,8 @@ io.on('connection', (socket) => {
 
       let url = data.youtube_url;
       let sourceId = extractSourceId(url);
+      let discoveredTitle: string | null = null;
+      let discoveredArtist: string | null = null;
 
       // If not a valid URL, treat as a search query (e.g. from Spotify: "Artist - Title")
       if (!sourceId) {
@@ -799,6 +808,8 @@ io.on('connection', (socket) => {
           socket.emit('error:toast', { message: 'Kon geen geldig nummer vinden' });
           return;
         }
+        discoveredTitle = searchResults[0].title ?? null;
+        discoveredArtist = searchResults[0].channel ?? null;
         console.log(`[queue] Search "${data.youtube_url}" → ${searchResults[0].title} (${url})`);
       }
 
@@ -817,7 +828,17 @@ io.on('connection', (socket) => {
       }
 
       const thumbForQueue = thumbnail ?? info.thumbnail;
-      const item = await addToQueue(sb, url, data.added_by || 'anonymous', info.title, thumbForQueue);
+      const submittedTitle = (data.title ?? '').trim() || null;
+      const submittedArtist = (data.artist ?? '').trim() || null;
+      const mergedTitle =
+        info.title ??
+        (submittedArtist && submittedTitle ? `${submittedArtist} - ${submittedTitle}` : null) ??
+        submittedTitle ??
+        (discoveredArtist && discoveredTitle ? `${discoveredArtist} - ${discoveredTitle}` : null) ??
+        discoveredTitle ??
+        sourceId;
+
+      const item = await addToQueue(sb, url, data.added_by || 'anonymous', mergedTitle, thumbForQueue);
       const queue = await getQueue(sb);
       io.emit('queue:update', { items: queue });
       playerEvents.emit('queue:add');

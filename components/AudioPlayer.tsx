@@ -5,6 +5,7 @@ import { getSupabase } from "@/lib/supabaseClient";
 import { useRadioStore } from "@/lib/radioStore";
 import AudioVisualizer from "@/components/AudioVisualizer";
 import { parseTrackDisplay } from "@/lib/trackDisplay";
+import { useSyncedTrack } from "@/lib/useSyncedTrack";
 import type { Track } from "@/lib/types";
 
 interface NowPlayingData {
@@ -37,6 +38,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const userPaused = useRef(false);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connected = useRadioStore((s) => s.connected);
+  const syncedRadioTrack = useSyncedTrack(radioTrack);
 
   useEffect(() => {
     if (audioRef.current) audioRef.current.volume = volume;
@@ -109,16 +111,16 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   }, []);
 
   useEffect(() => {
-    if (!radioTrack?.started_at) { setElapsed(0); return; }
+    if (!syncedRadioTrack?.started_at) { setElapsed(0); return; }
 
     function tick() {
-      if (!radioTrack?.started_at) return;
-      setElapsed(Math.max(0, Math.floor((Date.now() - radioTrack.started_at) / 1000)));
+      if (!syncedRadioTrack?.started_at) return;
+      setElapsed(Math.max(0, Math.floor((Date.now() - syncedRadioTrack.started_at) / 1000)));
     }
     tick();
     const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
-  }, [radioTrack]);
+  }, [syncedRadioTrack]);
 
   function toggle() {
     const audio = audioRef.current;
@@ -140,19 +142,19 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     }
   }
 
-  const isRadioMode = !!radioTrack;
-  const isLoading = isRadioMode && radioTrack.started_at === 0;
-  const radioHasMetadata = !!(radioTrack?.title || radioTrack?.thumbnail);
+  const isRadioMode = !!syncedRadioTrack;
+  const isLoading = isRadioMode && syncedRadioTrack.started_at === 0;
+  const radioHasMetadata = !!(syncedRadioTrack?.title || syncedRadioTrack?.thumbnail);
   const showSupabaseData = (showFallback && (!connected || preferSupabase)) || !radioHasMetadata;
-  const parsedRadio = parseTrackDisplay(radioTrack?.title);
-  const radioTitle = parsedRadio.title ?? radioTrack?.title ?? null;
+  const parsedRadio = parseTrackDisplay(syncedRadioTrack?.title);
+  const radioTitle = parsedRadio.title ?? syncedRadioTrack?.title ?? null;
   const radioArtist = parsedRadio.artist;
-  const displayTitle = radioTrack ? radioTitle : (showSupabaseData ? track.title : null);
-  const displayArtist = radioTrack ? radioArtist : (showSupabaseData ? track.artist : null);
-  const displayArtwork = radioTrack?.thumbnail ?? (showSupabaseData ? track.artwork_url : null);
+  const displayTitle = syncedRadioTrack ? radioTitle : (showSupabaseData ? track.title : null);
+  const displayArtist = syncedRadioTrack ? radioArtist : (showSupabaseData ? track.artist : null);
+  const displayArtwork = syncedRadioTrack?.thumbnail ?? (showSupabaseData ? track.artwork_url : null);
   const hasTrack = displayTitle || displayArtist;
 
-  const duration = radioTrack?.duration ?? null;
+  const duration = syncedRadioTrack?.duration ?? null;
   const progress = duration && duration > 0 ? Math.min(elapsed / duration, 1) : 0;
 
   const artworkFallback = (
@@ -345,7 +347,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
             <img
               src={displayArtwork}
               alt=""
-              className={`relative z-10 h-24 w-24 rounded-xl object-cover shadow-lg ${playing ? "player-cover-art" : ""} ${
+              className={`relative z-10 h-24 w-24 rounded-xl object-cover shadow-lg ${playing ? "player-cover-art" : "player-cover-idle-drift"} ${
                 playing ? "shadow-violet-500/20" : "shadow-black/30"
               }`}
             />

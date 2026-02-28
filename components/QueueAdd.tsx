@@ -322,7 +322,7 @@ export default function QueueAdd() {
     setTimeout(() => setFeedback(null), 5000);
   }
 
-  function submitUrl(url: string, thumbnail?: string) {
+  function submitUrl(url: string, thumbnail?: string, title?: string | null, artist?: string | null) {
     setSubmitting(true);
     setFeedback({ msg: "Aanvraag verstuurd...", ok: true });
     setShowResults(false);
@@ -350,6 +350,8 @@ export default function QueueAdd() {
       youtube_url: url,
       added_by: nickname,
       token: getRadioToken(),
+      ...(title ? { title } : {}),
+      ...(artist ? { artist } : {}),
       ...(thumbnail ? { thumbnail } : {}),
     });
 
@@ -383,7 +385,7 @@ export default function QueueAdd() {
     setInput(result.title);
     setResults([]);
     setShowResults(false);
-    submitUrl(result.url, result.thumbnail || undefined);
+    submitUrl(result.url, result.thumbnail || undefined, result.title, result.channel);
   }
 
   function switchSource(newSource: SearchSource) {

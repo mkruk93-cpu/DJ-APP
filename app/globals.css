@@ -131,6 +131,12 @@ body {
   will-change: transform;
 }
 
+.player-cover-idle-drift {
+  animation: player-cover-drift 9.5s ease-in-out infinite;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
 .player-fallback-note {
   animation: player-note-drift 4.6s ease-in-out infinite;
   will-change: transform;
