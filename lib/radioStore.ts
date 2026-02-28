@@ -4,6 +4,7 @@ import type { RadioState, Track, QueueItem, Mode, ModeSettings, VoteState, Durat
 interface RadioStore extends RadioState {
   setConnected: (connected: boolean) => void;
   setCurrentTrack: (track: Track | null) => void;
+  setUpcomingTrack: (track: RadioState["upcomingTrack"]) => void;
   setQueue: (items: QueueItem[]) => void;
   setMode: (mode: Mode, settings: ModeSettings) => void;
   setModeSettings: (settings: ModeSettings) => void;
@@ -21,6 +22,7 @@ interface RadioStore extends RadioState {
 export const useRadioStore = create<RadioStore>((set) => ({
   connected: false,
   currentTrack: null,
+  upcomingTrack: null,
   queue: [],
   mode: 'radio',
   modeSettings: {
@@ -38,6 +40,7 @@ export const useRadioStore = create<RadioStore>((set) => ({
 
   setConnected: (connected) => set({ connected }),
   setCurrentTrack: (currentTrack) => set({ currentTrack }),
+  setUpcomingTrack: (upcomingTrack) => set({ upcomingTrack }),
   setQueue: (queue) => set({ queue }),
   setMode: (mode, modeSettings) => set({ mode, modeSettings }),
   setModeSettings: (modeSettings) => set({ modeSettings }),
@@ -50,6 +53,7 @@ export const useRadioStore = create<RadioStore>((set) => ({
   resetAll: () => set({
     connected: false,
     currentTrack: null,
+    upcomingTrack: null,
     queue: [],
     listenerCount: 0,
     streamOnline: false,

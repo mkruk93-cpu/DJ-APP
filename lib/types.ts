@@ -22,6 +22,14 @@ export interface Track {
   started_at: number;
 }
 
+export interface UpcomingTrack {
+  youtube_id: string;
+  title: string | null;
+  thumbnail: string | null;
+  duration: number | null;
+  isFallback: boolean;
+}
+
 export interface ModeSettings {
   democracy_threshold: number;
   democracy_timer: number;
@@ -51,6 +59,7 @@ export interface DurationVote {
 export interface RadioState {
   connected: boolean;
   currentTrack: Track | null;
+  upcomingTrack: UpcomingTrack | null;
   queue: QueueItem[];
   mode: Mode;
   modeSettings: ModeSettings;

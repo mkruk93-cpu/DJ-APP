@@ -246,7 +246,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
       )}
 
       {/* Mobile: compact horizontal layout */}
-      <div className="relative z-[1] flex flex-col sm:hidden">
+      <div className="relative z-[1] flex flex-col landscape:hidden sm:hidden">
         <div className="flex items-center gap-3 p-3">
           <div className="relative shrink-0" style={{ perspective: "900px" }}>
             {playing && <div className="player-cover-glow absolute -inset-1 rounded-xl bg-violet-500/30 blur-md" />}
@@ -340,7 +340,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
       </div>
 
       {/* Desktop: compact horizontal layout */}
-      <div className="relative z-[1] hidden items-center gap-4 px-4 py-4 sm:flex">
+      <div className="relative z-[1] hidden items-center gap-4 px-4 py-4 landscape:flex sm:flex">
         <div className="relative -ml-2 shrink-0 overflow-visible" style={{ perspective: "1100px" }}>
           {playing && <div className="player-cover-glow absolute -inset-2 rounded-2xl bg-violet-500/30 blur-xl" />}
           {displayArtwork ? (

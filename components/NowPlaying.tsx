@@ -32,6 +32,7 @@ export default function NowPlaying({ radioTrack, showFallback = false, preferSup
   const prevTrack = useRef<string>("");
   const connected = useRadioStore((s) => s.connected);
   const queue = useRadioStore((s) => s.queue);
+  const upcomingTrack = useRadioStore((s) => s.upcomingTrack);
   const syncedRadioTrack = useSyncedTrack(radioTrack);
 
   useEffect(() => {
@@ -83,8 +84,9 @@ export default function NowPlaying({ radioTrack, showFallback = false, preferSup
     return () => clearInterval(interval);
   }, [syncedRadioTrack]);
 
-  const isRadioMode = !!syncedRadioTrack;
-  const isLoading = isRadioMode && syncedRadioTrack.started_at === 0;
+  const hasUpcomingTrack = !!upcomingTrack || queue.length > 0;
+  const isRadioMode = !!syncedRadioTrack || connected || hasUpcomingTrack;
+  const isLoading = !!syncedRadioTrack && syncedRadioTrack.started_at === 0;
   const radioHasMetadata = !!(syncedRadioTrack?.title || syncedRadioTrack?.thumbnail);
   const showSupabaseData = (showFallback && (!connected || preferSupabase)) || !radioHasMetadata;
   const parsedRadio = parseTrackDisplay(syncedRadioTrack?.title);
@@ -95,10 +97,11 @@ export default function NowPlaying({ radioTrack, showFallback = false, preferSup
   const displayArtwork = syncedRadioTrack?.thumbnail ?? (showSupabaseData ? track.artwork_url : null);
   const hasData = displayTitle || displayArtist;
   const nextQueueItem = queue[0] ?? null;
-  const parsedNext = parseTrackDisplay(nextQueueItem?.title);
-  const nextTitle = parsedNext.title ?? nextQueueItem?.title ?? null;
+  const nextSourceTitle = nextQueueItem?.title ?? upcomingTrack?.title ?? null;
+  const parsedNext = parseTrackDisplay(nextSourceTitle);
+  const nextTitle = parsedNext.title ?? nextSourceTitle;
   const nextArtist = parsedNext.artist;
-  const showNextTrack = isRadioMode && !!nextQueueItem && (!!nextTitle || !!nextArtist);
+  const showNextTrack = isRadioMode && (!!nextSourceTitle || !!nextArtist);
 
   if (!hasData && !isRadioMode) return null;
 
@@ -166,6 +169,9 @@ export default function NowPlaying({ radioTrack, showFallback = false, preferSup
           {nextArtist && <span className="text-violet-400">{nextArtist}</span>}
           {nextArtist && nextTitle && <span className="text-gray-500"> — </span>}
           {nextTitle && <span className="text-gray-300">{nextTitle}</span>}
+          {!nextQueueItem && upcomingTrack?.isFallback && (
+            <span className="ml-1 text-gray-500">(random)</span>
+          )}
         </div>
       )}
 

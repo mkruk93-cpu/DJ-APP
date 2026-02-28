@@ -19,7 +19,8 @@ import ModeIndicator from "@/components/ModeIndicator";
 import DurationVotePanel from "@/components/DurationVote";
 import LivePollCard from "@/components/LivePollCard";
 import ShoutoutBanner from "@/components/ShoutoutBanner";
-import type { Track, QueueItem, Mode, ModeSettings, VoteState, DurationVote } from "@/lib/types";
+import type { Track, QueueItem, Mode, ModeSettings, VoteState, DurationVote, UpcomingTrack } from "@/lib/types";
+import { parseTrackDisplay } from "@/lib/trackDisplay";
 
 type StreamMode = "twitch" | "audio" | "radio" | "offline";
 type MobileTab = "chat" | "requests" | "radio";
@@ -73,7 +74,10 @@ export default function StreamPage() {
 
   const radioConnected = useRadioStore((s) => s.connected);
   const radioTrack = useRadioStore((s) => s.currentTrack);
+  const queue = useRadioStore((s) => s.queue);
+  const upcomingTrack = useRadioStore((s) => s.upcomingTrack);
   const radioMode = useRadioStore((s) => s.mode);
+  const streamOnline = useRadioStore((s) => s.streamOnline);
   const store = useRadioStore;
 
   const [suppressFallback, setSuppressFallback] = useState(false);
@@ -134,6 +138,7 @@ export default function StreamPage() {
           });
           store.getState().initFromServer({
             currentTrack: state.currentTrack ?? null,
+            upcomingTrack: state.upcomingTrack ?? null,
             queue: state.queue ?? [],
             mode: state.mode ?? "radio",
             modeSettings: state.modeSettings ?? store.getState().modeSettings,
@@ -157,6 +162,8 @@ export default function StreamPage() {
 
     socket.on("disconnect", () => {
       store.getState().setConnected(false);
+      store.getState().setStreamOnline(false);
+      store.getState().setCurrentTrack(null);
       setSuppressFallback(true);
     });
 
@@ -169,6 +176,10 @@ export default function StreamPage() {
     socket.on("queue:update", (data: { items: QueueItem[] }) => {
       store.getState().setQueue(data.items);
       if (activeTabRef.current !== "radio") setRadioBadge(true);
+    });
+
+    socket.on("upcoming:update", (upcoming: UpcomingTrack | null) => {
+      store.getState().setUpcomingTrack(upcoming);
     });
 
     socket.on("mode:change", (data: { mode: Mode; settings: ModeSettings }) => {
@@ -244,6 +255,15 @@ export default function StreamPage() {
   const radioStreamUrl = radioServerUrl
     ? `${radioServerUrl}/listen`
     : process.env.NEXT_PUBLIC_STREAM_URL ?? icecastUrl;
+  const showRadioOfflineState =
+    mode === "radio" &&
+    (!radioStreamUrl || !radioConnected || !streamOnline);
+  const nextQueueItem = queue[0] ?? null;
+  const nextSourceTitle = nextQueueItem?.title ?? upcomingTrack?.title ?? null;
+  const parsedNext = parseTrackDisplay(nextSourceTitle);
+  const nextTitle = parsedNext.title ?? nextSourceTitle;
+  const nextArtist = parsedNext.artist;
+  const showHeaderNextOnly = mode === "radio" && !showRadioOfflineState;
 
   return (
     <div className="relative flex h-dvh flex-col overflow-hidden">
@@ -271,8 +291,22 @@ export default function StreamPage() {
             </button>
           </div>
         </div>
-        {mode !== "offline" && (
-          <div>
+        {showHeaderNextOnly && (
+          <div className="mt-2 rounded-lg border border-gray-700/60 bg-gray-800/60 px-2.5 py-1 landscape:hidden sm:hidden">
+            <p className="truncate text-[11px] text-gray-300">
+              <span className="mr-1 uppercase tracking-wider text-gray-500">Volgende:</span>
+              {nextArtist && <span className="text-violet-400">{nextArtist}</span>}
+              {nextArtist && nextTitle && <span className="text-gray-500"> — </span>}
+              {nextTitle && <span>{nextTitle}</span>}
+              {!nextTitle && <span className="text-gray-500">Nog geen track klaar...</span>}
+              {!nextQueueItem && upcomingTrack?.isFallback && (
+                <span className="ml-1 text-gray-500">(random)</span>
+              )}
+            </p>
+          </div>
+        )}
+        {mode !== "offline" && !showRadioOfflineState && (
+          <div className="hidden landscape:block sm:block">
             <NowPlaying
               radioTrack={radioConnected && radioMode !== "dj" ? radioTrack : null}
               showFallback={((mode === "twitch" || mode === "audio") && !suppressFallback) || radioMode === "dj" || (mode === "radio" && !radioTrack)}
@@ -280,17 +314,31 @@ export default function StreamPage() {
             />
           </div>
         )}
+        {showRadioOfflineState && (
+          <div className="mt-2 rounded-lg border border-red-900/50 bg-red-950/20 px-3 py-2 text-xs text-red-200">
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400/70" />
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-500" />
+              </span>
+              <span className="font-semibold uppercase tracking-wide">Stream offline</span>
+            </div>
+            <p className="mt-1 text-[11px] text-red-200/85">
+              Geen live DJ/radio signaal. Metadata is verborgen tot de stream weer online is.
+            </p>
+          </div>
+        )}
       </header>
 
-      <main className="flex min-h-0 flex-1 flex-col gap-2 p-2 sm:gap-4 sm:p-4 lg:flex-row">
+      <main className="flex min-h-0 flex-1 flex-col gap-2 p-2 sm:gap-4 sm:p-4 landscape:flex-row lg:flex-row">
         {/* Player */}
-        <div className="shrink-0 lg:min-w-0 lg:flex-1 lg:min-h-0 lg:overflow-visible">
+        <div className="shrink-0 landscape:min-w-0 landscape:flex-1 landscape:min-h-0 landscape:overflow-visible lg:min-w-0 lg:flex-1 lg:min-h-0 lg:overflow-visible">
           <ShoutoutBanner />
           {mode === "twitch" && <TwitchPlayer />}
           {mode === "audio" && icecastUrl && (
             <AudioPlayer src={icecastUrl} radioTrack={radioConnected ? radioTrack : undefined} showFallback={!suppressFallback} />
           )}
-          {mode === "radio" && radioStreamUrl && (
+          {mode === "radio" && radioStreamUrl && !showRadioOfflineState && (
             <AudioPlayer
               src={radioStreamUrl}
               radioTrack={radioMode === "dj" ? null : radioTrack}
@@ -298,7 +346,25 @@ export default function StreamPage() {
               preferSupabase={radioMode === "dj" || !radioTrack}
             />
           )}
-          {mode === "radio" && !radioStreamUrl && (
+          {mode === "radio" && showRadioOfflineState && (
+            <div className="relative overflow-hidden rounded-xl border border-red-900/60 bg-gradient-to-br from-red-950/30 via-gray-900 to-gray-900 px-4 py-6 shadow-lg shadow-red-900/20 sm:py-12">
+              <div className="pointer-events-none absolute -left-10 -top-10 h-32 w-32 rounded-full bg-red-500/15 blur-2xl" />
+              <div className="pointer-events-none absolute -bottom-12 right-0 h-36 w-36 rounded-full bg-violet-500/10 blur-3xl" />
+              <div className="relative z-10 flex items-center justify-center gap-3">
+                <span className="relative flex h-3 w-3">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
+                  <span className="relative inline-flex h-3 w-3 rounded-full bg-red-500" />
+                </span>
+                <p className="text-sm font-semibold text-red-200 sm:text-base">
+                  Stream is offline
+                </p>
+              </div>
+              <p className="relative z-10 mt-2 text-center text-xs text-gray-300 sm:text-sm">
+                Wachten op DJ/radio verbinding...
+              </p>
+            </div>
+          )}
+          {mode === "radio" && !radioStreamUrl && !showRadioOfflineState && (
             <div className="flex items-center justify-center gap-2 rounded-xl border border-gray-800 bg-gray-900 px-4 py-4 shadow-lg shadow-violet-500/5 sm:py-16">
               <span className="relative flex h-3 w-3">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400 opacity-75" />
@@ -331,7 +397,7 @@ export default function StreamPage() {
         </div>
 
         {/* Mobile: tab bar */}
-        <div className="flex shrink-0 gap-1 rounded-lg bg-gray-800/60 p-1 lg:hidden">
+        <div className="flex shrink-0 gap-1 rounded-lg bg-gray-800/60 p-1 landscape:hidden lg:hidden">
           <button
             onClick={() => { setActiveTab("chat"); setChatBadge(false); }}
             className={`relative flex-1 rounded-md px-3 py-2 text-xs font-semibold uppercase tracking-wider transition ${
@@ -378,17 +444,17 @@ export default function StreamPage() {
         </div>
 
         {/* Content panels */}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 lg:min-w-0 lg:flex-[2] lg:flex-row lg:gap-4">
-          <div className={`min-h-0 min-w-0 flex-1 ${activeTab === "chat" ? "" : "hidden"} lg:block`}>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 landscape:min-w-0 landscape:flex-[2] landscape:flex-row landscape:gap-4 lg:min-w-0 lg:flex-[2] lg:flex-row lg:gap-4">
+          <div className={`min-h-0 min-w-0 flex-1 ${activeTab === "chat" ? "" : "hidden"} landscape:block lg:block`}>
             <ChatBox onNewMessage={() => { if (activeTabRef.current !== "chat") setChatBadge(true); }} />
           </div>
           {showRequests && (
-            <div className={`min-h-0 min-w-0 flex-1 ${activeTab === "requests" ? "" : "hidden"} lg:block`}>
+            <div className={`min-h-0 min-w-0 flex-1 ${activeTab === "requests" ? "" : "hidden"} landscape:block lg:block`}>
               <RequestForm onNewRequest={() => { if (activeTabRef.current !== "requests") setRequestBadge(true); }} />
             </div>
           )}
           {showRadioPanel && (
-            <div className={`min-h-0 min-w-0 flex-1 overflow-y-auto flex-col gap-2 ${activeTab === "radio" ? "flex" : "hidden"} lg:flex`}>
+            <div className={`min-h-0 min-w-0 flex-1 overflow-y-auto flex-col gap-2 ${activeTab === "radio" ? "flex" : "hidden"} landscape:flex lg:flex`}>
               <RadioPanelErrorBoundary>
                 <QueueAdd />
                 <Queue />

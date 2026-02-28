@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { EventEmitter } from 'node:events';
 import { SupabaseClient } from '@supabase/supabase-js';
 import type { Server as IOServer } from 'socket.io';
-import type { QueueItem, Track } from './types.js';
+import type { QueueItem, Track, UpcomingTrack } from './types.js';
 import { clearQueueItem, getQueue, fetchVideoInfo } from './queue.js';
 import { cleanupFile } from './cleanup.js';
 import type { StreamHub } from './streamHub.js';
@@ -136,9 +136,44 @@ interface ReadyTrack {
 
 let nextReady: ReadyTrack | null = null;
 let preparingNext = false;
+let currentQueueItemId: string | null = null;
+let lastUpcomingKey: string | null = null;
 
 export function getCurrentTrack(): Track | null {
   return currentTrack;
+}
+
+export function getUpcomingTrack(): UpcomingTrack | null {
+  if (nextReady) {
+    return {
+      youtube_id: nextReady.youtubeId,
+      title: nextReady.title,
+      thumbnail: nextReady.thumbnail,
+      duration: nextReady.duration,
+      isFallback: nextReady.isFallback,
+    };
+  }
+  if (preloadBuffer.length > 0) {
+    const first = preloadBuffer[0];
+    return {
+      youtube_id: first.item.youtube_id,
+      title: first.item.title ?? null,
+      thumbnail: first.item.thumbnail ?? null,
+      duration: first.duration,
+      isFallback: false,
+    };
+  }
+  return null;
+}
+
+function broadcastUpcomingTrack(): void {
+  const upcoming = getUpcomingTrack();
+  const key = upcoming
+    ? `${upcoming.youtube_id}|${upcoming.title ?? ''}|${upcoming.isFallback ? '1' : '0'}`
+    : 'none';
+  if (key === lastUpcomingKey) return;
+  lastUpcomingKey = key;
+  _io?.emit('upcoming:update', upcoming);
 }
 
 function killDecoderProcess(dec: ChildProcess | null): void {
@@ -192,6 +227,7 @@ export function skipCurrentTrack(): void {
     // ── Seamless skip: pre-spawn new decoder, old track keeps playing ──
     const ready = nextReady;
     nextReady = null;
+    broadcastUpcomingTrack();
     beginSeamlessSwap(ready);
     console.log('[player] Skip: old track continues until new decoder is ready');
   } else {
@@ -210,18 +246,21 @@ export function invalidatePreload(): void {
     cleanupFile(nextReady.audioFile);
   }
   nextReady = null;
+  broadcastUpcomingTrack();
   if (preloadBuffer.length === 0) return;
   for (const p of preloadBuffer) {
     if (!keepFiles) cleanupFile(p.audioFile);
   }
   preloadBuffer = [];
   console.log('[preload] Buffer invalidated');
+  broadcastUpcomingTrack();
 }
 
 function takeFromBuffer(itemId: string): PreloadedTrack | null {
   const idx = preloadBuffer.findIndex((p) => p.item.id === itemId);
   if (idx === -1) return null;
   const [found] = preloadBuffer.splice(idx, 1);
+  broadcastUpcomingTrack();
   return found;
 }
 
@@ -229,8 +268,12 @@ function isInBuffer(itemId: string): boolean {
   return preloadBuffer.some((p) => p.item.id === itemId);
 }
 
-function pickNextQueueItem(queue: QueueItem[], currentItemId: string | null): QueueItem | null {
-  const next = queue.find((q) => q.id !== currentItemId);
+function pickNextQueueItem(
+  queue: QueueItem[],
+  currentItemId: string | null,
+  reservedItemId: string | null,
+): QueueItem | null {
+  const next = queue.find((q) => q.id !== currentItemId && q.id !== reservedItemId);
   return next ?? null;
 }
 
@@ -316,6 +359,7 @@ export async function startPlayCycle(
     if (nextReady?.isFallback) {
       console.log('[prepare] Invalidated fallback — queue item added');
       nextReady = null;
+      broadcastUpcomingTrack();
     }
     if (_sb) {
       void fillPreloadBuffer(_sb, _cacheDir, currentTrack?.id ?? null);
@@ -384,6 +428,7 @@ async function fillPreloadBuffer(sb: SupabaseClient, cacheDir: string, currentId
       }
       preloadBuffer = preloadBuffer.filter((p) => upcomingIds.has(p.item.id));
       console.log(`[preload] Dropped ${stale.length} stale preloaded track(s)`);
+      broadcastUpcomingTrack();
     }
 
     const readyCount = preloadBuffer.length + (nextReady?.queueItemId ? 1 : 0);
@@ -412,6 +457,7 @@ async function fillPreloadBuffer(sb: SupabaseClient, cacheDir: string, currentId
 
         preloadBuffer.push({ item: next, audioFile, duration: info.duration });
         console.log(`[preload] Ready (${preloadBuffer.length}/${MAX_PRELOAD}): ${next.title ?? next.youtube_id}`);
+        broadcastUpcomingTrack();
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.warn(`[preload] Failed: ${next.title ?? next.youtube_id} — ${msg}`);
@@ -453,10 +499,12 @@ async function playNext(
     trackQueueId = ready.queueItemId;
     isFallback = ready.isFallback;
     source = isFallback ? 'ready/random' : 'ready/preloaded';
+    currentQueueItemId = trackQueueId;
+    broadcastUpcomingTrack();
   } else {
     // ── NORMAL PATH: fetch from queue or fallback ──
     const queue = await getQueue(sb);
-    const item = pickNextQueueItem(queue, currentTrack?.id ?? null);
+    const item = pickNextQueueItem(queue, currentTrack?.id ?? null, currentQueueItemId);
 
     if (item) {
       const fails = failCounts.get(item.youtube_id) ?? 0;
@@ -499,6 +547,7 @@ async function playNext(
       trackYoutubeId = item.youtube_id;
       trackQueueId = item.id;
       failCounts.delete(item.youtube_id);
+      currentQueueItemId = trackQueueId;
     } else {
       // Queue may still contain only the current track while async deletion catches up.
       if (queue.length > 0) {
@@ -514,8 +563,10 @@ async function playNext(
         trackDuration = await getAudioDuration(fallbackFile);
         isFallback = true;
         source = 'random';
+        currentQueueItemId = null;
       } else {
         currentTrack = null;
+      currentQueueItemId = null;
         io.emit('track:change', null);
         console.log('[player] Queue empty — waiting for tracks...');
         await waitForQueueAdd();
@@ -602,6 +653,7 @@ async function playNext(
       io.emit('track:change', currentTrack);
       setSkipLock(false);
       console.log(`[player] Seamless skip → ${trackTitle ?? trackYoutubeId} (${durStr})`);
+      currentQueueItemId = trackQueueId;
 
       if (trackQueueId) {
         clearQueueItem(sb, trackQueueId)
@@ -631,6 +683,7 @@ async function playNext(
     }
   } finally {
     currentDecoder = null;
+    currentQueueItemId = null;
 
     if (audioFile && !isFallback && !keepFiles) {
       cleanupFile(audioFile);
@@ -872,7 +925,7 @@ async function prepareNextTrack(
 
   try {
     const queue = await getQueue(sb);
-    const item = pickNextQueueItem(queue, currentItemId);
+    const item = pickNextQueueItem(queue, currentItemId, currentQueueItemId);
 
     if (item) {
       const buffered = takeFromBuffer(item.id);
@@ -888,6 +941,7 @@ async function prepareNextTrack(
           isFallback: false,
         };
         console.log(`[prepare] Next ready (preloaded): ${item.title ?? item.youtube_id}`);
+        broadcastUpcomingTrack();
       } else {
         const info = await fetchVideoInfo(item.youtube_url);
         if (info.title && !item.title) item.title = info.title;
@@ -903,6 +957,7 @@ async function prepareNextTrack(
           isFallback: false,
         };
         console.log(`[prepare] Next ready (downloaded): ${item.title ?? item.youtube_id}`);
+        broadcastUpcomingTrack();
       }
     } else {
       // Never pick random while queue still has items (usually current-track DB lag).
@@ -924,6 +979,7 @@ async function prepareNextTrack(
           isFallback: true,
         };
         console.log(`[prepare] Next ready (random): ${title}`);
+        broadcastUpcomingTrack();
       }
     }
   } catch (err) {
@@ -942,6 +998,7 @@ async function prepareNextTrack(
     skipWhenReady = false;
     const ready = nextReady;
     nextReady = null;
+    broadcastUpcomingTrack();
     beginSeamlessSwap(ready);
     console.log('[player] skipWhenReady triggered — seamless swap started');
   }

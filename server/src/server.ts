@@ -11,7 +11,7 @@ import { initCache } from './cleanup.js';
 import { seedSettings, getActiveMode, getModeSettings, getSetting, setSetting } from './settings.js';
 import { getQueue, addToQueue, removeFromQueue, reorderQueue, fetchVideoInfo, extractYoutubeId, extractSourceId, isSoundcloudUrl, getThumbnailUrl } from './queue.js';
 import { canPerformAction } from './permissions.js';
-import { startPlayCycle, stopPlayCycle, getCurrentTrack, skipCurrentTrack, isSkipLocked, playerEvents, setKeepFiles, invalidatePreload } from './player.js';
+import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, playerEvents, setKeepFiles, invalidatePreload } from './player.js';
 import { startBridge } from './bridge.js';
 import { startNowPlayingWatcher } from './nowPlaying.js';
 import { StreamHub } from './streamHub.js';
@@ -103,6 +103,7 @@ async function getServerState(): Promise<ServerState> {
 
   return {
     currentTrack: getCurrentTrack(),
+    upcomingTrack: getUpcomingTrack(),
     queue,
     mode,
     modeSettings,
@@ -772,6 +773,7 @@ function startDurationVote(
 io.on('connection', (socket) => {
   console.log(`[socket] Client connected: ${socket.id}`);
   io.emit('stream:status', { online: getCurrentTrack() !== null, listeners: io.engine.clientsCount });
+  socket.emit('upcoming:update', getUpcomingTrack());
 
   // ── auth:verify ──
   socket.on('auth:verify', (data: { token: string }, callback?: (valid: boolean) => void) => {
