@@ -80,6 +80,7 @@ export default function StreamPage() {
   const activeTabRef = useRef<MobileTab>(activeTab);
   activeTabRef.current = activeTab;
   const previousQueueLengthRef = useRef<number>(0);
+  const latestUpcomingRef = useRef<UpcomingTrack | null>(null);
 
   const radioConnected = useRadioStore((s) => s.connected);
   const radioTrack = useRadioStore((s) => s.currentTrack);
@@ -98,6 +99,16 @@ export default function StreamPage() {
 
   const showRequests = twitchLive || (radioConnected && radioMode === "dj");
   const showRadioPanel = radioMode !== "dj";
+
+  function hydrateTrackRequester(track: Track | null): Track | null {
+    if (!track) return null;
+    if (track.added_by) return track;
+    const upcoming = latestUpcomingRef.current;
+    if (upcoming && upcoming.youtube_id === track.youtube_id && upcoming.added_by) {
+      return { ...track, added_by: upcoming.added_by };
+    }
+    return track;
+  }
 
   function showToast(message: string): void {
     setToastMessage(message);
@@ -152,6 +163,7 @@ export default function StreamPage() {
         .then((state) => {
           const nextQueueLength = state.queue?.length ?? 0;
           previousQueueLengthRef.current = nextQueueLength;
+          latestUpcomingRef.current = state.upcomingTrack ?? null;
           console.log("[radio] State loaded:", {
             track: state.currentTrack?.title ?? "none",
             duration: state.currentTrack?.duration,
@@ -159,7 +171,7 @@ export default function StreamPage() {
             mode: state.mode,
           });
           store.getState().initFromServer({
-            currentTrack: state.currentTrack ?? null,
+            currentTrack: hydrateTrackRequester(state.currentTrack ?? null),
             upcomingTrack: state.upcomingTrack ?? null,
             queue: state.queue ?? [],
             fallbackGenres: state.fallbackGenres ?? [],
@@ -189,12 +201,13 @@ export default function StreamPage() {
       store.getState().setConnected(false);
       store.getState().setStreamOnline(false);
       store.getState().setCurrentTrack(null);
+      latestUpcomingRef.current = null;
       previousQueueLengthRef.current = 0;
       setSuppressFallback(true);
     });
 
     socket.on("track:change", (track: Track | null) => {
-      store.getState().setCurrentTrack(track);
+      store.getState().setCurrentTrack(hydrateTrackRequester(track));
       store.getState().setStreamOnline(track !== null);
       store.getState().setVoteState(null);
     });
@@ -210,6 +223,7 @@ export default function StreamPage() {
     });
 
     socket.on("upcoming:update", (upcoming: UpcomingTrack | null) => {
+      latestUpcomingRef.current = upcoming;
       store.getState().setUpcomingTrack(upcoming);
     });
 

@@ -21,7 +21,7 @@ export default function FallbackGenreSelector() {
   const activeLabel = sortedGenres.find((g) => g.id === activeGenre)?.label ?? activeGenre ?? "Kies genre";
 
   return (
-    <details ref={menuRef} className="group relative">
+    <details ref={menuRef} className="group relative z-40">
       <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md border border-gray-700 bg-gray-900/75 px-2.5 py-1.5 text-xs text-gray-200 transition hover:border-violet-500/60">
         <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
           Random genre
@@ -29,7 +29,7 @@ export default function FallbackGenreSelector() {
         <span className="min-w-0 flex-1 truncate text-violet-300">{activeLabel}</span>
         <span className="text-gray-400 transition group-open:rotate-180">▾</span>
       </summary>
-      <div className="absolute left-0 right-0 z-30 mt-1 max-h-[55dvh] overflow-y-auto rounded-md border border-gray-700 bg-gray-900/95 p-1 shadow-lg shadow-black/40 sm:max-h-60">
+      <div className="relative z-40 mt-1 max-h-[55dvh] overflow-y-auto rounded-md border border-gray-700 bg-gray-900/95 p-1 shadow-lg shadow-black/40 sm:max-h-60">
         {activeGenreBy && (
           <p className="mb-1 px-2 py-1 text-[10px] text-gray-400">
             Gekozen door: <span className="text-violet-300">{activeGenreBy}</span>
