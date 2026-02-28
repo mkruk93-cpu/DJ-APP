@@ -9,6 +9,8 @@ interface RequestRow {
   id: string;
   nickname: string;
   url: string;
+  title?: string | null;
+  artist?: string | null;
   status: string;
 }
 
@@ -16,13 +18,34 @@ function safeFilename(text: string): string {
   return text.replace(/[\\/:*?"<>|]/g, '_');
 }
 
+function cleanPart(text: string | null | undefined, fallback: string): string {
+  const trimmed = (text ?? '').trim();
+  if (!trimmed) return fallback;
+  return safeFilename(trimmed).replace(/\s+/g, ' ');
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function stripArtistPrefixFromTitle(artistRaw: string, titleRaw: string): string {
+  const artist = artistRaw.trim();
+  const title = titleRaw.trim();
+  if (!artist || !title) return titleRaw;
+
+  // Remove leading "Artist - " / "Artist: " / "Artist | " patterns.
+  const prefixRe = new RegExp(`^${escapeRegExp(artist)}\\s*[-–:|]\\s*`, 'i');
+  const stripped = title.replace(prefixRe, '').trim();
+  return stripped || titleRaw;
+}
+
 function downloadRequest(row: RequestRow, downloadPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const nickname = safeFilename(row.nickname);
-    const outtmpl = path.join(
-      downloadPath,
-      `%(artist,uploader,creator|Unknown)s - %(title)s [${nickname}].%(ext)s`,
-    );
+    const artistRaw = (row.artist ?? '').trim() || 'Unknown Artist';
+    const titleRaw = stripArtistPrefixFromTitle(artistRaw, (row.title ?? '').trim() || 'Unknown Title');
+    const artist = cleanPart(artistRaw, 'Unknown Artist');
+    const title = cleanPart(titleRaw, 'Unknown Title');
+    const outtmpl = path.join(downloadPath, `${artist} - ${title}.%(ext)s`);
 
     const proc = spawn('python', [
       '-m', 'yt_dlp',

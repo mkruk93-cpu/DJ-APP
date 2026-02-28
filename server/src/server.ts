@@ -109,6 +109,47 @@ interface SearchResult {
   channel: string;
 }
 
+const MAX_LONG_CONTENT_SECONDS = 35 * 60;
+const MAX_SET_LIKE_SECONDS = 15 * 60;
+const MIN_SOUNDCLOUD_SECONDS = 60;
+
+function isSetLikeTitle(title: string): boolean {
+  return /\b(set|mix|liveset|live set|podcast|radio show|megamix|full mix|extended mix)\b/i.test(title);
+}
+
+function scoreResult(item: SearchResult, source: 'youtube' | 'soundcloud'): number {
+  let score = 0;
+  const title = item.title ?? '';
+  const duration = item.duration;
+
+  if (duration !== null) {
+    if (duration >= 120 && duration <= 8 * 60) score += 35;
+    else if (duration > 8 * 60 && duration <= 12 * 60) score += 18;
+    else if (duration < 90) score -= source === 'soundcloud' ? 20 : 8;
+    else if (duration > MAX_SET_LIKE_SECONDS) score -= 16;
+  }
+
+  if (isSetLikeTitle(title)) score -= 28;
+  if (/\b(official|audio|video|track)\b/i.test(title)) score += 6;
+
+  return score;
+}
+
+function postProcessResults(
+  input: SearchResult[],
+  source: 'youtube' | 'soundcloud',
+): SearchResult[] {
+  const filtered = input.filter((item) => {
+    const duration = item.duration;
+    if (duration !== null && duration > MAX_LONG_CONTENT_SECONDS) return false;
+    if (source === 'soundcloud' && duration !== null && duration < MIN_SOUNDCLOUD_SECONDS) return false;
+    if (duration !== null && duration > MAX_SET_LIKE_SECONDS && isSetLikeTitle(item.title)) return false;
+    return true;
+  });
+
+  return filtered.sort((a, b) => scoreResult(b, source) - scoreResult(a, source));
+}
+
 const searchCache = new Map<string, { results: SearchResult[]; ts: number }>();
 const CACHE_TTL = 60_000;
 const DISCOVERY_CACHE_TTL = 180_000;
@@ -184,8 +225,9 @@ async function youtubeSearch(query: string, limit = 6): Promise<SearchResult[]> 
       if (results.length >= limit) break;
     }
 
-    searchCache.set(cacheKey, { results, ts: Date.now() });
-    return results;
+    const normalized = postProcessResults(results, 'youtube');
+    searchCache.set(cacheKey, { results: normalized, ts: Date.now() });
+    return normalized;
   } catch (err) {
     console.warn('[search] Innertube failed, falling back to yt-dlp:', (err as Error).message);
     return youtubeSearchFallback(query, limit);
@@ -224,7 +266,7 @@ function youtubeSearchFallback(query: string, limit = 6): Promise<SearchResult[]
           });
         } catch {}
       }
-      resolve(results);
+      resolve(postProcessResults(results, 'youtube'));
     });
 
     proc.on('error', () => resolve([]));
@@ -312,7 +354,7 @@ async function soundcloudSearchDirect(query: string, limit = 6): Promise<SearchR
     if (results.length >= limit) break;
   }
 
-  return results;
+  return postProcessResults(results, 'soundcloud');
 }
 
 function soundcloudSearchFallback(query: string, limit = 6): Promise<SearchResult[]> {
@@ -350,7 +392,7 @@ function soundcloudSearchFallback(query: string, limit = 6): Promise<SearchResul
           });
         } catch {}
       }
-      resolve(results);
+      resolve(postProcessResults(results, 'soundcloud'));
     });
 
     proc.on('error', () => resolve([]));

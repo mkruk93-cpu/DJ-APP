@@ -1,11 +1,13 @@
-import type { OverlaySettings, PanelLayout } from "../types";
+import type { OverlaySettings, PanelLayout, PollPreset } from "../types";
 
 const SETTINGS_KEY = "dj_overlay_settings_v1";
 const CHAT_LAYOUT_KEY = "dj_overlay_layout_chat_v1";
 const REQUEST_LAYOUT_KEY = "dj_overlay_layout_requests_v1";
+const POLL_PRESETS_KEY = "dj_overlay_poll_presets_v1";
 
 const DEFAULT_SETTINGS: OverlaySettings = {
   apiBaseUrl: "/",
+  controlServerUrl: "http://localhost:3001",
   adminToken: "",
   supabaseUrl: "",
   supabaseAnonKey: "",
@@ -59,4 +61,15 @@ export function saveChatLayout(next: PanelLayout): void {
 export function saveRequestLayout(next: PanelLayout): void {
   if (typeof window === "undefined") return;
   localStorage.setItem(REQUEST_LAYOUT_KEY, JSON.stringify(next));
+}
+
+export function loadPollPresets(): PollPreset[] {
+  if (typeof window === "undefined") return [];
+  const saved = parseJson<PollPreset[]>(localStorage.getItem(POLL_PRESETS_KEY));
+  return Array.isArray(saved) ? saved : [];
+}
+
+export function savePollPresets(next: PollPreset[]): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(POLL_PRESETS_KEY, JSON.stringify(next));
 }

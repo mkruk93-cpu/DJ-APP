@@ -107,3 +107,41 @@ ALTER PUBLICATION supabase_realtime ADD TABLE requests;
 ALTER PUBLICATION supabase_realtime ADD TABLE now_playing;
 ALTER PUBLICATION supabase_realtime ADD TABLE queue;
 ALTER PUBLICATION supabase_realtime ADD TABLE radio_settings;
+
+-- Live polls (DJ can launch one active poll at a time)
+CREATE TABLE IF NOT EXISTS live_polls (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  question    text NOT NULL,
+  options     jsonb NOT NULL,
+  status      text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'closed')),
+  created_by  text,
+  created_at  timestamptz DEFAULT now(),
+  closed_at   timestamptz
+);
+
+CREATE TABLE IF NOT EXISTS live_poll_votes (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  poll_id      uuid NOT NULL REFERENCES live_polls(id) ON DELETE CASCADE,
+  nickname     text NOT NULL,
+  option_index integer NOT NULL,
+  created_at   timestamptz DEFAULT now(),
+  UNIQUE (poll_id, nickname)
+);
+
+CREATE INDEX IF NOT EXISTS idx_live_poll_votes_poll_id ON live_poll_votes(poll_id);
+
+-- Temporary spotlight messages from DJ to listener
+CREATE TABLE IF NOT EXISTS shoutouts (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  nickname    text NOT NULL,
+  message     text NOT NULL,
+  active      boolean NOT NULL DEFAULT true,
+  created_at  timestamptz DEFAULT now(),
+  expires_at  timestamptz NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_shoutouts_active_expires ON shoutouts(active, expires_at DESC);
+
+ALTER PUBLICATION supabase_realtime ADD TABLE live_polls;
+ALTER PUBLICATION supabase_realtime ADD TABLE live_poll_votes;
+ALTER PUBLICATION supabase_realtime ADD TABLE shoutouts;

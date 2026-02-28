@@ -17,6 +17,8 @@ import QueueAdd from "@/components/QueueAdd";
 import SkipButton from "@/components/SkipButton";
 import ModeIndicator from "@/components/ModeIndicator";
 import DurationVotePanel from "@/components/DurationVote";
+import LivePollCard from "@/components/LivePollCard";
+import ShoutoutBanner from "@/components/ShoutoutBanner";
 import type { Track, QueueItem, Mode, ModeSettings, VoteState, DurationVote } from "@/lib/types";
 
 type StreamMode = "twitch" | "audio" | "radio" | "offline";
@@ -283,6 +285,7 @@ export default function StreamPage() {
       <main className="flex min-h-0 flex-1 flex-col gap-2 p-2 sm:gap-4 sm:p-4 lg:flex-row">
         {/* Player */}
         <div className="shrink-0 lg:min-w-0 lg:flex-1 lg:min-h-0 lg:overflow-y-auto">
+          <ShoutoutBanner />
           {mode === "twitch" && <TwitchPlayer />}
           {mode === "audio" && icecastUrl && (
             <AudioPlayer src={icecastUrl} radioTrack={radioConnected ? radioTrack : undefined} showFallback={!suppressFallback} />
@@ -322,6 +325,9 @@ export default function StreamPage() {
               <DurationVotePanel />
             </div>
           )}
+          <div className="mt-2">
+            <LivePollCard />
+          </div>
         </div>
 
         {/* Mobile: tab bar */}

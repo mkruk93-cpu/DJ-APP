@@ -30,6 +30,7 @@ export interface NowPlaying {
 
 export interface OverlaySettings {
   apiBaseUrl: string;
+  controlServerUrl: string;
   adminToken: string;
   supabaseUrl: string;
   supabaseAnonKey: string;
@@ -45,4 +46,12 @@ export interface PanelLayout {
   y: number;
   width: number;
   height: number;
+}
+
+export interface PollPreset {
+  id: string;
+  name: string;
+  question: string;
+  options: string[];
+  created_at: string;
 }
