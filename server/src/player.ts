@@ -138,6 +138,8 @@ let nextReady: ReadyTrack | null = null;
 let preparingNext = false;
 let currentQueueItemId: string | null = null;
 let lastUpcomingKey: string | null = null;
+const prepareFailCounts = new Map<string, number>();
+const PREPARE_FAIL_MAX = 3;
 
 export function getCurrentTrack(): Track | null {
   return currentTrack;
@@ -275,6 +277,57 @@ function pickNextQueueItem(
 ): QueueItem | null {
   const next = queue.find((q) => q.id !== currentItemId && q.id !== reservedItemId);
   return next ?? null;
+}
+
+function clearPrepareFailure(itemId: string | null | undefined): void {
+  if (!itemId) return;
+  prepareFailCounts.delete(itemId);
+}
+
+async function markUnplayableQueueItem(
+  sb: SupabaseClient,
+  item: QueueItem,
+  context: 'prepare' | 'preload',
+  reason: string,
+): Promise<boolean> {
+  const fails = (prepareFailCounts.get(item.id) ?? 0) + 1;
+  prepareFailCounts.set(item.id, fails);
+
+  if (fails < PREPARE_FAIL_MAX) {
+    console.warn(`[${context}] Failed ${fails}/${PREPARE_FAIL_MAX} for ${item.title ?? item.youtube_id}: ${reason}`);
+    return false;
+  }
+
+  console.warn(`[${context}] Removing unplayable queue item after ${fails} failed attempts: ${item.title ?? item.youtube_id}`);
+  clearPrepareFailure(item.id);
+
+  try {
+    await clearQueueItem(sb, item.id);
+  } catch (err) {
+    console.warn(`[${context}] Failed to remove broken queue item: ${(err as Error).message}`);
+    return false;
+  }
+
+  // Remove stale preloaded files for this queue item.
+  const stalePreloads = preloadBuffer.filter((p) => p.item.id === item.id);
+  if (stalePreloads.length > 0) {
+    for (const p of stalePreloads) {
+      if (!keepFiles) cleanupFile(p.audioFile);
+    }
+    preloadBuffer = preloadBuffer.filter((p) => p.item.id !== item.id);
+  }
+
+  // If the queued item was already prepared as nextReady, invalidate it.
+  if (nextReady?.queueItemId === item.id) {
+    if (!nextReady.isFallback && !keepFiles) cleanupFile(nextReady.audioFile);
+    nextReady = null;
+  }
+
+  _io?.emit('error:toast', { message: `Overgeslagen: ${item.title ?? item.youtube_id} (niet beschikbaar)` });
+  const q = await getQueue(sb);
+  _io?.emit('queue:update', { items: q });
+  broadcastUpcomingTrack();
+  return true;
 }
 
 export type IcecastConfig = { host: string; port: number; password: string; mount: string };
@@ -461,6 +514,7 @@ async function fillPreloadBuffer(sb: SupabaseClient, cacheDir: string, currentId
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.warn(`[preload] Failed: ${next.title ?? next.youtube_id} — ${msg}`);
+        await markUnplayableQueueItem(sb, next, 'preload', msg);
       }
     }
   } catch (err) {
@@ -865,47 +919,109 @@ function pipeRunningDecoder(decoder: ChildProcess, enc: ChildProcess): Promise<v
 
 let downloadCounter = 0;
 
+function resolveAlternativeYoutubeUrl(item: QueueItem): Promise<string | null> {
+  return new Promise((resolve) => {
+    const query = (item.title ?? item.youtube_id ?? '').trim();
+    if (!query) {
+      resolve(null);
+      return;
+    }
+
+    const proc = spawn('python', [
+      '-m', 'yt_dlp',
+      '--flat-playlist',
+      '--print', '%(id)s',
+      '--no-warnings',
+      '--playlist-end', '5',
+      `ytsearch5:${query}`,
+    ], { timeout: 15_000 });
+
+    let output = '';
+    proc.stdout?.on('data', (chunk: Buffer) => {
+      output += chunk.toString();
+    });
+
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        resolve(null);
+        return;
+      }
+      const candidates = output
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((id) => /^[\w-]{11}$/.test(id))
+        .filter((id) => id !== item.youtube_id);
+
+      const id = candidates[0];
+      resolve(id ? `https://www.youtube.com/watch?v=${id}` : null);
+    });
+
+    proc.on('error', () => resolve(null));
+  });
+}
+
 function downloadAudio(item: QueueItem, cacheDir: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const safeId = item.youtube_id.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 30);
     const uniqueTag = `${safeId}_${Date.now()}_${downloadCounter++}`;
     const outputTemplate = path.join(cacheDir, `${uniqueTag}.%(ext)s`);
 
-    const proc = spawn('python', [
-      '-m', 'yt_dlp',
-      '--format', 'bestaudio',
-      '--no-playlist',
-      '--no-warnings',
-      '-o', outputTemplate,
-      item.youtube_url,
-    ]);
+    function downloadFrom(url: string): Promise<string> {
+      return new Promise((resolveDownload, rejectDownload) => {
+        const proc = spawn('python', [
+          '-m', 'yt_dlp',
+          '--format', 'bestaudio',
+          '--no-playlist',
+          '--no-warnings',
+          '-o', outputTemplate,
+          url,
+        ]);
 
-    let stderr = '';
-    proc.stderr?.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
+        let stderr = '';
+        proc.stderr?.on('data', (chunk: Buffer) => {
+          stderr += chunk.toString();
+        });
 
-    proc.on('close', (code) => {
-      if (code !== 0) {
-        reject(new Error(`yt-dlp exited ${code}: ${stderr.slice(0, 200)}`));
-        return;
-      }
+        proc.on('close', (code) => {
+          if (code !== 0) {
+            rejectDownload(new Error(`yt-dlp exited ${code}: ${stderr.slice(0, 200)}`));
+            return;
+          }
 
-      const files = fs.readdirSync(cacheDir)
-        .filter((f) => f.startsWith(uniqueTag))
-        .map((f) => path.join(cacheDir, f));
+          const files = fs.readdirSync(cacheDir)
+            .filter((f) => f.startsWith(uniqueTag))
+            .map((f) => path.join(cacheDir, f));
 
-      if (files.length === 0) {
-        reject(new Error('yt-dlp completed but no file found'));
-        return;
-      }
+          if (files.length === 0) {
+            rejectDownload(new Error('yt-dlp completed but no file found'));
+            return;
+          }
 
-      resolve(files[0]);
-    });
+          resolveDownload(files[0]);
+        });
 
-    proc.on('error', (err) => {
-      reject(new Error(`Failed to start yt-dlp: ${err.message}`));
-    });
+        proc.on('error', (err) => {
+          rejectDownload(new Error(`Failed to start yt-dlp: ${err.message}`));
+        });
+      });
+    }
+
+    downloadFrom(item.youtube_url)
+      .then(resolve)
+      .catch(async (primaryErr) => {
+        const altUrl = await resolveAlternativeYoutubeUrl(item);
+        if (!altUrl) {
+          reject(primaryErr);
+          return;
+        }
+        console.warn(`[download] Primary source failed for ${item.title ?? item.youtube_id}; trying alternative source`);
+        try {
+          const file = await downloadFrom(altUrl);
+          resolve(file);
+        } catch {
+          reject(primaryErr);
+        }
+      });
   });
 }
 
@@ -924,10 +1040,10 @@ async function prepareNextTrack(
   preparingNext = true;
 
   try {
-    const queue = await getQueue(sb);
-    const item = pickNextQueueItem(queue, currentItemId, currentQueueItemId);
+    let queue = await getQueue(sb);
+    let item = pickNextQueueItem(queue, currentItemId, currentQueueItemId);
 
-    if (item) {
+    while (item) {
       const buffered = takeFromBuffer(item.id);
       if (buffered) {
         if (buffered.item.title) item.title = buffered.item.title;
@@ -941,8 +1057,12 @@ async function prepareNextTrack(
           isFallback: false,
         };
         console.log(`[prepare] Next ready (preloaded): ${item.title ?? item.youtube_id}`);
+        clearPrepareFailure(item.id);
         broadcastUpcomingTrack();
-      } else {
+        break;
+      }
+
+      try {
         const info = await fetchVideoInfo(item.youtube_url);
         if (info.title && !item.title) item.title = info.title;
         console.log(`[prepare] Downloading next: ${item.title ?? item.youtube_id}`);
@@ -957,9 +1077,21 @@ async function prepareNextTrack(
           isFallback: false,
         };
         console.log(`[prepare] Next ready (downloaded): ${item.title ?? item.youtube_id}`);
+        clearPrepareFailure(item.id);
         broadcastUpcomingTrack();
+        break;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const removed = await markUnplayableQueueItem(sb, item, 'prepare', msg);
+        if (!removed) {
+          throw err;
+        }
+        queue = await getQueue(sb);
+        item = pickNextQueueItem(queue, currentItemId, currentQueueItemId);
       }
-    } else {
+    }
+
+    if (!item && !nextReady) {
       // Never pick random while queue still has items (usually current-track DB lag).
       if (queue.length > 0) {
         console.log('[prepare] Queue still contains current track only — skip random fallback');

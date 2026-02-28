@@ -91,9 +91,20 @@ export default function StreamPage() {
   const [twitchLive, setTwitchLive] = useState(false);
   const [radioServerUrl, setRadioServerUrl] = useState<string | null>(null);
   const [preferRadioUi, setPreferRadioUi] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const showRequests = twitchLive || (radioConnected && radioMode === "dj");
   const showRadioPanel = radioMode !== "dj";
+
+  function showToast(message: string): void {
+    setToastMessage(message);
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => {
+      setToastMessage(null);
+      toastTimerRef.current = null;
+    }, 5000);
+  }
 
   useEffect(() => {
     if (!showRequests && activeTab === "requests") {
@@ -204,6 +215,7 @@ export default function StreamPage() {
 
     socket.on("error:toast", (data: { message: string }) => {
       console.warn("[radio]", data.message);
+      showToast(data.message);
     });
 
     socket.on("durationVote:update", (data: DurationVote & { voters: string[] }) => {
@@ -225,6 +237,10 @@ export default function StreamPage() {
     }, 8000);
 
     return () => {
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+        toastTimerRef.current = null;
+      }
       clearInterval(stateSyncInterval);
       disconnectSocket();
     };
@@ -481,6 +497,13 @@ export default function StreamPage() {
           )}
         </div>
       </main>
+      {toastMessage && (
+        <div className="pointer-events-none fixed bottom-4 left-1/2 z-[120] w-[92%] max-w-xl -translate-x-1/2">
+          <div className="rounded-lg border border-red-900/60 bg-red-950/85 px-4 py-2 text-center text-sm text-red-100 shadow-lg shadow-red-900/40 backdrop-blur-sm">
+            {toastMessage}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
