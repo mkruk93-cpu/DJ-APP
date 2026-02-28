@@ -25,6 +25,13 @@ import { parseTrackDisplay } from "@/lib/trackDisplay";
 type StreamMode = "twitch" | "audio" | "radio" | "offline";
 type MobileTab = "chat" | "requests" | "radio";
 
+function firstNonEmpty(...values: Array<string | null | undefined>): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim().length > 0) return value.trim();
+  }
+  return null;
+}
+
 class RadioPanelErrorBoundary extends Component<
   { children: ReactNode },
   { hasError: boolean }
@@ -212,7 +219,13 @@ export default function StreamPage() {
       store.getState().setSkipLocked(data.locked);
     });
 
+    // Safety net: keep upcoming/current state in sync in case a socket event is missed.
+    const stateSyncInterval = setInterval(() => {
+      if (store.getState().connected) fetchState();
+    }, 8000);
+
     return () => {
+      clearInterval(stateSyncInterval);
       disconnectSocket();
     };
   }, [radioServerUrl, store]);
@@ -259,7 +272,12 @@ export default function StreamPage() {
     mode === "radio" &&
     (!radioStreamUrl || !radioConnected || !streamOnline);
   const nextQueueItem = queue[0] ?? null;
-  const nextSourceTitle = nextQueueItem?.title ?? upcomingTrack?.title ?? null;
+  const nextSourceTitle = firstNonEmpty(
+    nextQueueItem?.title,
+    upcomingTrack?.title,
+    nextQueueItem?.youtube_id,
+    upcomingTrack?.youtube_id,
+  );
   const parsedNext = parseTrackDisplay(nextSourceTitle);
   const nextTitle = parsedNext.title ?? nextSourceTitle;
   const nextArtist = parsedNext.artist;

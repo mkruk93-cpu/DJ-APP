@@ -19,6 +19,13 @@ interface NowPlayingProps {
   preferSupabase?: boolean;
 }
 
+function firstNonEmpty(...values: Array<string | null | undefined>): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim().length > 0) return value.trim();
+  }
+  return null;
+}
+
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
@@ -97,7 +104,12 @@ export default function NowPlaying({ radioTrack, showFallback = false, preferSup
   const displayArtwork = syncedRadioTrack?.thumbnail ?? (showSupabaseData ? track.artwork_url : null);
   const hasData = displayTitle || displayArtist;
   const nextQueueItem = queue[0] ?? null;
-  const nextSourceTitle = nextQueueItem?.title ?? upcomingTrack?.title ?? null;
+  const nextSourceTitle = firstNonEmpty(
+    nextQueueItem?.title,
+    upcomingTrack?.title,
+    nextQueueItem?.youtube_id,
+    upcomingTrack?.youtube_id,
+  );
   const parsedNext = parseTrackDisplay(nextSourceTitle);
   const nextTitle = parsedNext.title ?? nextSourceTitle;
   const nextArtist = parsedNext.artist;
