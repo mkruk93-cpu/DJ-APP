@@ -19,6 +19,7 @@ import ModeIndicator from "@/components/ModeIndicator";
 import DurationVotePanel from "@/components/DurationVote";
 import LivePollCard from "@/components/LivePollCard";
 import ShoutoutBanner from "@/components/ShoutoutBanner";
+import FallbackGenreSelector from "@/components/FallbackGenreSelector";
 import type { Track, QueueItem, Mode, ModeSettings, VoteState, DurationVote, UpcomingTrack } from "@/lib/types";
 import { parseTrackDisplay } from "@/lib/trackDisplay";
 
@@ -158,6 +159,9 @@ export default function StreamPage() {
             currentTrack: state.currentTrack ?? null,
             upcomingTrack: state.upcomingTrack ?? null,
             queue: state.queue ?? [],
+            fallbackGenres: state.fallbackGenres ?? [],
+            activeFallbackGenre: state.activeFallbackGenre ?? null,
+            activeFallbackGenreBy: state.activeFallbackGenreBy ?? null,
             mode: state.mode ?? "radio",
             modeSettings: state.modeSettings ?? store.getState().modeSettings,
             listenerCount: state.listenerCount ?? 0,
@@ -198,6 +202,12 @@ export default function StreamPage() {
 
     socket.on("upcoming:update", (upcoming: UpcomingTrack | null) => {
       store.getState().setUpcomingTrack(upcoming);
+    });
+
+    socket.on("fallback:genre:update", (data: { activeGenreId: string | null; selectedBy?: string | null; genres: Array<{ id: string; label: string; trackCount: number }> }) => {
+      store.getState().setFallbackGenres(data.genres ?? []);
+      store.getState().setActiveFallbackGenre(data.activeGenreId ?? null);
+      store.getState().setActiveFallbackGenreBy(data.selectedBy ?? null);
     });
 
     socket.on("mode:change", (data: { mode: Mode; settings: ModeSettings }) => {
@@ -297,6 +307,7 @@ export default function StreamPage() {
   const parsedNext = parseTrackDisplay(nextSourceTitle);
   const nextTitle = parsedNext.title ?? nextSourceTitle;
   const nextArtist = parsedNext.artist;
+  const nextRequestedBy = nextQueueItem?.added_by ?? upcomingTrack?.added_by ?? null;
   const showHeaderNextOnly = mode === "radio" && !showRadioOfflineState;
 
   return (
@@ -335,6 +346,11 @@ export default function StreamPage() {
               {!nextTitle && <span className="text-gray-500">Nog geen track klaar...</span>}
               {!nextQueueItem && upcomingTrack?.isFallback && (
                 <span className="ml-1 text-gray-500">(random)</span>
+              )}
+              {nextRequestedBy && (
+                <span className="ml-1 text-gray-500">
+                  · door <span className="text-violet-300">{nextRequestedBy}</span>
+                </span>
               )}
             </p>
           </div>
@@ -421,6 +437,7 @@ export default function StreamPage() {
           {/* Skip / vote button below player */}
           {radioConnected && (
             <div className="mt-2 space-y-2">
+              <FallbackGenreSelector />
               <SkipButton />
               <DurationVotePanel />
             </div>

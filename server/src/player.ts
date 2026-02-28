@@ -1,7 +1,6 @@
 import { spawn, ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { homedir } from 'node:os';
 import { EventEmitter } from 'node:events';
 import { SupabaseClient } from '@supabase/supabase-js';
 import type { Server as IOServer } from 'socket.io';
@@ -9,6 +8,7 @@ import type { QueueItem, Track, UpcomingTrack } from './types.js';
 import { clearQueueItem, getQueue, fetchVideoInfo } from './queue.js';
 import { cleanupFile } from './cleanup.js';
 import type { StreamHub } from './streamHub.js';
+import { pickRandomFallbackForGenre } from './fallbackGenres.js';
 
 export const playerEvents = new EventEmitter();
 
@@ -52,35 +52,10 @@ function setSkipLock(locked: boolean): void {
 
 const STREAM_DELAY_MS = parseInt(process.env.STREAM_DELAY_MS ?? '8000', 10);
 const STREAM_BITRATE = process.env.STREAM_BITRATE ?? '256k';
-const FALLBACK_MUSIC_DIR_RAW = process.env.FALLBACK_MUSIC_DIR ?? '';
-const FALLBACK_MUSIC_DIR = FALLBACK_MUSIC_DIR_RAW.startsWith('~/')
-  ? path.join(homedir(), FALLBACK_MUSIC_DIR_RAW.slice(2))
-  : FALLBACK_MUSIC_DIR_RAW;
+let activeFallbackGenre: string | null = null;
 
-let fallbackFiles: string[] = [];
-
-function loadFallbackLibrary(): void {
-  if (!FALLBACK_MUSIC_DIR) return;
-  try {
-    const exts = new Set(['.mp3', '.flac', '.wav', '.m4a', '.ogg', '.aac', '.wma']);
-    function scan(dir: string): void {
-      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) scan(full);
-        else if (exts.has(path.extname(entry.name).toLowerCase())) fallbackFiles.push(full);
-      }
-    }
-    scan(FALLBACK_MUSIC_DIR);
-    console.log(`[player] Fallback library: ${fallbackFiles.length} tracks from ${FALLBACK_MUSIC_DIR}`);
-  } catch (err) {
-    console.warn(`[player] Could not scan fallback dir: ${(err as Error).message}`);
-  }
-}
-
-function pickRandomFallback(): string | null {
-  if (fallbackFiles.length === 0) return null;
-  const idx = Math.floor(Math.random() * fallbackFiles.length);
-  return fallbackFiles[idx];
+export function setActiveFallbackGenre(genreId: string | null): void {
+  activeFallbackGenre = genreId;
 }
 
 function titleFromFilename(filePath: string): string {
@@ -130,6 +105,7 @@ interface ReadyTrack {
   thumbnail: string | null;
   youtubeId: string;
   duration: number | null;
+  addedBy: string | null;
   queueItemId: string | null;
   isFallback: boolean;
 }
@@ -152,6 +128,7 @@ export function getUpcomingTrack(): UpcomingTrack | null {
       title: nextReady.title,
       thumbnail: nextReady.thumbnail,
       duration: nextReady.duration,
+      added_by: nextReady.addedBy,
       isFallback: nextReady.isFallback,
     };
   }
@@ -162,6 +139,7 @@ export function getUpcomingTrack(): UpcomingTrack | null {
       title: first.item.title ?? null,
       thumbnail: first.item.thumbnail ?? null,
       duration: first.duration,
+      added_by: first.item.added_by ?? null,
       isFallback: false,
     };
   }
@@ -405,8 +383,6 @@ export async function startPlayCycle(
   _icecast = icecast;
   _streamHub = streamHub ?? null;
 
-  loadFallbackLibrary();
-
   playerEvents.on('queue:add', () => {
     // Invalidate fallback nextReady so queued track gets priority
     if (nextReady?.isFallback) {
@@ -537,6 +513,7 @@ async function playNext(
   let trackThumbnail: string | null = null;
   let trackYoutubeId = '';
   let trackDuration: number | null = null;
+  let trackAddedBy: string | null = null;
   let trackQueueId: string | null = null;
   let isFallback = false;
   let source = '';
@@ -550,6 +527,7 @@ async function playNext(
     trackThumbnail = ready.thumbnail;
     trackYoutubeId = ready.youtubeId;
     trackDuration = ready.duration;
+    trackAddedBy = ready.addedBy;
     trackQueueId = ready.queueItemId;
     isFallback = ready.isFallback;
     source = isFallback ? 'ready/random' : 'ready/preloaded';
@@ -587,6 +565,7 @@ async function playNext(
         currentTrack = {
           id: item.id, youtube_id: item.youtube_id,
           title: item.title, thumbnail: item.thumbnail,
+          added_by: item.added_by ?? null,
           duration: trackDuration, started_at: 0,
         };
         io.emit('track:change', currentTrack);
@@ -600,6 +579,7 @@ async function playNext(
       trackThumbnail = item.thumbnail;
       trackYoutubeId = item.youtube_id;
       trackQueueId = item.id;
+      trackAddedBy = item.added_by ?? null;
       failCounts.delete(item.youtube_id);
       currentQueueItemId = trackQueueId;
     } else {
@@ -609,12 +589,13 @@ async function playNext(
         await sleep(500);
         return;
       }
-      const fallbackFile = pickRandomFallback();
+      const fallbackFile = pickRandomFallbackForGenre(activeFallbackGenre);
       if (fallbackFile) {
         audioFile = fallbackFile;
         trackTitle = titleFromFilename(fallbackFile);
         trackYoutubeId = 'local';
         trackDuration = await getAudioDuration(fallbackFile);
+        trackAddedBy = null;
         isFallback = true;
         source = 'random';
         currentQueueItemId = null;
@@ -650,6 +631,7 @@ async function playNext(
       youtube_id: trackYoutubeId,
       title: trackTitle,
       thumbnail: trackThumbnail,
+      added_by: trackAddedBy,
       duration: trackDuration,
       started_at: Date.now() + STREAM_DELAY_MS,
     };
@@ -688,6 +670,7 @@ async function playNext(
       trackThumbnail = swap.ready.thumbnail;
       trackYoutubeId = swap.ready.youtubeId;
       trackDuration = swap.ready.duration;
+      trackAddedBy = swap.ready.addedBy;
       trackQueueId = swap.ready.queueItemId;
       isFallback = swap.ready.isFallback;
 
@@ -701,6 +684,7 @@ async function playNext(
         youtube_id: trackYoutubeId,
         title: trackTitle,
         thumbnail: trackThumbnail,
+        added_by: trackAddedBy,
         duration: trackDuration,
         started_at: Date.now() + STREAM_DELAY_MS,
       };
@@ -1053,6 +1037,7 @@ async function prepareNextTrack(
           thumbnail: item.thumbnail,
           youtubeId: item.youtube_id,
           duration: buffered.duration,
+          addedBy: item.added_by ?? null,
           queueItemId: item.id,
           isFallback: false,
         };
@@ -1073,6 +1058,7 @@ async function prepareNextTrack(
           thumbnail: item.thumbnail,
           youtubeId: item.youtube_id,
           duration: info.duration,
+          addedBy: item.added_by ?? null,
           queueItemId: item.id,
           isFallback: false,
         };
@@ -1097,7 +1083,7 @@ async function prepareNextTrack(
         console.log('[prepare] Queue still contains current track only — skip random fallback');
         return;
       }
-      const fallbackFile = pickRandomFallback();
+      const fallbackFile = pickRandomFallbackForGenre(activeFallbackGenre);
       if (fallbackFile) {
         const title = titleFromFilename(fallbackFile);
         const duration = await getAudioDuration(fallbackFile);
@@ -1107,6 +1093,7 @@ async function prepareNextTrack(
           thumbnail: null,
           youtubeId: 'local',
           duration,
+          addedBy: null,
           queueItemId: null,
           isFallback: true,
         };

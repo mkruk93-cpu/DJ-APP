@@ -8,15 +8,16 @@ import { join as pathJoin } from 'node:path';
 import { Server as IOServer } from 'socket.io';
 import { createClient } from '@supabase/supabase-js';
 import { initCache } from './cleanup.js';
-import { seedSettings, getActiveMode, getModeSettings, getSetting, setSetting } from './settings.js';
+import { seedSettings, getActiveMode, getActiveFallbackGenre, getModeSettings, getSetting, setSetting } from './settings.js';
 import { getQueue, addToQueue, removeFromQueue, reorderQueue, fetchVideoInfo, extractYoutubeId, extractSourceId, isSoundcloudUrl, getThumbnailUrl } from './queue.js';
 import { canPerformAction } from './permissions.js';
-import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, playerEvents, setKeepFiles, invalidatePreload } from './player.js';
+import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, playerEvents, setKeepFiles, invalidatePreload, setActiveFallbackGenre } from './player.js';
 import { startBridge } from './bridge.js';
 import { startNowPlayingWatcher } from './nowPlaying.js';
 import { StreamHub } from './streamHub.js';
-import type { Mode, ServerState, DurationVote } from './types.js';
+import type { Mode, ServerState, DurationVote, FallbackGenre } from './types.js';
 import { searchGenres, getTopTracksByGenre, type GenreItem, type GenreHitItem } from './services/discovery.js';
+import { reloadFallbackGenres, listFallbackGenres, getDefaultFallbackGenreId, isKnownFallbackGenre } from './fallbackGenres.js';
 
 // ── Environment ──────────────────────────────────────────────────────────────
 
@@ -93,12 +94,59 @@ function applyPlaybackForMode(mode: Mode): void {
 }
 
 const startTime = Date.now();
+let lastStateLogKey: string | null = null;
+
+function normalizeFallbackGenreId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeNickname(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, 40);
+}
+
+async function resolveActiveFallbackGenre(persistFix = false): Promise<string | null> {
+  const raw = await getActiveFallbackGenre(sb);
+  const normalized = normalizeFallbackGenreId(raw);
+  let resolved = normalized;
+  if (resolved && !isKnownFallbackGenre(resolved)) {
+    resolved = null;
+  }
+  if (!resolved) {
+    resolved = getDefaultFallbackGenreId();
+  }
+  if (persistFix && resolved !== normalized) {
+    await setSetting(sb, 'fallback_active_genre', resolved);
+  }
+  return resolved;
+}
+
+async function emitFallbackGenreUpdate(target?: { emit: (event: string, payload: unknown) => void }): Promise<void> {
+  const [activeGenreId, selectedBy] = await Promise.all([
+    resolveActiveFallbackGenre(),
+    getSetting<string | null>(sb, 'fallback_active_genre_by'),
+  ]);
+  setActiveFallbackGenre(activeGenreId);
+  const payload = {
+    activeGenreId,
+    selectedBy: normalizeNickname(selectedBy),
+    genres: listFallbackGenres() as FallbackGenre[],
+  };
+  if (target) target.emit('fallback:genre:update', payload);
+  else io.emit('fallback:genre:update', payload);
+}
 
 async function getServerState(): Promise<ServerState> {
-  const [mode, modeSettings, queue] = await Promise.all([
+  const [mode, modeSettings, queue, activeFallbackGenre, activeFallbackGenreBy] = await Promise.all([
     getActiveMode(sb),
     getModeSettings(sb),
     getQueue(sb),
+    resolveActiveFallbackGenre(),
+    getSetting<string | null>(sb, 'fallback_active_genre_by'),
   ]);
 
   return {
@@ -107,6 +155,9 @@ async function getServerState(): Promise<ServerState> {
     queue,
     mode,
     modeSettings,
+    fallbackGenres: listFallbackGenres(),
+    activeFallbackGenre,
+    activeFallbackGenreBy: normalizeNickname(activeFallbackGenreBy),
     listenerCount: io.engine.clientsCount,
     streamOnline: getCurrentTrack() !== null,
     voteState: null,
@@ -442,7 +493,11 @@ async function soundcloudSearch(query: string, limit = 12): Promise<SearchResult
 app.get('/state', async (_req, res) => {
   try {
     const state = await getServerState();
-    console.log(`[rest] /state → track: ${state.currentTrack?.title ?? 'none'}, queue: ${state.queue.length}, mode: ${state.mode}`);
+    const stateLogKey = `${state.currentTrack?.title ?? 'none'}|${state.queue.length}|${state.mode}`;
+    if (stateLogKey !== lastStateLogKey) {
+      lastStateLogKey = stateLogKey;
+      console.log(`[rest] /state → track: ${state.currentTrack?.title ?? 'none'}, queue: ${state.queue.length}, mode: ${state.mode}`);
+    }
     res.json(state);
   } catch (err) {
     console.error('[rest] /state error:', err);
@@ -600,6 +655,20 @@ app.post('/api/settings', async (req, res) => {
   if (!isAdmin(token)) return res.status(403).json({ error: 'Unauthorized' });
 
   try {
+    if (key === 'fallback_active_genre') {
+      const requested = normalizeFallbackGenreId(value);
+      if (requested && !isKnownFallbackGenre(requested)) {
+        return res.status(400).json({ error: 'Unknown fallback genre' });
+      }
+      const nextGenre = requested ?? getDefaultFallbackGenreId();
+      await setSetting(sb, key, nextGenre);
+      await setSetting(sb, 'fallback_active_genre_by', null);
+      setActiveFallbackGenre(nextGenre);
+      await emitFallbackGenreUpdate();
+      console.log(`[rest] Setting updated: ${key}=${nextGenre ?? 'none'}`);
+      return res.json({ ok: true });
+    }
+
     await setSetting(sb, key, value);
     const modeSettings = await getModeSettings(sb);
     const mode = await getActiveMode(sb);
@@ -774,6 +843,7 @@ io.on('connection', (socket) => {
   console.log(`[socket] Client connected: ${socket.id}`);
   io.emit('stream:status', { online: getCurrentTrack() !== null, listeners: io.engine.clientsCount });
   socket.emit('upcoming:update', getUpcomingTrack());
+  void emitFallbackGenreUpdate(socket);
 
   // ── auth:verify ──
   socket.on('auth:verify', (data: { token: string }, callback?: (valid: boolean) => void) => {
@@ -984,6 +1054,21 @@ io.on('connection', (socket) => {
     }
 
     try {
+      if (data.key === 'fallback_active_genre') {
+        const requested = normalizeFallbackGenreId(data.value);
+        if (requested && !isKnownFallbackGenre(requested)) {
+          socket.emit('error:toast', { message: 'Onbekend fallback genre' });
+          return;
+        }
+        const nextGenre = requested ?? getDefaultFallbackGenreId();
+        await setSetting(sb, data.key, nextGenre);
+        await setSetting(sb, 'fallback_active_genre_by', null);
+        setActiveFallbackGenre(nextGenre);
+        await emitFallbackGenreUpdate();
+        console.log(`[settings] Updated: ${data.key}=${nextGenre ?? 'none'}`);
+        return;
+      }
+
       await setSetting(sb, data.key, data.value);
       const modeSettings = await getModeSettings(sb);
       const mode = await getActiveMode(sb);
@@ -1045,6 +1130,26 @@ io.on('connection', (socket) => {
     console.log(`[settings] Keep files: ${data.keep}`);
   });
 
+  // ── fallback:genre:set (global, all listeners) ──
+  socket.on('fallback:genre:set', async (data: { genreId: string; selectedBy?: string }) => {
+    const requested = normalizeFallbackGenreId(data.genreId);
+    if (!requested || !isKnownFallbackGenre(requested)) {
+      socket.emit('error:toast', { message: 'Dit genre is niet beschikbaar' });
+      return;
+    }
+    const selectedBy = normalizeNickname(data.selectedBy) ?? 'onbekend';
+    try {
+      await setSetting(sb, 'fallback_active_genre', requested);
+      await setSetting(sb, 'fallback_active_genre_by', selectedBy);
+      setActiveFallbackGenre(requested);
+      await emitFallbackGenreUpdate();
+      console.log(`[fallback] Active genre changed: ${requested} by ${selectedBy}`);
+    } catch (err) {
+      console.error('[socket] fallback:genre:set error:', err);
+      socket.emit('error:toast', { message: 'Kon genre niet opslaan' });
+    }
+  });
+
   // ── disconnect ──
   socket.on('disconnect', () => {
     voteSkipSet.delete(socket.id);
@@ -1063,6 +1168,10 @@ async function main(): Promise<void> {
   // Seed default settings
   await seedSettings(sb);
   console.log('[server] Settings seeded');
+  reloadFallbackGenres();
+  const startupFallbackGenre = await resolveActiveFallbackGenre(true);
+  setActiveFallbackGenre(startupFallbackGenre);
+  console.log(`[fallback] Active genre: ${startupFallbackGenre ?? 'none'}`);
 
   httpServer.listen(PORT, () => {
     console.log(`[server] Listening on http://localhost:${PORT}`);

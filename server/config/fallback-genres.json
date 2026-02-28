@@ -1,0 +1,149 @@
+{
+  "defaultGenreId": "hardstyle",
+  "genres": [
+    {
+      "id": "hardstyle",
+      "label": "Hardstyle",
+      "folders": [
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/Hardstyle"
+      ]
+    },
+    {
+      "id": "hardcore",
+      "label": "Hardcore",
+      "folders": [
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/Hardcore"
+      ]
+    },
+    {
+      "id": "frenchcore",
+      "label": "Frenchcore",
+      "folders": [
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/Hardcore/Frenchcore"
+      ]
+    },
+    {
+      "id": "drum_and_bass",
+      "label": "Drum & Bass",
+      "folders": [
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/Drum & bass",
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/Mixjes/Mixjes Progressive, Dubstep, Drum n Bass"
+      ]
+    },
+    {
+      "id": "dubstep",
+      "label": "Dubstep",
+      "folders": [
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/Dubstep"
+      ]
+    },
+    {
+      "id": "techno_trance",
+      "label": "Techno/Trance",
+      "folders": [
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/Techno-Trance"
+      ]
+    },
+    {
+      "id": "house",
+      "label": "House",
+      "folders": [
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/House",
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/Jelle-Jeroen meuk/House"
+      ]
+    },
+    {
+      "id": "deephouse",
+      "label": "Deep House",
+      "folders": [
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/Deephouse"
+      ]
+    },
+    {
+      "id": "trap",
+      "label": "Trap",
+      "folders": [
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/Trap"
+      ]
+    },
+    {
+      "id": "top40_nl",
+      "label": "Nederlandse Top 40",
+      "folders": [
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/Nederlandse Top 40"
+      ]
+    },
+    {
+      "id": "country",
+      "label": "Country",
+      "folders": [
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/Country"
+      ]
+    },
+    {
+      "id": "reggae",
+      "label": "Reggae",
+      "folders": [
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/Reggae"
+      ]
+    },
+    {
+      "id": "klassiek",
+      "label": "Klassiek",
+      "folders": [
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/Klassiek"
+      ]
+    },
+    {
+      "id": "mixjes",
+      "label": "Mixjes",
+      "folders": [
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/Mixjes"
+      ]
+    },
+    {
+      "id": "rock_metal",
+      "label": "Rock/Metal",
+      "folders": [
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/Anders/System of a Down",
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/Anders/Volbeat",
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/Anders/Green Day"
+      ]
+    },
+    {
+      "id": "soundtrack_cinematic",
+      "label": "Soundtrack/Cinematic",
+      "folders": [
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/Anders/Hans Zimmer- The Classics (2017) 320"
+      ]
+    },
+    {
+      "id": "kerst",
+      "label": "Kerst",
+      "folders": [
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/Anders/Kerst"
+      ]
+    },
+    {
+      "id": "skapunk_alt",
+      "label": "Ska/Punk/Alt",
+      "folders": [
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/Anders/Big D And The Kids Table",
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/Anders/Jaya the Cat",
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/Anders/Slackers, the",
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/Anders/John Coffey"
+      ]
+    },
+    {
+      "id": "ongesorteerd",
+      "label": "Ongesorteerd",
+      "folders": [
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/Anders",
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/eigen nummerkies",
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/Jelle-Jeroen meuk",
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/JEROEN RECENTE DOWNLOAD MUZIEK 18-12-2021",
+        "D:/Back-Up van 2TB HDD 28-05-2025/Muziek/Ongesorteerd"
+      ]
+    }
+  ]
+}

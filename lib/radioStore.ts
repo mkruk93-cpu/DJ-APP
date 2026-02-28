@@ -1,11 +1,14 @@
 import { create } from 'zustand';
-import type { RadioState, Track, QueueItem, Mode, ModeSettings, VoteState, DurationVote } from './types';
+import type { RadioState, Track, QueueItem, Mode, ModeSettings, VoteState, DurationVote, FallbackGenre } from './types';
 
 interface RadioStore extends RadioState {
   setConnected: (connected: boolean) => void;
   setCurrentTrack: (track: Track | null) => void;
   setUpcomingTrack: (track: RadioState["upcomingTrack"]) => void;
   setQueue: (items: QueueItem[]) => void;
+  setFallbackGenres: (genres: FallbackGenre[]) => void;
+  setActiveFallbackGenre: (genreId: string | null) => void;
+  setActiveFallbackGenreBy: (nickname: string | null) => void;
   setMode: (mode: Mode, settings: ModeSettings) => void;
   setModeSettings: (settings: ModeSettings) => void;
   setListenerCount: (count: number) => void;
@@ -24,6 +27,9 @@ export const useRadioStore = create<RadioStore>((set) => ({
   currentTrack: null,
   upcomingTrack: null,
   queue: [],
+  fallbackGenres: [],
+  activeFallbackGenre: null,
+  activeFallbackGenreBy: null,
   mode: 'radio',
   modeSettings: {
     democracy_threshold: 51,
@@ -42,6 +48,9 @@ export const useRadioStore = create<RadioStore>((set) => ({
   setCurrentTrack: (currentTrack) => set({ currentTrack }),
   setUpcomingTrack: (upcomingTrack) => set({ upcomingTrack }),
   setQueue: (queue) => set({ queue }),
+  setFallbackGenres: (fallbackGenres) => set({ fallbackGenres }),
+  setActiveFallbackGenre: (activeFallbackGenre) => set({ activeFallbackGenre }),
+  setActiveFallbackGenreBy: (activeFallbackGenreBy) => set({ activeFallbackGenreBy }),
   setMode: (mode, modeSettings) => set({ mode, modeSettings }),
   setModeSettings: (modeSettings) => set({ modeSettings }),
   setListenerCount: (listenerCount) => set({ listenerCount }),
@@ -55,6 +64,9 @@ export const useRadioStore = create<RadioStore>((set) => ({
     currentTrack: null,
     upcomingTrack: null,
     queue: [],
+    fallbackGenres: [],
+    activeFallbackGenre: null,
+    activeFallbackGenreBy: null,
     listenerCount: 0,
     streamOnline: false,
     voteState: null,

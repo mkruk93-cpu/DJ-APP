@@ -19,6 +19,7 @@ export interface Track {
   title: string | null;
   thumbnail: string | null;
   duration: number | null;
+  added_by: string | null;
   started_at: number;
 }
 
@@ -27,7 +28,14 @@ export interface UpcomingTrack {
   title: string | null;
   thumbnail: string | null;
   duration: number | null;
+  added_by: string | null;
   isFallback: boolean;
+}
+
+export interface FallbackGenre {
+  id: string;
+  label: string;
+  trackCount: number;
 }
 
 export interface ModeSettings {
@@ -62,6 +70,9 @@ export interface ServerState {
   queue: QueueItem[];
   mode: Mode;
   modeSettings: ModeSettings;
+  fallbackGenres: FallbackGenre[];
+  activeFallbackGenre: string | null;
+  activeFallbackGenreBy: string | null;
   listenerCount: number;
   streamOnline: boolean;
   voteState: VoteState | null;

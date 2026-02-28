@@ -99,6 +99,7 @@ export default function NowPlaying({ radioTrack, showFallback = false, preferSup
   const parsedRadio = parseTrackDisplay(syncedRadioTrack?.title);
   const radioTitle = parsedRadio.title ?? syncedRadioTrack?.title ?? null;
   const radioArtist = parsedRadio.artist;
+  const currentRequestedBy = syncedRadioTrack?.added_by ?? null;
   const displayTitle = syncedRadioTrack ? radioTitle : (showSupabaseData ? track.title : null);
   const displayArtist = syncedRadioTrack ? radioArtist : (showSupabaseData ? track.artist : null);
   const displayArtwork = syncedRadioTrack?.thumbnail ?? (showSupabaseData ? track.artwork_url : null);
@@ -113,6 +114,7 @@ export default function NowPlaying({ radioTrack, showFallback = false, preferSup
   const parsedNext = parseTrackDisplay(nextSourceTitle);
   const nextTitle = parsedNext.title ?? nextSourceTitle;
   const nextArtist = parsedNext.artist;
+  const nextRequestedBy = nextQueueItem?.added_by ?? upcomingTrack?.added_by ?? null;
   const showNextTrack = isRadioMode && (!!nextSourceTitle || !!nextArtist);
 
   if (!hasData && !isRadioMode) return null;
@@ -162,6 +164,11 @@ export default function NowPlaying({ radioTrack, showFallback = false, preferSup
               <span className="text-gray-400">Wacht op nummer...</span>
             )}
           </p>
+          {isRadioMode && currentRequestedBy && (
+            <p className="truncate text-[10px] text-gray-500 sm:text-xs">
+              Aangevraagd door <span className="text-violet-300">{currentRequestedBy}</span>
+            </p>
+          )}
         </div>
         {isLoading ? (
           <span className="shrink-0 flex items-center gap-1.5 text-[11px] text-yellow-400 sm:text-xs">
@@ -183,6 +190,11 @@ export default function NowPlaying({ radioTrack, showFallback = false, preferSup
           {nextTitle && <span className="text-gray-300">{nextTitle}</span>}
           {!nextQueueItem && upcomingTrack?.isFallback && (
             <span className="ml-1 text-gray-500">(random)</span>
+          )}
+          {nextRequestedBy && (
+            <span className="ml-1 text-gray-500">
+              · door <span className="text-violet-300">{nextRequestedBy}</span>
+            </span>
           )}
         </div>
       )}

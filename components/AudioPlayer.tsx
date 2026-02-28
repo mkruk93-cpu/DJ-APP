@@ -149,6 +149,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const parsedRadio = parseTrackDisplay(syncedRadioTrack?.title);
   const radioTitle = parsedRadio.title ?? syncedRadioTrack?.title ?? null;
   const radioArtist = parsedRadio.artist;
+  const radioRequestedBy = syncedRadioTrack?.added_by ?? null;
   const displayTitle = syncedRadioTrack ? radioTitle : (showSupabaseData ? track.title : null);
   const displayArtist = syncedRadioTrack ? radioArtist : (showSupabaseData ? track.artist : null);
   const displayArtwork = syncedRadioTrack?.thumbnail ?? (showSupabaseData ? track.artwork_url : null);
@@ -274,6 +275,11 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
               <>
                 {displayTitle && <p className="truncate text-sm font-semibold text-white">{displayTitle}</p>}
                 {displayArtist && <p className="truncate text-xs text-violet-400">{displayArtist}</p>}
+                {isRadioMode && radioRequestedBy && (
+                  <p className="truncate text-[10px] text-gray-500">
+                    Aangevraagd door <span className="text-violet-300">{radioRequestedBy}</span>
+                  </p>
+                )}
               </>
             ) : (
               <p className="text-sm font-medium text-gray-400">
@@ -372,6 +378,11 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
             <div className="min-w-0">
               {displayTitle && <p className="truncate text-sm font-semibold text-white">{displayTitle}</p>}
               {displayArtist && <p className="truncate text-xs text-violet-400">{displayArtist}</p>}
+              {isRadioMode && radioRequestedBy && (
+                <p className="truncate text-[11px] text-gray-500">
+                  Aangevraagd door <span className="text-violet-300">{radioRequestedBy}</span>
+                </p>
+              )}
             </div>
           )}
 

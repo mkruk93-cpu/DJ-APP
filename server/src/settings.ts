@@ -5,6 +5,8 @@ const TABLE = 'radio_settings';
 
 const DEFAULTS: Record<string, unknown> = {
   active_mode: 'radio',
+  fallback_active_genre: null,
+  fallback_active_genre_by: null,
   democracy_threshold: 51,
   democracy_timer: 15,
   jukebox_max_per_user: 5,
@@ -62,4 +64,11 @@ export async function getModeSettings(sb: SupabaseClient): Promise<ModeSettings>
     jukebox_max_per_user: maxPerUser ?? 5,
     party_skip_cooldown: skipCooldown ?? 10,
   };
+}
+
+export async function getActiveFallbackGenre(sb: SupabaseClient): Promise<string | null> {
+  const genreId = await getSetting<string | null>(sb, 'fallback_active_genre');
+  if (!genreId || typeof genreId !== 'string') return null;
+  const trimmed = genreId.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
