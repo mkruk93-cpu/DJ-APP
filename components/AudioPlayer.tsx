@@ -150,6 +150,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const radioTitle = parsedRadio.title ?? syncedRadioTrack?.title ?? null;
   const radioArtist = parsedRadio.artist;
   const radioRequestedBy = syncedRadioTrack?.added_by ?? null;
+  const radioIsRandom = syncedRadioTrack?.youtube_id === "local";
   const displayTitle = syncedRadioTrack ? radioTitle : (showSupabaseData ? track.title : null);
   const displayArtist = syncedRadioTrack ? radioArtist : (showSupabaseData ? track.artist : null);
   const displayArtwork = syncedRadioTrack?.thumbnail ?? (showSupabaseData ? track.artwork_url : null);
@@ -248,17 +249,17 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
 
       {/* Mobile: compact horizontal layout */}
       <div className="relative z-[1] flex flex-col landscape:hidden sm:hidden">
-        <div className="flex items-center gap-3 p-3">
+        <div className="flex items-center gap-2 p-2">
           <div className="relative shrink-0" style={{ perspective: "900px" }}>
             {playing && <div className="player-cover-glow absolute -inset-1 rounded-xl bg-violet-500/30 blur-md" />}
             {displayArtwork ? (
               <img
                 src={displayArtwork}
                 alt=""
-                className={`relative z-10 h-14 w-14 rounded-lg object-cover ${playing ? "player-cover-art" : ""}`}
+                className={`relative z-10 h-12 w-12 rounded-lg object-cover ${playing ? "player-cover-art" : ""}`}
               />
             ) : (
-              <div className="player-fallback-note relative z-10 flex h-14 w-14 items-center justify-center rounded-lg bg-gray-800">
+              <div className="player-fallback-note relative z-10 flex h-12 w-12 items-center justify-center rounded-lg bg-gray-800">
                 {artworkFallback}
               </div>
             )}
@@ -275,9 +276,13 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
               <>
                 {displayTitle && <p className="truncate text-sm font-semibold text-white">{displayTitle}</p>}
                 {displayArtist && <p className="truncate text-xs text-violet-400">{displayArtist}</p>}
-                {isRadioMode && radioRequestedBy && (
+                {isRadioMode && (radioRequestedBy || syncedRadioTrack) && (
                   <p className="truncate text-[10px] text-gray-500">
-                    Aangevraagd door <span className="text-violet-300">{radioRequestedBy}</span>
+                    {radioIsRandom ? (
+                      <>Bron: <span className="text-gray-300">Random selectie</span></>
+                    ) : (
+                      <>Aangevraagd door <span className="text-violet-300">{radioRequestedBy ?? "onbekend"}</span></>
+                    )}
                   </p>
                 )}
               </>
@@ -308,7 +313,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
 
           <button
             onClick={toggle}
-            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-all ${
+            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-all ${
               playing
                 ? "bg-violet-600 shadow-md shadow-violet-500/30 hover:bg-violet-500"
                 : "bg-gray-700 hover:bg-gray-600"
@@ -328,7 +333,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
         </div>
 
         {isRadioMode && duration && duration > 0 && (
-          <div className="px-3 pb-2">
+          <div className="px-2 pb-1.5">
             <div className="h-1 w-full overflow-hidden rounded-full bg-gray-700">
               <div
                 className="h-full rounded-full bg-violet-500 transition-all duration-1000 ease-linear"
@@ -339,7 +344,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
         )}
 
         {playing && (
-          <div className="px-3 pb-2">
+          <div className="px-2 pb-1.5">
             <AudioVisualizer audioRef={audioRef} hostRef={playerRef} playing={playing} barCount={24} className="h-8" />
           </div>
         )}
@@ -378,9 +383,13 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
             <div className="min-w-0">
               {displayTitle && <p className="truncate text-sm font-semibold text-white">{displayTitle}</p>}
               {displayArtist && <p className="truncate text-xs text-violet-400">{displayArtist}</p>}
-              {isRadioMode && radioRequestedBy && (
+              {isRadioMode && (radioRequestedBy || syncedRadioTrack) && (
                 <p className="truncate text-[11px] text-gray-500">
-                  Aangevraagd door <span className="text-violet-300">{radioRequestedBy}</span>
+                  {radioIsRandom ? (
+                    <>Bron: <span className="text-gray-300">Random selectie</span></>
+                  ) : (
+                    <>Aangevraagd door <span className="text-violet-300">{radioRequestedBy ?? "onbekend"}</span></>
+                  )}
                 </p>
               )}
             </div>
@@ -446,7 +455,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
                 step={0.01}
                 value={volume}
                 onChange={(e) => setVolume(Number(e.target.value))}
-                className="h-1 w-full max-w-32 cursor-pointer appearance-none rounded-full bg-gray-700 accent-violet-500"
+                className="violet-slider h-1 w-full max-w-32 cursor-pointer appearance-none rounded-full bg-gray-700 accent-violet-500"
               />
               <svg className="h-3.5 w-3.5 shrink-0 text-gray-500" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />

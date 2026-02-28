@@ -51,7 +51,7 @@ export default function ModeSettings() {
               max={100}
               value={settings.democracy_threshold}
               onChange={(e) => handleUpdate("democracy_threshold", Number(e.target.value))}
-              className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-gray-700 accent-violet-500"
+              className="violet-slider h-1.5 w-full cursor-pointer appearance-none rounded-full bg-gray-700 accent-violet-500"
             />
           </div>
           <div>
@@ -65,7 +65,7 @@ export default function ModeSettings() {
               max={60}
               value={settings.democracy_timer}
               onChange={(e) => handleUpdate("democracy_timer", Number(e.target.value))}
-              className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-gray-700 accent-violet-500"
+              className="violet-slider h-1.5 w-full cursor-pointer appearance-none rounded-full bg-gray-700 accent-violet-500"
             />
           </div>
         </>
@@ -83,7 +83,7 @@ export default function ModeSettings() {
             max={20}
             value={settings.jukebox_max_per_user}
             onChange={(e) => handleUpdate("jukebox_max_per_user", Number(e.target.value))}
-            className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-gray-700 accent-violet-500"
+            className="violet-slider h-1.5 w-full cursor-pointer appearance-none rounded-full bg-gray-700 accent-violet-500"
           />
         </div>
       )}
@@ -100,7 +100,7 @@ export default function ModeSettings() {
             max={60}
             value={settings.party_skip_cooldown}
             onChange={(e) => handleUpdate("party_skip_cooldown", Number(e.target.value))}
-            className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-gray-700 accent-violet-500"
+            className="violet-slider h-1.5 w-full cursor-pointer appearance-none rounded-full bg-gray-700 accent-violet-500"
           />
         </div>
       )}

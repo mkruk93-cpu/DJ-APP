@@ -423,43 +423,43 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-2 border-b border-gray-800 px-3 py-2 sm:px-4 sm:py-3">
-        <div className="flex gap-1 rounded-lg bg-gray-800 p-0.5">
+        <div className="flex flex-wrap gap-1 rounded-lg bg-gray-800 p-0.5">
           <button
             type="button"
             onClick={() => switchSource("youtube")}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+            className={`flex min-w-0 flex-1 basis-[calc(50%-0.125rem)] items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition sm:basis-0 sm:gap-1.5 sm:px-3 sm:text-xs ${
               source === "youtube" ? "bg-red-500/20 text-red-400" : "text-gray-400 hover:text-gray-200"
             }`}
           >
-            YouTube
+            <span className="truncate">YouTube</span>
           </button>
           <button
             type="button"
             onClick={() => switchSource("soundcloud")}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+            className={`flex min-w-0 flex-1 basis-[calc(50%-0.125rem)] items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition sm:basis-0 sm:gap-1.5 sm:px-3 sm:text-xs ${
               source === "soundcloud" ? "bg-orange-500/20 text-orange-400" : "text-gray-400 hover:text-gray-200"
             }`}
           >
-            SoundCloud
+            <span className="truncate">SoundCloud</span>
           </button>
           <button
             type="button"
             onClick={() => switchSource("genres")}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+            className={`flex min-w-0 flex-1 basis-[calc(50%-0.125rem)] items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition sm:basis-0 sm:gap-1.5 sm:px-3 sm:text-xs ${
               source === "genres" ? "bg-fuchsia-500/20 text-fuchsia-300" : "text-gray-400 hover:text-gray-200"
             }`}
           >
-            Genres
+            <span className="truncate">Genres</span>
           </button>
           {isSpotifyConfigured() && (
             <button
               type="button"
               onClick={() => switchSource("spotify")}
-              className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+              className={`flex min-w-0 flex-1 basis-[calc(50%-0.125rem)] items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition sm:basis-0 sm:gap-1.5 sm:px-3 sm:text-xs ${
                 source === "spotify" ? "bg-[#1DB954]/20 text-[#1DB954]" : "text-gray-400 hover:text-gray-200"
               }`}
             >
-              Spotify
+              <span className="truncate">Spotify</span>
             </button>
           )}
         </div>

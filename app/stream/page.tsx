@@ -79,6 +79,7 @@ export default function StreamPage() {
   const [radioBadge, setRadioBadge] = useState(false);
   const activeTabRef = useRef<MobileTab>(activeTab);
   activeTabRef.current = activeTab;
+  const previousQueueLengthRef = useRef<number>(0);
 
   const radioConnected = useRadioStore((s) => s.connected);
   const radioTrack = useRadioStore((s) => s.currentTrack);
@@ -149,6 +150,8 @@ export default function StreamPage() {
           return r.json();
         })
         .then((state) => {
+          const nextQueueLength = state.queue?.length ?? 0;
+          previousQueueLengthRef.current = nextQueueLength;
           console.log("[radio] State loaded:", {
             track: state.currentTrack?.title ?? "none",
             duration: state.currentTrack?.duration,
@@ -186,6 +189,7 @@ export default function StreamPage() {
       store.getState().setConnected(false);
       store.getState().setStreamOnline(false);
       store.getState().setCurrentTrack(null);
+      previousQueueLengthRef.current = 0;
       setSuppressFallback(true);
     });
 
@@ -196,8 +200,13 @@ export default function StreamPage() {
     });
 
     socket.on("queue:update", (data: { items: QueueItem[] }) => {
+      const nextQueueLength = data.items.length;
+      const hadQueue = previousQueueLengthRef.current;
       store.getState().setQueue(data.items);
-      if (activeTabRef.current !== "radio") setRadioBadge(true);
+      if (nextQueueLength > hadQueue && activeTabRef.current !== "radio") {
+        setRadioBadge(true);
+      }
+      previousQueueLengthRef.current = nextQueueLength;
     });
 
     socket.on("upcoming:update", (upcoming: UpcomingTrack | null) => {
@@ -317,12 +326,12 @@ export default function StreamPage() {
         <div className="player-ambient absolute bottom-0 right-0 h-80 w-80 rounded-full bg-fuchsia-500/10 blur-3xl" />
       </div>
       {/* Header */}
-      <header className="relative z-50 border-b border-gray-800 bg-gray-900/80 px-3 py-2 backdrop-blur-sm sm:px-6 sm:py-3">
-        <div className="flex items-center justify-between">
-          <h1 className="shrink-0 text-base font-bold tracking-tight text-white sm:text-lg">
+      <header className="relative z-50 border-b border-gray-800 bg-gray-900/80 px-2 py-1.5 backdrop-blur-sm sm:px-6 sm:py-3">
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5">
+          <h1 className="min-w-0 truncate text-sm font-bold tracking-tight text-white sm:text-lg">
             🎵 <span className="text-violet-400">{process.env.NEXT_PUBLIC_TWITCH_CHANNEL ?? "Stream"}</span>
           </h1>
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex min-w-0 shrink-0 items-center gap-1 sm:gap-3">
             {radioConnected && <ModeIndicator />}
             <OnlineUsers />
             <button
@@ -330,7 +339,7 @@ export default function StreamPage() {
                 localStorage.removeItem("nickname");
                 router.push("/");
               }}
-              className="rounded-lg border border-gray-700 px-2.5 py-1.5 text-sm text-gray-400 transition hover:border-gray-600 hover:text-white sm:px-3"
+              className="whitespace-nowrap rounded-lg border border-gray-700 px-2 py-1 text-xs text-gray-400 transition hover:border-gray-600 hover:text-white sm:px-3 sm:text-sm"
             >
               Uitloggen
             </button>
@@ -380,9 +389,9 @@ export default function StreamPage() {
         )}
       </header>
 
-      <main className="flex min-h-0 flex-1 flex-col gap-2 p-2 sm:gap-4 sm:p-4 landscape:flex-row lg:flex-row">
+      <main className="flex min-h-0 flex-1 flex-col gap-1.5 p-1.5 sm:gap-4 sm:p-4 landscape:flex-row lg:flex-row">
         {/* Player */}
-        <div className="shrink-0 landscape:min-w-0 landscape:flex-1 landscape:min-h-0 landscape:overflow-visible lg:min-w-0 lg:flex-1 lg:min-h-0 lg:overflow-visible">
+        <div className="min-h-0 shrink-0 max-h-[38dvh] overflow-y-auto landscape:min-w-0 landscape:flex-1 landscape:max-h-none landscape:min-h-0 landscape:overflow-visible lg:min-w-0 lg:flex-1 lg:max-h-none lg:min-h-0 lg:overflow-visible">
           <ShoutoutBanner />
           {mode === "twitch" && <TwitchPlayer />}
           {mode === "audio" && icecastUrl && (
@@ -451,7 +460,7 @@ export default function StreamPage() {
         <div className="flex shrink-0 gap-1 rounded-lg bg-gray-800/60 p-1 landscape:hidden lg:hidden">
           <button
             onClick={() => { setActiveTab("chat"); setChatBadge(false); }}
-            className={`relative flex-1 rounded-md px-3 py-2 text-xs font-semibold uppercase tracking-wider transition ${
+            className={`relative flex-1 rounded-md px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition ${
               activeTab === "chat"
                 ? "bg-violet-600 text-white shadow-sm"
                 : "text-gray-400 hover:text-white"
@@ -465,7 +474,7 @@ export default function StreamPage() {
           {showRequests && (
             <button
               onClick={() => { setActiveTab("requests"); setRequestBadge(false); }}
-              className={`relative flex-1 rounded-md px-3 py-2 text-xs font-semibold uppercase tracking-wider transition ${
+              className={`relative flex-1 rounded-md px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition ${
                 activeTab === "requests"
                   ? "bg-violet-600 text-white shadow-sm"
                   : "text-gray-400 hover:text-white"
@@ -480,7 +489,7 @@ export default function StreamPage() {
           {showRadioPanel && (
             <button
               onClick={() => { setActiveTab("radio"); setRadioBadge(false); }}
-              className={`relative flex-1 rounded-md px-3 py-2 text-xs font-semibold uppercase tracking-wider transition ${
+              className={`relative flex-1 rounded-md px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition ${
                 activeTab === "radio"
                   ? "bg-violet-600 text-white shadow-sm"
                   : "text-gray-400 hover:text-white"

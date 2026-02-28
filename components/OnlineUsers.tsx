@@ -42,10 +42,10 @@ export default function OnlineUsers() {
     <div className="relative">
       <button
         onClick={() => setExpanded((p) => !p)}
-        className="flex items-center gap-2 rounded-lg border border-gray-700 px-3 py-1.5 text-sm text-gray-400 transition hover:border-gray-600 hover:text-white"
+        className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-gray-700 px-2 py-1 text-xs text-gray-400 transition hover:border-gray-600 hover:text-white sm:gap-2 sm:px-3 sm:py-1.5 sm:text-sm"
       >
         <span className="h-2 w-2 rounded-full bg-green-500" />
-        <span>{onlineUsers.length} online</span>
+        <span className="whitespace-nowrap">{onlineUsers.length} online</span>
         <svg
           className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-180" : ""}`}
           fill="none"

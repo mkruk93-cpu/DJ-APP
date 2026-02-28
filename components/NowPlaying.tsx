@@ -100,6 +100,7 @@ export default function NowPlaying({ radioTrack, showFallback = false, preferSup
   const radioTitle = parsedRadio.title ?? syncedRadioTrack?.title ?? null;
   const radioArtist = parsedRadio.artist;
   const currentRequestedBy = syncedRadioTrack?.added_by ?? null;
+  const currentIsRandom = syncedRadioTrack?.youtube_id === "local";
   const displayTitle = syncedRadioTrack ? radioTitle : (showSupabaseData ? track.title : null);
   const displayArtist = syncedRadioTrack ? radioArtist : (showSupabaseData ? track.artist : null);
   const displayArtwork = syncedRadioTrack?.thumbnail ?? (showSupabaseData ? track.artwork_url : null);
@@ -164,9 +165,13 @@ export default function NowPlaying({ radioTrack, showFallback = false, preferSup
               <span className="text-gray-400">Wacht op nummer...</span>
             )}
           </p>
-          {isRadioMode && currentRequestedBy && (
+          {isRadioMode && (currentRequestedBy || syncedRadioTrack) && (
             <p className="truncate text-[10px] text-gray-500 sm:text-xs">
-              Aangevraagd door <span className="text-violet-300">{currentRequestedBy}</span>
+              {currentIsRandom ? (
+                <>Bron: <span className="text-gray-300">Random selectie</span></>
+              ) : (
+                <>Aangevraagd door <span className="text-violet-300">{currentRequestedBy ?? "onbekend"}</span></>
+              )}
             </p>
           )}
         </div>
