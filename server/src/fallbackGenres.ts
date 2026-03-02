@@ -171,7 +171,10 @@ export function isKnownFallbackGenre(genreId: string | null | undefined): boolea
   return runtimeGenres.some((genre) => genre.id === genreId);
 }
 
-export function pickRandomFallbackForGenre(activeGenreId: string | null | undefined): string | null {
+export function pickRandomFallbackForGenre(
+  activeGenreId: string | null | undefined,
+  excludeFile: string | null = null,
+): string | null {
   const active = activeGenreId && isKnownFallbackGenre(activeGenreId)
     ? runtimeGenres.find((genre) => genre.id === activeGenreId) ?? null
     : null;
@@ -187,6 +190,13 @@ export function pickRandomFallbackForGenre(activeGenreId: string | null | undefi
       : runtimeGenres.find((genre) => genre.files.length > 0)?.files ?? [];
 
   if (candidates.length === 0) return null;
+  if (excludeFile && candidates.length > 1) {
+    const filtered = candidates.filter((file) => file !== excludeFile);
+    if (filtered.length > 0) {
+      const idx = Math.floor(Math.random() * filtered.length);
+      return filtered[idx];
+    }
+  }
   const idx = Math.floor(Math.random() * candidates.length);
   return candidates[idx];
 }

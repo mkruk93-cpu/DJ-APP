@@ -13,6 +13,13 @@ interface NowPlayingData {
   artwork_url: string | null;
 }
 
+interface DisplayNextTrack {
+  title: string | null;
+  artist: string | null;
+  requestedBy: string | null;
+  isFallback: boolean;
+}
+
 interface NowPlayingProps {
   radioTrack?: Track | null;
   showFallback?: boolean;
@@ -36,7 +43,9 @@ export default function NowPlaying({ radioTrack, showFallback = false, preferSup
   const [track, setTrack] = useState<NowPlayingData>({ title: null, artist: null, artwork_url: null });
   const [animate, setAnimate] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [displayNextTrack, setDisplayNextTrack] = useState<DisplayNextTrack | null>(null);
   const prevTrack = useRef<string>("");
+  const prevCurrentTrackKeyRef = useRef<string>("");
   const connected = useRadioStore((s) => s.connected);
   const queue = useRadioStore((s) => s.queue);
   const upcomingTrack = useRadioStore((s) => s.upcomingTrack);
@@ -116,7 +125,40 @@ export default function NowPlaying({ radioTrack, showFallback = false, preferSup
   const nextTitle = parsedNext.title ?? nextSourceTitle;
   const nextArtist = parsedNext.artist;
   const nextRequestedBy = nextQueueItem?.added_by ?? upcomingTrack?.added_by ?? null;
-  const showNextTrack = isRadioMode && (!!nextSourceTitle || !!nextArtist);
+  const nextIsFallback = (!nextQueueItem && !!upcomingTrack?.isFallback) || false;
+
+  useEffect(() => {
+    const currentTrackKey = syncedRadioTrack
+      ? `${syncedRadioTrack.id}|${syncedRadioTrack.started_at}`
+      : "none";
+    const currentTrackChanged = prevCurrentTrackKeyRef.current !== currentTrackKey;
+    const hasCandidate = !!(nextTitle || nextArtist);
+
+    // Keep "Volgende" stable while current track is the same.
+    // Only advance when the visible current track actually changes.
+    if (currentTrackChanged || !syncedRadioTrack) {
+      if (hasCandidate) {
+        setDisplayNextTrack({
+          title: nextTitle ?? null,
+          artist: nextArtist ?? null,
+          requestedBy: nextRequestedBy,
+          isFallback: nextIsFallback,
+        });
+      } else {
+        setDisplayNextTrack(null);
+      }
+    }
+
+    prevCurrentTrackKeyRef.current = currentTrackKey;
+  }, [
+    syncedRadioTrack,
+    nextTitle,
+    nextArtist,
+    nextRequestedBy,
+    nextIsFallback,
+  ]);
+
+  const showNextTrack = isRadioMode && !!displayNextTrack && (!!displayNextTrack.title || !!displayNextTrack.artist);
 
   if (!hasData && !isRadioMode) return null;
 
@@ -190,15 +232,15 @@ export default function NowPlaying({ radioTrack, showFallback = false, preferSup
       {showNextTrack && (
         <div className="truncate border-t border-gray-700/50 pt-1 text-[10px] text-gray-400 sm:text-xs">
           <span className="mr-1 uppercase tracking-wider text-gray-500">Volgende:</span>
-          {nextArtist && <span className="text-violet-400">{nextArtist}</span>}
-          {nextArtist && nextTitle && <span className="text-gray-500"> — </span>}
-          {nextTitle && <span className="text-gray-300">{nextTitle}</span>}
-          {!nextQueueItem && upcomingTrack?.isFallback && (
+          {displayNextTrack?.artist && <span className="text-violet-400">{displayNextTrack.artist}</span>}
+          {displayNextTrack?.artist && displayNextTrack?.title && <span className="text-gray-500"> — </span>}
+          {displayNextTrack?.title && <span className="text-gray-300">{displayNextTrack.title}</span>}
+          {displayNextTrack?.isFallback && (
             <span className="ml-1 text-gray-500">(random)</span>
           )}
-          {nextRequestedBy && (
+          {displayNextTrack?.requestedBy && (
             <span className="ml-1 text-gray-500">
-              · door <span className="text-violet-300">{nextRequestedBy}</span>
+              · door <span className="text-violet-300">{displayNextTrack.requestedBy}</span>
             </span>
           )}
         </div>

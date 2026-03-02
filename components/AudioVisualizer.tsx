@@ -43,6 +43,16 @@ export default function AudioVisualizer({
   const kickWaveYRef = useRef(0);
   const smoothBarsRef = useRef<Float32Array | null>(null);
 
+  function mixColor(base: [number, number, number], art: [number, number, number], artWeight: number): [number, number, number] {
+    const w = Math.max(0, Math.min(1, artWeight));
+    const inv = 1 - w;
+    return [
+      Math.round(base[0] * inv + art[0] * w),
+      Math.round(base[1] * inv + art[1] * w),
+      Math.round(base[2] * inv + art[2] * w),
+    ];
+  }
+
   const connect = useCallback(() => {
     const audio = audioRef.current;
     if (!audio || connectedRef.current) return;
@@ -126,6 +136,23 @@ export default function AudioVisualizer({
       analyser.getByteTimeDomainData(timeArray);
       ctx2d.clearRect(0, 0, w, h);
 
+      let artR = 139;
+      let artG = 92;
+      let artB = 246;
+      if (hostRef?.current) {
+        const style = getComputedStyle(hostRef.current);
+        artR = Number(style.getPropertyValue("--player-art-r").trim()) || 139;
+        artG = Number(style.getPropertyValue("--player-art-g").trim()) || 92;
+        artB = Number(style.getPropertyValue("--player-art-b").trim()) || 246;
+      }
+      const artColor: [number, number, number] = [artR, artG, artB];
+      const basePurple: [number, number, number] = [139, 92, 246];
+      const baseLight: [number, number, number] = [196, 181, 253];
+      const basePink: [number, number, number] = [236, 72, 153];
+      const tintMid = mixColor(basePurple, artColor, 0.22);
+      const tintLight = mixColor(baseLight, artColor, 0.26);
+      const tintHot = mixColor(basePink, artColor, 0.2);
+
       // Smooth envelope to avoid stroboscopic jumps.
       const bassRaw = (dataArray[1] + dataArray[2] + dataArray[3] + dataArray[4]) / (4 * 255);
       const env = bassEnvelopeRef.current;
@@ -169,9 +196,9 @@ export default function AudioVisualizer({
 
         // Subtle gradient backdrop
         const bg = ctx2d.createRadialGradient(w * 0.3, h * 0.6, 0, w * 0.7, h * 0.4, Math.max(w, h) * 0.8);
-        bg.addColorStop(0, "rgba(139, 92, 246, 0.08)");
-        bg.addColorStop(0.6, "rgba(168, 85, 247, 0.04)");
-        bg.addColorStop(1, "rgba(196, 181, 253, 0.02)");
+        bg.addColorStop(0, `rgba(${tintMid[0]}, ${tintMid[1]}, ${tintMid[2]}, 0.08)`);
+        bg.addColorStop(0.6, `rgba(${tintHot[0]}, ${tintHot[1]}, ${tintHot[2]}, 0.04)`);
+        bg.addColorStop(1, `rgba(${tintLight[0]}, ${tintLight[1]}, ${tintLight[2]}, 0.02)`);
         ctx2d.fillStyle = bg;
         ctx2d.fillRect(0, 0, w, h);
 
@@ -221,9 +248,10 @@ export default function AudioVisualizer({
             const colorMix = hue * 0.6 + 0.4;
             const alpha = Math.min(0.72, 0.08 + intensity * 0.64);
             
-            const r1 = Math.floor(226 * (1 - colorMix) + 196 * colorMix);
-            const g1 = Math.floor(232 * (1 - colorMix) + 181 * colorMix);
-            const b1 = Math.floor(240 * (1 - colorMix) + 253 * colorMix);
+            const baseR = Math.floor(226 * (1 - colorMix) + 196 * colorMix);
+            const baseG = Math.floor(232 * (1 - colorMix) + 181 * colorMix);
+            const baseB = Math.floor(240 * (1 - colorMix) + 253 * colorMix);
+            const mixed = mixColor([baseR, baseG, baseB], artColor, 0.24);
             
             // Shape rendering with organic variations
             const offsetX = Math.sin(time * 0.7 + c * 0.4) * 2 * dpr * intensity;
@@ -231,7 +259,7 @@ export default function AudioVisualizer({
             const px = x + offsetX;
             const py = y + offsetY;
             
-            ctx2d.fillStyle = `rgba(${r1}, ${g1}, ${b1}, ${alpha})`;
+            ctx2d.fillStyle = `rgba(${mixed[0]}, ${mixed[1]}, ${mixed[2]}, ${alpha})`;
             
             if (shapeType === 0 || shapeType === 4) {
               // Circles with size variation
@@ -269,9 +297,9 @@ export default function AudioVisualizer({
               const glowR = (3 + intensity * 8) * dpr;
               const glow = ctx2d.createRadialGradient(px, py, 0, px, py, glowR);
               const glowAlpha = Math.min(0.4, intensity * 0.5);
-              glow.addColorStop(0, `rgba(196, 181, 253, ${glowAlpha})`);
-              glow.addColorStop(0.7, `rgba(139, 92, 246, ${glowAlpha * 0.3})`);
-              glow.addColorStop(1, "rgba(139, 92, 246, 0)");
+              glow.addColorStop(0, `rgba(${tintLight[0]}, ${tintLight[1]}, ${tintLight[2]}, ${glowAlpha})`);
+              glow.addColorStop(0.7, `rgba(${tintMid[0]}, ${tintMid[1]}, ${tintMid[2]}, ${glowAlpha * 0.3})`);
+              glow.addColorStop(1, `rgba(${tintMid[0]}, ${tintMid[1]}, ${tintMid[2]}, 0)`);
               ctx2d.fillStyle = glow;
               ctx2d.beginPath();
               ctx2d.arc(px, py, glowR, 0, Math.PI * 2);
@@ -300,8 +328,8 @@ export default function AudioVisualizer({
 
           const alpha = 0.35 + value * 0.5;
           const gradient = ctx2d.createLinearGradient(0, y, 0, h);
-          gradient.addColorStop(0, `rgba(196, 181, 253, ${Math.min(0.95, alpha + 0.2)})`);
-          gradient.addColorStop(1, `rgba(139, 92, 246, ${alpha})`);
+          gradient.addColorStop(0, `rgba(${tintLight[0]}, ${tintLight[1]}, ${tintLight[2]}, ${Math.min(0.95, alpha + 0.2)})`);
+          gradient.addColorStop(1, `rgba(${tintMid[0]}, ${tintMid[1]}, ${tintMid[2]}, ${alpha})`);
           ctx2d.fillStyle = gradient;
 
           ctx2d.beginPath();

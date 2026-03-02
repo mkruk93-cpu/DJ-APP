@@ -46,6 +46,7 @@ export function isSkipLocked(): boolean {
 }
 
 function setSkipLock(locked: boolean): void {
+  if (skipLocked === locked) return;
   skipLocked = locked;
   _io?.emit('skip:lock', { locked });
 }
@@ -83,6 +84,123 @@ function getAudioDuration(filePath: string): Promise<number | null> {
   });
 }
 
+const fallbackArtworkCache = new Map<string, string | null>();
+const FALLBACK_ART_MAX_BYTES = 2 * 1024 * 1024;
+
+function mimeForImageExtension(ext: string): string | null {
+  switch (ext.toLowerCase()) {
+    case '.jpg':
+    case '.jpeg':
+      return 'image/jpeg';
+    case '.png':
+      return 'image/png';
+    case '.webp':
+      return 'image/webp';
+    default:
+      return null;
+  }
+}
+
+function toDataUrlFromFile(imagePath: string): string | null {
+  try {
+    const ext = path.extname(imagePath);
+    const mime = mimeForImageExtension(ext);
+    if (!mime) return null;
+    const stat = fs.statSync(imagePath);
+    if (!stat.isFile() || stat.size <= 0 || stat.size > FALLBACK_ART_MAX_BYTES) return null;
+    const buf = fs.readFileSync(imagePath);
+    if (buf.length === 0) return null;
+    return `data:${mime};base64,${buf.toString('base64')}`;
+  } catch {
+    return null;
+  }
+}
+
+function extractEmbeddedArtworkDataUrl(filePath: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const proc = spawn('ffmpeg', [
+      '-hide_banner',
+      '-loglevel', 'error',
+      '-i', filePath,
+      '-an',
+      '-vcodec', 'mjpeg',
+      '-frames:v', '1',
+      '-f', 'image2pipe',
+      'pipe:1',
+    ], { timeout: 12_000 });
+
+    const chunks: Buffer[] = [];
+    let total = 0;
+    let resolved = false;
+
+    const finish = (value: string | null) => {
+      if (resolved) return;
+      resolved = true;
+      resolve(value);
+    };
+
+    proc.stdout?.on('data', (chunk: Buffer) => {
+      if (resolved) return;
+      total += chunk.length;
+      if (total > FALLBACK_ART_MAX_BYTES) {
+        finish(null);
+        return;
+      }
+      chunks.push(chunk);
+    });
+
+    proc.on('close', () => {
+      if (resolved) return;
+      if (chunks.length === 0) {
+        finish(null);
+        return;
+      }
+      const img = Buffer.concat(chunks);
+      if (img.length === 0) {
+        finish(null);
+        return;
+      }
+      finish(`data:image/jpeg;base64,${img.toString('base64')}`);
+    });
+
+    proc.on('error', () => finish(null));
+  });
+}
+
+async function getFallbackArtworkDataUrl(filePath: string): Promise<string | null> {
+  if (fallbackArtworkCache.has(filePath)) {
+    return fallbackArtworkCache.get(filePath) ?? null;
+  }
+
+  const dir = path.dirname(filePath);
+  const base = path.basename(filePath, path.extname(filePath));
+  const sidecarCandidates = [
+    path.join(dir, `${base}.jpg`),
+    path.join(dir, `${base}.jpeg`),
+    path.join(dir, `${base}.png`),
+    path.join(dir, `${base}.webp`),
+    path.join(dir, 'cover.jpg'),
+    path.join(dir, 'cover.jpeg'),
+    path.join(dir, 'cover.png'),
+    path.join(dir, 'folder.jpg'),
+    path.join(dir, 'folder.jpeg'),
+    path.join(dir, 'folder.png'),
+    path.join(dir, 'AlbumArtSmall.jpg'),
+  ];
+
+  for (const candidate of sidecarCandidates) {
+    const dataUrl = toDataUrlFromFile(candidate);
+    if (dataUrl) {
+      fallbackArtworkCache.set(filePath, dataUrl);
+      return dataUrl;
+    }
+  }
+
+  const embedded = await extractEmbeddedArtworkDataUrl(filePath);
+  fallbackArtworkCache.set(filePath, embedded);
+  return embedded;
+}
+
 const MAX_PRELOAD = 5;
 const PRELOAD_REFRESH_MS = 3000;
 
@@ -114,6 +232,7 @@ let nextReady: ReadyTrack | null = null;
 let preparingNext = false;
 let currentQueueItemId: string | null = null;
 let lastUpcomingKey: string | null = null;
+let lastFallbackFile: string | null = null;
 const prepareFailCounts = new Map<string, number>();
 const PREPARE_FAIL_MAX = 3;
 
@@ -519,7 +638,8 @@ async function playNext(
   let source = '';
 
   // ── FAST PATH: use pre-prepared track (instant, no DB call) ──
-  if (nextReady) {
+  // Guard against stale prepare races where "next" accidentally equals current.
+  if (nextReady && nextReady.queueItemId !== currentTrack?.id) {
     const ready = nextReady;
     nextReady = null;
     audioFile = ready.audioFile;
@@ -534,6 +654,14 @@ async function playNext(
     currentQueueItemId = trackQueueId;
     broadcastUpcomingTrack();
   } else {
+    if (nextReady && nextReady.queueItemId === currentTrack?.id) {
+      const stale = nextReady;
+      nextReady = null;
+      if (!stale.isFallback && !keepFiles) cleanupFile(stale.audioFile);
+      console.warn(`[prepare] Dropped stale nextReady equal to current track: ${stale.title ?? stale.youtubeId}`);
+      broadcastUpcomingTrack();
+    }
+
     // ── NORMAL PATH: fetch from queue or fallback ──
     const queue = await getQueue(sb);
     const item = pickNextQueueItem(queue, currentTrack?.id ?? null, currentQueueItemId);
@@ -550,29 +678,41 @@ async function playNext(
         return;
       }
 
-      const buffered = takeFromBuffer(item.id);
-      if (buffered) {
-        audioFile = buffered.audioFile;
-        trackDuration = buffered.duration;
-        if (buffered.item.title) item.title = buffered.item.title;
-        source = 'preloaded';
-      } else {
-        const info = await fetchVideoInfo(item.youtube_url);
-        trackDuration = info.duration;
-        if (info.title && !item.title) item.title = info.title;
+      // Reserve this queue item immediately so background prepare/preload
+      // cannot pick the same item as "next" while we are fetching/downloading it.
+      const reservedQueueItemId = item.id;
+      currentQueueItemId = reservedQueueItemId;
 
-        // Show "loading" state while downloading
-        currentTrack = {
-          id: item.id, youtube_id: item.youtube_id,
-          title: item.title, thumbnail: item.thumbnail,
-          added_by: item.added_by ?? null,
-          duration: trackDuration, started_at: 0,
-        };
-        io.emit('track:change', currentTrack);
+      try {
+        const buffered = takeFromBuffer(item.id);
+        if (buffered) {
+          audioFile = buffered.audioFile;
+          trackDuration = buffered.duration;
+          if (buffered.item.title) item.title = buffered.item.title;
+          source = 'preloaded';
+        } else {
+          const info = await fetchVideoInfo(item.youtube_url);
+          trackDuration = info.duration;
+          if (info.title && !item.title) item.title = info.title;
 
-        console.log(`[player] Downloading: ${item.title ?? item.youtube_id}`);
-        audioFile = await downloadAudio(item, cacheDir);
-        source = 'downloaded';
+          // Show "loading" state while downloading
+          currentTrack = {
+            id: item.id, youtube_id: item.youtube_id,
+            title: item.title, thumbnail: item.thumbnail,
+            added_by: item.added_by ?? null,
+            duration: trackDuration, started_at: 0,
+          };
+          io.emit('track:change', currentTrack);
+
+          console.log(`[player] Downloading: ${item.title ?? item.youtube_id}`);
+          audioFile = await downloadAudio(item, cacheDir);
+          source = 'downloaded';
+        }
+      } catch (err) {
+        if (currentQueueItemId === reservedQueueItemId) {
+          currentQueueItemId = null;
+        }
+        throw err;
       }
 
       trackTitle = item.title;
@@ -589,12 +729,13 @@ async function playNext(
         await sleep(500);
         return;
       }
-      const fallbackFile = pickRandomFallbackForGenre(activeFallbackGenre);
+      const fallbackFile = pickRandomFallbackForGenre(activeFallbackGenre, lastFallbackFile);
       if (fallbackFile) {
         audioFile = fallbackFile;
         trackTitle = titleFromFilename(fallbackFile);
         trackYoutubeId = 'local';
         trackDuration = await getAudioDuration(fallbackFile);
+        trackThumbnail = await getFallbackArtworkDataUrl(fallbackFile);
         trackAddedBy = null;
         isFallback = true;
         source = 'random';
@@ -636,6 +777,16 @@ async function playNext(
       started_at: Date.now() + STREAM_DELAY_MS,
     };
     io.emit('track:change', currentTrack);
+    if (isFallback) {
+      lastFallbackFile = audioFile;
+    }
+    // Always unlock on actual track start; cooldown logic in server.ts handles
+    // the 5s post-skip guard and prevents accidental double skips.
+    if (skipWhenReady) {
+      console.log('[player] skipWhenReady cleared after natural transition');
+      skipWhenReady = false;
+    }
+    setSkipLock(false);
 
     const durStr = trackDuration
       ? `${Math.floor(trackDuration / 60)}:${String(Math.round(trackDuration % 60)).padStart(2, '0')}`
@@ -689,6 +840,9 @@ async function playNext(
         started_at: Date.now() + STREAM_DELAY_MS,
       };
       io.emit('track:change', currentTrack);
+      if (isFallback) {
+        lastFallbackFile = audioFile;
+      }
       setSkipLock(false);
       console.log(`[player] Seamless skip → ${trackTitle ?? trackYoutubeId} (${durStr})`);
       currentQueueItemId = trackQueueId;
@@ -1083,14 +1237,15 @@ async function prepareNextTrack(
         console.log('[prepare] Queue still contains current track only — skip random fallback');
         return;
       }
-      const fallbackFile = pickRandomFallbackForGenre(activeFallbackGenre);
+      const fallbackFile = pickRandomFallbackForGenre(activeFallbackGenre, lastFallbackFile);
       if (fallbackFile) {
         const title = titleFromFilename(fallbackFile);
         const duration = await getAudioDuration(fallbackFile);
+        const thumbnail = await getFallbackArtworkDataUrl(fallbackFile);
         nextReady = {
           audioFile: fallbackFile,
           title,
-          thumbnail: null,
+          thumbnail,
           youtubeId: 'local',
           duration,
           addedBy: null,

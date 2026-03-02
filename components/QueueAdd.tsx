@@ -713,27 +713,27 @@ export default function QueueAdd() {
               key={r.id}
               type="button"
               onClick={() => selectResult(r)}
-              className="flex w-full items-center gap-1.5 px-2 py-1 text-left transition hover:bg-gray-800/80 first:rounded-t-xl last:rounded-b-xl"
+              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition hover:bg-gray-800/80 first:rounded-t-xl last:rounded-b-xl"
             >
               {r.thumbnail ? (
                 <img
                   src={r.thumbnail}
                   alt=""
-                  className="h-8 w-10 shrink-0 rounded object-cover"
+                  className="h-10 w-12 shrink-0 rounded object-cover"
                 />
               ) : (
-                <div className="flex h-8 w-10 shrink-0 items-center justify-center rounded bg-gray-800 text-[9px] text-gray-500">
+                <div className="flex h-10 w-12 shrink-0 items-center justify-center rounded bg-gray-800 text-[10px] text-gray-500">
                   no art
                 </div>
               )}
               <div className="min-w-0 flex-1">
-                <p className="truncate text-[11px] font-medium text-white sm:text-xs">{r.title}</p>
-                <div className="flex items-center gap-1.5">
+                <p className="line-clamp-2 text-xs font-medium leading-snug text-white sm:line-clamp-1">{r.title}</p>
+                <div className="mt-0.5 flex items-center gap-2">
                   {r.channel && (
-                    <span className="hidden truncate text-[10px] text-gray-400 sm:inline">{r.channel}</span>
+                    <span className="truncate text-[11px] text-gray-400">{r.channel}</span>
                   )}
                   {r.duration !== null && (
-                    <span className="shrink-0 text-[10px] tabular-nums text-gray-500">
+                    <span className="shrink-0 text-[11px] tabular-nums text-gray-500">
                       {formatDuration(r.duration)}
                     </span>
                   )}

@@ -21,6 +21,56 @@ interface AudioPlayerProps {
   preferSupabase?: boolean;
 }
 
+function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
+  const rn = r / 255;
+  const gn = g / 255;
+  const bn = b / 255;
+  const max = Math.max(rn, gn, bn);
+  const min = Math.min(rn, gn, bn);
+  const l = (max + min) / 2;
+  let h = 0;
+  let s = 0;
+  const d = max - min;
+  if (d !== 0) {
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case rn:
+        h = (gn - bn) / d + (gn < bn ? 6 : 0);
+        break;
+      case gn:
+        h = (bn - rn) / d + 2;
+        break;
+      default:
+        h = (rn - gn) / d + 4;
+        break;
+    }
+    h /= 6;
+  }
+  return [h, s, l];
+}
+
+function hslToRgb(h: number, s: number, l: number): [number, number, number] {
+  if (s === 0) {
+    const v = Math.round(l * 255);
+    return [v, v, v];
+  }
+  const hueToRgb = (p: number, q: number, t: number): number => {
+    let tn = t;
+    if (tn < 0) tn += 1;
+    if (tn > 1) tn -= 1;
+    if (tn < 1 / 6) return p + (q - p) * 6 * tn;
+    if (tn < 1 / 2) return q;
+    if (tn < 2 / 3) return p + (q - p) * (2 / 3 - tn) * 6;
+    return p;
+  };
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  const r = hueToRgb(p, q, h + 1 / 3);
+  const g = hueToRgb(p, q, h);
+  const b = hueToRgb(p, q, h - 1 / 3);
+  return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+}
+
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
@@ -30,11 +80,17 @@ function formatTime(seconds: number): string {
 export default function AudioPlayer({ src, radioTrack, showFallback = false, preferSupabase = false }: AudioPlayerProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const playerRef = useRef<HTMLDivElement>(null);
+  const artSwapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const artSwapRafRef = useRef<number | null>(null);
+  const tintAnimRafRef = useRef<number | null>(null);
   const [playing, setPlaying] = useState(false);
   const [volume, setVolume] = useState(0.8);
   const [track, setTrack] = useState<NowPlayingData>({ title: null, artist: null, artwork_url: null });
   const [elapsed, setElapsed] = useState(0);
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);
+  const [currentArtwork, setCurrentArtwork] = useState<string | null>(null);
+  const [incomingArtwork, setIncomingArtwork] = useState<string | null>(null);
+  const [incomingArtworkVisible, setIncomingArtworkVisible] = useState(false);
   const userPaused = useRef(false);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connected = useRadioStore((s) => s.connected);
@@ -155,12 +211,188 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const displayArtist = syncedRadioTrack ? radioArtist : (showSupabaseData ? track.artist : null);
   const displayArtwork = syncedRadioTrack?.thumbnail ?? (showSupabaseData ? track.artwork_url : null);
   const hasTrack = displayTitle || displayArtist;
+  const backgroundArtBaseOpacity = 0.15;
+
+  useEffect(() => {
+    const host = playerRef.current;
+    if (!host) return;
+
+    function readVar(name: string, fallback: number): number {
+      const v = Number(getComputedStyle(host).getPropertyValue(name).trim());
+      return Number.isFinite(v) ? v : fallback;
+    }
+
+    function setTint(r: number, g: number, b: number, vr: number, vg: number, vb: number) {
+      host.style.setProperty("--player-art-r", String(Math.round(r)));
+      host.style.setProperty("--player-art-g", String(Math.round(g)));
+      host.style.setProperty("--player-art-b", String(Math.round(b)));
+      host.style.setProperty("--player-art-vibrant-r", String(Math.round(vr)));
+      host.style.setProperty("--player-art-vibrant-g", String(Math.round(vg)));
+      host.style.setProperty("--player-art-vibrant-b", String(Math.round(vb)));
+    }
+
+    function animateTintTo(target: { r: number; g: number; b: number; vr: number; vg: number; vb: number }) {
+      if (tintAnimRafRef.current) cancelAnimationFrame(tintAnimRafRef.current);
+      const from = {
+        r: readVar("--player-art-r", 139),
+        g: readVar("--player-art-g", 92),
+        b: readVar("--player-art-b", 246),
+        vr: readVar("--player-art-vibrant-r", 196),
+        vg: readVar("--player-art-vibrant-g", 181),
+        vb: readVar("--player-art-vibrant-b", 253),
+      };
+      const start = performance.now();
+      const duration = 700;
+      const ease = (t: number) => 1 - Math.pow(1 - t, 3);
+      const step = (now: number) => {
+        const t = Math.min(1, (now - start) / duration);
+        const e = ease(t);
+        setTint(
+          from.r + (target.r - from.r) * e,
+          from.g + (target.g - from.g) * e,
+          from.b + (target.b - from.b) * e,
+          from.vr + (target.vr - from.vr) * e,
+          from.vg + (target.vg - from.vg) * e,
+          from.vb + (target.vb - from.vb) * e,
+        );
+        if (t < 1) tintAnimRafRef.current = requestAnimationFrame(step);
+      };
+      tintAnimRafRef.current = requestAnimationFrame(step);
+    }
+
+    function setDefaultTint() {
+      animateTintTo({ r: 139, g: 92, b: 246, vr: 196, vg: 181, vb: 253 });
+    }
+
+    if (!displayArtwork) {
+      setDefaultTint();
+      return;
+    }
+
+    let cancelled = false;
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.referrerPolicy = "no-referrer";
+    img.onload = () => {
+      if (cancelled) return;
+      try {
+        const canvas = document.createElement("canvas");
+        const size = 18;
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          setDefaultTint();
+          return;
+        }
+        ctx.drawImage(img, 0, 0, size, size);
+        const data = ctx.getImageData(0, 0, size, size).data;
+        let rSum = 0;
+        let gSum = 0;
+        let bSum = 0;
+        let count = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          const r = data[i];
+          const g = data[i + 1];
+          const b = data[i + 2];
+          const max = Math.max(r, g, b);
+          const min = Math.min(r, g, b);
+          const sat = max === 0 ? 0 : (max - min) / max;
+          const lum = (r + g + b) / 3;
+          // Ignore grayscale + extreme dark/bright pixels to keep tint meaningful.
+          if (sat < 0.18 || lum < 28 || lum > 230) continue;
+          rSum += r;
+          gSum += g;
+          bSum += b;
+          count += 1;
+        }
+        if (count === 0) {
+          setDefaultTint();
+          return;
+        }
+        const rr = Math.round(rSum / count);
+        const gg = Math.round(gSum / count);
+        const bb = Math.round(bSum / count);
+        const [h, s, l] = rgbToHsl(rr, gg, bb);
+        const vividS = Math.min(1, s * 1.35 + 0.08);
+        const vividL = Math.max(0.44, Math.min(0.67, l * 1.07));
+        const [vr, vg, vb] = hslToRgb(h, vividS, vividL);
+        animateTintTo({ r: rr, g: gg, b: bb, vr, vg, vb });
+      } catch {
+        setDefaultTint();
+      }
+    };
+    img.onerror = setDefaultTint;
+    img.src = displayArtwork;
+
+    return () => {
+      cancelled = true;
+      if (tintAnimRafRef.current) {
+        cancelAnimationFrame(tintAnimRafRef.current);
+        tintAnimRafRef.current = null;
+      }
+    };
+  }, [displayArtwork]);
+
+  useEffect(() => {
+    if (artSwapTimerRef.current) {
+      clearTimeout(artSwapTimerRef.current);
+      artSwapTimerRef.current = null;
+    }
+    if (artSwapRafRef.current) {
+      cancelAnimationFrame(artSwapRafRef.current);
+      artSwapRafRef.current = null;
+    }
+
+    if (!displayArtwork) {
+      setCurrentArtwork(null);
+      setIncomingArtwork(null);
+      setIncomingArtworkVisible(false);
+      return;
+    }
+
+    if (!currentArtwork) {
+      setCurrentArtwork(displayArtwork);
+      setIncomingArtwork(null);
+      setIncomingArtworkVisible(false);
+      return;
+    }
+
+    if (displayArtwork === currentArtwork || displayArtwork === incomingArtwork) {
+      return;
+    }
+
+    setIncomingArtwork(displayArtwork);
+    setIncomingArtworkVisible(false);
+    artSwapRafRef.current = requestAnimationFrame(() => setIncomingArtworkVisible(true));
+    artSwapTimerRef.current = setTimeout(() => {
+      setCurrentArtwork(displayArtwork);
+      setIncomingArtwork(null);
+      setIncomingArtworkVisible(false);
+      artSwapTimerRef.current = null;
+    }, 700);
+  }, [displayArtwork, currentArtwork, incomingArtwork]);
+
+  useEffect(() => {
+    return () => {
+      if (artSwapTimerRef.current) clearTimeout(artSwapTimerRef.current);
+      if (artSwapRafRef.current) cancelAnimationFrame(artSwapRafRef.current);
+      if (tintAnimRafRef.current) cancelAnimationFrame(tintAnimRafRef.current);
+    };
+  }, []);
 
   const duration = syncedRadioTrack?.duration ?? null;
   const progress = duration && duration > 0 ? Math.min(elapsed / duration, 1) : 0;
 
   const artworkFallback = (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="h-6 w-6 text-gray-500 sm:h-16 sm:w-16">
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.55}
+      className="h-5 w-5 text-violet-100 sm:h-9 sm:w-9"
+    >
       <path strokeLinecap="round" strokeLinejoin="round" d="M9 9l10-4.5M9 9v10.5a3 3 0 1 1-3-3h3Zm10-4.5v10a3 3 0 1 1-3-3h3V4.5Z" />
     </svg>
   );
@@ -183,25 +415,48 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
         )}
         <div className="player-bass-wash absolute inset-0" />
       </div>
-      {displayArtwork && (
+      {(currentArtwork || incomingArtwork) && (
         <>
           <div className="pointer-events-none absolute inset-y-0 left-0 z-0 w-[62%] max-w-[260px] overflow-hidden sm:w-[48%] sm:max-w-[320px]">
-            <img
-              src={displayArtwork}
-              alt=""
-              className="h-full w-full scale-105 object-cover blur-2xl"
-              style={{
-                opacity: 0.16,
-                filter: "saturate(1.05)",
-                WebkitMaskImage:
-                  "linear-gradient(to right, rgba(0,0,0,0.95), rgba(0,0,0,0.5) 72%, rgba(0,0,0,0))",
-                maskImage:
-                  "linear-gradient(to right, rgba(0,0,0,0.95), rgba(0,0,0,0.5) 72%, rgba(0,0,0,0))",
-              }}
-            />
-            <div className="absolute inset-0 bg-gradient-to-r from-gray-900/25 via-gray-900/10 to-transparent" />
+            {currentArtwork && (
+              <img
+                src={currentArtwork}
+                alt=""
+                className={`absolute inset-0 h-full w-full scale-105 object-cover blur-2xl transition-opacity duration-700 ${incomingArtwork ? "opacity-0" : "opacity-100"}`}
+                style={{
+                  opacity: (incomingArtwork ? (incomingArtworkVisible ? 0 : 1) : 1) * backgroundArtBaseOpacity,
+                  filter: "saturate(1.2)",
+                  WebkitMaskImage:
+                    "linear-gradient(to right, rgba(0,0,0,0.95), rgba(0,0,0,0.5) 72%, rgba(0,0,0,0))",
+                  maskImage:
+                    "linear-gradient(to right, rgba(0,0,0,0.95), rgba(0,0,0,0.5) 72%, rgba(0,0,0,0))",
+                }}
+              />
+            )}
+            {incomingArtwork && (
+              <img
+                src={incomingArtwork}
+                alt=""
+                className="absolute inset-0 h-full w-full scale-105 object-cover blur-2xl transition-opacity duration-700"
+                style={{
+                  opacity: (incomingArtworkVisible ? 1 : 0) * backgroundArtBaseOpacity,
+                  filter: "saturate(1.2)",
+                  WebkitMaskImage:
+                    "linear-gradient(to right, rgba(0,0,0,0.95), rgba(0,0,0,0.5) 72%, rgba(0,0,0,0))",
+                  maskImage:
+                    "linear-gradient(to right, rgba(0,0,0,0.95), rgba(0,0,0,0.5) 72%, rgba(0,0,0,0))",
+                }}
+              />
+            )}
+            <div className="absolute inset-0 bg-gradient-to-r from-gray-900/45 via-gray-900/28 to-transparent" />
           </div>
-          <div className={`player-ambient pointer-events-none absolute inset-0 rounded-xl bg-violet-500/15 blur-2xl ${playing ? "opacity-100" : "opacity-50"}`} />
+          <div
+            className={`player-ambient pointer-events-none absolute inset-0 rounded-xl blur-2xl ${playing ? "opacity-100" : "opacity-60"}`}
+            style={{
+              background:
+                "radial-gradient(70% 62% at 20% 60%, rgba(var(--player-art-r), var(--player-art-g), var(--player-art-b), 0.24), transparent 72%), radial-gradient(68% 58% at 80% 40%, rgba(168, 85, 247, 0.18), transparent 74%)",
+            }}
+          />
         </>
       )}
       <audio
@@ -252,22 +507,71 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
         <div className="flex items-center gap-2 p-2">
           <div className="relative shrink-0" style={{ perspective: "900px" }}>
             {playing && <div className="player-cover-glow absolute -inset-1 rounded-xl bg-violet-500/30 blur-md" />}
-            {displayArtwork ? (
-              <img
-                src={displayArtwork}
-                alt=""
-                className={`relative z-10 h-12 w-12 rounded-lg object-cover ${playing ? "player-cover-art" : ""}`}
-              />
+            {(currentArtwork || incomingArtwork) ? (
+              <div className={`player-cover-3d-shell player-cover-3d-shell--sm relative h-12 w-12 ${playing ? "player-cover-art" : "player-cover-idle-drift"}`}>
+                <div className={`player-cover-3d-card absolute inset-0 rounded-lg ${playing ? "player-cover-spin-cycle" : ""}`}>
+                  {currentArtwork && (
+                    <img
+                      src={currentArtwork}
+                      alt=""
+                      className="player-cover-face absolute inset-0 z-10 h-12 w-12 rounded-lg object-cover transition-opacity duration-700"
+                      style={{ opacity: incomingArtwork ? (incomingArtworkVisible ? 0 : 1) : 1 }}
+                    />
+                  )}
+                  {currentArtwork && (
+                    <img
+                      src={currentArtwork}
+                      alt=""
+                      className="player-cover-face player-cover-face--back absolute inset-0 z-[5] h-12 w-12 rounded-lg object-cover transition-opacity duration-700"
+                      style={{ opacity: incomingArtwork ? (incomingArtworkVisible ? 0 : 1) : 1 }}
+                    />
+                  )}
+                  {incomingArtwork && (
+                    <img
+                      src={incomingArtwork}
+                      alt=""
+                      className="player-cover-face absolute inset-0 z-10 h-12 w-12 rounded-lg object-cover transition-opacity duration-700"
+                      style={{ opacity: incomingArtworkVisible ? 1 : 0 }}
+                    />
+                  )}
+                  {incomingArtwork && (
+                    <img
+                      src={incomingArtwork}
+                      alt=""
+                      className="player-cover-face player-cover-face--back absolute inset-0 z-[5] h-12 w-12 rounded-lg object-cover transition-opacity duration-700"
+                      style={{ opacity: incomingArtworkVisible ? 1 : 0 }}
+                    />
+                  )}
+                </div>
+              </div>
             ) : (
-              <div className="player-fallback-note relative z-10 flex h-12 w-12 items-center justify-center rounded-lg bg-gray-800">
-                {artworkFallback}
+              <div className="player-fallback-note player-fallback-cover relative z-10 flex h-12 w-12 items-center justify-center rounded-lg border border-violet-300/25">
+                <span className="player-fallback-shine absolute inset-0 rounded-lg" />
+                <span className="player-fallback-grid absolute inset-0 rounded-lg" />
+                <span className="player-fallback-orb player-fallback-orb--a absolute rounded-full" />
+                <span className="player-fallback-orb player-fallback-orb--b absolute rounded-full" />
+                <span className="relative z-10">{artworkFallback}</span>
               </div>
             )}
             {playing && (
-              <div className="player-cover-ring player-cover-ring--inner absolute -inset-1 rounded-xl border border-violet-300/50" />
+              <div
+                className="player-cover-ring player-cover-ring--inner absolute -inset-1 rounded-xl border"
+                style={{
+                  borderColor: "rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.96)",
+                  boxShadow:
+                    "0 0 0 1px rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.62) inset, 0 0 10px rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.2)",
+                }}
+              />
             )}
             {playing && (
-              <div className="player-cover-ring player-cover-ring--outer absolute -inset-[6px] rounded-[0.85rem] border border-fuchsia-300/32" />
+              <div
+                className="player-cover-ring player-cover-ring--outer absolute -inset-[6px] rounded-[0.85rem] border"
+                style={{
+                  borderColor: "rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.86)",
+                  boxShadow:
+                    "0 0 0 1px rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.54) inset, 0 0 12px rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.18)",
+                }}
+              />
             )}
           </div>
 
@@ -354,26 +658,75 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
       <div className="relative z-[1] hidden items-center gap-4 px-4 py-4 landscape:flex sm:flex">
         <div className="relative -ml-2 shrink-0 overflow-visible" style={{ perspective: "1100px" }}>
           {playing && <div className="player-cover-glow absolute -inset-2 rounded-2xl bg-violet-500/30 blur-xl" />}
-          {displayArtwork ? (
-            <img
-              src={displayArtwork}
-              alt=""
-              className={`relative z-10 h-24 w-24 rounded-xl object-cover shadow-lg ${playing ? "player-cover-art" : "player-cover-idle-drift"} ${
-                playing ? "shadow-violet-500/20" : "shadow-black/30"
-              }`}
-            />
+          {(currentArtwork || incomingArtwork) ? (
+            <div className={`player-cover-3d-shell player-cover-3d-shell--lg relative h-24 w-24 ${playing ? "player-cover-art" : "player-cover-idle-drift"} ${
+              playing ? "shadow-lg shadow-violet-500/20" : "shadow-lg shadow-black/30"
+            }`}>
+              <div className={`player-cover-3d-card absolute inset-0 rounded-xl ${playing ? "player-cover-spin-cycle" : ""}`}>
+                {currentArtwork && (
+                  <img
+                    src={currentArtwork}
+                    alt=""
+                    className="player-cover-face absolute inset-0 z-10 h-24 w-24 rounded-xl object-cover transition-opacity duration-700"
+                    style={{ opacity: incomingArtwork ? (incomingArtworkVisible ? 0 : 1) : 1 }}
+                  />
+                )}
+                {currentArtwork && (
+                  <img
+                    src={currentArtwork}
+                    alt=""
+                    className="player-cover-face player-cover-face--back absolute inset-0 z-[5] h-24 w-24 rounded-xl object-cover transition-opacity duration-700"
+                    style={{ opacity: incomingArtwork ? (incomingArtworkVisible ? 0 : 1) : 1 }}
+                  />
+                )}
+                {incomingArtwork && (
+                  <img
+                    src={incomingArtwork}
+                    alt=""
+                    className="player-cover-face absolute inset-0 z-10 h-24 w-24 rounded-xl object-cover transition-opacity duration-700"
+                    style={{ opacity: incomingArtworkVisible ? 1 : 0 }}
+                  />
+                )}
+                {incomingArtwork && (
+                  <img
+                    src={incomingArtwork}
+                    alt=""
+                    className="player-cover-face player-cover-face--back absolute inset-0 z-[5] h-24 w-24 rounded-xl object-cover transition-opacity duration-700"
+                    style={{ opacity: incomingArtworkVisible ? 1 : 0 }}
+                  />
+                )}
+              </div>
+            </div>
           ) : (
-            <div className={`player-fallback-note relative z-10 flex h-24 w-24 items-center justify-center rounded-xl bg-gray-800 ${
+            <div className={`player-fallback-note player-fallback-cover relative z-10 flex h-24 w-24 items-center justify-center rounded-xl border border-violet-300/30 ${
               playing ? "shadow-lg shadow-violet-500/20" : ""
             }`}>
-              {artworkFallback}
+              <span className="player-fallback-shine absolute inset-0 rounded-xl" />
+              <span className="player-fallback-grid absolute inset-0 rounded-xl" />
+              <span className="player-fallback-orb player-fallback-orb--a absolute rounded-full" />
+              <span className="player-fallback-orb player-fallback-orb--b absolute rounded-full" />
+              <span className="relative z-10">{artworkFallback}</span>
             </div>
           )}
           {playing && (
-            <div className="player-cover-ring player-cover-ring--inner absolute -inset-2 z-20 rounded-[1.05rem] border-2 border-violet-300/55" />
+            <div
+              className="player-cover-ring player-cover-ring--inner absolute -inset-2 z-20 rounded-[1.05rem] border-2"
+              style={{
+                borderColor: "rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.98)",
+                boxShadow:
+                  "0 0 0 1px rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.66) inset, 0 0 14px rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.22)",
+              }}
+            />
           )}
           {playing && (
-            <div className="player-cover-ring player-cover-ring--outer absolute -inset-4 z-20 rounded-[1.3rem] border border-fuchsia-300/45" />
+            <div
+              className="player-cover-ring player-cover-ring--outer absolute -inset-4 z-20 rounded-[1.3rem] border"
+              style={{
+                borderColor: "rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.9)",
+                boxShadow:
+                  "0 0 0 1px rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.58) inset, 0 0 16px rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.2)",
+              }}
+            />
           )}
           <div className="pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-t from-black/30 to-transparent" />
         </div>

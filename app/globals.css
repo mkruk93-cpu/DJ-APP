@@ -141,20 +141,84 @@ body {
 @keyframes player-cover-drift {
   0%,
   100% {
-    transform: translate3d(0, 0, 0) scale(1);
+    transform: translate3d(0, 0, 0) rotateZ(0deg) scale(1);
   }
-  50% {
-    transform: translate3d(0, -2px, 0) scale(1.02);
+  20% {
+    transform: translate3d(1.8px, -4.8px, 0) rotateZ(-0.7deg) scale(1.02);
+  }
+  40% {
+    transform: translate3d(-1.4px, -7.2px, 0) rotateZ(0.95deg) scale(1.032);
+  }
+  62% {
+    transform: translate3d(-2.2px, -2.8px, 0) rotateZ(-0.58deg) scale(1.024);
+  }
+  82% {
+    transform: translate3d(1.2px, -5.2px, 0) rotateZ(0.62deg) scale(1.028);
   }
 }
 
-@keyframes player-cover-flip-30s {
+@keyframes player-cover-float-organic {
+  0% {
+    transform: translate3d(0, 0, 0) translateZ(0px) rotateX(0deg) rotateY(0deg) rotateZ(0deg) scale(1);
+  }
+  12% {
+    transform: translate3d(1.2px, -3.4px, 0) translateZ(2.7px) rotateX(4.4deg) rotateY(-7.6deg) rotateZ(-0.35deg) scale(1.014);
+  }
+  24% {
+    transform: translate3d(1.9px, -5.1px, 0) translateZ(3.3px) rotateX(5.4deg) rotateY(-10.2deg) rotateZ(-0.58deg) scale(1.02);
+  }
+  38% {
+    transform: translate3d(-1.4px, -6.2px, 0) translateZ(3.9px) rotateX(-4.2deg) rotateY(10.8deg) rotateZ(0.76deg) scale(1.026);
+  }
+  52% {
+    transform: translate3d(-2.1px, -2.1px, 0) translateZ(2.6px) rotateX(5.6deg) rotateY(6.9deg) rotateZ(-0.3deg) scale(1.019);
+  }
+  66% {
+    transform: translate3d(0.8px, -4.7px, 0) translateZ(3.4px) rotateX(-4.8deg) rotateY(-9.6deg) rotateZ(0.62deg) scale(1.022);
+  }
+  78% {
+    transform: translate3d(1.3px, -3.1px, 0) translateZ(2.9px) rotateX(2.8deg) rotateY(-4.6deg) rotateZ(0.2deg) scale(1.016);
+  }
+  88% {
+    transform: translate3d(0.4px, -2.5px, 0) translateZ(2.5px) rotateX(1.4deg) rotateY(-1.2deg) rotateZ(0deg) scale(1.012);
+  }
+  100% {
+    transform: translate3d(0, 0, 0) translateZ(0px) rotateX(0deg) rotateY(0deg) rotateZ(0deg) scale(1);
+  }
+}
+
+@keyframes player-cover-spin-cycle {
   0%,
-  90% {
+  82% {
     transform: rotateY(0deg);
+  }
+  86% {
+    transform: rotateY(18deg);
+  }
+  90% {
+    transform: rotateY(110deg);
+  }
+  94% {
+    transform: rotateY(235deg);
+  }
+  97% {
+    transform: rotateY(320deg);
   }
   100% {
     transform: rotateY(360deg);
+  }
+}
+
+@keyframes player-cover-idle-tilt {
+  0%,
+  100% {
+    transform: translateZ(0px) rotateX(0deg) rotateY(0deg) rotateZ(0deg);
+  }
+  33% {
+    transform: translateZ(2px) rotateX(3.8deg) rotateY(-7deg) rotateZ(-0.35deg);
+  }
+  66% {
+    transform: translateZ(1.8px) rotateX(-3.2deg) rotateY(7.5deg) rotateZ(0.42deg);
   }
 }
 
@@ -163,22 +227,171 @@ body {
 }
 
 .player-cover-art {
-  animation:
-    player-cover-drift 8s ease-in-out infinite,
-    player-cover-flip-30s 30s cubic-bezier(0.22, 0.62, 0.2, 1) infinite;
+  animation: player-cover-float-organic 30s cubic-bezier(0.36, 0.04, 0.2, 1) infinite;
   transform-style: preserve-3d;
   will-change: transform;
 }
 
 .player-cover-idle-drift {
-  animation: player-cover-drift 9.5s ease-in-out infinite;
+  animation:
+    player-cover-drift 10.2s cubic-bezier(0.35, 0.08, 0.2, 1) infinite,
+    player-cover-idle-tilt 8s cubic-bezier(0.4, 0.05, 0.2, 1) infinite;
   transform-style: preserve-3d;
   will-change: transform;
+}
+
+.player-cover-3d-shell {
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+.player-cover-3d-shell--sm {
+  --cover-depth: 4px;
+}
+
+.player-cover-3d-shell--lg {
+  --cover-depth: 8px;
+}
+
+.player-cover-3d-card {
+  transform-style: preserve-3d;
+  isolation: isolate;
+  will-change: transform;
+}
+
+.player-cover-spin-cycle {
+  animation: player-cover-spin-cycle 30s linear infinite;
+  transform-origin: center;
+  backface-visibility: hidden;
+}
+
+.player-cover-face {
+  backface-visibility: hidden;
+  transform: translateZ(calc(var(--cover-depth) * 0.5));
+}
+
+.player-cover-face--back {
+  transform: rotateY(180deg) translateZ(calc(var(--cover-depth) * 0.5));
+}
+
+.player-cover-3d-card::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  right: 0;
+  width: var(--cover-depth);
+  transform-origin: right center;
+  transform: rotateY(90deg) translateZ(calc(var(--cover-depth) * -0.5));
+  border-radius: 0 0.6rem 0.6rem 0;
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.14),
+    rgba(99, 102, 241, 0.16) 45%,
+    rgba(17, 24, 39, 0.44)
+  );
+  opacity: 0.58;
+  pointer-events: none;
+}
+
+.player-cover-3d-card::after {
+  content: none;
 }
 
 .player-fallback-note {
   animation: player-note-drift 4.6s ease-in-out infinite;
   will-change: transform;
+}
+
+.player-fallback-cover {
+  background:
+    radial-gradient(120% 110% at 15% 15%, rgba(244, 114, 182, 0.3), transparent 55%),
+    radial-gradient(120% 110% at 85% 85%, rgba(99, 102, 241, 0.35), transparent 56%),
+    linear-gradient(145deg, rgba(124, 58, 237, 0.52), rgba(31, 41, 55, 0.9));
+  box-shadow:
+    inset 0 0 0 1px rgba(196, 181, 253, 0.1),
+    0 10px 25px rgba(76, 29, 149, 0.2);
+}
+
+.player-fallback-shine {
+  background:
+    radial-gradient(120% 90% at 20% 0%, rgba(255, 255, 255, 0.28), transparent 52%),
+    linear-gradient(120deg, rgba(255, 255, 255, 0.08), transparent 35%);
+  mix-blend-mode: screen;
+  opacity: 0.75;
+}
+
+.player-fallback-grid {
+  background-image:
+    linear-gradient(rgba(196, 181, 253, 0.14) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(196, 181, 253, 0.14) 1px, transparent 1px);
+  background-size: 8px 8px;
+  opacity: 0.24;
+  mask-image: radial-gradient(circle at 50% 45%, black 35%, transparent 82%);
+  animation: player-fallback-grid-flow 9s linear infinite;
+}
+
+.player-fallback-orb {
+  pointer-events: none;
+  filter: blur(0.4px);
+  mix-blend-mode: screen;
+}
+
+.player-fallback-orb--a {
+  top: 16%;
+  right: 14%;
+  width: 22%;
+  height: 22%;
+  background: radial-gradient(circle at 35% 35%, rgba(244, 114, 182, 0.9), rgba(244, 114, 182, 0.15) 70%, transparent 100%);
+  animation: player-fallback-orb-a 7.5s ease-in-out infinite;
+}
+
+.player-fallback-orb--b {
+  bottom: 14%;
+  left: 12%;
+  width: 17%;
+  height: 17%;
+  background: radial-gradient(circle at 40% 40%, rgba(125, 211, 252, 0.85), rgba(125, 211, 252, 0.12) 72%, transparent 100%);
+  animation: player-fallback-orb-b 8.8s ease-in-out infinite;
+}
+
+@keyframes player-fallback-grid-flow {
+  0% {
+    background-position: 0 0, 0 0;
+    opacity: 0.18;
+  }
+  50% {
+    background-position: 6px 4px, -4px 5px;
+    opacity: 0.3;
+  }
+  100% {
+    background-position: 12px 8px, -8px 10px;
+    opacity: 0.18;
+  }
+}
+
+@keyframes player-fallback-orb-a {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.78;
+  }
+  50% {
+    transform: translate3d(-2px, 1px, 0) scale(1.1);
+    opacity: 0.95;
+  }
+}
+
+@keyframes player-fallback-orb-b {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.68;
+  }
+  50% {
+    transform: translate3d(2px, -1px, 0) scale(1.12);
+    opacity: 0.9;
+  }
 }
 
 .player-ambient {
@@ -192,14 +405,25 @@ body {
   --kick-wave: 0;
   --kick-wave-x: 0;
   --kick-wave-y: 0;
+  --player-art-r: 139;
+  --player-art-g: 92;
+  --player-art-b: 246;
+  --player-art-vibrant-r: 196;
+  --player-art-vibrant-g: 181;
+  --player-art-vibrant-b: 253;
 }
 
 .player-kick-sweep {
   background:
-    radial-gradient(120% 100% at 82% 100%, rgba(196, 181, 253, 0.34), transparent 62%),
-    radial-gradient(90% 90% at 92% 100%, rgba(236, 72, 153, 0.26), transparent 68%);
+    radial-gradient(
+      120% 100% at 82% 100%,
+      rgba(var(--player-art-r), var(--player-art-g), var(--player-art-b), 0.26),
+      transparent 62%
+    ),
+    radial-gradient(90% 90% at 92% 100%, rgba(236, 72, 153, 0.2), transparent 68%),
+    radial-gradient(85% 82% at 70% 90%, rgba(196, 181, 253, 0.18), transparent 68%);
   mix-blend-mode: screen;
-  opacity: calc(0.03 + (var(--kick-wave) * 0.2));
+  opacity: calc(0.05 + (var(--kick-wave) * 0.24));
   transform: translate3d(
       calc(var(--kick-wave-x) * 9px),
       calc(var(--kick-wave-y) * -6px),
@@ -213,11 +437,20 @@ body {
 
 .player-bass-wash {
   background:
-    radial-gradient(140% 100% at 12% 100%, rgba(168, 85, 247, 0.34), transparent 54%),
-    radial-gradient(130% 96% at 88% 100%, rgba(236, 72, 153, 0.28), transparent 57%),
-    linear-gradient(to top, rgba(139, 92, 246, 0.14), transparent 64%);
+    radial-gradient(
+      140% 100% at 12% 100%,
+      rgba(var(--player-art-r), var(--player-art-g), var(--player-art-b), 0.28),
+      transparent 54%
+    ),
+    radial-gradient(130% 96% at 88% 100%, rgba(236, 72, 153, 0.2), transparent 57%),
+    linear-gradient(
+      to top,
+      rgba(var(--player-art-r), var(--player-art-g), var(--player-art-b), 0.14),
+      rgba(139, 92, 246, 0.08) 38%,
+      transparent 68%
+    );
   mix-blend-mode: screen;
-  opacity: calc(0.06 + (var(--player-bass) * 0.4) + (var(--kick-wave) * 0.12));
+  opacity: calc(0.09 + (var(--player-bass) * 0.44) + (var(--kick-wave) * 0.14));
   transform:
     translate3d(
       calc(var(--kick-wave-x) * -5px),
@@ -226,7 +459,7 @@ body {
     )
     scale(calc(1 + (var(--player-bass) * 0.03) + (var(--kick-wave) * 0.01)));
   transform-origin: 50% 100%;
-  filter: saturate(calc(1 + (var(--player-bass) * 0.62) + (var(--kick-wave) * 0.25)))
-    brightness(calc(0.96 + (var(--player-bass) * 0.1)));
+  filter: saturate(calc(1.1 + (var(--player-bass) * 0.7) + (var(--kick-wave) * 0.28)))
+    brightness(calc(0.97 + (var(--player-bass) * 0.11)));
   transition: opacity 200ms ease, transform 220ms ease, filter 230ms ease;
 }

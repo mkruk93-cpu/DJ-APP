@@ -230,7 +230,8 @@ function postProcessResults(
   const filtered = input.filter((item) => {
     const duration = item.duration;
     if (duration !== null && duration > MAX_LONG_CONTENT_SECONDS) return false;
-    if (source === 'soundcloud' && duration !== null && duration < MIN_SOUNDCLOUD_SECONDS) return false;
+    // Filter out short SoundCloud preview/sample clips (often 30s pro snippets).
+    if (source === 'soundcloud' && duration !== null && duration <= MIN_SOUNDCLOUD_SECONDS) return false;
     return true;
   });
 
@@ -252,7 +253,7 @@ function parseDuration(text: string): number | null {
 }
 
 async function youtubeSearch(query: string, limit = 12): Promise<SearchResult[]> {
-  const cacheKey = query.toLowerCase().trim();
+  const cacheKey = `yt:${query.toLowerCase().trim()}:${limit}`;
   const cached = searchCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.results;
 
@@ -487,7 +488,7 @@ function soundcloudSearchFallback(query: string, limit = 12): Promise<SearchResu
 }
 
 async function soundcloudSearch(query: string, limit = 12): Promise<SearchResult[]> {
-  const cacheKey = `sc:${query.toLowerCase().trim()}`;
+  const cacheKey = `sc:${query.toLowerCase().trim()}:${limit}`;
   const cached = searchCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.results;
 
@@ -706,9 +707,10 @@ app.post('/api/skip', async (req, res) => {
   if (!isAdmin(token)) return res.status(403).json({ error: 'Unauthorized' });
   if (isSkipLocked()) return res.status(429).json({ error: 'Skip bezig — wacht tot het nieuwe nummer speelt' });
   const waitSeconds = getSkipCooldownRemainingSeconds();
-  if (waitSeconds > 0) return res.status(429).json({ error: `Wacht nog ${waitSeconds}s tot het nummer goed speelt` });
+  if (waitSeconds > 0) return res.status(429).json({ error: `Wacht nog ${waitSeconds}s tot je opnieuw kunt skippen` });
 
   skipCurrentTrack();
+  markSkipTriggered();
   console.log('[rest] Track skipped by admin');
   res.json({ ok: true });
 });
@@ -773,12 +775,46 @@ const MAX_DURATION = 3900;
 const ANYONE_SKIP_AFTER = 300;
 const DURATION_VOTE_TIMEOUT = 30_000;
 const MIN_SKIP_PLAY_SECONDS = 5;
+let skipCooldownPending = false;
+let skipCooldownFromTrackId: string | null = null;
+let skipCooldownFromStartedAt: number | null = null;
+let skipCooldownTriggeredAt: number | null = null;
 
 function getSkipCooldownRemainingSeconds(): number {
+  if (!skipCooldownPending) return 0;
+  const now = Date.now();
+  // Safety valve: never keep skip cooldown stuck forever on edge-cases.
+  if (skipCooldownTriggeredAt && now - skipCooldownTriggeredAt > 45_000) {
+    skipCooldownPending = false;
+    skipCooldownFromTrackId = null;
+    skipCooldownFromStartedAt = null;
+    skipCooldownTriggeredAt = null;
+    return 0;
+  }
   const track = getCurrentTrack();
-  if (!track?.started_at) return 0;
-  const elapsedSeconds = Math.max(0, (Date.now() - track.started_at) / 1000);
-  return Math.max(0, Math.ceil(MIN_SKIP_PLAY_SECONDS - elapsedSeconds));
+  if (!track) return MIN_SKIP_PLAY_SECONDS;
+  const stillSameTrack = !!skipCooldownFromTrackId
+    && track.id === skipCooldownFromTrackId
+    && (skipCooldownFromStartedAt == null || track.started_at === skipCooldownFromStartedAt);
+  if (stillSameTrack) return MIN_SKIP_PLAY_SECONDS;
+  const elapsedSeconds = Math.max(0, (now - track.started_at) / 1000);
+  const remaining = Math.max(0, Math.ceil(MIN_SKIP_PLAY_SECONDS - elapsedSeconds));
+  if (remaining <= 0) {
+    skipCooldownPending = false;
+    skipCooldownFromTrackId = null;
+    skipCooldownFromStartedAt = null;
+    skipCooldownTriggeredAt = null;
+    return 0;
+  }
+  return remaining;
+}
+
+function markSkipTriggered(): void {
+  const track = getCurrentTrack();
+  skipCooldownPending = true;
+  skipCooldownFromTrackId = track?.id ?? null;
+  skipCooldownFromStartedAt = track?.started_at ?? null;
+  skipCooldownTriggeredAt = Date.now();
 }
 
 let activeDurationVote: DurationVote | null = null;
@@ -1196,7 +1232,7 @@ io.on('connection', (socket) => {
       }
       const waitSeconds = getSkipCooldownRemainingSeconds();
       if (waitSeconds > 0) {
-        socket.emit('error:toast', { message: `Wacht nog ${waitSeconds}s tot dit nummer goed speelt` });
+        socket.emit('error:toast', { message: `Wacht nog ${waitSeconds}s tot je opnieuw kunt skippen` });
         return;
       }
 
@@ -1213,6 +1249,7 @@ io.on('connection', (socket) => {
       resetVotes();
       io.emit('vote:update', null);
       skipCurrentTrack();
+      markSkipTriggered();
     } catch (err) {
       console.error('[socket] track:skip error:', err);
     }
@@ -1264,6 +1301,7 @@ io.on('connection', (socket) => {
         resetVotes();
         io.emit('vote:update', null);
         skipCurrentTrack();
+        markSkipTriggered();
       }
     } catch (err) {
       console.error('[socket] vote:skip error:', err);
