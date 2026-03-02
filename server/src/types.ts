@@ -64,6 +64,20 @@ export interface DurationVote {
   expires_at: number;
 }
 
+export interface QueuePushVote {
+  id: string;
+  item_id: string;
+  title: string | null;
+  thumbnail: string | null;
+  added_by: string;
+  proposed_by: string;
+  required: number;
+  yes: number;
+  no: number;
+  voters: string[];
+  expires_at: number;
+}
+
 export interface ServerState {
   currentTrack: Track | null;
   upcomingTrack: UpcomingTrack | null;
@@ -77,4 +91,6 @@ export interface ServerState {
   streamOnline: boolean;
   voteState: VoteState | null;
   durationVote: DurationVote | null;
+  queuePushVote: Omit<QueuePushVote, 'voters'> | null;
+  queuePushLocked: boolean;
 }

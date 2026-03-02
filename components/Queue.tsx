@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useRadioStore } from "@/lib/radioStore";
 import { getSocket } from "@/lib/socket";
 import { getRadioToken } from "@/lib/auth";
@@ -21,7 +22,14 @@ function deriveTitleFromId(sourceId: string): string {
 export default function Queue() {
   const queue = useRadioStore((s) => s.queue);
   const mode = useRadioStore((s) => s.mode);
-  const canRemove = mode === "party";
+  const queuePushVote = useRadioStore((s) => s.queuePushVote);
+  const [nickname, setNickname] = useState<string>("");
+  const canRequestPush = mode !== "dj";
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setNickname((localStorage.getItem("nickname") ?? "").trim());
+  }, []);
 
   return (
     <div className="flex h-full flex-col rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5">
@@ -55,30 +63,53 @@ export default function Queue() {
               <img
                 src={item.thumbnail}
                 alt=""
-                className="h-10 w-14 shrink-0 rounded object-cover sm:h-11 sm:w-16"
+                className="h-8 w-12 shrink-0 rounded object-cover sm:h-9 sm:w-14"
               />
             )}
 
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-white">
+              <p className="break-words text-sm font-semibold leading-tight text-white">
                 {item.title ?? deriveTitleFromId(item.youtube_id)}
               </p>
-              <p className="truncate text-xs text-gray-400">
-                {item.added_by}
+              <p className="truncate text-[11px] text-gray-400">
+                door {item.added_by}
               </p>
             </div>
 
-            {canRemove && (
-              <button
-                onClick={() => getSocket().emit("queue:remove", { id: item.id, token: getRadioToken() })}
-                className="shrink-0 rounded p-1 text-gray-500 transition hover:bg-red-500/10 hover:text-red-400"
-                title="Verwijderen"
-              >
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            )}
+            <div className="flex shrink-0 items-center gap-1">
+              {canRequestPush && (
+                <button
+                  onClick={() => {
+                    getSocket().emit("queuePushVote:start", { id: item.id, added_by: nickname || "onbekend" });
+                  }}
+                  disabled={!!queuePushVote || index === 0}
+                  className="rounded p-1 text-violet-300 transition hover:bg-violet-500/10 hover:text-violet-200 disabled:opacity-40"
+                  title="Stem om als volgende te zetten"
+                >
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M13 5l7 7-7 7" />
+                  </svg>
+                </button>
+              )}
+
+              {mode !== "dj" && (item.added_by === nickname || !!getRadioToken()) && (
+                <button
+                  onClick={() =>
+                    getSocket().emit("queue:remove", {
+                      id: item.id,
+                      token: getRadioToken(),
+                      added_by: nickname || "onbekend",
+                    })
+                  }
+                  className="rounded p-1 text-gray-500 transition hover:bg-red-500/10 hover:text-red-400"
+                  title="Verwijderen"
+                >
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
+            </div>
           </div>
         ))}
       </div>

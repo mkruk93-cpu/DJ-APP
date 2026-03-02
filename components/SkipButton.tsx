@@ -7,7 +7,7 @@ import { getRadioToken, isRadioAdmin } from "@/lib/auth";
 
 const ANYONE_SKIP_AFTER = 300;
 
-export default function SkipButton() {
+export default function SkipButton({ compact = false }: { compact?: boolean }) {
   const mode = useRadioStore((s) => s.mode);
   const voteState = useRadioStore((s) => s.voteState);
   const currentTrack = useRadioStore((s) => s.currentTrack);
@@ -61,6 +61,116 @@ export default function SkipButton() {
 
   const threshold = modeSettings.democracy_threshold;
   const needed = voteState?.required ?? Math.max(1, Math.ceil(listenerCount * threshold / 100));
+
+  if (compact) {
+    return (
+      <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+        {skipLocked && (
+          <span className="rounded border border-amber-600/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-300">
+            Laden...
+          </span>
+        )}
+
+        {mode === "democracy" && (
+          <>
+            <button
+              onClick={handleVoteSkip}
+              disabled={skipLocked || (voted && !admin)}
+              className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium transition ${
+                skipLocked
+                  ? "border-gray-700 bg-gray-800/50 text-gray-600 cursor-not-allowed"
+                  : voted
+                  ? "border-violet-500/50 bg-violet-500/10 text-violet-400"
+                  : "border-gray-700 bg-gray-800 text-gray-300 hover:border-violet-500 hover:text-white"
+              }`}
+            >
+              {voted ? "Gestemd" : "Stem skip"}
+              <span className="rounded-full bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-300">
+                {voteState?.votes ?? 0}/{needed}
+              </span>
+            </button>
+            {anyoneCanSkip && (
+              <button
+                onClick={handleAnyoneSkip}
+                disabled={skipLocked}
+                className={`rounded-md border px-2 py-1 text-xs font-medium transition ${
+                  skipLocked
+                    ? "border-gray-700 bg-gray-800/50 text-gray-600 cursor-not-allowed"
+                    : "border-orange-500/30 bg-orange-500/10 text-orange-400 hover:bg-orange-500/20"
+                }`}
+              >
+                Skip
+              </button>
+            )}
+            {admin && (
+              <button
+                onClick={handleAdminSkip}
+                disabled={skipLocked}
+                className={`rounded-md px-2 py-1 text-xs font-medium transition ${
+                  skipLocked
+                    ? "bg-gray-800/50 text-gray-600 cursor-not-allowed"
+                    : "bg-red-600/20 text-red-400 hover:bg-red-600/30"
+                }`}
+              >
+                Skip
+              </button>
+            )}
+          </>
+        )}
+
+        {mode === "party" && (
+          <button
+            onClick={() => { if (!skipLocked) getSocket().emit("track:skip", { token: getRadioToken() }); }}
+            disabled={skipLocked}
+            className={`rounded-md border px-2 py-1 text-xs font-medium transition ${
+              skipLocked
+                ? "border-gray-700 bg-gray-800/50 text-gray-600 cursor-not-allowed"
+                : "border-gray-700 bg-gray-800 text-gray-300 hover:border-violet-500 hover:text-white"
+            }`}
+          >
+            Skip
+          </button>
+        )}
+
+        {(mode === "jukebox" || mode === "radio" || mode === "dj") && (
+          <>
+            {anyoneCanSkip && (
+              <button
+                onClick={handleAnyoneSkip}
+                disabled={skipLocked}
+                className={`rounded-md border px-2 py-1 text-xs font-medium transition ${
+                  skipLocked
+                    ? "border-gray-700 bg-gray-800/50 text-gray-600 cursor-not-allowed"
+                    : "border-orange-500/30 bg-orange-500/10 text-orange-400 hover:bg-orange-500/20"
+                }`}
+              >
+                Skip
+              </button>
+            )}
+            {admin && (
+              <button
+                onClick={handleAdminSkip}
+                disabled={skipLocked}
+                className={`rounded-md px-2 py-1 text-xs font-medium transition ${
+                  skipLocked
+                    ? "bg-gray-800/50 text-gray-600 cursor-not-allowed"
+                    : "bg-red-600/20 text-red-400 hover:bg-red-600/30"
+                }`}
+              >
+                Skip
+              </button>
+            )}
+          </>
+        )}
+
+        {isLongTrack && !anyoneCanSkip && timeUntilSkip > 0 && (
+          <span className="text-[10px] text-gray-500">
+            skip {Math.floor(timeUntilSkip / 60)}:{String(timeUntilSkip % 60).padStart(2, "0")}
+          </span>
+        )}
+      </div>
+    );
+  }
 
   if (mode === "democracy") {
     const hasVotes = voteState && voteState.votes > 0;

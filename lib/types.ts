@@ -64,6 +64,20 @@ export interface DurationVote {
   voted: boolean;
 }
 
+export interface QueuePushVote {
+  id: string;
+  item_id: string;
+  title: string | null;
+  thumbnail: string | null;
+  added_by: string;
+  proposed_by: string;
+  required: number;
+  yes: number;
+  no: number;
+  expires_at: number;
+  voted: boolean;
+}
+
 export interface RadioState {
   connected: boolean;
   currentTrack: Track | null;
@@ -78,6 +92,8 @@ export interface RadioState {
   streamOnline: boolean;
   voteState: VoteState | null;
   durationVote: DurationVote | null;
+  queuePushVote: QueuePushVote | null;
+  queuePushLocked: boolean;
   serverUrl: string | null;
 }
 

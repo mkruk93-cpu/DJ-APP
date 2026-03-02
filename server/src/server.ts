@@ -15,7 +15,7 @@ import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipC
 import { startBridge } from './bridge.js';
 import { startNowPlayingWatcher } from './nowPlaying.js';
 import { StreamHub } from './streamHub.js';
-import type { Mode, ServerState, DurationVote, FallbackGenre } from './types.js';
+import type { Mode, ServerState, DurationVote, QueuePushVote, FallbackGenre } from './types.js';
 import { searchGenres, getTopTracksByGenre, type GenreItem, type GenreHitItem } from './services/discovery.js';
 import { reloadFallbackGenres, listFallbackGenres, getDefaultFallbackGenreId, isKnownFallbackGenre } from './fallbackGenres.js';
 
@@ -162,6 +162,21 @@ async function getServerState(): Promise<ServerState> {
     streamOnline: getCurrentTrack() !== null,
     voteState: null,
     durationVote: activeDurationVote,
+    queuePushVote: activeQueuePushVote
+      ? {
+          id: activeQueuePushVote.id,
+          item_id: activeQueuePushVote.item_id,
+          title: activeQueuePushVote.title,
+          thumbnail: activeQueuePushVote.thumbnail,
+          added_by: activeQueuePushVote.added_by,
+          proposed_by: activeQueuePushVote.proposed_by,
+          required: activeQueuePushVote.required,
+          yes: activeQueuePushVote.yes,
+          no: activeQueuePushVote.no,
+          expires_at: activeQueuePushVote.expires_at,
+        }
+      : null,
+    queuePushLocked,
   };
 }
 
@@ -516,16 +531,21 @@ app.get('/health', (_req, res) => {
 app.get('/search', async (req, res) => {
   const q = String(req.query.q ?? '').trim();
   const source = String(req.query.source ?? 'youtube').toLowerCase();
+  const parsedLimit = parseInt(String(req.query.limit ?? '12'), 10);
+  const parsedOffset = parseInt(String(req.query.offset ?? '0'), 10);
+  const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(parsedLimit, 50)) : 12;
+  const offset = Number.isFinite(parsedOffset) ? Math.max(0, parsedOffset) : 0;
   if (!q || q.length < 2) {
     res.json([]);
     return;
   }
 
   try {
-    const results = source === 'soundcloud'
-      ? await soundcloudSearch(q)
-      : await youtubeSearch(q);
-    res.json(results);
+    const requested = Math.min(50, limit + offset);
+    const allResults = source === 'soundcloud'
+      ? await soundcloudSearch(q, requested)
+      : await youtubeSearch(q, requested);
+    res.json(allResults.slice(offset, offset + limit));
   } catch (err) {
     console.error('[rest] /search error:', err);
     res.status(500).json({ error: 'Search failed' });
@@ -685,6 +705,8 @@ app.post('/api/skip', async (req, res) => {
   const { token } = req.body ?? {};
   if (!isAdmin(token)) return res.status(403).json({ error: 'Unauthorized' });
   if (isSkipLocked()) return res.status(429).json({ error: 'Skip bezig — wacht tot het nieuwe nummer speelt' });
+  const waitSeconds = getSkipCooldownRemainingSeconds();
+  if (waitSeconds > 0) return res.status(429).json({ error: `Wacht nog ${waitSeconds}s tot het nummer goed speelt` });
 
   skipCurrentTrack();
   console.log('[rest] Track skipped by admin');
@@ -734,9 +756,11 @@ app.post('/api/tunnel-url', async (req, res) => {
 
 let voteSkipSet = new Set<string>();
 let voteTimer: ReturnType<typeof setTimeout> | null = null;
+let voteTrackId: string | null = null;
 
 function resetVotes(): void {
   voteSkipSet.clear();
+  voteTrackId = null;
   if (voteTimer) {
     clearTimeout(voteTimer);
     voteTimer = null;
@@ -748,9 +772,21 @@ function resetVotes(): void {
 const MAX_DURATION = 3900;
 const ANYONE_SKIP_AFTER = 300;
 const DURATION_VOTE_TIMEOUT = 30_000;
+const MIN_SKIP_PLAY_SECONDS = 5;
+
+function getSkipCooldownRemainingSeconds(): number {
+  const track = getCurrentTrack();
+  if (!track?.started_at) return 0;
+  const elapsedSeconds = Math.max(0, (Date.now() - track.started_at) / 1000);
+  return Math.max(0, Math.ceil(MIN_SKIP_PLAY_SECONDS - elapsedSeconds));
+}
 
 let activeDurationVote: DurationVote | null = null;
 let durationVoteTimer: ReturnType<typeof setTimeout> | null = null;
+let activeQueuePushVote: QueuePushVote | null = null;
+let queuePushVoteTimer: ReturnType<typeof setTimeout> | null = null;
+let queuePushLocked = false;
+let queuePushUnlockTrackSignature: string | null = null;
 
 function broadcastDurationVote(): void {
   if (activeDurationVote) {
@@ -758,6 +794,134 @@ function broadcastDurationVote(): void {
   } else {
     io.emit('durationVote:end', null);
   }
+}
+
+function currentQueueTrackSignature(): string | null {
+  const track = getCurrentTrack();
+  if (!track || track.youtube_id === 'local') return null;
+  return `${track.id}|${track.youtube_id}|${track.started_at}`;
+}
+
+function setQueuePushLockActive(): void {
+  queuePushLocked = true;
+  queuePushUnlockTrackSignature = currentQueueTrackSignature();
+  io.emit('queuePush:lock', { locked: true });
+}
+
+function maybeReleaseQueuePushLock(): void {
+  if (!queuePushLocked) return;
+  const signature = currentQueueTrackSignature();
+  if (!signature) return;
+  if (signature === queuePushUnlockTrackSignature) return;
+  queuePushLocked = false;
+  queuePushUnlockTrackSignature = null;
+  io.emit('queuePush:lock', { locked: false });
+}
+
+function broadcastQueuePushVote(): void {
+  if (activeQueuePushVote) {
+    io.emit('queuePushVote:update', activeQueuePushVote);
+  } else {
+    io.emit('queuePushVote:end', null);
+  }
+}
+
+async function finalizeQueuePushVote(): Promise<void> {
+  if (!activeQueuePushVote) return;
+  try {
+    const vote = activeQueuePushVote;
+    activeQueuePushVote = null;
+    if (queuePushVoteTimer) {
+      clearTimeout(queuePushVoteTimer);
+      queuePushVoteTimer = null;
+    }
+
+    const accepted = vote.yes >= vote.required;
+    if (!accepted) {
+      io.emit('queuePushVote:result', {
+        accepted: false,
+        title: vote.title,
+        reason: 'Niet genoeg stemmen',
+      });
+      broadcastQueuePushVote();
+      return;
+    }
+
+    if (queuePushLocked) {
+      io.emit('queuePushVote:result', {
+        accepted: false,
+        title: vote.title,
+        reason: 'Push is nog vergrendeld tot het volgende nummer start',
+      });
+      broadcastQueuePushVote();
+      return;
+    }
+
+    const queue = await getQueue(sb);
+    const target = queue.find((item) => item.id === vote.item_id);
+    if (!target) {
+      io.emit('queuePushVote:result', {
+        accepted: false,
+        title: vote.title,
+        reason: 'Nummer staat niet meer in de wachtrij',
+      });
+      broadcastQueuePushVote();
+      return;
+    }
+
+    await reorderQueue(sb, vote.item_id, 1);
+    invalidatePreload();
+    playerEvents.emit('queue:add');
+    const updatedQueue = await getQueue(sb);
+    io.emit('queue:update', { items: updatedQueue });
+    setQueuePushLockActive();
+    io.emit('queuePushVote:result', { accepted: true, title: vote.title });
+    console.log(`[queue-push] Accepted: ${vote.item_id} moved to next`);
+    broadcastQueuePushVote();
+  } catch (err) {
+    console.error('[queue-push] finalize error:', err);
+    io.emit('queuePushVote:result', {
+      accepted: false,
+      reason: 'Push-stemming kon niet worden afgerond',
+    });
+    activeQueuePushVote = null;
+    broadcastQueuePushVote();
+  }
+}
+
+function startQueuePushVote(
+  item: { id: string; title: string | null; thumbnail: string | null; added_by: string },
+  proposedBy: string,
+  proposerSocketId: string,
+  required: number,
+  timeoutMs: number,
+): void {
+  if (activeQueuePushVote) {
+    activeQueuePushVote = null;
+    if (queuePushVoteTimer) {
+      clearTimeout(queuePushVoteTimer);
+      queuePushVoteTimer = null;
+    }
+  }
+
+  activeQueuePushVote = {
+    id: `qpv_${Date.now()}`,
+    item_id: item.id,
+    title: item.title,
+    thumbnail: item.thumbnail,
+    added_by: item.added_by,
+    proposed_by: proposedBy,
+    required,
+    yes: 1,
+    no: 0,
+    voters: [proposerSocketId],
+    expires_at: Date.now() + timeoutMs,
+  };
+  broadcastQueuePushVote();
+
+  queuePushVoteTimer = setTimeout(() => {
+    void finalizeQueuePushVote();
+  }, timeoutMs);
 }
 
 function finalizeDurationVote(): void {
@@ -783,6 +947,7 @@ function finalizeDurationVote(): void {
       })
       .then(async (item) => {
         const queue = await getQueue(sb);
+        io.emit('queue:added', { id: item.id, title: item.title ?? item.youtube_id, added_by: item.added_by ?? vote.added_by ?? 'onbekend' });
         io.emit('queue:update', { items: queue });
         playerEvents.emit('queue:add');
         console.log(`[queue] Added after vote: ${item.youtube_id} by ${vote.added_by}`);
@@ -844,6 +1009,9 @@ io.on('connection', (socket) => {
   io.emit('stream:status', { online: getCurrentTrack() !== null, listeners: io.engine.clientsCount });
   socket.emit('upcoming:update', getUpcomingTrack());
   void emitFallbackGenreUpdate(socket);
+  if (activeQueuePushVote) socket.emit('queuePushVote:update', activeQueuePushVote);
+  else socket.emit('queuePushVote:end', null);
+  socket.emit('queuePush:lock', { locked: queuePushLocked });
 
   // ── auth:verify ──
   socket.on('auth:verify', (data: { token: string }, callback?: (valid: boolean) => void) => {
@@ -912,6 +1080,7 @@ io.on('connection', (socket) => {
 
       const item = await addToQueue(sb, url, data.added_by || 'anonymous', mergedTitle, thumbForQueue);
       const queue = await getQueue(sb);
+      io.emit('queue:added', { id: item.id, title: item.title ?? item.youtube_id, added_by: item.added_by ?? data.added_by ?? 'onbekend' });
       io.emit('queue:update', { items: queue });
       playerEvents.emit('queue:add');
       console.log(`[queue] Added: ${item.youtube_id} by ${data.added_by}`);
@@ -950,6 +1119,70 @@ io.on('connection', (socket) => {
     }
   });
 
+  // ── queuePushVote:start ──
+  socket.on('queuePushVote:start', async (data: { id: string; added_by?: string }) => {
+    try {
+      const mode = await getActiveMode(sb);
+      if (mode === 'dj') {
+        socket.emit('error:toast', { message: 'Push-stemmen is niet beschikbaar in DJ modus' });
+        return;
+      }
+      if (queuePushLocked) {
+        socket.emit('error:toast', { message: 'Je kunt nu nog niet pushen. Wacht tot het volgende nummer uit de wachtrij start.' });
+        return;
+      }
+      if (activeQueuePushVote) {
+        socket.emit('error:toast', { message: 'Er loopt al een actieve push-stemming' });
+        return;
+      }
+
+      const queue = await getQueue(sb);
+      const item = queue.find((q) => q.id === data.id);
+      if (!item) {
+        socket.emit('error:toast', { message: 'Nummer niet gevonden in wachtrij' });
+        return;
+      }
+      if (queue[0]?.id === item.id) {
+        socket.emit('error:toast', { message: 'Dit nummer staat al als volgende' });
+        return;
+      }
+
+      const settings = await getModeSettings(sb);
+      const required = Math.max(1, Math.ceil(io.engine.clientsCount * (settings.democracy_threshold / 100)));
+      const proposedBy = normalizeNickname(data.added_by) ?? 'onbekend';
+      startQueuePushVote(item, proposedBy, socket.id, required, Math.max(5, settings.democracy_timer) * 1000);
+      socket.emit('info:toast', { message: 'Push-stemming gestart. Jouw stem telt al als ja.' });
+      if ((activeQueuePushVote?.yes ?? 0) >= required) {
+        void finalizeQueuePushVote();
+      }
+      console.log(`[queue-push] Vote started for ${item.id} by ${proposedBy}`);
+    } catch (err) {
+      console.error('[socket] queuePushVote:start error:', err);
+      socket.emit('error:toast', { message: 'Kon push-stemming niet starten' });
+    }
+  });
+
+  // ── queuePushVote:cast ──
+  socket.on('queuePushVote:cast', async (data: { vote: 'yes' | 'no' }) => {
+    if (!activeQueuePushVote) {
+      socket.emit('error:toast', { message: 'Geen actieve push-stemming' });
+      return;
+    }
+    if (activeQueuePushVote.voters.includes(socket.id)) {
+      socket.emit('error:toast', { message: 'Je hebt al gestemd' });
+      return;
+    }
+
+    activeQueuePushVote.voters.push(socket.id);
+    if (data.vote === 'yes') activeQueuePushVote.yes += 1;
+    else activeQueuePushVote.no += 1;
+    broadcastQueuePushVote();
+
+    if (activeQueuePushVote.yes >= activeQueuePushVote.required) {
+      void finalizeQueuePushVote();
+    }
+  });
+
   // ── track:skip ──
   socket.on('track:skip', async (data: { isAdmin?: boolean; token?: string }) => {
     try {
@@ -959,6 +1192,11 @@ io.on('connection', (socket) => {
       const track = getCurrentTrack();
       if (isSkipLocked()) {
         socket.emit('error:toast', { message: 'Skip bezig — wacht tot het nieuwe nummer speelt' });
+        return;
+      }
+      const waitSeconds = getSkipCooldownRemainingSeconds();
+      if (waitSeconds > 0) {
+        socket.emit('error:toast', { message: `Wacht nog ${waitSeconds}s tot dit nummer goed speelt` });
         return;
       }
 
@@ -987,6 +1225,17 @@ io.on('connection', (socket) => {
       if (!canPerformAction(mode, 'vote_skip', false)) {
         socket.emit('error:toast', { message: 'Stemmen is niet beschikbaar in deze modus' });
         return;
+      }
+      const waitSeconds = getSkipCooldownRemainingSeconds();
+      if (waitSeconds > 0) {
+        socket.emit('error:toast', { message: `Nog ${waitSeconds}s wachten voordat skip-stemmen actief is` });
+        return;
+      }
+
+      const trackId = getCurrentTrack()?.id ?? null;
+      if (trackId !== voteTrackId) {
+        resetVotes();
+        voteTrackId = trackId;
       }
 
       voteSkipSet.add(socket.id);
@@ -1099,10 +1348,14 @@ io.on('connection', (socket) => {
   });
 
   // ── queue:remove ──
-  socket.on('queue:remove', async (data: { id: string; token: string }) => {
+  socket.on('queue:remove', async (data: { id: string; token?: string; added_by?: string }) => {
     const mode = await getActiveMode(sb);
     const admin = isAdmin(data.token);
-    if (!canPerformAction(mode, 'remove_from_queue', admin)) {
+    const requester = normalizeNickname(data.added_by) ?? null;
+    const queue = await getQueue(sb);
+    const target = queue.find((item) => item.id === data.id);
+    const isOwner = mode !== 'dj' && !!(target && requester && normalizeNickname(target.added_by) === requester);
+    if (!isOwner && !canPerformAction(mode, 'remove_from_queue', admin)) {
       socket.emit('error:toast', { message: 'Je mag geen nummers verwijderen in deze modus' });
       return;
     }
@@ -1192,6 +1445,7 @@ async function main(): Promise<void> {
 
   let lastSyncedMode = initialMode;
   setInterval(() => {
+    maybeReleaseQueuePushLock();
     getActiveMode(sb)
       .then(async (mode) => {
         if (mode === lastSyncedMode) return;

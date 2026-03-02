@@ -131,6 +131,10 @@ export default function QueueAdd() {
   const [submitting, setSubmitting] = useState(false);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
+  const [searchingMore, setSearchingMore] = useState(false);
+  const [searchOffset, setSearchOffset] = useState(0);
+  const [searchHasMore, setSearchHasMore] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const [showResults, setShowResults] = useState(false);
   const [source, setSource] = useState<SearchSource>("youtube");
   const [genreQuery, setGenreQuery] = useState("");
@@ -147,8 +151,10 @@ export default function QueueAdd() {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const genreListRef = useRef<HTMLDivElement>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
+  const searchListRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const GENRE_PAGE_SIZE = 20;
+  const SEARCH_PAGE_SIZE = 12;
 
   const serverUrl = useRadioStore((s) => s.serverUrl) ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
   const canAdd = canPerformAction(mode, "add_to_queue", isRadioAdmin());
@@ -165,23 +171,48 @@ export default function QueueAdd() {
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
-  const search = useCallback((query: string) => {
+  const search = useCallback((query: string, append = false) => {
     if (!serverUrl || query.length < 2) {
       setResults([]);
+      setSearchOffset(0);
+      setSearchHasMore(false);
+      setSearchQuery("");
       setSearching(false);
+      setSearchingMore(false);
       return;
     }
 
-    setSearching(true);
-    fetch(`${serverUrl}/search?q=${encodeURIComponent(query)}&source=${source}`)
+    const offset = append ? searchOffset : 0;
+    if (append) setSearchingMore(true);
+    else setSearching(true);
+    fetch(
+      `${serverUrl}/search?q=${encodeURIComponent(query)}&source=${source}&limit=${SEARCH_PAGE_SIZE}&offset=${offset}`,
+    )
       .then((r) => r.json())
       .then((data: SearchResult[]) => {
-        setResults(data);
-        setShowResults(data.length > 0);
+        const normalized = Array.isArray(data) ? data : [];
+        setResults((prev) => {
+          if (!append) return normalized;
+          const merged = [...prev, ...normalized];
+          return Array.from(new Map(merged.map((item) => [item.id, item])).values());
+        });
+        setSearchQuery(query);
+        setSearchOffset(offset + normalized.length);
+        setSearchHasMore(normalized.length >= SEARCH_PAGE_SIZE);
+        setShowResults(append ? true : normalized.length > 0);
       })
-      .catch(() => setResults([]))
-      .finally(() => setSearching(false));
-  }, [serverUrl, source]);
+      .catch(() => {
+        if (!append) {
+          setResults([]);
+          setSearchOffset(0);
+          setSearchHasMore(false);
+        }
+      })
+      .finally(() => {
+        setSearching(false);
+        setSearchingMore(false);
+      });
+  }, [serverUrl, source, searchOffset]);
 
   const loadGenres = useCallback((query: string) => {
     if (!serverUrl) {
@@ -285,6 +316,27 @@ export default function QueueAdd() {
   }, [source, activeGenre, genreHasMore, genreHitsLoading, genreHitsLoadingMore, loadGenreHits]);
 
   useEffect(() => {
+    if (source === "spotify" || source === "genres") return;
+    const root = searchListRef.current;
+    const sentinel = loadMoreRef.current;
+    if (!root || !sentinel) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries.some((entry) => entry.isIntersecting);
+        if (!visible) return;
+        if (!searchHasMore || searching || searchingMore) return;
+        if (!searchQuery) return;
+        search(searchQuery, true);
+      },
+      { root, rootMargin: "160px" },
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [source, searchHasMore, searching, searchingMore, searchQuery, search]);
+
+  useEffect(() => {
     if (source !== "genres") return;
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => loadGenres(genreQuery), 250);
@@ -303,15 +355,21 @@ export default function QueueAdd() {
 
     if (isSupportedUrl(value.trim())) {
       setResults([]);
+      setSearchOffset(0);
+      setSearchHasMore(false);
+      setSearchQuery("");
       setShowResults(false);
       return;
     }
 
     const query = value.trim();
     if (query.length >= 2) {
-      debounceRef.current = setTimeout(() => search(query), 300);
+      debounceRef.current = setTimeout(() => search(query, false), 260);
     } else {
       setResults([]);
+      setSearchOffset(0);
+      setSearchHasMore(false);
+      setSearchQuery("");
       setShowResults(false);
     }
   }
@@ -384,6 +442,9 @@ export default function QueueAdd() {
   function selectResult(result: SearchResult) {
     setInput(result.title);
     setResults([]);
+    setSearchOffset(0);
+    setSearchHasMore(false);
+    setSearchQuery("");
     setShowResults(false);
     submitUrl(result.url, result.thumbnail || undefined, result.title, result.channel);
   }
@@ -391,6 +452,9 @@ export default function QueueAdd() {
   function switchSource(newSource: SearchSource) {
     setSource(newSource);
     setResults([]);
+    setSearchOffset(0);
+    setSearchHasMore(false);
+    setSearchQuery("");
     setShowResults(false);
     setFeedback(null);
     if (newSource === "genres") {
@@ -409,11 +473,15 @@ export default function QueueAdd() {
       debounceRef.current = setTimeout(() => {
         setSearching(true);
         const url = serverUrl ?? "";
-        fetch(`${url}/search?q=${encodeURIComponent(query)}&source=${newSource}`)
+        fetch(`${url}/search?q=${encodeURIComponent(query)}&source=${newSource}&limit=${SEARCH_PAGE_SIZE}&offset=0`)
           .then((r) => r.json())
           .then((data: SearchResult[]) => {
-            setResults(data);
-            setShowResults(data.length > 0);
+            const normalized = Array.isArray(data) ? data : [];
+            setResults(normalized);
+            setSearchOffset(normalized.length);
+            setSearchHasMore(normalized.length >= SEARCH_PAGE_SIZE);
+            setSearchQuery(query);
+            setShowResults(normalized.length > 0);
           })
           .catch(() => setResults([]))
           .finally(() => setSearching(false));
@@ -434,64 +502,88 @@ export default function QueueAdd() {
         </label>
 
         {/* Source tabs */}
-        <div className="flex flex-wrap gap-1 rounded-lg bg-gray-800 p-0.5">
+        <div className="flex items-center gap-1 rounded-lg bg-gray-800 p-0.5">
           <button
             type="button"
             onClick={() => switchSource("youtube")}
-            className={`flex min-w-0 flex-1 basis-[calc(50%-0.125rem)] items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition sm:basis-0 sm:gap-1.5 sm:px-3 sm:text-xs ${
+            className={`group flex h-8 min-w-0 items-center rounded-md text-[11px] font-semibold transition ${
               source === "youtube"
-                ? "bg-red-500/20 text-red-400"
-                : "text-gray-400 hover:text-gray-200"
+                ? "flex-1 justify-start bg-red-500/20 px-2.5 text-red-400"
+                : "w-8 shrink-0 justify-center px-0 text-gray-400 hover:text-gray-200"
             }`}
           >
             <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor">
               <path d="M23.5 6.2a3.02 3.02 0 00-2.12-2.14C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.38.56A3.02 3.02 0 00.5 6.2 31.7 31.7 0 000 12a31.7 31.7 0 00.5 5.8 3.02 3.02 0 002.12 2.14c1.88.56 9.38.56 9.38.56s7.5 0 9.38-.56a3.02 3.02 0 002.12-2.14A31.7 31.7 0 0024 12a31.7 31.7 0 00-.5-5.8zM9.55 15.5V8.5l6.27 3.5-6.27 3.5z" />
             </svg>
-            <span className="truncate">YouTube</span>
+            <span
+              className={`overflow-hidden whitespace-nowrap transition-all duration-200 ${
+                source === "youtube" ? "ml-1.5 max-w-[120px] opacity-100" : "max-w-0 opacity-0"
+              }`}
+            >
+              YouTube
+            </span>
           </button>
           <button
             type="button"
             onClick={() => switchSource("soundcloud")}
-            className={`flex min-w-0 flex-1 basis-[calc(50%-0.125rem)] items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition sm:basis-0 sm:gap-1.5 sm:px-3 sm:text-xs ${
+            className={`group flex h-8 min-w-0 items-center rounded-md text-[11px] font-semibold transition ${
               source === "soundcloud"
-                ? "bg-orange-500/20 text-orange-400"
-                : "text-gray-400 hover:text-gray-200"
+                ? "flex-1 justify-start bg-orange-500/20 px-2.5 text-orange-400"
+                : "w-8 shrink-0 justify-center px-0 text-gray-400 hover:text-gray-200"
             }`}
           >
             <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor">
               <path d="M1.175 12.225c-.05 0-.075.025-.075.075v4.4c0 .05.025.075.075.075s.075-.025.075-.075v-4.4c0-.05-.025-.075-.075-.075zm-.9.825c-.05 0-.075.025-.075.075v2.75c0 .05.025.075.075.075s.075-.025.075-.075v-2.75c0-.05-.025-.075-.075-.075zm1.8-.6c-.05 0-.075.025-.075.075v5c0 .05.025.075.075.075s.075-.025.075-.075v-5c0-.05-.025-.075-.075-.075zm.9-.75c-.05 0-.075.025-.075.075v6.5c0 .05.025.075.075.075s.075-.025.075-.075v-6.5c0-.05-.025-.075-.075-.075zm.9.275c-.05 0-.075.025-.075.075v5.95c0 .05.025.075.075.075s.075-.025.075-.075v-5.95c0-.05-.025-.075-.075-.075zm.9-.9c-.05 0-.075.025-.075.075v7.75c0 .05.025.075.075.075s.075-.025.075-.075v-7.75c0-.05-.025-.075-.075-.075zm.9 1.05c-.05 0-.075.025-.075.075v5.65c0 .05.025.075.075.075s.075-.025.075-.075v-5.65c0-.05-.025-.075-.075-.075zm.9-2.025c-.05 0-.075.025-.075.075v9.7c0 .05.025.075.075.075s.075-.025.075-.075v-9.7c0-.05-.025-.075-.075-.075zm.9-.475c-.05 0-.075.025-.075.075v10.65c0 .05.025.075.075.075s.075-.025.075-.075V9.55c0-.05-.025-.075-.075-.075zm.9.45c-.05 0-.075.025-.075.075v9.75c0 .05.025.075.075.075s.075-.025.075-.075v-9.75c0-.05-.025-.075-.075-.075zm1.3-.275c-.827 0-1.587.262-2.213.708a5.346 5.346 0 00-1.587-3.658A5.346 5.346 0 009.175 5C6.388 5 4.1 7.163 3.95 9.9c-.013.05-.013.1-.013.15 0 .05 0 .1.013.15h-.175c-.975 0-1.775.8-1.775 1.775v5.05c0 .975.8 1.775 1.775 1.775H12.5c2.375 0 4.3-1.925 4.3-4.3S14.875 10.2 12.5 10.2z" />
             </svg>
-            <span className="truncate">SoundCloud</span>
+            <span
+              className={`overflow-hidden whitespace-nowrap transition-all duration-200 ${
+                source === "soundcloud" ? "ml-1.5 max-w-[120px] opacity-100" : "max-w-0 opacity-0"
+              }`}
+            >
+              SoundCloud
+            </span>
           </button>
           <button
             type="button"
             onClick={() => switchSource("genres")}
-            className={`flex min-w-0 flex-1 basis-[calc(50%-0.125rem)] items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition sm:basis-0 sm:gap-1.5 sm:px-3 sm:text-xs ${
+            className={`group flex h-8 min-w-0 items-center rounded-md text-[11px] font-semibold transition ${
               source === "genres"
-                ? "bg-fuchsia-500/20 text-fuchsia-300"
-                : "text-gray-400 hover:text-gray-200"
+                ? "flex-1 justify-start bg-fuchsia-500/20 px-2.5 text-fuchsia-300"
+                : "w-8 shrink-0 justify-center px-0 text-gray-400 hover:text-gray-200"
             }`}
           >
             <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="12" cy="12" r="9" />
               <path d="M12 3v18M3 12h18" />
             </svg>
-            <span className="truncate">Genres</span>
+            <span
+              className={`overflow-hidden whitespace-nowrap transition-all duration-200 ${
+                source === "genres" ? "ml-1.5 max-w-[120px] opacity-100" : "max-w-0 opacity-0"
+              }`}
+            >
+              Genres
+            </span>
           </button>
           {isSpotifyConfigured() && (
             <button
               type="button"
               onClick={() => switchSource("spotify")}
-              className={`flex min-w-0 flex-1 basis-[calc(50%-0.125rem)] items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition sm:basis-0 sm:gap-1.5 sm:px-3 sm:text-xs ${
+              className={`group flex h-8 min-w-0 items-center rounded-md text-[11px] font-semibold transition ${
                 source === "spotify"
-                  ? "bg-[#1DB954]/20 text-[#1DB954]"
-                  : "text-gray-400 hover:text-gray-200"
+                  ? "flex-1 justify-start bg-[#1DB954]/20 px-2.5 text-[#1DB954]"
+                  : "w-8 shrink-0 justify-center px-0 text-gray-400 hover:text-gray-200"
               }`}
             >
               <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z" />
               </svg>
-              <span className="truncate">Spotify</span>
+              <span
+                className={`overflow-hidden whitespace-nowrap transition-all duration-200 ${
+                  source === "spotify" ? "ml-1.5 max-w-[120px] opacity-100" : "max-w-0 opacity-0"
+                }`}
+              >
+                Spotify
+              </span>
             </button>
           )}
         </div>
@@ -509,22 +601,27 @@ export default function QueueAdd() {
               placeholder="Zoek genre (hardstyle, techno, hiphop, nederlands...)"
               className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-fuchsia-500"
             />
-            <div className="flex gap-2 overflow-x-auto pb-1">
+            <select
+              value={activeGenre ?? ""}
+              onChange={(e) => {
+                const next = e.target.value;
+                setActiveGenre(next || null);
+                if (next) loadGenreHits(next, false);
+                else {
+                  setGenreHits([]);
+                  setGenreHitsOffset(0);
+                  setGenreHasMore(false);
+                }
+              }}
+              className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white outline-none transition focus:border-fuchsia-500"
+            >
+              <option value="">Kies eerst een genre...</option>
               {genres.map((genre) => (
-                <button
-                  key={genre.id}
-                  type="button"
-                  onClick={() => loadGenreHits(genre.name, false)}
-                  className={`shrink-0 rounded-full border px-3 py-1 text-xs font-semibold transition ${
-                    activeGenre === genre.name
-                      ? "border-fuchsia-400 bg-fuchsia-500/20 text-fuchsia-200"
-                      : "border-gray-700 bg-gray-800 text-gray-300 hover:border-fuchsia-500/60 hover:text-white"
-                  }`}
-                >
+                <option key={genre.id} value={genre.name}>
                   {genre.name}
-                </button>
+                </option>
               ))}
-            </div>
+            </select>
             {genresLoading && (
               <p className="text-xs text-gray-400">Genres laden...</p>
             )}
@@ -610,33 +707,33 @@ export default function QueueAdd() {
 
       {/* Search results dropdown */}
       {showResults && results.length > 0 && (
-        <div className="absolute left-0 right-0 z-50 mt-1 max-h-80 overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50">
+        <div ref={searchListRef} className="absolute left-0 right-0 z-50 mt-1 max-h-[70dvh] overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50">
           {results.map((r) => (
             <button
               key={r.id}
               type="button"
               onClick={() => selectResult(r)}
-              className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition hover:bg-gray-800/80 first:rounded-t-xl last:rounded-b-xl"
+              className="flex w-full items-center gap-1.5 px-2 py-1 text-left transition hover:bg-gray-800/80 first:rounded-t-xl last:rounded-b-xl"
             >
               {r.thumbnail ? (
                 <img
                   src={r.thumbnail}
                   alt=""
-                  className="h-12 w-16 shrink-0 rounded-md object-cover"
+                  className="h-8 w-10 shrink-0 rounded object-cover"
                 />
               ) : (
-                <div className="flex h-12 w-16 shrink-0 items-center justify-center rounded-md bg-gray-800 text-[10px] text-gray-500">
+                <div className="flex h-8 w-10 shrink-0 items-center justify-center rounded bg-gray-800 text-[9px] text-gray-500">
                   no art
                 </div>
               )}
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-white">{r.title}</p>
-                <div className="flex items-center gap-2">
+                <p className="truncate text-[11px] font-medium text-white sm:text-xs">{r.title}</p>
+                <div className="flex items-center gap-1.5">
                   {r.channel && (
-                    <span className="truncate text-xs text-gray-400">{r.channel}</span>
+                    <span className="hidden truncate text-[10px] text-gray-400 sm:inline">{r.channel}</span>
                   )}
                   {r.duration !== null && (
-                    <span className="shrink-0 text-xs tabular-nums text-gray-500">
+                    <span className="shrink-0 text-[10px] tabular-nums text-gray-500">
                       {formatDuration(r.duration)}
                     </span>
                   )}
@@ -649,6 +746,10 @@ export default function QueueAdd() {
               )}
             </button>
           ))}
+          {searchingMore && (
+            <p className="px-3 py-2 text-[11px] text-gray-400">Meer resultaten laden...</p>
+          )}
+          <div ref={loadMoreRef} className="h-1 w-full" />
         </div>
       )}
       </div>

@@ -17,6 +17,7 @@ import QueueAdd from "@/components/QueueAdd";
 import SkipButton from "@/components/SkipButton";
 import ModeIndicator from "@/components/ModeIndicator";
 import DurationVotePanel from "@/components/DurationVote";
+import QueuePushVotePanel from "@/components/QueuePushVotePanel";
 import LivePollCard from "@/components/LivePollCard";
 import ShoutoutBanner from "@/components/ShoutoutBanner";
 import FallbackGenreSelector from "@/components/FallbackGenreSelector";
@@ -24,7 +25,7 @@ import type { Track, QueueItem, Mode, ModeSettings, VoteState, DurationVote, Upc
 import { parseTrackDisplay } from "@/lib/trackDisplay";
 
 type StreamMode = "twitch" | "audio" | "radio" | "offline";
-type MobileTab = "chat" | "requests" | "radio";
+type MobileTab = "chat" | "requests" | "radio" | "queue";
 
 function firstNonEmpty(...values: Array<string | null | undefined>): string | null {
   for (const value of values) {
@@ -76,11 +77,12 @@ export default function StreamPage() {
   const [activeTab, setActiveTab] = useState<MobileTab>("chat");
   const [chatBadge, setChatBadge] = useState(false);
   const [requestBadge, setRequestBadge] = useState(false);
-  const [radioBadge, setRadioBadge] = useState(false);
+  const [queueBadge, setQueueBadge] = useState(false);
   const activeTabRef = useRef<MobileTab>(activeTab);
   activeTabRef.current = activeTab;
   const previousQueueLengthRef = useRef<number>(0);
   const latestUpcomingRef = useRef<UpcomingTrack | null>(null);
+  const latestQueueRef = useRef<QueueItem[]>([]);
 
   const radioConnected = useRadioStore((s) => s.connected);
   const radioTrack = useRadioStore((s) => s.currentTrack);
@@ -95,28 +97,68 @@ export default function StreamPage() {
   const [radioServerUrl, setRadioServerUrl] = useState<string | null>(null);
   const [preferRadioUi, setPreferRadioUi] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [infoToastMessage, setInfoToastMessage] = useState<string | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const infoToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const suppressNextQueueBadgeRef = useRef(false);
 
   const showRequests = twitchLive || (radioConnected && radioMode === "dj");
   const showRadioPanel = radioMode !== "dj";
+  const showQueuePanel = radioMode !== "dj";
 
-  function hydrateTrackRequester(track: Track | null): Track | null {
+  function hydrateCurrentTrack(track: Track | null): Track | null {
     if (!track) return null;
-    if (track.added_by) return track;
+    let hydrated = track;
     const upcoming = latestUpcomingRef.current;
-    if (upcoming && upcoming.youtube_id === track.youtube_id && upcoming.added_by) {
-      return { ...track, added_by: upcoming.added_by };
+    if (upcoming && upcoming.youtube_id === track.youtube_id) {
+      hydrated = {
+        ...hydrated,
+        title: hydrated.title ?? upcoming.title ?? null,
+        thumbnail: hydrated.thumbnail ?? upcoming.thumbnail ?? null,
+        added_by: hydrated.added_by ?? upcoming.added_by ?? null,
+        duration: hydrated.duration ?? upcoming.duration ?? null,
+      };
     }
-    return track;
+
+    if (!hydrated.title || !hydrated.added_by || !hydrated.thumbnail) {
+      const fromQueue = latestQueueRef.current.find((item) => item.youtube_id === track.youtube_id);
+      if (fromQueue) {
+        hydrated = {
+          ...hydrated,
+          title: hydrated.title ?? fromQueue.title ?? null,
+          thumbnail: hydrated.thumbnail ?? fromQueue.thumbnail ?? null,
+          added_by: hydrated.added_by ?? fromQueue.added_by ?? null,
+        };
+      }
+    }
+    return hydrated;
   }
 
-  function showToast(message: string): void {
+  function showToast(message: string, durationMs = 5000): void {
     setToastMessage(message);
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     toastTimerRef.current = setTimeout(() => {
       setToastMessage(null);
       toastTimerRef.current = null;
-    }, 5000);
+    }, durationMs);
+  }
+
+  function showInfoToast(message: string): void {
+    setInfoToastMessage(message);
+    if (infoToastTimerRef.current) clearTimeout(infoToastTimerRef.current);
+    infoToastTimerRef.current = setTimeout(() => {
+      setInfoToastMessage(null);
+      infoToastTimerRef.current = null;
+    }, 5500);
+  }
+
+  function dismissInfoToast(): void {
+    setInfoToastMessage(null);
+    suppressNextQueueBadgeRef.current = true;
+    if (infoToastTimerRef.current) {
+      clearTimeout(infoToastTimerRef.current);
+      infoToastTimerRef.current = null;
+    }
   }
 
   useEffect(() => {
@@ -127,9 +169,17 @@ export default function StreamPage() {
 
   useEffect(() => {
     if (!showRadioPanel && activeTab === "radio") {
-      setActiveTab(showRequests ? "requests" : "chat");
+      if (showQueuePanel) setActiveTab("queue");
+      else setActiveTab(showRequests ? "requests" : "chat");
     }
-  }, [showRadioPanel, activeTab, showRequests]);
+  }, [showRadioPanel, showQueuePanel, activeTab, showRequests]);
+
+  useEffect(() => {
+    if (!showQueuePanel && activeTab === "queue") {
+      if (showRadioPanel) setActiveTab("radio");
+      else setActiveTab(showRequests ? "requests" : "chat");
+    }
+  }, [showQueuePanel, showRadioPanel, activeTab, showRequests]);
 
   useEffect(() => {
     const nickname = localStorage.getItem("nickname");
@@ -164,6 +214,7 @@ export default function StreamPage() {
           const nextQueueLength = state.queue?.length ?? 0;
           previousQueueLengthRef.current = nextQueueLength;
           latestUpcomingRef.current = state.upcomingTrack ?? null;
+          latestQueueRef.current = state.queue ?? [];
           console.log("[radio] State loaded:", {
             track: state.currentTrack?.title ?? "none",
             duration: state.currentTrack?.duration,
@@ -171,7 +222,7 @@ export default function StreamPage() {
             mode: state.mode,
           });
           store.getState().initFromServer({
-            currentTrack: hydrateTrackRequester(state.currentTrack ?? null),
+            currentTrack: hydrateCurrentTrack(state.currentTrack ?? null),
             upcomingTrack: state.upcomingTrack ?? null,
             queue: state.queue ?? [],
             fallbackGenres: state.fallbackGenres ?? [],
@@ -182,6 +233,8 @@ export default function StreamPage() {
             listenerCount: state.listenerCount ?? 0,
             streamOnline: state.streamOnline ?? false,
             durationVote: state.durationVote ?? null,
+            queuePushVote: state.queuePushVote ?? null,
+            queuePushLocked: state.queuePushLocked ?? false,
           });
         })
         .catch((err) => {
@@ -202,12 +255,16 @@ export default function StreamPage() {
       store.getState().setStreamOnline(false);
       store.getState().setCurrentTrack(null);
       latestUpcomingRef.current = null;
+      latestQueueRef.current = [];
       previousQueueLengthRef.current = 0;
+      store.getState().setQueuePushVote(null);
+      store.getState().setQueuePushLocked(false);
+      setQueueBadge(false);
       setSuppressFallback(true);
     });
 
     socket.on("track:change", (track: Track | null) => {
-      store.getState().setCurrentTrack(hydrateTrackRequester(track));
+      store.getState().setCurrentTrack(hydrateCurrentTrack(track));
       store.getState().setStreamOnline(track !== null);
       store.getState().setVoteState(null);
     });
@@ -216,10 +273,24 @@ export default function StreamPage() {
       const nextQueueLength = data.items.length;
       const hadQueue = previousQueueLengthRef.current;
       store.getState().setQueue(data.items);
-      if (nextQueueLength > hadQueue && activeTabRef.current !== "radio") {
-        setRadioBadge(true);
+      latestQueueRef.current = data.items;
+      if (nextQueueLength > hadQueue && activeTabRef.current !== "queue") {
+        if (suppressNextQueueBadgeRef.current) {
+          suppressNextQueueBadgeRef.current = false;
+        } else {
+          setQueueBadge(true);
+        }
       }
       previousQueueLengthRef.current = nextQueueLength;
+    });
+
+    socket.on("queue:added", (data: { title?: string | null; added_by?: string | null }) => {
+      const addedBy = (data.added_by ?? "").trim();
+      if (!addedBy) return;
+      const me = (localStorage.getItem("nickname") ?? "").trim().toLowerCase();
+      if (me && addedBy.toLowerCase() === me) return;
+      const title = (data.title ?? "").trim() || "een nummer";
+      showInfoToast(`${addedBy} voegde toe: ${title}`);
     });
 
     socket.on("upcoming:update", (upcoming: UpcomingTrack | null) => {
@@ -251,6 +322,11 @@ export default function StreamPage() {
       showToast(data.message);
     });
 
+    socket.on("info:toast", (data: { message: string }) => {
+      if (!data?.message) return;
+      showInfoToast(data.message);
+    });
+
     socket.on("durationVote:update", (data: DurationVote & { voters: string[] }) => {
       const voted = data.voters?.includes(socket.id ?? "") ?? false;
       store.getState().setDurationVote({ ...data, voted });
@@ -258,6 +334,36 @@ export default function StreamPage() {
 
     socket.on("durationVote:end", () => {
       store.getState().setDurationVote(null);
+    });
+
+    socket.on("queuePushVote:update", (data: {
+      id: string;
+      item_id: string;
+      title: string | null;
+      thumbnail: string | null;
+      added_by: string;
+      proposed_by: string;
+      required: number;
+      yes: number;
+      no: number;
+      voters: string[];
+      expires_at: number;
+    }) => {
+      const voted = data.voters?.includes(socket.id ?? "") ?? false;
+      store.getState().setQueuePushVote({ ...data, voted });
+    });
+
+    socket.on("queuePushVote:end", () => {
+      store.getState().setQueuePushVote(null);
+    });
+
+    socket.on("queuePush:lock", (data: { locked: boolean }) => {
+      store.getState().setQueuePushLocked(!!data.locked);
+    });
+
+    socket.on("queuePushVote:result", (data: { accepted: boolean; title?: string | null; reason?: string }) => {
+      if (data.accepted) showToast(`Push akkoord: ${data.title ?? "nummer"}`, 3200);
+      else showToast(data.reason ?? `Push geweigerd voor ${data.title ?? "nummer"}`, 3200);
     });
 
     socket.on("skip:lock", (data: { locked: boolean }) => {
@@ -274,6 +380,11 @@ export default function StreamPage() {
         clearTimeout(toastTimerRef.current);
         toastTimerRef.current = null;
       }
+      if (infoToastTimerRef.current) {
+        clearTimeout(infoToastTimerRef.current);
+        infoToastTimerRef.current = null;
+      }
+      suppressNextQueueBadgeRef.current = false;
       clearInterval(stateSyncInterval);
       disconnectSocket();
     };
@@ -334,7 +445,7 @@ export default function StreamPage() {
   const showHeaderNextOnly = mode === "radio" && !showRadioOfflineState;
 
   return (
-    <div className="relative flex h-dvh flex-col overflow-hidden">
+    <div className="relative flex h-dvh flex-col overflow-x-hidden overflow-y-hidden">
       <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
         <div className="player-ambient absolute -left-20 top-10 h-72 w-72 rounded-full bg-violet-500/15 blur-3xl" />
         <div className="player-ambient absolute bottom-0 right-0 h-80 w-80 rounded-full bg-fuchsia-500/10 blur-3xl" />
@@ -360,8 +471,8 @@ export default function StreamPage() {
           </div>
         </div>
         {showHeaderNextOnly && (
-          <div className="mt-2 rounded-lg border border-gray-700/60 bg-gray-800/60 px-2.5 py-1 landscape:hidden sm:hidden">
-            <p className="truncate text-[11px] text-gray-300">
+          <div className="mt-2 rounded-lg border border-gray-700/60 bg-gray-800/60 px-2.5 py-1 sm:px-3 sm:py-1.5">
+            <p className="truncate text-[11px] text-gray-300 sm:text-xs">
               <span className="mr-1 uppercase tracking-wider text-gray-500">Volgende:</span>
               {nextArtist && <span className="text-violet-400">{nextArtist}</span>}
               {nextArtist && nextTitle && <span className="text-gray-500"> — </span>}
@@ -378,7 +489,7 @@ export default function StreamPage() {
             </p>
           </div>
         )}
-        {mode !== "offline" && !showRadioOfflineState && (
+        {mode !== "offline" && mode !== "radio" && !showRadioOfflineState && (
           <div className="hidden landscape:block sm:block">
             <NowPlaying
               radioTrack={radioConnected && radioMode !== "dj" ? radioTrack : null}
@@ -459,10 +570,23 @@ export default function StreamPage() {
 
           {/* Skip / vote button below player */}
           {radioConnected && (
-            <div className="mt-2 space-y-2">
-              <FallbackGenreSelector />
-              <SkipButton />
+            <div className="mt-1.5 space-y-1.5">
+              <div className="flex min-w-0 flex-wrap items-center gap-1.5 pb-0.5">
+                <span
+                  className="shrink-0 whitespace-nowrap rounded-md border border-violet-700/50 bg-violet-900/25 px-2 py-1 text-[10px] font-semibold text-violet-200"
+                  title="Aantal nummers in wachtrij"
+                >
+                  Wachtrij: {queue.length}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <FallbackGenreSelector />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <SkipButton compact />
+                </div>
+              </div>
               <DurationVotePanel />
+              <QueuePushVotePanel />
             </div>
           )}
           <div className="mt-2">
@@ -502,15 +626,27 @@ export default function StreamPage() {
           )}
           {showRadioPanel && (
             <button
-              onClick={() => { setActiveTab("radio"); setRadioBadge(false); }}
+              onClick={() => setActiveTab("radio")}
               className={`relative flex-1 rounded-md px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition ${
                 activeTab === "radio"
                   ? "bg-violet-600 text-white shadow-sm"
                   : "text-gray-400 hover:text-white"
               }`}
             >
-              Radio
-              {radioBadge && activeTab !== "radio" && (
+              Aanvragen
+            </button>
+          )}
+          {showQueuePanel && (
+            <button
+              onClick={() => { setActiveTab("queue"); setQueueBadge(false); }}
+              className={`relative flex-1 rounded-md px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition ${
+                activeTab === "queue"
+                  ? "bg-violet-600 text-white shadow-sm"
+                  : "text-gray-400 hover:text-white"
+              }`}
+            >
+              Wachtrij
+              {queueBadge && activeTab !== "queue" && (
                 <span className="absolute right-2 top-1/2 -translate-y-1/2 h-2 w-2 rounded-full bg-violet-400 animate-pulse" />
               )}
             </button>
@@ -531,12 +667,33 @@ export default function StreamPage() {
             <div className={`min-h-0 min-w-0 flex-1 overflow-y-auto flex-col gap-2 ${activeTab === "radio" ? "flex" : "hidden"} landscape:flex lg:flex`}>
               <RadioPanelErrorBoundary>
                 <QueueAdd />
+              </RadioPanelErrorBoundary>
+            </div>
+          )}
+          {showQueuePanel && (
+            <div className={`min-h-0 min-w-0 flex-1 overflow-y-auto flex-col gap-2 ${activeTab === "queue" ? "flex" : "hidden"} landscape:flex lg:flex`}>
+              <RadioPanelErrorBoundary>
                 <Queue />
               </RadioPanelErrorBoundary>
             </div>
           )}
         </div>
       </main>
+      {infoToastMessage && (
+        <div className="pointer-events-none fixed left-1/2 top-3 z-[115] w-[92%] max-w-xl -translate-x-1/2 sm:top-4">
+          <div className="pointer-events-auto flex items-start justify-between gap-2 rounded-lg border border-violet-800/70 bg-violet-950/80 px-4 py-2 text-sm text-violet-100 shadow-lg shadow-violet-900/30 backdrop-blur-sm">
+            <span className="min-w-0 flex-1 break-words">{infoToastMessage}</span>
+            <button
+              type="button"
+              onClick={dismissInfoToast}
+              className="shrink-0 rounded px-1 text-violet-200/80 transition hover:bg-violet-800/40 hover:text-white"
+              aria-label="Sluit melding"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
       {toastMessage && (
         <div className="pointer-events-none fixed bottom-4 left-1/2 z-[120] w-[92%] max-w-xl -translate-x-1/2">
           <div className="rounded-lg border border-red-900/60 bg-red-950/85 px-4 py-2 text-center text-sm text-red-100 shadow-lg shadow-red-900/40 backdrop-blur-sm">

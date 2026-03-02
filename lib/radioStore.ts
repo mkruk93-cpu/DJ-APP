@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { RadioState, Track, QueueItem, Mode, ModeSettings, VoteState, DurationVote, FallbackGenre } from './types';
+import type { RadioState, Track, QueueItem, Mode, ModeSettings, VoteState, DurationVote, QueuePushVote, FallbackGenre } from './types';
 
 interface RadioStore extends RadioState {
   setConnected: (connected: boolean) => void;
@@ -15,6 +15,8 @@ interface RadioStore extends RadioState {
   setStreamOnline: (online: boolean) => void;
   setVoteState: (vote: VoteState | null) => void;
   setDurationVote: (vote: DurationVote | null) => void;
+  setQueuePushVote: (vote: QueuePushVote | null) => void;
+  setQueuePushLocked: (locked: boolean) => void;
   setServerUrl: (url: string | null) => void;
   skipLocked: boolean;
   setSkipLocked: (locked: boolean) => void;
@@ -41,6 +43,8 @@ export const useRadioStore = create<RadioStore>((set) => ({
   streamOnline: false,
   voteState: null,
   durationVote: null,
+  queuePushVote: null,
+  queuePushLocked: false,
   serverUrl: null,
   skipLocked: false,
 
@@ -57,6 +61,8 @@ export const useRadioStore = create<RadioStore>((set) => ({
   setStreamOnline: (streamOnline) => set({ streamOnline }),
   setVoteState: (voteState) => set({ voteState }),
   setDurationVote: (durationVote) => set({ durationVote }),
+  setQueuePushVote: (queuePushVote) => set({ queuePushVote }),
+  setQueuePushLocked: (queuePushLocked) => set({ queuePushLocked }),
   setServerUrl: (serverUrl) => set({ serverUrl }),
   setSkipLocked: (skipLocked) => set({ skipLocked }),
   resetAll: () => set({
@@ -71,6 +77,8 @@ export const useRadioStore = create<RadioStore>((set) => ({
     streamOnline: false,
     voteState: null,
     durationVote: null,
+    queuePushVote: null,
+    queuePushLocked: false,
     skipLocked: false,
   }),
   initFromServer: (state) => set(state),
