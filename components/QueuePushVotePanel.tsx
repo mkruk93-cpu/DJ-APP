@@ -15,8 +15,9 @@ export default function QueuePushVotePanel() {
       setTimeLeft(0);
       return;
     }
+    const expiresAt = vote.expires_at;
     function tick() {
-      setTimeLeft(Math.max(0, Math.ceil((vote.expires_at - Date.now()) / 1000)));
+      setTimeLeft(Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000)));
     }
     tick();
     const timer = setInterval(tick, 1000);

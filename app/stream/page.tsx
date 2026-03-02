@@ -493,8 +493,8 @@ export default function StreamPage() {
           <div className="hidden landscape:block sm:block">
             <NowPlaying
               radioTrack={radioConnected && radioMode !== "dj" ? radioTrack : null}
-              showFallback={((mode === "twitch" || mode === "audio") && !suppressFallback) || radioMode === "dj" || (mode === "radio" && !radioTrack)}
-              preferSupabase={radioMode === "dj" || (mode === "radio" && !radioTrack)}
+              showFallback={!suppressFallback || radioMode === "dj"}
+              preferSupabase={radioMode === "dj"}
             />
           </div>
         )}
