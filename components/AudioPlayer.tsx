@@ -216,19 +216,20 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   useEffect(() => {
     const host = playerRef.current;
     if (!host) return;
+    const hostEl: HTMLDivElement = host;
 
     function readVar(name: string, fallback: number): number {
-      const v = Number(getComputedStyle(host).getPropertyValue(name).trim());
+      const v = Number(getComputedStyle(hostEl).getPropertyValue(name).trim());
       return Number.isFinite(v) ? v : fallback;
     }
 
     function setTint(r: number, g: number, b: number, vr: number, vg: number, vb: number) {
-      host.style.setProperty("--player-art-r", String(Math.round(r)));
-      host.style.setProperty("--player-art-g", String(Math.round(g)));
-      host.style.setProperty("--player-art-b", String(Math.round(b)));
-      host.style.setProperty("--player-art-vibrant-r", String(Math.round(vr)));
-      host.style.setProperty("--player-art-vibrant-g", String(Math.round(vg)));
-      host.style.setProperty("--player-art-vibrant-b", String(Math.round(vb)));
+      hostEl.style.setProperty("--player-art-r", String(Math.round(r)));
+      hostEl.style.setProperty("--player-art-g", String(Math.round(g)));
+      hostEl.style.setProperty("--player-art-b", String(Math.round(b)));
+      hostEl.style.setProperty("--player-art-vibrant-r", String(Math.round(vr)));
+      hostEl.style.setProperty("--player-art-vibrant-g", String(Math.round(vg)));
+      hostEl.style.setProperty("--player-art-vibrant-b", String(Math.round(vb)));
     }
 
     function animateTintTo(target: { r: number; g: number; b: number; vr: number; vg: number; vb: number }) {
