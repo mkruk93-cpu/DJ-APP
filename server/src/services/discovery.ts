@@ -1,4 +1,5 @@
 import { getCuratedGenreRule, listCuratedGenreRules } from './genreCuratedConfig.js';
+import { spawn } from 'node:child_process';
 
 export interface GenreItem {
   id: string;
@@ -82,6 +83,7 @@ interface GenreHints {
   avoidTokens: string[];
   requiredTokens?: string[];
   priorityArtists?: string[];
+  priorityTracks?: string[];
   priorityLabels?: string[];
   minScore: number;
 }
@@ -109,6 +111,10 @@ function isAllowedGenre(genre: string): boolean {
   return !!getCuratedGenreRule(normalized);
 }
 
+export function isKnownDiscoveryGenre(genre: string): boolean {
+  return isAllowedGenre(genre);
+}
+
 function getGenreHints(genre: string): GenreHints {
   const normalized = normalizeGenreName(genre);
   const hints: Record<string, GenreHints> = {
@@ -129,11 +135,11 @@ function getGenreHints(genre: string): GenreHints {
       minScore: 2,
     },
     krach: {
-      spotifyQueries: ['krach hardcore gabber', 'hardcore krach'],
+      spotifyQueries: ['krach hardcore zaag', 'hardcore krach'],
       lastFmTags: ['gabber', 'hardcore'],
-      deezerQueries: ['krach hardcore', 'gabber krach'],
-      relevanceTokens: ['krach', 'hardcore', 'gabber', 'terror'],
-      avoidTokens: ['house', 'trance'],
+      deezerQueries: ['krach hardcore', 'deutscher krach'],
+      relevanceTokens: ['krach', 'zaag', 'saw', 'hardcore'],
+      avoidTokens: ['gabber', 'early hardcore', 'house', 'trance'],
       minScore: 2,
     },
     terror: {
@@ -281,6 +287,7 @@ function getGenreHints(genre: string): GenreHints {
       ...base,
       requiredTokens: base.requiredTokens ?? [],
       priorityArtists: base.priorityArtists ?? [],
+      priorityTracks: base.priorityTracks ?? [],
       priorityLabels: base.priorityLabels ?? [],
     };
   }
@@ -293,6 +300,7 @@ function getGenreHints(genre: string): GenreHints {
     avoidTokens: dedupeNormalized([...base.avoidTokens, ...(curated.blockedTokens ?? [])]),
     requiredTokens: dedupeNormalized([...(base.requiredTokens ?? []), ...(curated.requiredTokens ?? [])]),
     priorityArtists: dedupeNormalized([...(base.priorityArtists ?? []), ...(curated.priorityArtists ?? [])]),
+    priorityTracks: dedupeNormalized([...(base.priorityTracks ?? []), ...(curated.priorityTracks ?? [])]),
     priorityLabels: dedupeNormalized([...(base.priorityLabels ?? []), ...(curated.priorityLabels ?? [])]),
     minScore: Math.max(base.minScore, curated.minScore ?? base.minScore),
   };
@@ -312,7 +320,11 @@ function scoreGenreRelevance(item: GenreHitItem, hints: GenreHints): number {
   }
   for (const artist of hints.priorityArtists ?? []) {
     if (!artist) continue;
-    if (item.artist.toLowerCase().includes(artist.toLowerCase())) score += 8;
+    if (item.artist.toLowerCase().includes(artist.toLowerCase())) score += 16;
+  }
+  for (const track of hints.priorityTracks ?? []) {
+    if (!track) continue;
+    if (item.title.toLowerCase().includes(track.toLowerCase())) score += 11;
   }
   for (const label of hints.priorityLabels ?? []) {
     if (!label) continue;
@@ -650,6 +662,101 @@ async function fetchDeezerTracksByGenre(genre: string, limit: number, offset: nu
   return filterHitsByGenre(merged, hints, limit);
 }
 
+function normalizeHitKey(artist: string, title: string): string {
+  return `${artist}-${title}`.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function ytdlpSearchPlatform(
+  platform: 'yt' | 'sc',
+  query: string,
+  limit: number,
+): Promise<GenreHitItem[]> {
+  return new Promise((resolve) => {
+    const prefix = platform === 'yt' ? 'ytsearch' : 'scsearch';
+    const proc = spawn('python', [
+      '-m', 'yt_dlp',
+      `${prefix}${limit}:${query}`,
+      '--flat-playlist',
+      '-j',
+      '--no-warnings',
+    ], { timeout: 12_000 });
+
+    let output = '';
+    proc.stdout.on('data', (chunk: Buffer) => { output += chunk.toString(); });
+    proc.stderr?.on('data', () => {});
+
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        resolve([]);
+        return;
+      }
+      const hits: GenreHitItem[] = [];
+      for (const line of output.trim().split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          const item = JSON.parse(line) as Record<string, unknown>;
+          const title = String(item.title ?? '').trim();
+          const artist = String(item.uploader ?? item.channel ?? '').trim();
+          if (!title || !artist) continue;
+          const thumbnail = Array.isArray(item.thumbnails) && item.thumbnails.length > 0
+            ? String((item.thumbnails[item.thumbnails.length - 1] as { url?: string })?.url ?? '').trim()
+            : '';
+          const sourceHint = String(item.url ?? item.webpage_url ?? '').trim();
+          hits.push({
+            id: `${platform}-${String(item.id ?? `${artist}-${title}`)}`,
+            title,
+            artist,
+            thumbnail,
+            sourceHint,
+          });
+        } catch {
+          // ignore malformed line
+        }
+      }
+      resolve(hits);
+    });
+
+    proc.on('error', () => resolve([]));
+  });
+}
+
+async function fetchPriorityArtistPlatformHits(
+  genre: string,
+  hints: GenreHints,
+  limit: number,
+  offset: number,
+): Promise<GenreHitItem[]> {
+  const artists = [...(hints.priorityArtists ?? [])].filter(Boolean);
+  if (artists.length === 0) return [];
+  const sampleSize = Math.min(6, artists.length);
+  const page = Math.floor(offset / Math.max(1, limit));
+  const start = (page * sampleSize) % artists.length;
+  const selected = Array.from({ length: sampleSize }, (_, i) => artists[(start + i) % artists.length]);
+
+  const results: GenreHitItem[] = [];
+  const seen = new Set<string>();
+
+  for (const artist of selected) {
+    const query = `${artist} ${genre}`;
+    const [ytRes, scRes] = await Promise.allSettled([
+      ytdlpSearchPlatform('yt', query, 5),
+      ytdlpSearchPlatform('sc', query, 5),
+    ]);
+    const merged = [
+      ...(ytRes.status === 'fulfilled' ? ytRes.value : []),
+      ...(scRes.status === 'fulfilled' ? scRes.value : []),
+    ];
+    for (const item of merged) {
+      const key = normalizeHitKey(item.artist, item.title);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      results.push(item);
+    }
+  }
+
+  return filterHitsByGenre(results, hints, limit);
+}
+
 export async function getTopTracksByGenre(genre: string, limit = 20, offset = 0): Promise<GenreHitItem[]> {
   const normalizedGenre = genre.trim();
   const safeLimit = Math.max(1, Math.min(limit, 50));
@@ -658,10 +765,11 @@ export async function getTopTracksByGenre(genre: string, limit = 20, offset = 0)
   if (!isAllowedGenre(normalizedGenre)) return [];
 
   const hints = getGenreHints(normalizedGenre);
-  const [spotifyRes, deezerRes, lastFmRes] = await Promise.allSettled([
+  const [spotifyRes, deezerRes, lastFmRes, priorityRes] = await Promise.allSettled([
     fetchSpotifyTracksByGenre(normalizedGenre, safeLimit, safeOffset),
     fetchDeezerTracksByGenre(normalizedGenre, safeLimit, safeOffset),
     fetchLastFmTopTracksByGenre(normalizedGenre, safeLimit, safeOffset),
+    fetchPriorityArtistPlatformHits(normalizedGenre, hints, safeLimit, safeOffset),
   ]);
 
   const collected: GenreHitItem[] = [];
@@ -671,6 +779,8 @@ export async function getTopTracksByGenre(genre: string, limit = 20, offset = 0)
   else console.warn('[discovery] Deezer genre search failed:', deezerRes.reason);
   if (lastFmRes.status === 'fulfilled') collected.push(...lastFmRes.value);
   else console.warn('[discovery] Last.fm genre search failed:', lastFmRes.reason);
+  if (priorityRes.status === 'fulfilled') collected.push(...priorityRes.value);
+  else console.warn('[discovery] Priority artist platform search failed:', priorityRes.reason);
 
   return filterHitsByGenre(collected, hints, safeLimit);
 }

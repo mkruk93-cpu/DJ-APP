@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { getSocket } from "@/lib/socket";
 import { useRadioStore } from "@/lib/radioStore";
 
+type FallbackListTab = "local" | "auto";
+
 export default function FallbackGenreSelector() {
   const connected = useRadioStore((s) => s.connected);
   const genres = useRadioStore((s) => s.fallbackGenres);
@@ -13,11 +15,21 @@ export default function FallbackGenreSelector() {
   const summaryRef = useRef<HTMLElement | null>(null);
   const [isMobile, setIsMobile] = useState(false);
   const [mobileMenuTop, setMobileMenuTop] = useState<number | null>(null);
+  const [activeListTab, setActiveListTab] = useState<FallbackListTab>("local");
 
   const sortedGenres = useMemo(
     () => [...genres].sort((a, b) => a.label.localeCompare(b.label, "nl")),
     [genres],
   );
+  const localGenres = useMemo(
+    () => sortedGenres.filter((genre) => !genre.id.startsWith("auto:")),
+    [sortedGenres],
+  );
+  const autoGenres = useMemo(
+    () => sortedGenres.filter((genre) => genre.id.startsWith("auto:")),
+    [sortedGenres],
+  );
+  const shownGenres = activeListTab === "auto" ? autoGenres : localGenres;
 
   const shouldRender = connected && sortedGenres.length > 0;
   const activeLabel = sortedGenres.find((g) => g.id === activeGenre)?.label ?? activeGenre ?? "Kies genre";
@@ -45,6 +57,14 @@ export default function FallbackGenreSelector() {
       window.removeEventListener("scroll", updateMenuPosition);
     };
   }, [isMobile]);
+
+  useEffect(() => {
+    if (activeGenre?.startsWith("auto:")) {
+      setActiveListTab("auto");
+      return;
+    }
+    setActiveListTab("local");
+  }, [activeGenre]);
 
   if (!shouldRender) return null;
 
@@ -77,16 +97,41 @@ export default function FallbackGenreSelector() {
         }
       >
         <p className="mb-1 rounded-md bg-gray-800/70 px-2 py-1.5 text-[11px] leading-snug text-gray-300">
-          Dit genre bepaalt welke random nummers worden gekozen als de wachtrij leeg is.
+          Kies lokaal genre (Marco PC) of Online (Genres-tab) voor random nummers als de wachtrij leeg is.
         </p>
+        <div className="mb-1 grid grid-cols-2 gap-1 rounded-md border border-gray-800 bg-gray-900/70 p-1">
+          <button
+            type="button"
+            onClick={() => setActiveListTab("local")}
+            className={`rounded px-2 py-1 text-[11px] font-semibold transition ${
+              activeListTab === "local"
+                ? "bg-violet-600/30 text-violet-100"
+                : "text-gray-300 hover:bg-gray-800"
+            }`}
+          >
+            Lokaal ({localGenres.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveListTab("auto")}
+            className={`rounded px-2 py-1 text-[11px] font-semibold transition ${
+              activeListTab === "auto"
+                ? "bg-violet-600/30 text-violet-100"
+                : "text-gray-300 hover:bg-gray-800"
+            }`}
+          >
+            Online ({autoGenres.length})
+          </button>
+        </div>
         {activeGenreBy && (
           <p className="mb-1 px-2 py-1 text-[10px] text-gray-400">
             Gekozen door: <span className="text-violet-300">{activeGenreBy}</span>
           </p>
         )}
         <div className="border-b border-gray-800/80 mb-1" />
-        {sortedGenres.map((genre) => {
+        {shownGenres.map((genre) => {
           const isActive = genre.id === activeGenre;
+          const isAuto = genre.id.startsWith("auto:");
           return (
             <button
               key={genre.id}
@@ -103,10 +148,17 @@ export default function FallbackGenreSelector() {
               }`}
             >
               <span className="truncate">{genre.label}</span>
-              <span className="ml-2 text-[10px] text-gray-500">{genre.trackCount}</span>
+              <span className="ml-2 text-[10px] text-gray-500">
+                {isAuto ? "AUTO" : genre.trackCount}
+              </span>
             </button>
           );
         })}
+        {shownGenres.length === 0 && (
+          <p className="px-2 py-2 text-[11px] text-gray-400">
+            Geen genres beschikbaar in de {activeListTab === "auto" ? "Online" : "Lokale"} lijst.
+          </p>
+        )}
       </div>
     </details>
   );

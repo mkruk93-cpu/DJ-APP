@@ -5,6 +5,7 @@ export interface CuratedGenreRule {
   id: string;
   label?: string;
   priorityArtists?: string[];
+  priorityTracks?: string[];
   priorityLabels?: string[];
   requiredTokens?: string[];
   blockedTokens?: string[];
@@ -90,6 +91,7 @@ function normalizeRule(rule: CuratedGenreRule): CuratedGenreRule | null {
     id,
     label: rule.label?.trim() || undefined,
     priorityArtists: dedupe(rule.priorityArtists),
+    priorityTracks: dedupe(rule.priorityTracks),
     priorityLabels: dedupe(rule.priorityLabels),
     requiredTokens: dedupe(rule.requiredTokens),
     blockedTokens: dedupe(rule.blockedTokens),
@@ -204,6 +206,74 @@ export function addPriorityArtistForGenre(
       id: normalizedGenreId,
       label: current.label?.trim() || trimmedLabel,
       priorityArtists,
+      priorityTracks: dedupe(current.priorityTracks),
+      priorityLabels: dedupe(current.priorityLabels),
+      requiredTokens: dedupe(current.requiredTokens),
+      blockedTokens: dedupe(current.blockedTokens),
+      minScore: typeof current.minScore === 'number' && Number.isFinite(current.minScore)
+        ? Math.max(0, Math.round(current.minScore))
+        : current.minScore,
+    };
+  }
+
+  parsed.genres = genres;
+  if (typeof parsed.version !== 'number') parsed.version = 1;
+  fs.writeFileSync(configPath, `${JSON.stringify(parsed, null, 2)}\n`, 'utf8');
+
+  cachedConfigPath = null;
+  cachedConfigMtime = 0;
+  cachedConfigRules = new Map();
+  const updated = getCuratedGenreRule(normalizedGenreId);
+  if (!updated) {
+    throw new Error('Failed to reload curated rule');
+  }
+  return updated;
+}
+
+export function addPriorityTrackForGenre(
+  genreId: string,
+  trackTitle: string,
+  label?: string,
+): CuratedGenreRule {
+  const normalizedGenreId = normalize(genreId);
+  const normalizedTrack = normalize(trackTitle);
+  const trimmedLabel = label?.trim() || undefined;
+  if (!normalizedGenreId) {
+    throw new Error('Invalid genre');
+  }
+  if (!normalizedTrack) {
+    throw new Error('Invalid track');
+  }
+
+  const configPath = getGenreCurationConfigPath();
+  const base: CuratedGenreConfigFile = { version: 1, genres: [] };
+  let parsed: CuratedGenreConfigFile = base;
+  if (fs.existsSync(configPath)) {
+    const raw = fs.readFileSync(configPath, 'utf8');
+    parsed = JSON.parse(raw) as CuratedGenreConfigFile;
+    if (!Array.isArray(parsed.genres)) parsed.genres = [];
+    if (typeof parsed.version !== 'number') parsed.version = 1;
+  } else {
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  }
+
+  const genres = parsed.genres ?? [];
+  const existingIndex = genres.findIndex((rule) => normalize(rule.id ?? '') === normalizedGenreId);
+  if (existingIndex === -1) {
+    genres.push({
+      id: normalizedGenreId,
+      label: trimmedLabel,
+      priorityTracks: [normalizedTrack],
+    });
+  } else {
+    const current = genres[existingIndex] ?? { id: normalizedGenreId };
+    const priorityTracks = uniqueByNormalized([...(current.priorityTracks ?? []), normalizedTrack]).map(normalize);
+    genres[existingIndex] = {
+      ...current,
+      id: normalizedGenreId,
+      label: current.label?.trim() || trimmedLabel,
+      priorityArtists: dedupe(current.priorityArtists),
+      priorityTracks,
       priorityLabels: dedupe(current.priorityLabels),
       requiredTokens: dedupe(current.requiredTokens),
       blockedTokens: dedupe(current.blockedTokens),

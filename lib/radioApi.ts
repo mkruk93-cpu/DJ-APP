@@ -101,6 +101,13 @@ export async function addPriorityArtistToGenre(
   });
 }
 
+export async function likeCurrentAutoTrack(artist?: string | null, title?: string | null): Promise<void> {
+  await post('/api/genre-curation/like-current', {
+    ...(artist?.trim() ? { artist: artist.trim() } : {}),
+    ...(title?.trim() ? { title: title.trim() } : {}),
+  });
+}
+
 function refreshState(): void {
   const url = getServerUrl();
   if (!url) return;

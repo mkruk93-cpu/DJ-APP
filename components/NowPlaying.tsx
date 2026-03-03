@@ -133,10 +133,12 @@ export default function NowPlaying({ radioTrack, showFallback = false, preferSup
       : "none";
     const currentTrackChanged = prevCurrentTrackKeyRef.current !== currentTrackKey;
     const hasCandidate = !!(nextTitle || nextArtist);
+    const hasDisplayedNext = !!(displayNextTrack?.title || displayNextTrack?.artist);
 
     // Keep "Volgende" stable while current track is the same.
-    // Only advance when the visible current track actually changes.
-    if (currentTrackChanged || !syncedRadioTrack) {
+    // Only advance when the visible current track actually changes,
+    // except if there is no visible "next" info yet.
+    if (currentTrackChanged || !syncedRadioTrack || (hasCandidate && !hasDisplayedNext)) {
       if (hasCandidate) {
         setDisplayNextTrack({
           title: nextTitle ?? null,
@@ -156,6 +158,7 @@ export default function NowPlaying({ radioTrack, showFallback = false, preferSup
     nextArtist,
     nextRequestedBy,
     nextIsFallback,
+    displayNextTrack,
   ]);
 
   const showNextTrack = isRadioMode && !!displayNextTrack && (!!displayNextTrack.title || !!displayNextTrack.artist);

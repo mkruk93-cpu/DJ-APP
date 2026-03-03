@@ -17,8 +17,8 @@ import { startNowPlayingWatcher } from './nowPlaying.js';
 import { StreamHub } from './streamHub.js';
 import type { Mode, ServerState, DurationVote, QueuePushVote, FallbackGenre } from './types.js';
 import { searchGenres, getTopTracksByGenre, type GenreItem, type GenreHitItem } from './services/discovery.js';
-import { reloadFallbackGenres, listFallbackGenres, getDefaultFallbackGenreId, isKnownFallbackGenre } from './fallbackGenres.js';
-import { addPriorityArtistForGenre } from './services/genreCuratedConfig.js';
+import { reloadFallbackGenres, listFallbackGenres, getDefaultFallbackGenreId, isKnownFallbackGenre, toAutoFallbackGenreId, parseAutoFallbackGenreId } from './fallbackGenres.js';
+import { addPriorityArtistForGenre, addPriorityTrackForGenre } from './services/genreCuratedConfig.js';
 
 // ── Environment ──────────────────────────────────────────────────────────────
 
@@ -110,6 +110,21 @@ function normalizeNickname(value: unknown): string | null {
   return trimmed.slice(0, 40);
 }
 
+function parseArtistTitle(input: string): { artist: string | null; title: string | null } {
+  const trimmed = input.trim();
+  if (!trimmed) return { artist: null, title: null };
+  const separators = [' - ', ' — ', ' – ', ' | '];
+  for (const separator of separators) {
+    const idx = trimmed.indexOf(separator);
+    if (idx > 0 && idx < trimmed.length - separator.length) {
+      const artist = trimmed.slice(0, idx).trim();
+      const title = trimmed.slice(idx + separator.length).trim();
+      if (artist && title) return { artist, title };
+    }
+  }
+  return { artist: null, title: trimmed };
+}
+
 async function resolveActiveFallbackGenre(persistFix = false): Promise<string | null> {
   const raw = await getActiveFallbackGenre(sb);
   const normalized = normalizeFallbackGenreId(raw);
@@ -132,22 +147,40 @@ async function emitFallbackGenreUpdate(target?: { emit: (event: string, payload:
     getSetting<string | null>(sb, 'fallback_active_genre_by'),
   ]);
   setActiveFallbackGenre(activeGenreId);
+  const genres = await getCombinedFallbackGenres();
   const payload = {
     activeGenreId,
     selectedBy: normalizeNickname(selectedBy),
-    genres: listFallbackGenres() as FallbackGenre[],
+    genres,
   };
   if (target) target.emit('fallback:genre:update', payload);
   else io.emit('fallback:genre:update', payload);
 }
 
+async function getCombinedFallbackGenres(): Promise<FallbackGenre[]> {
+  const localGenres = listFallbackGenres() as FallbackGenre[];
+  let autoGenreOptions: GenreItem[] = [];
+  try {
+    autoGenreOptions = await searchGenres('');
+  } catch (err) {
+    console.warn('[fallback] Auto genre list unavailable:', (err as Error).message);
+  }
+  const autoGenres: FallbackGenre[] = autoGenreOptions.map((genre) => ({
+    id: toAutoFallbackGenreId(genre.id),
+    label: `Auto playlist · ${genre.name}`,
+    trackCount: 0,
+  }));
+  return [...localGenres, ...autoGenres];
+}
+
 async function getServerState(): Promise<ServerState> {
-  const [mode, modeSettings, queue, activeFallbackGenre, activeFallbackGenreBy] = await Promise.all([
+  const [mode, modeSettings, queue, activeFallbackGenre, activeFallbackGenreBy, fallbackGenres] = await Promise.all([
     getActiveMode(sb),
     getModeSettings(sb),
     getQueue(sb),
     resolveActiveFallbackGenre(),
     getSetting<string | null>(sb, 'fallback_active_genre_by'),
+    getCombinedFallbackGenres(),
   ]);
 
   return {
@@ -156,7 +189,7 @@ async function getServerState(): Promise<ServerState> {
     queue,
     mode,
     modeSettings,
-    fallbackGenres: listFallbackGenres(),
+    fallbackGenres,
     activeFallbackGenre,
     activeFallbackGenreBy: normalizeNickname(activeFallbackGenreBy),
     listenerCount: io.engine.clientsCount,
@@ -628,6 +661,45 @@ app.post('/api/genre-curation/priority-artist', async (req, res) => {
   } catch (err) {
     console.error('[rest] /api/genre-curation/priority-artist error:', err);
     res.status(500).json({ error: 'Failed to save priority artist' });
+  }
+});
+
+app.post('/api/genre-curation/like-current', async (req, res) => {
+  const activeGenreId = await resolveActiveFallbackGenre();
+  const autoGenre = parseAutoFallbackGenreId(activeGenreId);
+  if (!autoGenre) {
+    return res.status(409).json({ error: 'Auto playlist is niet actief' });
+  }
+
+  const current = getCurrentTrack();
+  if (!current || current.youtube_id !== 'local' || !current.title) {
+    return res.status(409).json({ error: 'Er speelt geen auto playlist track' });
+  }
+
+  const rawArtist = String(req.body?.artist ?? '').trim();
+  const rawTitle = String(req.body?.title ?? '').trim();
+  const parsed = parseArtistTitle(current.title ?? '');
+  const artist = rawArtist || parsed.artist;
+  const title = rawTitle || parsed.title;
+  if (!artist || !title) {
+    return res.status(400).json({ error: 'Kon artiest/titel niet bepalen voor like' });
+  }
+
+  try {
+    const artistRule = addPriorityArtistForGenre(autoGenre, artist, autoGenre);
+    addPriorityTrackForGenre(autoGenre, title, autoGenre);
+    genreHitsCache.clear();
+    genreCache.clear();
+    return res.json({
+      ok: true,
+      genre: autoGenre,
+      artist,
+      title,
+      artistCount: artistRule.priorityArtists?.length ?? 0,
+    });
+  } catch (err) {
+    console.error('[rest] /api/genre-curation/like-current error:', err);
+    return res.status(500).json({ error: 'Kon like niet opslaan' });
   }
 });
 

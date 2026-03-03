@@ -176,6 +176,7 @@ function isSupportedUrl(input: string): boolean {
 }
 
 export default function QueueAdd() {
+  const [hydrated, setHydrated] = useState(false);
   const [input, setInput] = useState("");
   const [feedback, setFeedback] = useState<{ msg: string; ok: boolean } | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -223,8 +224,12 @@ export default function QueueAdd() {
   const GENRE_PAGE_SIZE = 20;
   const SEARCH_PAGE_SIZE = 12;
 
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
+
   const serverUrl = useRadioStore((s) => s.serverUrl) ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
-  const isAdmin = isRadioAdmin();
+  const isAdmin = hydrated && isRadioAdmin();
   const canAdd = canPerformAction(mode, "add_to_queue", isAdmin);
   const isUrl = isSupportedUrl(input.trim());
   const hasSpotifySource = isSpotifyConfigured();

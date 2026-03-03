@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { homedir } from 'node:os';
+import { isKnownDiscoveryGenre } from './services/discovery.js';
 
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.flac', '.wav', '.m4a', '.ogg', '.aac', '.wma']);
 
@@ -29,6 +30,23 @@ interface FallbackGenreRuntimeItem {
 
 let runtimeGenres: FallbackGenreRuntimeItem[] = [];
 let defaultGenreId: string | null = null;
+const AUTO_GENRE_PREFIX = 'auto:';
+
+function normalizeGenreId(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+export function toAutoFallbackGenreId(discoveryGenreId: string): string {
+  return `${AUTO_GENRE_PREFIX}${normalizeGenreId(discoveryGenreId)}`;
+}
+
+export function parseAutoFallbackGenreId(genreId: string | null | undefined): string | null {
+  if (!genreId) return null;
+  const normalized = normalizeGenreId(genreId);
+  if (!normalized.startsWith(AUTO_GENRE_PREFIX)) return null;
+  const inner = normalized.slice(AUTO_GENRE_PREFIX.length).trim();
+  return inner || null;
+}
 
 function toAbsPath(input: string, configDir: string): string {
   const trimmed = input.trim();
@@ -168,7 +186,11 @@ export function getDefaultFallbackGenreId(): string | null {
 
 export function isKnownFallbackGenre(genreId: string | null | undefined): boolean {
   if (!genreId) return false;
-  return runtimeGenres.some((genre) => genre.id === genreId);
+  const localKnown = runtimeGenres.some((genre) => genre.id === genreId);
+  if (localKnown) return true;
+  const autoGenre = parseAutoFallbackGenreId(genreId);
+  if (!autoGenre) return false;
+  return isKnownDiscoveryGenre(autoGenre);
 }
 
 export function pickRandomFallbackForGenre(
