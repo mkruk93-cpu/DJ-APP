@@ -372,7 +372,10 @@ function filterHitsByGenre(items: GenreHitItem[], hints: GenreHints, limit: numb
       score: scoreGenreRelevance(item, hints),
       evidence: hasRequiredEvidence(item, hints),
     }))
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return Math.random() - 0.5;
+    });
 
   const strict = scored
     .filter((row) => row.evidence && row.score >= hints.minScore)
@@ -539,7 +542,12 @@ async function getSpotifyAppToken(): Promise<string | null> {
   return token;
 }
 
-async function fetchSpotifyTracksByGenre(genre: string, limit: number, offset: number): Promise<GenreHitItem[]> {
+async function fetchSpotifyTracksByGenre(
+  genre: string,
+  limit: number,
+  offset: number,
+  maxQueries = Number.POSITIVE_INFINITY,
+): Promise<GenreHitItem[]> {
   const token = await getSpotifyAppToken();
   if (!token) return [];
   const hints = getGenreHints(genre);
@@ -591,7 +599,7 @@ async function fetchSpotifyTracksByGenre(genre: string, limit: number, offset: n
   };
 
   const merged: GenreHitItem[] = [];
-  for (const query of hints.spotifyQueries) {
+  for (const query of hints.spotifyQueries.slice(0, Math.max(0, maxQueries))) {
     try {
       const result = await run(query);
       merged.push(...result);
@@ -604,13 +612,18 @@ async function fetchSpotifyTracksByGenre(genre: string, limit: number, offset: n
   return filterHitsByGenre(merged, hints, limit);
 }
 
-async function fetchLastFmTopTracksByGenre(genre: string, limit: number, offset: number): Promise<GenreHitItem[]> {
+async function fetchLastFmTopTracksByGenre(
+  genre: string,
+  limit: number,
+  offset: number,
+  maxTags = Number.POSITIVE_INFINITY,
+): Promise<GenreHitItem[]> {
   if (!LASTFM_API_KEY) return [];
   const hints = getGenreHints(genre);
   const page = Math.floor(offset / Math.max(1, limit)) + 1;
   const merged: GenreHitItem[] = [];
 
-  for (const tag of hints.lastFmTags) {
+  for (const tag of hints.lastFmTags.slice(0, Math.max(0, maxTags))) {
     const params = new URLSearchParams({
       method: 'tag.gettoptracks',
       tag,
@@ -664,10 +677,15 @@ async function fetchLastFmTopTracksByGenre(genre: string, limit: number, offset:
   return filterHitsByGenre(merged, hints, limit);
 }
 
-async function fetchDeezerTracksByGenre(genre: string, limit: number, offset: number): Promise<GenreHitItem[]> {
+async function fetchDeezerTracksByGenre(
+  genre: string,
+  limit: number,
+  offset: number,
+  maxQueries = Number.POSITIVE_INFINITY,
+): Promise<GenreHitItem[]> {
   const hints = getGenreHints(genre);
   const merged: GenreHitItem[] = [];
-  for (const query of hints.deezerQueries) {
+  for (const query of hints.deezerQueries.slice(0, Math.max(0, maxQueries))) {
     try {
       const items = await searchTopTracks(query, limit, offset);
       merged.push(...items);
@@ -680,6 +698,15 @@ async function fetchDeezerTracksByGenre(genre: string, limit: number, offset: nu
 
 function normalizeHitKey(artist: string, title: string): string {
   return `${artist}-${title}`.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function shuffleCopy<T>(items: T[]): T[] {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
 }
 
 function ytdlpSearchPlatform(
@@ -741,13 +768,20 @@ async function fetchPriorityArtistPlatformHits(
   hints: GenreHints,
   limit: number,
   offset: number,
+  options?: { artistSampleSize?: number; perPlatformLimit?: number },
 ): Promise<GenreHitItem[]> {
   const artists = [...(hints.priorityArtists ?? [])].filter(Boolean);
   if (artists.length === 0) return [];
-  const sampleSize = Math.min(6, artists.length);
+  const sampleSize = Math.max(1, Math.min(options?.artistSampleSize ?? 6, artists.length));
+  const perPlatformLimit = Math.max(1, Math.min(options?.perPlatformLimit ?? 5, 8));
   const page = Math.floor(offset / Math.max(1, limit));
-  const start = (page * sampleSize) % artists.length;
-  const selected = Array.from({ length: sampleSize }, (_, i) => artists[(start + i) % artists.length]);
+  const selected = shuffleCopy(artists).slice(0, sampleSize);
+  if (selected.length > 1 && page > 0) {
+    const rotateBy = page % selected.length;
+    for (let i = 0; i < rotateBy; i++) {
+      selected.push(selected.shift()!);
+    }
+  }
 
   const results: GenreHitItem[] = [];
   const seen = new Set<string>();
@@ -755,8 +789,8 @@ async function fetchPriorityArtistPlatformHits(
   for (const artist of selected) {
     const query = `${artist} ${genre}`;
     const [ytRes, scRes] = await Promise.allSettled([
-      ytdlpSearchPlatform('yt', query, 5),
-      ytdlpSearchPlatform('sc', query, 5),
+      ytdlpSearchPlatform('yt', query, perPlatformLimit),
+      ytdlpSearchPlatform('sc', query, perPlatformLimit),
     ]);
     const merged = [
       ...(ytRes.status === 'fulfilled' ? ytRes.value : []),
@@ -770,7 +804,7 @@ async function fetchPriorityArtistPlatformHits(
     }
   }
 
-  return filterHitsByGenre(results, hints, limit);
+  return filterHitsByGenre(shuffleCopy(results), hints, limit);
 }
 
 export async function getTopTracksByGenre(genre: string, limit = 20, offset = 0): Promise<GenreHitItem[]> {
@@ -781,11 +815,20 @@ export async function getTopTracksByGenre(genre: string, limit = 20, offset = 0)
   if (!isAllowedGenre(normalizedGenre)) return [];
 
   const hints = getGenreHints(normalizedGenre);
+  const isFastMode = safeOffset === 0 || safeOffset <= safeLimit * 2;
+  const spotifyQueries = isFastMode ? 0 : 2;
+  const deezerQueries = isFastMode ? 1 : 2;
+  const lastFmTags = isFastMode ? 0 : 1;
+  const priorityOptions = isFastMode
+    ? { artistSampleSize: 2, perPlatformLimit: 2 }
+    : { artistSampleSize: 6, perPlatformLimit: 5 };
   const [spotifyRes, deezerRes, lastFmRes, priorityRes] = await Promise.allSettled([
-    fetchSpotifyTracksByGenre(normalizedGenre, safeLimit, safeOffset),
-    fetchDeezerTracksByGenre(normalizedGenre, safeLimit, safeOffset),
-    fetchLastFmTopTracksByGenre(normalizedGenre, safeLimit, safeOffset),
-    fetchPriorityArtistPlatformHits(normalizedGenre, hints, safeLimit, safeOffset),
+    spotifyQueries > 0
+      ? fetchSpotifyTracksByGenre(normalizedGenre, safeLimit, safeOffset, spotifyQueries)
+      : Promise.resolve<GenreHitItem[]>([]),
+    fetchDeezerTracksByGenre(normalizedGenre, safeLimit, safeOffset, deezerQueries),
+    fetchLastFmTopTracksByGenre(normalizedGenre, safeLimit, safeOffset, lastFmTags),
+    fetchPriorityArtistPlatformHits(normalizedGenre, hints, safeLimit, safeOffset, priorityOptions),
   ]);
 
   const collected: GenreHitItem[] = [];

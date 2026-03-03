@@ -148,7 +148,8 @@
         "more kords",
         "jaws",
         "luvvtige, unicorn on ketamine",
-        "superstrongman"
+        "superstrongman",
+        "noiseflow, kior"
       ],
       "priorityLabels": [
         "cenobite",
@@ -171,9 +172,16 @@
         "asbak anthem",
         "krach x piiiip",
         "sound of the zaagkick",
-        "stuck in my zaag"
+        "stuck in my zaag",
+        "topic - stuck in my zaag",
+        "krachland",
+        "more kords - zaag on the ceiling",
+        "topic - overdrive",
+        "just be zaag"
       ],
-      "blockedTracks": []
+      "blockedTracks": [
+        "more kords - just be zaag"
+      ]
     },
     {
       "id": "terror",
@@ -309,9 +317,18 @@
         "re-style",
         "sanger",
         "d'ort",
-        "the sickest squad"
+        "the sickest squad",
+        "sefa, vertile"
       ],
-      "minScore": 3
+      "minScore": 3,
+      "priorityTracks": [
+        "sefa & relianze - going under",
+        "battlefield"
+      ],
+      "blockedTracks": [],
+      "priorityLabels": [],
+      "requiredTokens": [],
+      "blockedTokens": []
     },
     {
       "id": "techno",
@@ -588,9 +605,17 @@
         "blasterjaxx",
         "r3hab",
         "quintino",
-        "afrojack"
+        "afrojack",
+        "эхшчтхёђхэ"
       ],
-      "minScore": 3
+      "minScore": 3,
+      "priorityTracks": [
+        "aint nobody loves me better makes me happy"
+      ],
+      "blockedTracks": [],
+      "priorityLabels": [],
+      "requiredTokens": [],
+      "blockedTokens": []
     },
     {
       "id": "melodic techno",
@@ -937,6 +962,14 @@
     }
   ],
   "likedPlaylistTracks": [
-    "more kords - stuck in my zaag"
+    "more kords - stuck in my zaag",
+    "more kords - topic - stuck in my zaag",
+    "noiseflow, kior - krachland",
+    "more kords - more kords - zaag on the ceiling",
+    "noiseflow - topic - overdrive",
+    "more kords - just be zaag",
+    "эхшчтхёђхэ - aint nobody loves me better makes me happy",
+    "sefa - sefa & relianze - going under",
+    "sefa, vertile - battlefield"
   ]
 }

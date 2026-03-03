@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { SupabaseClient } from '@supabase/supabase-js';
 
-const POLL_INTERVAL = 5_000;
+const POLL_INTERVAL_BASE = 5_000;
+const POLL_INTERVAL_MAX = 60_000;
 
 interface RequestRow {
   id: string;
@@ -87,6 +88,40 @@ export function startBridge(sb: SupabaseClient, downloadPath: string): void {
   const lockDir = path.join(downloadPath, '.bridge-locks');
   fs.mkdirSync(lockDir, { recursive: true });
   let pollRunning = false;
+  let pollTimer: ReturnType<typeof setTimeout> | null = null;
+  let pollIntervalMs = POLL_INTERVAL_BASE;
+  let consecutivePollErrors = 0;
+
+  function describeBridgeError(err: unknown): string {
+    if (err instanceof Error) return err.message;
+    if (typeof err === 'string') return err;
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return String(err);
+    }
+  }
+
+  function scheduleNextPoll(): void {
+    if (pollTimer) clearTimeout(pollTimer);
+    pollTimer = setTimeout(() => {
+      void poll();
+    }, pollIntervalMs);
+  }
+
+  function markPollSuccess(): void {
+    consecutivePollErrors = 0;
+    pollIntervalMs = POLL_INTERVAL_BASE;
+  }
+
+  function markPollFailure(reason: string): void {
+    consecutivePollErrors += 1;
+    const exp = Math.min(6, consecutivePollErrors);
+    const backoff = Math.min(POLL_INTERVAL_MAX, POLL_INTERVAL_BASE * (2 ** (exp - 1)));
+    const jitter = Math.floor(Math.random() * 1200);
+    pollIntervalMs = Math.min(POLL_INTERVAL_MAX, backoff + jitter);
+    console.warn(`[bridge] Poll degraded (${consecutivePollErrors}): ${reason} — retry in ${pollIntervalMs}ms`);
+  }
 
   function acquireLock(id: string): string | null {
     const lockPath = path.join(lockDir, `${id}.lock`);
@@ -120,9 +155,10 @@ export function startBridge(sb: SupabaseClient, downloadPath: string): void {
         .eq('status', 'approved');
 
       if (error) {
-        console.error('[bridge] Poll error:', error.message);
+        markPollFailure(error.message);
         return;
       }
+      markPollSuccess();
 
       for (const row of (data ?? []) as RequestRow[]) {
         if (inFlight.has(row.id)) continue;
@@ -175,12 +211,12 @@ export function startBridge(sb: SupabaseClient, downloadPath: string): void {
         }
       }
     } catch (err) {
-      console.error('[bridge] Poll error:', err);
+      markPollFailure(describeBridgeError(err));
     } finally {
       pollRunning = false;
+      scheduleNextPoll();
     }
   }
 
-  setInterval(poll, POLL_INTERVAL);
-  poll();
+  void poll();
 }

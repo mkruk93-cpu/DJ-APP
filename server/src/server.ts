@@ -96,6 +96,9 @@ function applyPlaybackForMode(mode: Mode): void {
 
 const startTime = Date.now();
 let lastStateLogKey: string | null = null;
+const MODE_SYNC_INTERVAL_MS = 5_000;
+const MODE_SYNC_CONFIRM_POLLS = 2;
+const MODE_SYNC_COOLDOWN_MS = 10_000;
 
 function normalizeFallbackGenreId(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -1631,19 +1634,37 @@ async function main(): Promise<void> {
   applyPlaybackForMode(initialMode);
 
   let lastSyncedMode = initialMode;
+  let pendingSyncedMode: Mode | null = null;
+  let pendingSyncedModeCount = 0;
+  let lastModeApplyAt = Date.now();
   setInterval(() => {
     maybeReleaseQueuePushLock();
     getActiveMode(sb)
       .then(async (mode) => {
-        if (mode === lastSyncedMode) return;
+        if (mode === lastSyncedMode) {
+          pendingSyncedMode = null;
+          pendingSyncedModeCount = 0;
+          return;
+        }
+        if (pendingSyncedMode !== mode) {
+          pendingSyncedMode = mode;
+          pendingSyncedModeCount = 1;
+          return;
+        }
+        pendingSyncedModeCount += 1;
+        if (pendingSyncedModeCount < MODE_SYNC_CONFIRM_POLLS) return;
+        if (Date.now() - lastModeApplyAt < MODE_SYNC_COOLDOWN_MS) return;
         lastSyncedMode = mode;
+        pendingSyncedMode = null;
+        pendingSyncedModeCount = 0;
+        lastModeApplyAt = Date.now();
         applyPlaybackForMode(mode);
         const modeSettings = await getModeSettings(sb);
         io.emit('mode:change', { mode, settings: modeSettings });
         console.log(`[mode] Synced mode from settings: ${mode}`);
       })
       .catch(() => {});
-  }, 2000);
+  }, MODE_SYNC_INTERVAL_MS);
 
   // Start the bridge (downloads approved requests)
   startBridge(sb, DOWNLOAD_PATH);

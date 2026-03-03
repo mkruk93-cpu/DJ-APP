@@ -218,10 +218,12 @@ export default function QueueAdd() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recentAddTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recentAddTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const genreLoadInFlightRef = useRef(false);
+  const genreHitsCacheRef = useRef(new Map<string, GenreHit[]>());
   const searchOffsetRef = useRef(0);
   const genreOffsetRef = useRef(0);
   const latestSearchRunRef = useRef(0);
-  const GENRE_PAGE_SIZE = 20;
+  const GENRE_PAGE_SIZE = 12;
   const SEARCH_PAGE_SIZE = 12;
 
   useEffect(() => {
@@ -431,7 +433,33 @@ export default function QueueAdd() {
 
   const loadGenreHits = useCallback((genre: string, append = false) => {
     if (!serverUrl) return;
+    if (genreLoadInFlightRef.current) return;
     const offset = append ? genreOffsetRef.current : 0;
+    const cacheKey = `${genre.toLowerCase()}::${offset}::${GENRE_PAGE_SIZE}`;
+    const cached = genreHitsCacheRef.current.get(cacheKey);
+    if (cached) {
+      const mapped = cached.map((item) => ({
+        ...item,
+        query: `${item.artist} - ${item.title}`,
+      }));
+      let addedUniqueCount = mapped.length;
+      setGenreHits((prev) => {
+        if (!append) return mapped;
+        const merged = [...prev, ...mapped];
+        const deduped = Array.from(
+          new Map(merged.map((track) => [`${track.artist}-${track.title}`.toLowerCase(), track])).values(),
+        );
+        addedUniqueCount = Math.max(0, deduped.length - prev.length);
+        return deduped;
+      });
+      setGenreOffsetSafe(offset + cached.length);
+      setGenreHasMore(
+        cached.length >= GENRE_PAGE_SIZE || (append ? addedUniqueCount > 0 : cached.length > 0),
+      );
+      setActiveGenre(genre);
+      return;
+    }
+    genreLoadInFlightRef.current = true;
     if (append) {
       setGenreHitsLoadingMore(true);
     } else {
@@ -444,6 +472,7 @@ export default function QueueAdd() {
     Promise.resolve()
       .then(() => getGenreHits(genre, GENRE_PAGE_SIZE, offset))
       .then((items) => {
+        genreHitsCacheRef.current.set(cacheKey, items);
         const normalized = items.filter(
           (item): item is GenreHit =>
             !!item?.id && !!item?.title && !!item?.artist,
@@ -474,6 +503,7 @@ export default function QueueAdd() {
         setGenreHasMore(false);
       })
       .finally(() => {
+        genreLoadInFlightRef.current = false;
         setGenreHitsLoading(false);
         setGenreHitsLoadingMore(false);
       });
