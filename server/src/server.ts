@@ -931,7 +931,7 @@ function startQueuePushVote(
   proposerSocketId: string,
   required: number,
   timeoutMs: number,
-): void {
+): QueuePushVote {
   if (activeQueuePushVote) {
     activeQueuePushVote = null;
     if (queuePushVoteTimer) {
@@ -940,7 +940,7 @@ function startQueuePushVote(
     }
   }
 
-  activeQueuePushVote = {
+  const vote: QueuePushVote = {
     id: `qpv_${Date.now()}`,
     item_id: item.id,
     title: item.title,
@@ -953,11 +953,14 @@ function startQueuePushVote(
     voters: [proposerSocketId],
     expires_at: Date.now() + timeoutMs,
   };
+  activeQueuePushVote = vote;
   broadcastQueuePushVote();
 
   queuePushVoteTimer = setTimeout(() => {
     void finalizeQueuePushVote();
   }, timeoutMs);
+
+  return vote;
 }
 
 function finalizeDurationVote(): void {
@@ -1186,9 +1189,9 @@ io.on('connection', (socket) => {
       const settings = await getModeSettings(sb);
       const required = Math.max(1, Math.ceil(io.engine.clientsCount * (settings.democracy_threshold / 100)));
       const proposedBy = normalizeNickname(data.added_by) ?? 'onbekend';
-      startQueuePushVote(item, proposedBy, socket.id, required, Math.max(5, settings.democracy_timer) * 1000);
+      const vote = startQueuePushVote(item, proposedBy, socket.id, required, Math.max(5, settings.democracy_timer) * 1000);
       socket.emit('info:toast', { message: 'Push-stemming gestart. Jouw stem telt al als ja.' });
-      if ((activeQueuePushVote?.yes ?? 0) >= required) {
+      if (vote.yes >= required) {
         void finalizeQueuePushVote();
       }
       console.log(`[queue-push] Vote started for ${item.id} by ${proposedBy}`);

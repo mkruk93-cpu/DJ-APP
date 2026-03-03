@@ -189,20 +189,26 @@ body {
 
 @keyframes player-cover-spin-cycle {
   0%,
-  82% {
+  80% {
     transform: rotateY(0deg);
   }
-  86% {
-    transform: rotateY(18deg);
+  84% {
+    transform: rotateY(12deg);
   }
-  90% {
-    transform: rotateY(110deg);
+  88% {
+    transform: rotateY(62deg);
+  }
+  91% {
+    transform: rotateY(138deg);
   }
   94% {
-    transform: rotateY(235deg);
+    transform: rotateY(230deg);
   }
-  97% {
-    transform: rotateY(320deg);
+  96.5% {
+    transform: rotateY(298deg);
+  }
+  98.5% {
+    transform: rotateY(342deg);
   }
   100% {
     transform: rotateY(360deg);
@@ -260,18 +266,22 @@ body {
 }
 
 .player-cover-spin-cycle {
-  animation: player-cover-spin-cycle 30s linear infinite;
+  animation: player-cover-spin-cycle 30s cubic-bezier(0.42, 0.03, 0.2, 1) infinite;
   transform-origin: center;
   backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  transform-style: preserve-3d;
 }
 
 .player-cover-face {
   backface-visibility: hidden;
-  transform: translateZ(calc(var(--cover-depth) * 0.5));
+  -webkit-backface-visibility: hidden;
+  transform: translateZ(calc(var(--cover-depth) * 0.5 + 0.02px));
+  transform-style: preserve-3d;
 }
 
 .player-cover-face--back {
-  transform: rotateY(180deg) translateZ(calc(var(--cover-depth) * 0.5));
+  transform: rotateY(180deg) translateZ(calc(var(--cover-depth) * 0.5 + 0.02px));
 }
 
 .player-cover-3d-card::before {

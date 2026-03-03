@@ -9,6 +9,7 @@ import { clearQueueItem, getQueue, fetchVideoInfo } from './queue.js';
 import { cleanupFile } from './cleanup.js';
 import type { StreamHub } from './streamHub.js';
 import { pickRandomFallbackForGenre } from './fallbackGenres.js';
+import { fetchArtwork } from './artwork.js';
 
 export const playerEvents = new EventEmitter();
 
@@ -170,6 +171,18 @@ function extractEmbeddedArtworkDataUrl(filePath: string): Promise<string | null>
 async function getFallbackArtworkDataUrl(filePath: string): Promise<string | null> {
   if (fallbackArtworkCache.has(filePath)) {
     return fallbackArtworkCache.get(filePath) ?? null;
+  }
+
+  const guessedTitle = titleFromFilename(filePath);
+  const splitIdx = guessedTitle.indexOf(' - ');
+  const guessedArtist = splitIdx > 0 ? guessedTitle.slice(0, splitIdx).trim() : '';
+  const guessedTrackTitle = splitIdx > 0 ? guessedTitle.slice(splitIdx + 3).trim() : guessedTitle;
+
+  // Match DJ-mode behavior: first try remote artwork lookup.
+  const remoteArtwork = await fetchArtwork(guessedArtist, guessedTrackTitle);
+  if (remoteArtwork) {
+    fallbackArtworkCache.set(filePath, remoteArtwork);
+    return remoteArtwork;
   }
 
   const dir = path.dirname(filePath);
