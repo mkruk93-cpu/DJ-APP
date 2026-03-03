@@ -20,16 +20,47 @@ const DEFAULT_POPULAR_GENRES = [
   'hardcore',
   'uptempo',
   'gabber',
+  'industrial hardcore',
+  'krach',
+  'terror',
+  'terrorcore',
+  'mainstream hardcore',
+  'happy hardcore',
   'hardstyle',
+  'euphoric hardstyle',
   'rawstyle',
   'frenchcore',
   'techno',
   'hard techno',
   'trance',
+  'psy trance',
   'psytrance',
+  'deep house',
+  'future house',
   'house',
   'tech house',
+  'progressive house',
+  'electro house',
   'drum and bass',
+  'liquid drum and bass',
+  'neurofunk',
+  'bass house',
+  'big room',
+  'melodic techno',
+  'hard dance',
+  'dubstep',
+  'brostep',
+  'uk garage',
+  'rock',
+  'alternative',
+  'alternative rock',
+  'indie rock',
+  'metal',
+  'heavy metal',
+  'metalcore',
+  'death metal',
+  'punk',
+  'pop punk',
   'edm',
   'dance',
   'hiphop',
@@ -41,45 +72,188 @@ const DEFAULT_POPULAR_GENRES = [
 
 const ALLOWED_GENRE_SET = new Set(DEFAULT_POPULAR_GENRES.map((g) => normalizeGenreName(g)));
 
+interface GenreHints {
+  spotifyQueries: string[];
+  lastFmTags: string[];
+  deezerQueries: string[];
+  relevanceTokens: string[];
+  avoidTokens: string[];
+}
+
 function normalizeGenreName(name: string): string {
   return name.trim().toLowerCase();
 }
 
-function getGenreHints(genre: string): { spotify: string; lastFmTag: string; deezer: string } {
+function getGenreHints(genre: string): GenreHints {
   const normalized = normalizeGenreName(genre);
-  const hints: Record<string, { spotify: string; lastFmTag: string; deezer: string }> = {
+  const hints: Record<string, GenreHints> = {
     hardcore: {
-      spotify: 'gabber hardcore dance 180 bpm 190 bpm',
-      lastFmTag: 'gabber',
-      deezer: 'gabber hardcore dance',
+      spotifyQueries: ['genre:"hardcore" gabber hardcore dance', 'gabber hardcore uptempo'],
+      lastFmTags: ['gabber', 'hardcore'],
+      deezerQueries: ['gabber hardcore', 'uptempo hardcore'],
+      relevanceTokens: ['hardcore', 'gabber', 'uptempo', 'frenchcore', 'rawstyle'],
+      avoidTokens: ['house', 'afrobeats', 'latin pop'],
+    },
+    'industrial hardcore': {
+      spotifyQueries: ['industrial hardcore darkcore gabber', 'hardcore industrial'],
+      lastFmTags: ['industrial hardcore', 'hardcore'],
+      deezerQueries: ['industrial hardcore', 'darkcore hardcore'],
+      relevanceTokens: ['industrial', 'darkcore', 'hardcore', 'gabber'],
+      avoidTokens: ['house', 'pop'],
+    },
+    krach: {
+      spotifyQueries: ['krach hardcore gabber', 'hardcore krach'],
+      lastFmTags: ['gabber', 'hardcore'],
+      deezerQueries: ['krach hardcore', 'gabber krach'],
+      relevanceTokens: ['krach', 'hardcore', 'gabber', 'terror'],
+      avoidTokens: ['house', 'trance'],
+    },
+    terror: {
+      spotifyQueries: ['terror hardcore terrorcore', 'speedcore terror'],
+      lastFmTags: ['terrorcore', 'hardcore'],
+      deezerQueries: ['terrorcore hardcore', 'terror hardcore'],
+      relevanceTokens: ['terror', 'terrorcore', 'speedcore', 'hardcore'],
+      avoidTokens: ['house', 'afrobeats'],
+    },
+    terrorcore: {
+      spotifyQueries: ['terrorcore speedcore hardcore', 'terrorcore'],
+      lastFmTags: ['terrorcore', 'speedcore'],
+      deezerQueries: ['terrorcore', 'speedcore hardcore'],
+      relevanceTokens: ['terrorcore', 'speedcore', 'terror', 'hardcore'],
+      avoidTokens: ['house', 'pop'],
     },
     hardstyle: {
-      spotify: 'hardstyle rawstyle euphoric hardstyle',
-      lastFmTag: 'hardstyle',
-      deezer: 'hardstyle',
+      spotifyQueries: ['genre:"hardstyle" hardstyle rawstyle', 'hardstyle rawstyle euphoric'],
+      lastFmTags: ['hardstyle', 'rawstyle'],
+      deezerQueries: ['hardstyle rawstyle', 'hard dance hardstyle'],
+      relevanceTokens: ['hardstyle', 'rawstyle', 'euphoric', 'defqon', 'qlimax'],
+      avoidTokens: ['house', 'afrobeats', 'reggaeton'],
+    },
+    'euphoric hardstyle': {
+      spotifyQueries: ['euphoric hardstyle melodic hardstyle', 'hardstyle euphoric anthem'],
+      lastFmTags: ['hardstyle', 'euphoric hardstyle'],
+      deezerQueries: ['euphoric hardstyle', 'melodic hardstyle'],
+      relevanceTokens: ['euphoric', 'hardstyle', 'melodic', 'anthem'],
+      avoidTokens: ['terror', 'industrial'],
     },
     techno: {
-      spotify: 'techno peak time techno',
-      lastFmTag: 'techno',
-      deezer: 'techno',
+      spotifyQueries: ['genre:"techno" peak time techno', 'techno warehouse rave'],
+      lastFmTags: ['techno'],
+      deezerQueries: ['techno', 'peak time techno'],
+      relevanceTokens: ['techno', 'acid', 'warehouse', 'rave', 'hard techno'],
+      avoidTokens: ['hip hop', 'reggaeton', 'afrobeats'],
+    },
+    trance: {
+      spotifyQueries: ['trance uplifting trance vocal trance', 'trance progressive trance'],
+      lastFmTags: ['trance'],
+      deezerQueries: ['trance', 'uplifting trance'],
+      relevanceTokens: ['trance', 'uplifting', 'vocal trance', 'asot', 'psy'],
+      avoidTokens: ['hardcore', 'hip hop'],
+    },
+    'psy trance': {
+      spotifyQueries: ['psy trance psytrance full on', 'psychedelic trance'],
+      lastFmTags: ['psytrance', 'psy trance'],
+      deezerQueries: ['psy trance', 'psytrance'],
+      relevanceTokens: ['psy', 'psytrance', 'psy trance', 'goa'],
+      avoidTokens: ['house', 'hip hop'],
+    },
+    psytrance: {
+      spotifyQueries: ['psytrance psy trance full on', 'psychedelic trance'],
+      lastFmTags: ['psytrance', 'psy trance'],
+      deezerQueries: ['psytrance', 'psy trance'],
+      relevanceTokens: ['psytrance', 'psy trance', 'goa', 'psy'],
+      avoidTokens: ['house', 'hip hop'],
+    },
+    'deep house': {
+      spotifyQueries: ['deep house soulful deep house', 'deep house melodic house'],
+      lastFmTags: ['deep house', 'house'],
+      deezerQueries: ['deep house', 'melodic deep house'],
+      relevanceTokens: ['deep house', 'deep', 'house', 'melodic'],
+      avoidTokens: ['hardcore', 'terror'],
+    },
+    'future house': {
+      spotifyQueries: ['future house bass house', 'future house edm'],
+      lastFmTags: ['future house', 'house'],
+      deezerQueries: ['future house', 'future bass house'],
+      relevanceTokens: ['future house', 'future', 'house', 'bass house'],
+      avoidTokens: ['hardcore', 'terror'],
+    },
+    dubstep: {
+      spotifyQueries: ['dubstep brostep bass music', 'dubstep riddim'],
+      lastFmTags: ['dubstep', 'brostep'],
+      deezerQueries: ['dubstep', 'brostep'],
+      relevanceTokens: ['dubstep', 'brostep', 'riddim', 'bass'],
+      avoidTokens: ['trance', 'hardstyle'],
+    },
+    rock: {
+      spotifyQueries: ['rock anthems modern rock', 'classic rock alternative rock'],
+      lastFmTags: ['rock'],
+      deezerQueries: ['rock', 'modern rock'],
+      relevanceTokens: ['rock', 'guitar', 'band', 'anthem'],
+      avoidTokens: ['hardcore', 'techno'],
+    },
+    alternative: {
+      spotifyQueries: ['alternative alternative rock indie', 'alt rock'],
+      lastFmTags: ['alternative', 'alternative rock'],
+      deezerQueries: ['alternative rock', 'alternative'],
+      relevanceTokens: ['alternative', 'alt', 'indie', 'rock'],
+      avoidTokens: ['hardcore', 'terror'],
+    },
+    metal: {
+      spotifyQueries: ['metal heavy metal', 'metalcore melodic metal'],
+      lastFmTags: ['metal', 'heavy metal'],
+      deezerQueries: ['metal', 'heavy metal'],
+      relevanceTokens: ['metal', 'heavy', 'riff', 'core'],
+      avoidTokens: ['house', 'trance'],
     },
     hiphop: {
-      spotify: 'hip hop rap',
-      lastFmTag: 'hip-hop',
-      deezer: 'hip hop',
+      spotifyQueries: ['genre:"hip hop" hip hop rap', 'hip hop rap nl'],
+      lastFmTags: ['hip-hop', 'rap'],
+      deezerQueries: ['hip hop rap', 'nederlandse hiphop'],
+      relevanceTokens: ['hip hop', 'hiphop', 'rap', 'drill', 'trap'],
+      avoidTokens: ['hardstyle', 'trance', 'techno'],
     },
     nederlands: {
-      spotify: 'nederlandse hits dutch',
-      lastFmTag: 'dutch',
-      deezer: 'nederlandstalig',
+      spotifyQueries: ['nederlandstalig nederlands hits dutch', 'nederlandse pop'],
+      lastFmTags: ['dutch', 'nederlandstalig'],
+      deezerQueries: ['nederlandstalig', 'nederlandse hits'],
+      relevanceTokens: ['nederlands', 'nederlandstalig', 'dutch', 'holland'],
+      avoidTokens: ['k-pop', 'afrobeats'],
     },
   };
 
   return hints[normalized] ?? {
-    spotify: genre,
-    lastFmTag: genre,
-    deezer: genre,
+    spotifyQueries: [`genre:"${genre}" ${genre}`, genre],
+    lastFmTags: [genre],
+    deezerQueries: [genre],
+    relevanceTokens: [normalized],
+    avoidTokens: [],
   };
+}
+
+function scoreGenreRelevance(item: GenreHitItem, hints: GenreHints): number {
+  const text = `${item.artist} ${item.title}`.toLowerCase();
+  let score = 0;
+  for (const token of hints.relevanceTokens) {
+    if (!token) continue;
+    if (text.includes(token.toLowerCase())) score += 3;
+  }
+  for (const token of hints.avoidTokens) {
+    if (!token) continue;
+    if (text.includes(token.toLowerCase())) score -= 2;
+  }
+  return score;
+}
+
+function dedupeHits(items: GenreHitItem[]): GenreHitItem[] {
+  return Array.from(
+    new Map(
+      items.map((item) => [
+        `${item.artist}-${item.title}`.toLowerCase().replace(/\s+/g, ' ').trim(),
+        item,
+      ]),
+    ).values(),
+  );
 }
 
 function makeUniqueGenreMap(): Map<string, GenreItem> {
@@ -117,13 +291,23 @@ async function fetchDeezerGenres(): Promise<GenreItem[]> {
 export async function searchGenres(query?: string): Promise<GenreItem[]> {
   const uniqueGenres = makeUniqueGenreMap();
   const q = normalizeGenreName(query ?? '');
+  const genreOrder = new Map<string, number>();
+  DEFAULT_POPULAR_GENRES.forEach((name, index) => {
+    genreOrder.set(normalizeGenreName(name), index);
+  });
+
   let items = [...uniqueGenres.values()];
   if (q) {
     items = items.filter((genre) => normalizeGenreName(genre.name).includes(q));
   }
 
   return items
-    .sort((a, b) => a.name.localeCompare(b.name, 'nl', { sensitivity: 'base' }))
+    .sort((a, b) => {
+      const orderA = genreOrder.get(normalizeGenreName(a.name)) ?? Number.MAX_SAFE_INTEGER;
+      const orderB = genreOrder.get(normalizeGenreName(b.name)) ?? Number.MAX_SAFE_INTEGER;
+      if (orderA !== orderB) return orderA - orderB;
+      return a.name.localeCompare(b.name, 'nl', { sensitivity: 'base' });
+    })
     .slice(0, 80);
 }
 
@@ -248,66 +432,97 @@ async function fetchSpotifyTracksByGenre(genre: string, limit: number, offset: n
     return mapItems(data.tracks?.items ?? []).slice(0, limit);
   };
 
-  try {
-    const tagged = await run(`genre:"${hints.lastFmTag}" ${hints.spotify}`);
-    if (tagged.length > 0) return tagged;
-  } catch (err) {
-    console.warn('[discovery] Spotify tagged genre search failed:', (err as Error).message);
+  const merged: GenreHitItem[] = [];
+  for (const query of hints.spotifyQueries) {
+    try {
+      const result = await run(query);
+      merged.push(...result);
+      if (merged.length >= limit * 2) break;
+    } catch (err) {
+      console.warn('[discovery] Spotify tagged genre search failed:', (err as Error).message);
+    }
   }
 
-  return run(hints.spotify);
+  return dedupeHits(merged)
+    .sort((a, b) => scoreGenreRelevance(b, hints) - scoreGenreRelevance(a, hints))
+    .slice(0, limit);
 }
 
 async function fetchLastFmTopTracksByGenre(genre: string, limit: number, offset: number): Promise<GenreHitItem[]> {
   if (!LASTFM_API_KEY) return [];
   const hints = getGenreHints(genre);
   const page = Math.floor(offset / Math.max(1, limit)) + 1;
-  const params = new URLSearchParams({
-    method: 'tag.gettoptracks',
-    tag: hints.lastFmTag,
-    api_key: LASTFM_API_KEY,
-    format: 'json',
-    limit: String(limit),
-    page: String(page),
-  });
+  const merged: GenreHitItem[] = [];
 
-  const res = await fetch(`https://ws.audioscrobbler.com/2.0/?${params}`, {
-    signal: AbortSignal.timeout(7000),
-  });
-  if (!res.ok) {
-    throw new Error(`Last.fm HTTP ${res.status}`);
+  for (const tag of hints.lastFmTags) {
+    const params = new URLSearchParams({
+      method: 'tag.gettoptracks',
+      tag,
+      api_key: LASTFM_API_KEY,
+      format: 'json',
+      limit: String(limit),
+      page: String(page),
+    });
+
+    const res = await fetch(`https://ws.audioscrobbler.com/2.0/?${params}`, {
+      signal: AbortSignal.timeout(7000),
+    });
+    if (!res.ok) {
+      throw new Error(`Last.fm HTTP ${res.status}`);
+    }
+
+    const data = await res.json() as {
+      tracks?: {
+        track?: Array<{
+          name?: string;
+          url?: string;
+          artist?: { name?: string };
+          image?: Array<{ '#text'?: string; size?: string }>;
+        }>;
+      };
+    };
+
+    merged.push(
+      ...(data.tracks?.track ?? [])
+        .map((track) => {
+          const title = (track.name ?? '').trim();
+          const artist = (track.artist?.name ?? '').trim();
+          if (!title || !artist) return null;
+          const image = track.image ?? [];
+          const bestImage = image.find((img) => img.size === 'extralarge' && img['#text'])?.['#text']
+            ?? image.find((img) => img.size === 'large' && img['#text'])?.['#text']
+            ?? image.find((img) => img['#text'])?.['#text']
+            ?? '';
+          return {
+            id: `${artist}-${title}`.toLowerCase(),
+            title,
+            artist,
+            thumbnail: bestImage,
+            sourceHint: track.url ?? '',
+          } satisfies GenreHitItem;
+        })
+        .filter((item): item is GenreHitItem => item !== null),
+    );
   }
 
-  const data = await res.json() as {
-    tracks?: {
-      track?: Array<{
-        name?: string;
-        url?: string;
-        artist?: { name?: string };
-        image?: Array<{ '#text'?: string; size?: string }>;
-      }>;
-    };
-  };
+  return dedupeHits(merged)
+    .sort((a, b) => scoreGenreRelevance(b, hints) - scoreGenreRelevance(a, hints))
+    .slice(0, limit);
+}
 
-  return (data.tracks?.track ?? [])
-    .map((track) => {
-      const title = (track.name ?? '').trim();
-      const artist = (track.artist?.name ?? '').trim();
-      if (!title || !artist) return null;
-      const image = track.image ?? [];
-      const bestImage = image.find((img) => img.size === 'extralarge' && img['#text'])?.['#text']
-        ?? image.find((img) => img.size === 'large' && img['#text'])?.['#text']
-        ?? image.find((img) => img['#text'])?.['#text']
-        ?? '';
-      return {
-        id: `${artist}-${title}`.toLowerCase(),
-        title,
-        artist,
-        thumbnail: bestImage,
-        sourceHint: track.url ?? '',
-      } satisfies GenreHitItem;
-    })
-    .filter((item): item is GenreHitItem => item !== null)
+async function fetchDeezerTracksByGenre(genre: string, limit: number, offset: number): Promise<GenreHitItem[]> {
+  const hints = getGenreHints(genre);
+  const merged: GenreHitItem[] = [];
+  for (const query of hints.deezerQueries) {
+    try {
+      const items = await searchTopTracks(query, limit, offset);
+      merged.push(...items);
+    } catch (err) {
+      console.warn('[discovery] Deezer genre search failed:', (err as Error).message);
+    }
+  }
+  return dedupeHits(merged)
+    .sort((a, b) => scoreGenreRelevance(b, hints) - scoreGenreRelevance(a, hints))
     .slice(0, limit);
 }
 
@@ -318,11 +533,22 @@ export async function getTopTracksByGenre(genre: string, limit = 20, offset = 0)
   if (!normalizedGenre) return [];
   if (!ALLOWED_GENRE_SET.has(normalizeGenreName(normalizedGenre))) return [];
 
-  try {
-    const spotify = await fetchSpotifyTracksByGenre(normalizedGenre, safeLimit, safeOffset);
-    if (spotify.length > 0) return spotify;
-  } catch (err) {
-    console.warn('[discovery] Spotify genre search failed:', (err as Error).message);
-  }
-  return [];
+  const hints = getGenreHints(normalizedGenre);
+  const [spotifyRes, deezerRes, lastFmRes] = await Promise.allSettled([
+    fetchSpotifyTracksByGenre(normalizedGenre, safeLimit, safeOffset),
+    fetchDeezerTracksByGenre(normalizedGenre, safeLimit, safeOffset),
+    fetchLastFmTopTracksByGenre(normalizedGenre, safeLimit, safeOffset),
+  ]);
+
+  const collected: GenreHitItem[] = [];
+  if (spotifyRes.status === 'fulfilled') collected.push(...spotifyRes.value);
+  else console.warn('[discovery] Spotify genre search failed:', spotifyRes.reason);
+  if (deezerRes.status === 'fulfilled') collected.push(...deezerRes.value);
+  else console.warn('[discovery] Deezer genre search failed:', deezerRes.reason);
+  if (lastFmRes.status === 'fulfilled') collected.push(...lastFmRes.value);
+  else console.warn('[discovery] Last.fm genre search failed:', lastFmRes.reason);
+
+  return dedupeHits(collected)
+    .sort((a, b) => scoreGenreRelevance(b, hints) - scoreGenreRelevance(a, hints))
+    .slice(0, safeLimit);
 }

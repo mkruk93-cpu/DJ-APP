@@ -11,7 +11,7 @@ import { initCache } from './cleanup.js';
 import { seedSettings, getActiveMode, getActiveFallbackGenre, getModeSettings, getSetting, setSetting } from './settings.js';
 import { getQueue, addToQueue, removeFromQueue, reorderQueue, fetchVideoInfo, extractYoutubeId, extractSourceId, isSoundcloudUrl, getThumbnailUrl } from './queue.js';
 import { canPerformAction } from './permissions.js';
-import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, playerEvents, setKeepFiles, invalidatePreload, setActiveFallbackGenre } from './player.js';
+import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, playerEvents, setKeepFiles, invalidatePreload, invalidateNextReady, removeQueueItemFromPreload, setActiveFallbackGenre } from './player.js';
 import { startBridge } from './bridge.js';
 import { startNowPlayingWatcher } from './nowPlaying.js';
 import { StreamHub } from './streamHub.js';
@@ -774,6 +774,7 @@ function resetVotes(): void {
 const MAX_DURATION = 3900;
 const ANYONE_SKIP_AFTER = 300;
 const DURATION_VOTE_TIMEOUT = 30_000;
+const QUEUE_PUSH_VOTE_TIMEOUT = 45_000;
 const MIN_SKIP_PLAY_SECONDS = 5;
 let skipCooldownPending = false;
 let skipCooldownFromTrackId: string | null = null;
@@ -906,7 +907,7 @@ async function finalizeQueuePushVote(): Promise<void> {
     }
 
     await reorderQueue(sb, vote.item_id, 1);
-    invalidatePreload();
+    invalidateNextReady();
     playerEvents.emit('queue:add');
     const updatedQueue = await getQueue(sb);
     io.emit('queue:update', { items: updatedQueue });
@@ -1075,7 +1076,6 @@ io.on('connection', (socket) => {
 
       // If not a valid URL, treat as a search query (e.g. from Spotify: "Artist - Title")
       if (!sourceId) {
-        socket.emit('info:toast', { message: `Zoeken: "${url}"...` });
         const searchResults = await youtubeSearch(url, 1);
         if (searchResults.length === 0) {
           socket.emit('error:toast', { message: `Geen resultaat gevonden voor "${url}"` });
@@ -1091,8 +1091,6 @@ io.on('connection', (socket) => {
         discoveredArtist = searchResults[0].channel ?? null;
         console.log(`[queue] Search "${data.youtube_url}" → ${searchResults[0].title} (${url})`);
       }
-
-      socket.emit('info:toast', { message: 'Even checken...' });
 
       const ytId = extractYoutubeId(url);
       const thumbnail = data.thumbnail ?? (ytId ? getThumbnailUrl(ytId) : null);
@@ -1189,7 +1187,7 @@ io.on('connection', (socket) => {
       const settings = await getModeSettings(sb);
       const required = Math.max(1, Math.ceil(io.engine.clientsCount * (settings.democracy_threshold / 100)));
       const proposedBy = normalizeNickname(data.added_by) ?? 'onbekend';
-      const vote = startQueuePushVote(item, proposedBy, socket.id, required, Math.max(5, settings.democracy_timer) * 1000);
+      const vote = startQueuePushVote(item, proposedBy, socket.id, required, QUEUE_PUSH_VOTE_TIMEOUT);
       socket.emit('info:toast', { message: 'Push-stemming gestart. Jouw stem telt al als ja.' });
       if (vote.yes >= required) {
         void finalizeQueuePushVote();
@@ -1378,7 +1376,7 @@ io.on('connection', (socket) => {
 
     try {
       await reorderQueue(sb, data.id, data.newPosition);
-      invalidatePreload();
+      invalidateNextReady();
       playerEvents.emit('queue:add');
       const queue = await getQueue(sb);
       io.emit('queue:update', { items: queue });
@@ -1403,7 +1401,8 @@ io.on('connection', (socket) => {
 
     try {
       await removeFromQueue(sb, data.id);
-      invalidatePreload();
+      removeQueueItemFromPreload(data.id);
+      invalidateNextReady();
       playerEvents.emit('queue:add');
       const queue = await getQueue(sb);
       io.emit('queue:update', { items: queue });

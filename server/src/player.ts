@@ -395,6 +395,37 @@ export function invalidatePreload(): void {
   broadcastUpcomingTrack();
 }
 
+export function invalidateNextReady(): void {
+  if (!nextReady) return;
+  if (!nextReady.isFallback && !keepFiles) {
+    cleanupFile(nextReady.audioFile);
+  }
+  nextReady = null;
+  broadcastUpcomingTrack();
+}
+
+export function removeQueueItemFromPreload(itemId: string): void {
+  if (!itemId) return;
+
+  if (nextReady?.queueItemId === itemId) {
+    if (!nextReady.isFallback && !keepFiles) cleanupFile(nextReady.audioFile);
+    nextReady = null;
+  }
+
+  const removed = preloadBuffer.filter((p) => p.item.id === itemId);
+  if (removed.length > 0) {
+    for (const entry of removed) {
+      if (!keepFiles) cleanupFile(entry.audioFile);
+    }
+    preloadBuffer = preloadBuffer.filter((p) => p.item.id !== itemId);
+  }
+
+  if (removed.length > 0) {
+    console.log(`[preload] Removed stale preloaded item: ${itemId}`);
+  }
+  broadcastUpcomingTrack();
+}
+
 function takeFromBuffer(itemId: string): PreloadedTrack | null {
   const idx = preloadBuffer.findIndex((p) => p.item.id === itemId);
   if (idx === -1) return null;
@@ -679,6 +710,17 @@ async function playNext(
 
   // ── FAST PATH: use pre-prepared track (instant, no DB call) ──
   // Guard against stale prepare races where "next" accidentally equals current.
+  if (nextReady?.queueItemId && !nextReady.isFallback) {
+    const freshQueue = await getQueue(sb);
+    if (!freshQueue.some((q) => q.id === nextReady?.queueItemId)) {
+      const stale = nextReady;
+      nextReady = null;
+      if (!keepFiles) cleanupFile(stale.audioFile);
+      console.warn(`[prepare] Dropped stale nextReady removed from queue: ${stale.title ?? stale.youtubeId}`);
+      broadcastUpcomingTrack();
+    }
+  }
+
   if (nextReady && nextReady.queueItemId !== currentTrack?.id) {
     const ready = nextReady;
     nextReady = null;
@@ -753,6 +795,14 @@ async function playNext(
           currentQueueItemId = null;
         }
         throw err;
+      }
+
+      const freshQueue = await getQueue(sb);
+      if (!freshQueue.some((q) => q.id === reservedQueueItemId)) {
+        if (audioFile && !keepFiles) cleanupFile(audioFile);
+        console.warn(`[player] Dropped removed queue item before playback: ${item.title ?? item.youtube_id}`);
+        if (currentQueueItemId === reservedQueueItemId) currentQueueItemId = null;
+        return;
       }
 
       trackTitle = item.title;
@@ -1224,6 +1274,14 @@ async function prepareNextTrack(
     while (item) {
       const buffered = takeFromBuffer(item.id);
       if (buffered) {
+        const freshQueue = await getQueue(sb);
+        if (!freshQueue.some((q) => q.id === item?.id)) {
+          if (!keepFiles) cleanupFile(buffered.audioFile);
+          console.log(`[prepare] Discarded preloaded removed from queue: ${item.title ?? item.youtube_id}`);
+          queue = freshQueue;
+          item = pickNextQueueItem(queue, currentItemId, currentQueueItemId);
+          continue;
+        }
         if (buffered.item.title) item.title = buffered.item.title;
         nextReady = {
           audioFile: buffered.audioFile,
@@ -1246,6 +1304,14 @@ async function prepareNextTrack(
         if (info.title && !item.title) item.title = info.title;
         console.log(`[prepare] Downloading next: ${item.title ?? item.youtube_id}`);
         const audioFile = await downloadAudio(item, cacheDir);
+        const freshQueue = await getQueue(sb);
+        if (!freshQueue.some((q) => q.id === item?.id)) {
+          if (!keepFiles) cleanupFile(audioFile);
+          console.log(`[prepare] Discarded downloaded removed from queue: ${item.title ?? item.youtube_id}`);
+          queue = freshQueue;
+          item = pickNextQueueItem(queue, currentItemId, currentQueueItemId);
+          continue;
+        }
         nextReady = {
           audioFile,
           title: item.title,
@@ -1262,6 +1328,7 @@ async function prepareNextTrack(
         break;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        if (!item) throw err;
         const removed = await markUnplayableQueueItem(sb, item, 'prepare', msg);
         if (!removed) {
           throw err;

@@ -23,6 +23,7 @@ import ShoutoutBanner from "@/components/ShoutoutBanner";
 import FallbackGenreSelector from "@/components/FallbackGenreSelector";
 import type { Track, QueueItem, Mode, ModeSettings, VoteState, DurationVote, UpcomingTrack } from "@/lib/types";
 import { parseTrackDisplay } from "@/lib/trackDisplay";
+import { useSyncedTrack } from "@/lib/useSyncedTrack";
 
 type StreamMode = "twitch" | "audio" | "radio" | "offline";
 type MobileTab = "chat" | "requests" | "radio" | "queue";
@@ -102,15 +103,23 @@ export default function StreamPage() {
   const [skipVoteToastExpiresAt, setSkipVoteToastExpiresAt] = useState<number | null>(null);
   const [skipVoteToastSecondsLeft, setSkipVoteToastSecondsLeft] = useState(0);
   const [skipVoteToastVoted, setSkipVoteToastVoted] = useState(false);
+  const [displayHeaderNextTrack, setDisplayHeaderNextTrack] = useState<{
+    title: string | null;
+    artist: string | null;
+    requestedBy: string | null;
+    isFallback: boolean;
+  } | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const infoToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipVoteCountdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const suppressNextQueueBadgeRef = useRef(false);
+  const prevVisibleTrackKeyRef = useRef("");
 
   const showRequests = twitchLive || (radioConnected && radioMode === "dj");
   const showRadioPanel = radioMode !== "dj";
   const showQueuePanel = radioMode !== "dj";
   const voteState = useRadioStore((s) => s.voteState);
+  const syncedCurrentTrack = useSyncedTrack(radioMode === "dj" ? null : radioTrack);
 
   function hydrateCurrentTrack(track: Track | null): Track | null {
     if (!track) return null;
@@ -175,6 +184,9 @@ export default function StreamPage() {
     if (!voteState) return;
     getSocket().emit("vote:skip", {});
     setSkipVoteToastVoted(true);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("skip-vote-cast"));
+    }
   }
 
   useEffect(() => {
@@ -217,6 +229,20 @@ export default function StreamPage() {
       setSkipVoteToastSecondsLeft(Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000)));
     }
   }, [voteState, skipVoteToastExpiresAt]);
+
+  useEffect(() => {
+    function onSkipVoteCast() {
+      setSkipVoteToastVoted(true);
+    }
+    if (typeof window !== "undefined") {
+      window.addEventListener("skip-vote-cast", onSkipVoteCast);
+    }
+    return () => {
+      if (typeof window !== "undefined") {
+        window.removeEventListener("skip-vote-cast", onSkipVoteCast);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!skipVoteToastExpiresAt) {
@@ -513,7 +539,30 @@ export default function StreamPage() {
   const nextTitle = parsedNext.title ?? nextSourceTitle;
   const nextArtist = parsedNext.artist;
   const nextRequestedBy = nextQueueItem?.added_by ?? upcomingTrack?.added_by ?? null;
+  const nextIsFallback = !nextQueueItem && !!upcomingTrack?.isFallback;
   const showHeaderNextOnly = mode === "radio" && !showRadioOfflineState;
+
+  useEffect(() => {
+    const visibleTrackKey = syncedCurrentTrack
+      ? `${syncedCurrentTrack.id}|${syncedCurrentTrack.started_at}`
+      : "none";
+    const visibleTrackChanged = prevVisibleTrackKeyRef.current !== visibleTrackKey;
+
+    if (visibleTrackChanged || !syncedCurrentTrack) {
+      if (nextTitle || nextArtist) {
+        setDisplayHeaderNextTrack({
+          title: nextTitle ?? null,
+          artist: nextArtist ?? null,
+          requestedBy: nextRequestedBy,
+          isFallback: nextIsFallback,
+        });
+      } else {
+        setDisplayHeaderNextTrack(null);
+      }
+    }
+
+    prevVisibleTrackKeyRef.current = visibleTrackKey;
+  }, [syncedCurrentTrack, nextTitle, nextArtist, nextRequestedBy, nextIsFallback]);
 
   return (
     <div className="relative flex h-dvh flex-col overflow-x-hidden overflow-y-hidden">
@@ -545,16 +594,16 @@ export default function StreamPage() {
           <div className="mt-2 rounded-lg border border-gray-700/60 bg-gray-800/60 px-2.5 py-1 sm:px-3 sm:py-1.5">
             <p className="truncate text-[11px] text-gray-300 sm:text-xs">
               <span className="mr-1 uppercase tracking-wider text-gray-500">Volgende:</span>
-              {nextArtist && <span className="text-violet-400">{nextArtist}</span>}
-              {nextArtist && nextTitle && <span className="text-gray-500"> — </span>}
-              {nextTitle && <span>{nextTitle}</span>}
-              {!nextTitle && <span className="text-gray-500">Nog geen track klaar...</span>}
-              {!nextQueueItem && upcomingTrack?.isFallback && (
+              {displayHeaderNextTrack?.artist && <span className="text-violet-400">{displayHeaderNextTrack.artist}</span>}
+              {displayHeaderNextTrack?.artist && displayHeaderNextTrack?.title && <span className="text-gray-500"> — </span>}
+              {displayHeaderNextTrack?.title && <span>{displayHeaderNextTrack.title}</span>}
+              {!displayHeaderNextTrack?.title && <span className="text-gray-500">Nog geen track klaar...</span>}
+              {displayHeaderNextTrack?.isFallback && (
                 <span className="ml-1 text-gray-500">(random)</span>
               )}
-              {nextRequestedBy && (
+              {displayHeaderNextTrack?.requestedBy && (
                 <span className="ml-1 text-gray-500">
-                  · door <span className="text-violet-300">{nextRequestedBy}</span>
+                  · door <span className="text-violet-300">{displayHeaderNextTrack.requestedBy}</span>
                 </span>
               )}
             </p>
@@ -587,7 +636,7 @@ export default function StreamPage() {
 
       <main className="flex min-h-0 flex-1 flex-col gap-1.5 p-1.5 sm:gap-4 sm:p-4 landscape:flex-row lg:flex-row">
         {/* Player */}
-        <div className="min-h-0 shrink-0 max-h-[38dvh] overflow-y-auto landscape:min-w-0 landscape:flex-1 landscape:max-h-none landscape:min-h-0 landscape:overflow-visible lg:min-w-0 lg:flex-1 lg:max-h-none lg:min-h-0 lg:overflow-visible">
+        <div className="min-h-0 shrink-0 max-h-[38dvh] overflow-x-hidden overflow-y-auto landscape:min-w-0 landscape:flex-1 landscape:max-h-none landscape:min-h-0 landscape:overflow-visible lg:min-w-0 lg:flex-1 lg:max-h-none lg:min-h-0 lg:overflow-visible">
           <ShoutoutBanner />
           {mode === "twitch" && <TwitchPlayer />}
           {mode === "audio" && icecastUrl && (
@@ -643,13 +692,7 @@ export default function StreamPage() {
           {radioConnected && (
             <div className="mt-1.5 space-y-1.5">
               <div className="flex min-w-0 flex-wrap items-center gap-1.5 pb-0.5">
-                <span
-                  className="shrink-0 whitespace-nowrap rounded-md border border-violet-700/50 bg-violet-900/25 px-2 py-1 text-[10px] font-semibold text-violet-200"
-                  title="Aantal nummers in wachtrij"
-                >
-                  Wachtrij: {queue.length}
-                </span>
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0 flex-[1.2]">
                   <FallbackGenreSelector />
                 </div>
                 <div className="min-w-0 flex-1">
@@ -716,7 +759,7 @@ export default function StreamPage() {
                   : "text-gray-400 hover:text-white"
               }`}
             >
-              Wachtrij
+              Wachtrij{queue.length > 0 ? ` (${queue.length})` : ""}
               {queueBadge && activeTab !== "queue" && (
                 <span className="absolute right-2 top-1/2 -translate-y-1/2 h-2 w-2 rounded-full bg-violet-400 animate-pulse" />
               )}
@@ -804,7 +847,7 @@ export default function StreamPage() {
                     : "bg-violet-500 text-white hover:bg-violet-400"
                 }`}
               >
-                {skipVoteToastVoted ? "Gestemd" : "Stem mee"}
+                {skipVoteToastVoted ? "Gestemd" : "Skip"}
               </button>
               <button
                 type="button"

@@ -401,7 +401,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   return (
     <div
       ref={playerRef}
-      className="audio-player-shell relative w-full overflow-visible rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5"
+      className="audio-player-shell relative w-full max-w-full overflow-x-hidden overflow-y-visible rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5"
     >
       <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-xl">
         <div className="player-kick-sweep absolute inset-0" />

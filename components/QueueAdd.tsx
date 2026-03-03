@@ -91,20 +91,70 @@ interface GenreHitRow extends GenreHit {
   query: string;
 }
 
+interface RecentAddState {
+  key: string;
+  url: string;
+  title: string;
+  artist?: string | null;
+  addedBy: string;
+  requestedAt: number;
+  until: number;
+}
+
+interface PendingUndoState {
+  key: string;
+  url: string;
+  title: string;
+  artist?: string | null;
+  addedBy: string;
+  requestedAt: number;
+}
+
 const FALLBACK_GENRES: GenreOption[] = [
   "hardcore",
   "uptempo",
   "gabber",
+  "industrial hardcore",
+  "krach",
+  "terror",
+  "terrorcore",
+  "mainstream hardcore",
+  "happy hardcore",
   "hardstyle",
+  "euphoric hardstyle",
   "rawstyle",
   "frenchcore",
   "techno",
   "hard techno",
   "trance",
+  "psy trance",
   "psytrance",
+  "deep house",
+  "future house",
   "house",
   "tech house",
+  "progressive house",
+  "electro house",
   "drum and bass",
+  "liquid drum and bass",
+  "neurofunk",
+  "bass house",
+  "big room",
+  "melodic techno",
+  "hard dance",
+  "dubstep",
+  "brostep",
+  "uk garage",
+  "rock",
+  "alternative",
+  "alternative rock",
+  "indie rock",
+  "metal",
+  "heavy metal",
+  "metalcore",
+  "death metal",
+  "punk",
+  "pop punk",
   "edm",
   "dance",
   "hiphop",
@@ -137,6 +187,11 @@ export default function QueueAdd() {
   const [searchQuery, setSearchQuery] = useState("");
   const [showResults, setShowResults] = useState(false);
   const [source, setSource] = useState<SearchSource>("youtube");
+  const [includeSets, setIncludeSets] = useState(false);
+  const [resultStatus, setResultStatus] = useState<Record<string, "idle" | "pending" | "added">>({});
+  const [recentAdd, setRecentAdd] = useState<RecentAddState | null>(null);
+  const [pendingUndo, setPendingUndo] = useState<PendingUndoState | null>(null);
+  const [undoSecondsLeft, setUndoSecondsLeft] = useState(0);
   const [genreQuery, setGenreQuery] = useState("");
   const [genres, setGenres] = useState<GenreOption[]>([]);
   const [genresLoading, setGenresLoading] = useState(false);
@@ -148,11 +203,17 @@ export default function QueueAdd() {
   const [activeGenre, setActiveGenre] = useState<string | null>(null);
   const [genreError, setGenreError] = useState<string | null>(null);
   const mode = useRadioStore((s) => s.mode);
+  const queue = useRadioStore((s) => s.queue);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const genreListRef = useRef<HTMLDivElement>(null);
+  const genreMenuRef = useRef<HTMLDetailsElement>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const searchListRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recentAddTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recentAddTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const searchOffsetRef = useRef(0);
+  const genreOffsetRef = useRef(0);
   const GENRE_PAGE_SIZE = 20;
   const SEARCH_PAGE_SIZE = 12;
 
@@ -160,6 +221,98 @@ export default function QueueAdd() {
   const canAdd = canPerformAction(mode, "add_to_queue", isRadioAdmin());
   const isUrl = isSupportedUrl(input.trim());
   const hasSpotifySource = isSpotifyConfigured();
+  const activeGenreLabel =
+    genres.find((genre) => genre.name === activeGenre || genre.id === activeGenre)?.name
+    ?? activeGenre
+    ?? "Genre selecteren";
+
+  function filterSetResults(items: SearchResult[]): SearchResult[] {
+    if (includeSets) return items;
+    return items.filter((item) => item.duration === null || item.duration <= 900);
+  }
+
+  function setSearchOffsetSafe(next: number) {
+    searchOffsetRef.current = next;
+    setSearchOffset(next);
+  }
+
+  function setGenreOffsetSafe(next: number) {
+    genreOffsetRef.current = next;
+    setGenreHitsOffset(next);
+  }
+
+  function getNickname(): string {
+    return typeof window !== "undefined"
+      ? localStorage.getItem("nickname") ?? "anonymous"
+      : "anonymous";
+  }
+
+  function normalizeForMatch(value: string | null | undefined): string {
+    return (value ?? "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function titleMatchesUndoCandidate(queueTitle: string | null | undefined, pending: PendingUndoState): boolean {
+    const queueNorm = normalizeForMatch(queueTitle);
+    const pendingNorm = normalizeForMatch(
+      pending.artist ? `${pending.artist} ${pending.title}` : pending.title,
+    );
+    if (!queueNorm || !pendingNorm) return false;
+    if (queueNorm.includes(pendingNorm) || pendingNorm.includes(queueNorm)) return true;
+    const tokens = pendingNorm.split(" ").filter((token) => token.length > 2);
+    if (tokens.length === 0) return false;
+    const hits = tokens.filter((token) => queueNorm.includes(token)).length;
+    return hits >= Math.max(2, Math.ceil(tokens.length * 0.5));
+  }
+
+  function findQueueItemForUndo(candidate: PendingUndoState) {
+    const queueByNewest = [...queue].reverse();
+    const minCreatedAt = candidate.requestedAt - 20_000;
+    const urlMatchFresh = queueByNewest.find((item) => {
+      if (item.youtube_url !== candidate.url) return false;
+      const createdAtMs = Date.parse(item.created_at ?? "");
+      return Number.isFinite(createdAtMs) ? createdAtMs >= minCreatedAt : true;
+    });
+    if (urlMatchFresh) return urlMatchFresh;
+    const urlMatchAny = queueByNewest.find((item) => item.youtube_url === candidate.url);
+    if (urlMatchAny) return urlMatchAny;
+    const ownerMatchFresh = queueByNewest.find((item) => {
+      if ((item.added_by ?? "").toLowerCase() !== candidate.addedBy.toLowerCase()) return false;
+      const createdAtMs = Date.parse(item.created_at ?? "");
+      if (Number.isFinite(createdAtMs) && createdAtMs < minCreatedAt) return false;
+      return titleMatchesUndoCandidate(item.title, candidate);
+    });
+    if (ownerMatchFresh) return ownerMatchFresh;
+    return queueByNewest.find((item) => {
+      if ((item.added_by ?? "").toLowerCase() !== candidate.addedBy.toLowerCase()) return false;
+      return titleMatchesUndoCandidate(item.title, candidate);
+    }) ?? null;
+  }
+
+  function startRecentAdd(
+    key: string,
+    url: string,
+    title: string,
+    artist?: string | null,
+  ): RecentAddState {
+    const now = Date.now();
+    const next: RecentAddState = {
+      key,
+      url,
+      title,
+      artist,
+      addedBy: getNickname(),
+      requestedAt: now,
+      until: now + 6500,
+    };
+    if (recentAddTimerRef.current) clearTimeout(recentAddTimerRef.current);
+    setRecentAdd(next);
+    recentAddTimerRef.current = setTimeout(() => setRecentAdd(null), 6500);
+    return next;
+  }
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -175,7 +328,7 @@ export default function QueueAdd() {
   const search = useCallback((query: string, append = false) => {
     if (!serverUrl || query.length < 2) {
       setResults([]);
-      setSearchOffset(0);
+      setSearchOffsetSafe(0);
       setSearchHasMore(false);
       setSearchQuery("");
       setSearching(false);
@@ -183,7 +336,7 @@ export default function QueueAdd() {
       return;
     }
 
-    const offset = append ? searchOffset : 0;
+    const offset = append ? searchOffsetRef.current : 0;
     if (append) setSearchingMore(true);
     else setSearching(true);
     fetch(
@@ -192,20 +345,21 @@ export default function QueueAdd() {
       .then((r) => r.json())
       .then((data: SearchResult[]) => {
         const normalized = Array.isArray(data) ? data : [];
+        const visible = filterSetResults(normalized);
         setResults((prev) => {
-          if (!append) return normalized;
-          const merged = [...prev, ...normalized];
+          if (!append) return visible;
+          const merged = [...prev, ...visible];
           return Array.from(new Map(merged.map((item) => [item.id, item])).values());
         });
         setSearchQuery(query);
-        setSearchOffset(offset + normalized.length);
-        setSearchHasMore(normalized.length >= SEARCH_PAGE_SIZE);
-        setShowResults(append ? true : normalized.length > 0);
+        setSearchOffsetSafe(offset + normalized.length);
+        setSearchHasMore(normalized.length > 0);
+        setShowResults(append ? true : visible.length > 0);
       })
       .catch(() => {
         if (!append) {
           setResults([]);
-          setSearchOffset(0);
+          setSearchOffsetSafe(0);
           setSearchHasMore(false);
         }
       })
@@ -213,7 +367,7 @@ export default function QueueAdd() {
         setSearching(false);
         setSearchingMore(false);
       });
-  }, [serverUrl, source, searchOffset]);
+  }, [serverUrl, source, includeSets]);
 
   const loadGenres = useCallback((query: string) => {
     if (!serverUrl) {
@@ -251,13 +405,13 @@ export default function QueueAdd() {
 
   const loadGenreHits = useCallback((genre: string, append = false) => {
     if (!serverUrl) return;
-    const offset = append ? genreHitsOffset : 0;
+    const offset = append ? genreOffsetRef.current : 0;
     if (append) {
       setGenreHitsLoadingMore(true);
     } else {
       setGenreHitsLoading(true);
       setGenreHits([]);
-      setGenreHitsOffset(0);
+      setGenreOffsetSafe(0);
       setGenreHasMore(false);
     }
     setActiveGenre(genre);
@@ -272,16 +426,20 @@ export default function QueueAdd() {
           ...item,
           query: `${item.artist} - ${item.title}`,
         }));
+        let addedUniqueCount = mapped.length;
         setGenreHits((prev) => {
           if (!append) return mapped;
           const merged = [...prev, ...mapped];
           const deduped = Array.from(
             new Map(merged.map((track) => [`${track.artist}-${track.title}`.toLowerCase(), track])).values(),
           );
+          addedUniqueCount = Math.max(0, deduped.length - prev.length);
           return deduped;
         });
-        setGenreHitsOffset(offset + GENRE_PAGE_SIZE);
-        setGenreHasMore(mapped.length >= GENRE_PAGE_SIZE);
+        setGenreOffsetSafe(offset + normalized.length);
+        setGenreHasMore(
+          normalized.length >= GENRE_PAGE_SIZE || (append ? addedUniqueCount > 0 : normalized.length > 0),
+        );
       })
       .catch(() => {
         if (!append) {
@@ -293,7 +451,7 @@ export default function QueueAdd() {
         setGenreHitsLoading(false);
         setGenreHitsLoadingMore(false);
       });
-  }, [serverUrl, genreHitsOffset]);
+  }, [serverUrl]);
 
   useEffect(() => {
     if (source !== "genres" || !activeGenre) return;
@@ -316,26 +474,21 @@ export default function QueueAdd() {
     return () => observer.disconnect();
   }, [source, activeGenre, genreHasMore, genreHitsLoading, genreHitsLoadingMore, loadGenreHits]);
 
-  useEffect(() => {
+  function handleSearchListScroll(e: React.UIEvent<HTMLDivElement>) {
     if (source === "spotify" || source === "genres") return;
-    const root = searchListRef.current;
-    const sentinel = loadMoreRef.current;
-    if (!root || !sentinel) return;
+    if (searching || searchingMore || !searchHasMore || !searchQuery) return;
+    const el = e.currentTarget;
+    const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 120;
+    if (nearBottom) search(searchQuery, true);
+  }
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const visible = entries.some((entry) => entry.isIntersecting);
-        if (!visible) return;
-        if (!searchHasMore || searching || searchingMore) return;
-        if (!searchQuery) return;
-        search(searchQuery, true);
-      },
-      { root, rootMargin: "160px" },
-    );
-
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [source, searchHasMore, searching, searchingMore, searchQuery, search]);
+  function handleGenreListScroll(e: React.UIEvent<HTMLDivElement>) {
+    if (source !== "genres" || !activeGenre) return;
+    if (genreHitsLoading || genreHitsLoadingMore || !genreHasMore) return;
+    const el = e.currentTarget;
+    const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 120;
+    if (nearBottom) loadGenreHits(activeGenre, true);
+  }
 
   useEffect(() => {
     if (source !== "genres") return;
@@ -345,6 +498,70 @@ export default function QueueAdd() {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [genreQuery, source, loadGenres]);
+
+  useEffect(() => {
+    if (source !== "genres") return;
+    if (!genreMenuRef.current) return;
+    if (genreQuery.trim().length > 0) {
+      genreMenuRef.current.open = true;
+    }
+  }, [genreQuery, source]);
+
+  useEffect(() => {
+    if (!recentAdd) {
+      setUndoSecondsLeft(0);
+      if (recentAddTickRef.current) {
+        clearInterval(recentAddTickRef.current);
+        recentAddTickRef.current = null;
+      }
+      return;
+    }
+
+    const tick = () => {
+      const next = Math.max(0, Math.ceil((recentAdd.until - Date.now()) / 1000));
+      setUndoSecondsLeft(next);
+      if (next <= 0) {
+        setRecentAdd(null);
+        if (recentAddTickRef.current) {
+          clearInterval(recentAddTickRef.current);
+          recentAddTickRef.current = null;
+        }
+      }
+    };
+    tick();
+    if (recentAddTickRef.current) clearInterval(recentAddTickRef.current);
+    recentAddTickRef.current = setInterval(tick, 1000);
+    return () => {
+      if (recentAddTickRef.current) {
+        clearInterval(recentAddTickRef.current);
+        recentAddTickRef.current = null;
+      }
+    };
+  }, [recentAdd]);
+
+  useEffect(() => {
+    if (!pendingUndo) return;
+    const match = findQueueItemForUndo(pendingUndo);
+    if (!match) return;
+    getSocket().emit("queue:remove", {
+      id: match.id,
+      added_by: getNickname(),
+      token: getRadioToken(),
+    });
+    setResultStatus((prev) => ({ ...prev, [pendingUndo.key]: "idle" }));
+    setRecentAdd(null);
+    setPendingUndo(null);
+    setFeedback({ msg: "Toevoeging ongedaan gemaakt.", ok: true });
+  }, [pendingUndo, queue]);
+
+  useEffect(() => {
+    if (source === "spotify" || source === "genres") return;
+    const query = searchQuery.trim();
+    if (query.length < 2) return;
+    setSearchOffsetSafe(0);
+    setSearchHasMore(false);
+    search(query, false);
+  }, [includeSets, source, searchQuery, search]);
 
   if (!canAdd) return null;
 
@@ -356,7 +573,7 @@ export default function QueueAdd() {
 
     if (isSupportedUrl(value.trim())) {
       setResults([]);
-      setSearchOffset(0);
+      setSearchOffsetSafe(0);
       setSearchHasMore(false);
       setSearchQuery("");
       setShowResults(false);
@@ -368,7 +585,7 @@ export default function QueueAdd() {
       debounceRef.current = setTimeout(() => search(query, false), 260);
     } else {
       setResults([]);
-      setSearchOffset(0);
+      setSearchOffsetSafe(0);
       setSearchHasMore(false);
       setSearchQuery("");
       setShowResults(false);
@@ -381,10 +598,20 @@ export default function QueueAdd() {
     setTimeout(() => setFeedback(null), 5000);
   }
 
-  function submitUrl(url: string, thumbnail?: string, title?: string | null, artist?: string | null) {
+  function submitUrl(
+    url: string,
+    thumbnail?: string,
+    title?: string | null,
+    artist?: string | null,
+    options?: {
+      keepResults?: boolean;
+      keepInput?: boolean;
+      onError?: () => void;
+    },
+  ) {
     setSubmitting(true);
     setFeedback({ msg: "Aanvraag verstuurd...", ok: true });
-    setShowResults(false);
+    if (!options?.keepResults) setShowResults(false);
 
     const nickname =
       typeof window !== "undefined"
@@ -395,7 +622,8 @@ export default function QueueAdd() {
 
     function onError(data: { message: string }) {
       showFeedback(data.message, false);
-      setInput("");
+      if (!options?.keepInput) setInput("");
+      options?.onError?.();
       cleanup();
     }
 
@@ -416,7 +644,7 @@ export default function QueueAdd() {
 
     // Do not block consecutive submissions while server validates this one.
     setSubmitting(false);
-    setInput("");
+    if (!options?.keepInput) setInput("");
 
     setTimeout(() => {
       cleanup();
@@ -441,19 +669,59 @@ export default function QueueAdd() {
   }
 
   function selectResult(result: SearchResult) {
-    setInput(result.title);
-    setResults([]);
-    setSearchOffset(0);
-    setSearchHasMore(false);
-    setSearchQuery("");
-    setShowResults(false);
-    submitUrl(result.url, result.thumbnail || undefined, result.title, result.channel);
+    const key = `${source}:${result.id}`;
+    setResultStatus((prev) => ({ ...prev, [key]: "pending" }));
+
+    startRecentAdd(key, result.url, result.title, result.channel);
+    setResultStatus((prev) => ({ ...prev, [key]: "added" }));
+    submitUrl(
+      result.url,
+      result.thumbnail || undefined,
+      result.title,
+      result.channel,
+      {
+        keepResults: true,
+        keepInput: true,
+        onError: () => {
+          setResultStatus((prev) => ({ ...prev, [key]: "idle" }));
+          setRecentAdd((prev) => (prev?.key === key ? null : prev));
+        },
+      },
+    );
+  }
+
+  function undoRecentAdd() {
+    if (!recentAdd) return;
+    const target: PendingUndoState = {
+      key: recentAdd.key,
+      url: recentAdd.url,
+      title: recentAdd.title,
+      artist: recentAdd.artist,
+      addedBy: recentAdd.addedBy,
+      requestedAt: recentAdd.requestedAt,
+    };
+    const queueItem = findQueueItemForUndo(target);
+    if (!queueItem) {
+      setPendingUndo(target);
+      setRecentAdd(null);
+      setFeedback({ msg: "Ongedaan maken wordt uitgevoerd zodra het nummer in de wachtrij verschijnt.", ok: true });
+      return;
+    }
+    getSocket().emit("queue:remove", {
+      id: queueItem.id,
+      added_by: getNickname(),
+      token: getRadioToken(),
+    });
+    setResultStatus((prev) => ({ ...prev, [recentAdd.key]: "idle" }));
+    setRecentAdd(null);
+    setPendingUndo(null);
+    setFeedback({ msg: "Toevoeging ongedaan gemaakt.", ok: true });
   }
 
   function switchSource(newSource: SearchSource) {
     setSource(newSource);
     setResults([]);
-    setSearchOffset(0);
+    setSearchOffsetSafe(0);
     setSearchHasMore(false);
     setSearchQuery("");
     setShowResults(false);
@@ -461,7 +729,7 @@ export default function QueueAdd() {
     if (newSource === "genres") {
       setInput("");
       setGenreHits([]);
-      setGenreHitsOffset(0);
+      setGenreOffsetSafe(0);
       setGenreHasMore(false);
       setActiveGenre(null);
       loadGenres(genreQuery);
@@ -478,11 +746,11 @@ export default function QueueAdd() {
           .then((r) => r.json())
           .then((data: SearchResult[]) => {
             const normalized = Array.isArray(data) ? data : [];
-            setResults(normalized);
-            setSearchOffset(normalized.length);
-            setSearchHasMore(normalized.length >= SEARCH_PAGE_SIZE);
+            setResults(filterSetResults(normalized));
+            setSearchOffsetSafe(normalized.length);
+            setSearchHasMore(normalized.length > 0);
             setSearchQuery(query);
-            setShowResults(normalized.length > 0);
+            setShowResults(filterSetResults(normalized).length > 0);
           })
           .catch(() => setResults([]))
           .finally(() => setSearching(false));
@@ -490,8 +758,19 @@ export default function QueueAdd() {
     }
   }
 
-  function handleSpotifyAdd(track: { query: string; artist?: string | null; title?: string | null }) {
-    submitUrl(track.query);
+  function handleSpotifyAdd(track: { id?: string; query: string; artist?: string | null; title?: string | null }) {
+    const spotifyKey = track.id ? `spotify:${track.id}` : `spotify:${Date.now()}`;
+    setResultStatus((prev) => ({ ...prev, [spotifyKey]: "added" }));
+    setTimeout(() => {
+      setResultStatus((prev) => ({ ...prev, [spotifyKey]: "idle" }));
+    }, 4000);
+    startRecentAdd(
+      spotifyKey,
+      track.query,
+      (track.title ?? track.query).trim(),
+      track.artist ?? null,
+    );
+    submitUrl(track.query, undefined, track.title ?? null, track.artist ?? null);
   }
 
   return (
@@ -598,31 +877,68 @@ export default function QueueAdd() {
             <input
               type="text"
               value={genreQuery}
-              onChange={(e) => setGenreQuery(e.target.value)}
-              placeholder="Zoek genre (hardstyle, techno, hiphop, nederlands...)"
+              onChange={(e) => {
+                setGenreQuery(e.target.value);
+                if (genreMenuRef.current) genreMenuRef.current.open = true;
+              }}
+              onFocus={() => {
+                if (genreMenuRef.current) genreMenuRef.current.open = true;
+              }}
+              placeholder="Zoek genre (hardstyle, trance, rock, metal...)"
               className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-fuchsia-500"
             />
-            <select
-              value={activeGenre ?? ""}
-              onChange={(e) => {
-                const next = e.target.value;
-                setActiveGenre(next || null);
-                if (next) loadGenreHits(next, false);
-                else {
-                  setGenreHits([]);
-                  setGenreHitsOffset(0);
-                  setGenreHasMore(false);
-                }
-              }}
-              className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white outline-none transition focus:border-fuchsia-500"
-            >
-              <option value="">Kies eerst een genre...</option>
-              {genres.map((genre) => (
-                <option key={genre.id} value={genre.name}>
-                  {genre.name}
-                </option>
-              ))}
-            </select>
+            <details ref={genreMenuRef} className="group relative z-40">
+              <summary className="grid cursor-pointer list-none grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-gray-700 bg-gray-900/75 px-2.5 py-1.5 text-xs text-gray-200 transition hover:border-violet-500/60">
+                <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] font-semibold text-gray-300">
+                  Genre
+                </span>
+                <span className="min-w-0 truncate text-center text-[12px] font-semibold text-fuchsia-300">
+                  {activeGenreLabel}
+                </span>
+                <span className="justify-self-end text-gray-400 transition group-open:rotate-180">▾</span>
+              </summary>
+              <div className="relative z-40 mt-1 max-h-60 overflow-y-auto rounded-md border border-gray-700 bg-gray-900/95 p-1 shadow-lg shadow-black/40">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveGenre(null);
+                    setGenreHits([]);
+                    setGenreOffsetSafe(0);
+                    setGenreHasMore(false);
+                    if (genreMenuRef.current) genreMenuRef.current.open = false;
+                  }}
+                  className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
+                    !activeGenre
+                      ? "bg-violet-600/25 text-violet-100"
+                      : "text-gray-300 hover:bg-gray-800 hover:text-white"
+                  }`}
+                >
+                  <span className="truncate">Genre selecteren</span>
+                </button>
+                <div className="my-1 border-b border-gray-800/80" />
+                {genres.map((genre) => {
+                  const isActive = activeGenre === genre.name || activeGenre === genre.id;
+                  return (
+                    <button
+                      key={genre.id}
+                      type="button"
+                      onClick={() => {
+                        setActiveGenre(genre.name);
+                        loadGenreHits(genre.name, false);
+                        if (genreMenuRef.current) genreMenuRef.current.open = false;
+                      }}
+                      className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
+                        isActive
+                          ? "bg-violet-600/25 text-violet-100"
+                          : "text-gray-300 hover:bg-gray-800 hover:text-white"
+                      }`}
+                    >
+                      <span className="truncate">{genre.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </details>
             {genresLoading && (
               <p className="text-xs text-gray-400">Genres laden...</p>
             )}
@@ -633,7 +949,11 @@ export default function QueueAdd() {
               <p className="text-xs text-gray-400">Geen genres gevonden. Probeer een andere zoekterm.</p>
             )}
 
-            <div ref={genreListRef} className="max-h-64 overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70">
+            <div
+              ref={genreListRef}
+              onScroll={handleGenreListScroll}
+              className="max-h-64 overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70"
+            >
               {genreHitsLoading ? (
                 <p className="px-3 py-3 text-xs text-gray-400">Hitlijst laden...</p>
               ) : genreHits.length === 0 ? (
@@ -654,11 +974,32 @@ export default function QueueAdd() {
                     </div>
                     <button
                       type="button"
-                      onClick={() => submitUrl(item.query, item.thumbnail || undefined)}
+                      onClick={() => {
+                        const key = `genres:${item.id}`;
+                        setResultStatus((prev) => ({ ...prev, [key]: "pending" }));
+                        setTimeout(() => {
+                          setResultStatus((prev) => ({ ...prev, [key]: "added" }));
+                        }, 120);
+                        setTimeout(() => {
+                          setResultStatus((prev) => ({ ...prev, [key]: "idle" }));
+                        }, 4000);
+                        startRecentAdd(key, item.query, item.title, item.artist);
+                        submitUrl(item.query, item.thumbnail || undefined, item.title, item.artist);
+                      }}
                       disabled={submitting}
-                      className="rounded-md bg-violet-600 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-violet-500 disabled:opacity-50"
+                      className={`rounded-md px-2.5 py-1 text-xs font-semibold text-white transition disabled:opacity-50 ${
+                        resultStatus[`genres:${item.id}`] === "added"
+                          ? "bg-green-600 hover:bg-green-500"
+                          : resultStatus[`genres:${item.id}`] === "pending"
+                            ? "bg-violet-500/80"
+                            : "bg-violet-600 hover:bg-violet-500"
+                      }`}
                     >
-                      Toevoegen
+                      {resultStatus[`genres:${item.id}`] === "added"
+                        ? "Toegevoegd"
+                        : resultStatus[`genres:${item.id}`] === "pending"
+                          ? "Bezig..."
+                          : "Toevoegen"}
                     </button>
                   </div>
                 ))
@@ -682,8 +1023,22 @@ export default function QueueAdd() {
                     ? "Zoek op YouTube of plak een link..."
                     : "Zoek op SoundCloud of plak een link..."
                 }
-                className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
+                className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 pr-20 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
               />
+              <button
+                type="button"
+                onClick={() => setIncludeSets((prev) => !prev)}
+                className={`absolute right-10 top-1/2 -translate-y-1/2 rounded-full border px-2 py-0.5 text-[10px] font-semibold transition ${
+                  includeSets
+                    ? "border-violet-500/70 bg-violet-500/20 text-violet-200"
+                    : "border-gray-600 bg-gray-800/80 text-gray-300 hover:border-gray-500"
+                }`}
+                aria-pressed={includeSets}
+                aria-label="Setjes tonen (langer dan 15 minuten)"
+                title="Setjes tonen (> 15 min)"
+              >
+                Sets tonen
+              </button>
               {searching && (
                 <div className="absolute right-3 top-1/2 -translate-y-1/2">
                   <span className="block h-4 w-4 animate-spin rounded-full border-2 border-violet-400 border-t-transparent" />
@@ -708,7 +1063,11 @@ export default function QueueAdd() {
 
       {/* Search results dropdown */}
       {showResults && results.length > 0 && (
-        <div ref={searchListRef} className="absolute left-0 right-0 z-50 mt-1 max-h-[70dvh] overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50">
+        <div
+          ref={searchListRef}
+          onScroll={handleSearchListScroll}
+          className="absolute left-0 right-0 z-50 mt-1 max-h-[70dvh] overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50"
+        >
           {results.map((r) => (
             <button
               key={r.id}
@@ -740,6 +1099,16 @@ export default function QueueAdd() {
                   )}
                 </div>
               </div>
+              {resultStatus[`${source}:${r.id}`] === "added" && (
+                <span className="shrink-0 rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
+                  Toegevoegd
+                </span>
+              )}
+              {resultStatus[`${source}:${r.id}`] === "pending" && (
+                <span className="shrink-0 rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-300">
+                  Bezig...
+                </span>
+              )}
               {r.duration !== null && r.duration > 3900 && (
                 <span className="shrink-0 rounded bg-red-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-red-400">
                   Te lang
@@ -751,6 +1120,22 @@ export default function QueueAdd() {
             <p className="px-3 py-2 text-[11px] text-gray-400">Meer resultaten laden...</p>
           )}
           <div ref={loadMoreRef} className="h-1 w-full" />
+        </div>
+      )}
+      {recentAdd && (
+        <div className="pointer-events-none absolute left-0 right-0 top-2 z-[70] px-2">
+          <div className="pointer-events-auto flex items-center justify-between gap-2 rounded-lg border border-violet-800/60 bg-violet-950/95 px-3 py-2 text-xs text-violet-100 shadow-lg shadow-violet-900/30 backdrop-blur">
+            <span className="min-w-0 flex-1 truncate">
+              Toegevoegd: <span className="font-semibold">{recentAdd.title}</span> · {undoSecondsLeft}s
+            </span>
+            <button
+              type="button"
+              onClick={undoRecentAdd}
+              className="rounded-md border border-violet-600/70 px-2 py-1 font-semibold text-violet-100 transition hover:bg-violet-800/50"
+            >
+              Ongedaan maken
+            </button>
+          </div>
         </div>
       )}
       </div>

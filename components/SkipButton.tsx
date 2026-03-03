@@ -52,6 +52,9 @@ export default function SkipButton({ compact = false }: { compact?: boolean }) {
     if (skipLocked) return;
     getSocket().emit("vote:skip", {});
     setVoted(true);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("skip-vote-cast"));
+    }
   }
 
   function handleAnyoneSkip() {

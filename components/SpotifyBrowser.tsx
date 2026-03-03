@@ -14,7 +14,7 @@ import {
 } from "@/lib/spotify";
 
 interface SpotifyBrowserProps {
-  onAddTrack: (track: { query: string; artist?: string | null; title?: string | null }) => void;
+  onAddTrack: (track: { id?: string; query: string; artist?: string | null; title?: string | null }) => void;
   submitting: boolean;
 }
 
@@ -220,7 +220,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
       const artists = track.artists?.map((a) => a?.name).filter(Boolean).join(", ") || "Unknown";
       const query = `${artists} - ${track.name ?? "Unknown"}`;
       setAddedTrackId(track.id);
-      onAddTrack({ query, artist: artists, title: track.name ?? null });
+      onAddTrack({ id: track.id ?? undefined, query, artist: artists, title: track.name ?? null });
       setTimeout(() => setAddedTrackId(null), 3000);
     } catch {}
   }
@@ -517,9 +517,9 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
                     {track.duration_ms ? formatDuration(track.duration_ms) : ""}
                   </span>
                   {isAdded ? (
-                    <svg className="h-3.5 w-3.5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                    </svg>
+                    <span className="rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
+                      Toegevoegd
+                    </span>
                   ) : (
                     <svg className="h-3.5 w-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
