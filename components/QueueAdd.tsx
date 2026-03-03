@@ -159,6 +159,7 @@ export default function QueueAdd() {
   const serverUrl = useRadioStore((s) => s.serverUrl) ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
   const canAdd = canPerformAction(mode, "add_to_queue", isRadioAdmin());
   const isUrl = isSupportedUrl(input.trim());
+  const hasSpotifySource = isSpotifyConfigured();
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -506,10 +507,10 @@ export default function QueueAdd() {
           <button
             type="button"
             onClick={() => switchSource("youtube")}
-            className={`group flex h-8 min-w-0 items-center rounded-md text-[11px] font-semibold transition ${
+            className={`group flex h-8 min-w-0 basis-0 items-center justify-center rounded-md px-1.5 text-[11px] font-semibold transition-all duration-200 ${
               source === "youtube"
-                ? "flex-1 justify-start bg-red-500/20 px-2.5 text-red-400"
-                : "w-8 shrink-0 justify-center px-0 text-gray-400 hover:text-gray-200"
+                ? "flex-[1.4] bg-red-500/20 text-red-400"
+                : "flex-1 text-gray-400 hover:text-gray-200"
             }`}
           >
             <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor">
@@ -517,7 +518,7 @@ export default function QueueAdd() {
             </svg>
             <span
               className={`overflow-hidden whitespace-nowrap transition-all duration-200 ${
-                source === "youtube" ? "ml-1.5 max-w-[120px] opacity-100" : "max-w-0 opacity-0"
+                source === "youtube" ? "ml-1 max-w-[86px] opacity-100" : "max-w-0 opacity-0"
               }`}
             >
               YouTube
@@ -526,10 +527,10 @@ export default function QueueAdd() {
           <button
             type="button"
             onClick={() => switchSource("soundcloud")}
-            className={`group flex h-8 min-w-0 items-center rounded-md text-[11px] font-semibold transition ${
+            className={`group flex h-8 min-w-0 basis-0 items-center justify-center rounded-md px-1.5 text-[11px] font-semibold transition-all duration-200 ${
               source === "soundcloud"
-                ? "flex-1 justify-start bg-orange-500/20 px-2.5 text-orange-400"
-                : "w-8 shrink-0 justify-center px-0 text-gray-400 hover:text-gray-200"
+                ? "flex-[1.4] bg-orange-500/20 text-orange-400"
+                : "flex-1 text-gray-400 hover:text-gray-200"
             }`}
           >
             <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor">
@@ -537,7 +538,7 @@ export default function QueueAdd() {
             </svg>
             <span
               className={`overflow-hidden whitespace-nowrap transition-all duration-200 ${
-                source === "soundcloud" ? "ml-1.5 max-w-[120px] opacity-100" : "max-w-0 opacity-0"
+                source === "soundcloud" ? "ml-1 max-w-[86px] opacity-100" : "max-w-0 opacity-0"
               }`}
             >
               SoundCloud
@@ -546,10 +547,10 @@ export default function QueueAdd() {
           <button
             type="button"
             onClick={() => switchSource("genres")}
-            className={`group flex h-8 min-w-0 items-center rounded-md text-[11px] font-semibold transition ${
+            className={`group flex h-8 min-w-0 basis-0 items-center justify-center rounded-md px-1.5 text-[11px] font-semibold transition-all duration-200 ${
               source === "genres"
-                ? "flex-1 justify-start bg-fuchsia-500/20 px-2.5 text-fuchsia-300"
-                : "w-8 shrink-0 justify-center px-0 text-gray-400 hover:text-gray-200"
+                ? "flex-[1.4] bg-fuchsia-500/20 text-fuchsia-300"
+                : "flex-1 text-gray-400 hover:text-gray-200"
             }`}
           >
             <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -558,20 +559,20 @@ export default function QueueAdd() {
             </svg>
             <span
               className={`overflow-hidden whitespace-nowrap transition-all duration-200 ${
-                source === "genres" ? "ml-1.5 max-w-[120px] opacity-100" : "max-w-0 opacity-0"
+                source === "genres" ? "ml-1 max-w-[86px] opacity-100" : "max-w-0 opacity-0"
               }`}
             >
               Genres
             </span>
           </button>
-          {isSpotifyConfigured() && (
+          {hasSpotifySource && (
             <button
               type="button"
               onClick={() => switchSource("spotify")}
-              className={`group flex h-8 min-w-0 items-center rounded-md text-[11px] font-semibold transition ${
+              className={`group flex h-8 min-w-0 basis-0 items-center justify-center rounded-md px-1.5 text-[11px] font-semibold transition-all duration-200 ${
                 source === "spotify"
-                  ? "flex-1 justify-start bg-[#1DB954]/20 px-2.5 text-[#1DB954]"
-                  : "w-8 shrink-0 justify-center px-0 text-gray-400 hover:text-gray-200"
+                  ? "flex-[1.4] bg-[#1DB954]/20 text-[#1DB954]"
+                  : "flex-1 text-gray-400 hover:text-gray-200"
               }`}
             >
               <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor">
@@ -579,7 +580,7 @@ export default function QueueAdd() {
               </svg>
               <span
                 className={`overflow-hidden whitespace-nowrap transition-all duration-200 ${
-                  source === "spotify" ? "ml-1.5 max-w-[120px] opacity-100" : "max-w-0 opacity-0"
+                  source === "spotify" ? "ml-1 max-w-[86px] opacity-100" : "max-w-0 opacity-0"
                 }`}
               >
                 Spotify

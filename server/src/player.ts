@@ -9,7 +9,7 @@ import { clearQueueItem, getQueue, fetchVideoInfo } from './queue.js';
 import { cleanupFile } from './cleanup.js';
 import type { StreamHub } from './streamHub.js';
 import { pickRandomFallbackForGenre } from './fallbackGenres.js';
-import { fetchArtwork } from './artwork.js';
+import { fetchArtworkCandidate } from './artwork.js';
 
 export const playerEvents = new EventEmitter();
 
@@ -87,6 +87,27 @@ function getAudioDuration(filePath: string): Promise<number | null> {
 
 const fallbackArtworkCache = new Map<string, string | null>();
 const FALLBACK_ART_MAX_BYTES = 2 * 1024 * 1024;
+
+function normalizeTokens(input: string): string[] {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(' ')
+    .map((part) => part.trim())
+    .filter((part) => part.length > 1);
+}
+
+function tokenOverlapRatio(a: string, b: string): number {
+  const ta = normalizeTokens(a);
+  const tb = normalizeTokens(b);
+  if (ta.length === 0 || tb.length === 0) return 0;
+  const setB = new Set(tb);
+  let hits = 0;
+  for (const token of ta) {
+    if (setB.has(token)) hits += 1;
+  }
+  return hits / ta.length;
+}
 
 function mimeForImageExtension(ext: string): string | null {
   switch (ext.toLowerCase()) {
@@ -178,11 +199,17 @@ async function getFallbackArtworkDataUrl(filePath: string): Promise<string | nul
   const guessedArtist = splitIdx > 0 ? guessedTitle.slice(0, splitIdx).trim() : '';
   const guessedTrackTitle = splitIdx > 0 ? guessedTitle.slice(splitIdx + 3).trim() : guessedTitle;
 
-  // Match DJ-mode behavior: first try remote artwork lookup.
-  const remoteArtwork = await fetchArtwork(guessedArtist, guessedTrackTitle);
-  if (remoteArtwork) {
-    fallbackArtworkCache.set(filePath, remoteArtwork);
-    return remoteArtwork;
+  // Match DJ-mode source, but only trust remote artwork for high-confidence artist/title matches.
+  if (guessedArtist && guessedTrackTitle) {
+    const candidate = await fetchArtworkCandidate(guessedArtist, guessedTrackTitle);
+    if (candidate?.artworkUrl) {
+      const artistScore = tokenOverlapRatio(guessedArtist, candidate.artistName ?? '');
+      const titleScore = tokenOverlapRatio(guessedTrackTitle, candidate.trackName ?? '');
+      if (artistScore >= 0.5 && titleScore >= 0.4) {
+        fallbackArtworkCache.set(filePath, candidate.artworkUrl);
+        return candidate.artworkUrl;
+      }
+    }
   }
 
   const dir = path.dirname(filePath);

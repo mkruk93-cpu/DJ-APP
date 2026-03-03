@@ -98,13 +98,19 @@ export default function StreamPage() {
   const [preferRadioUi, setPreferRadioUi] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [infoToastMessage, setInfoToastMessage] = useState<string | null>(null);
+  const [skipVoteToastHidden, setSkipVoteToastHidden] = useState(false);
+  const [skipVoteToastExpiresAt, setSkipVoteToastExpiresAt] = useState<number | null>(null);
+  const [skipVoteToastSecondsLeft, setSkipVoteToastSecondsLeft] = useState(0);
+  const [skipVoteToastVoted, setSkipVoteToastVoted] = useState(false);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const infoToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const skipVoteCountdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const suppressNextQueueBadgeRef = useRef(false);
 
   const showRequests = twitchLive || (radioConnected && radioMode === "dj");
   const showRadioPanel = radioMode !== "dj";
   const showQueuePanel = radioMode !== "dj";
+  const voteState = useRadioStore((s) => s.voteState);
 
   function hydrateCurrentTrack(track: Track | null): Track | null {
     if (!track) return null;
@@ -161,6 +167,16 @@ export default function StreamPage() {
     }
   }
 
+  function dismissSkipVoteToast(): void {
+    setSkipVoteToastHidden(true);
+  }
+
+  function castSkipVoteFromToast(): void {
+    if (!voteState) return;
+    getSocket().emit("vote:skip", {});
+    setSkipVoteToastVoted(true);
+  }
+
   useEffect(() => {
     if (!showRequests && activeTab === "requests") {
       setActiveTab(radioConnected ? "radio" : "chat");
@@ -180,6 +196,57 @@ export default function StreamPage() {
       else setActiveTab(showRequests ? "requests" : "chat");
     }
   }, [showQueuePanel, showRadioPanel, activeTab, showRequests]);
+
+  useEffect(() => {
+    if (!voteState || voteState.votes <= 0) {
+      setSkipVoteToastExpiresAt(null);
+      setSkipVoteToastSecondsLeft(0);
+      setSkipVoteToastHidden(false);
+      setSkipVoteToastVoted(false);
+      if (skipVoteCountdownRef.current) {
+        clearInterval(skipVoteCountdownRef.current);
+        skipVoteCountdownRef.current = null;
+      }
+      return;
+    }
+
+    setSkipVoteToastHidden(false);
+    if (!skipVoteToastExpiresAt) {
+      const expiresAt = Date.now() + Math.max(1, voteState.timer ?? 15) * 1000;
+      setSkipVoteToastExpiresAt(expiresAt);
+      setSkipVoteToastSecondsLeft(Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000)));
+    }
+  }, [voteState, skipVoteToastExpiresAt]);
+
+  useEffect(() => {
+    if (!skipVoteToastExpiresAt) {
+      if (skipVoteCountdownRef.current) {
+        clearInterval(skipVoteCountdownRef.current);
+        skipVoteCountdownRef.current = null;
+      }
+      return;
+    }
+
+    const tick = () => {
+      const next = Math.max(0, Math.ceil((skipVoteToastExpiresAt - Date.now()) / 1000));
+      setSkipVoteToastSecondsLeft(next);
+      if (next <= 0 && skipVoteCountdownRef.current) {
+        clearInterval(skipVoteCountdownRef.current);
+        skipVoteCountdownRef.current = null;
+      }
+    };
+
+    tick();
+    if (skipVoteCountdownRef.current) clearInterval(skipVoteCountdownRef.current);
+    skipVoteCountdownRef.current = setInterval(tick, 1000);
+
+    return () => {
+      if (skipVoteCountdownRef.current) {
+        clearInterval(skipVoteCountdownRef.current);
+        skipVoteCountdownRef.current = null;
+      }
+    };
+  }, [skipVoteToastExpiresAt]);
 
   useEffect(() => {
     const nickname = localStorage.getItem("nickname");
@@ -383,6 +450,10 @@ export default function StreamPage() {
       if (infoToastTimerRef.current) {
         clearTimeout(infoToastTimerRef.current);
         infoToastTimerRef.current = null;
+      }
+      if (skipVoteCountdownRef.current) {
+        clearInterval(skipVoteCountdownRef.current);
+        skipVoteCountdownRef.current = null;
       }
       suppressNextQueueBadgeRef.current = false;
       clearInterval(stateSyncInterval);
@@ -698,6 +769,51 @@ export default function StreamPage() {
         <div className="pointer-events-none fixed bottom-4 left-1/2 z-[120] w-[92%] max-w-xl -translate-x-1/2">
           <div className="rounded-lg border border-red-900/60 bg-red-950/85 px-4 py-2 text-center text-sm text-red-100 shadow-lg shadow-red-900/40 backdrop-blur-sm">
             {toastMessage}
+          </div>
+        </div>
+      )}
+      {voteState && voteState.votes > 0 && !skipVoteToastHidden && (
+        <div className="pointer-events-none fixed bottom-20 left-1/2 z-[125] w-[94%] max-w-xl -translate-x-1/2 sm:bottom-6">
+          <div className="pointer-events-auto rounded-lg border border-violet-700/60 bg-violet-950/90 px-3 py-2 text-violet-100 shadow-lg shadow-violet-900/40 backdrop-blur-sm">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold">
+                  Skip-stemming actief
+                </p>
+                <p className="mt-0.5 text-xs text-violet-200/90">
+                  {voteState.votes}/{voteState.required} stemmen · nog {skipVoteToastSecondsLeft}s
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={dismissSkipVoteToast}
+                className="shrink-0 rounded px-1 text-violet-200/80 transition hover:bg-violet-800/40 hover:text-white"
+                aria-label="Sluit skip-stemming melding"
+              >
+                ×
+              </button>
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={castSkipVoteFromToast}
+                disabled={skipVoteToastVoted}
+                className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                  skipVoteToastVoted
+                    ? "cursor-default bg-violet-500/25 text-violet-200"
+                    : "bg-violet-500 text-white hover:bg-violet-400"
+                }`}
+              >
+                {skipVoteToastVoted ? "Gestemd" : "Stem mee"}
+              </button>
+              <button
+                type="button"
+                onClick={dismissSkipVoteToast}
+                className="rounded-md border border-violet-700/70 px-3 py-1.5 text-xs font-semibold text-violet-200 transition hover:bg-violet-900/55"
+              >
+                Verbergen
+              </button>
+            </div>
           </div>
         </div>
       )}
