@@ -18,6 +18,7 @@ import { StreamHub } from './streamHub.js';
 import type { Mode, ServerState, DurationVote, QueuePushVote, FallbackGenre } from './types.js';
 import { searchGenres, getTopTracksByGenre, type GenreItem, type GenreHitItem } from './services/discovery.js';
 import { reloadFallbackGenres, listFallbackGenres, getDefaultFallbackGenreId, isKnownFallbackGenre } from './fallbackGenres.js';
+import { addPriorityArtistForGenre } from './services/genreCuratedConfig.js';
 
 // ── Environment ──────────────────────────────────────────────────────────────
 
@@ -597,6 +598,36 @@ app.get('/api/genre-hits', async (req, res) => {
   } catch (err) {
     console.error('[rest] /api/genre-hits error:', err);
     res.status(500).json({ error: 'Genre hitlist lookup failed' });
+  }
+});
+
+app.post('/api/genre-curation/priority-artist', async (req, res) => {
+  const { token, genre, artist, label } = req.body ?? {};
+  if (!isAdmin(token)) return res.status(403).json({ error: 'Unauthorized' });
+
+  const genreName = String(genre ?? '').trim();
+  const artistName = String(artist ?? '').trim();
+  const genreLabel = String(label ?? '').trim();
+  if (genreName.length < 2) {
+    return res.status(400).json({ error: 'Missing or invalid genre' });
+  }
+  if (artistName.length < 2) {
+    return res.status(400).json({ error: 'Missing or invalid artist' });
+  }
+
+  try {
+    const rule = addPriorityArtistForGenre(genreName, artistName, genreLabel || undefined);
+    genreHitsCache.clear();
+    genreCache.clear();
+    res.json({
+      ok: true,
+      genre: rule.id,
+      artist: artistName,
+      count: rule.priorityArtists?.length ?? 0,
+    });
+  } catch (err) {
+    console.error('[rest] /api/genre-curation/priority-artist error:', err);
+    res.status(500).json({ error: 'Failed to save priority artist' });
   }
 });
 

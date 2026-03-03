@@ -84,6 +84,23 @@ export async function getGenreHits(genre: string, limit = 20, offset = 0): Promi
   return get<GenreHit[]>(path);
 }
 
+export async function addPriorityArtistToGenre(
+  genre: string,
+  artist: string,
+  label?: string,
+): Promise<void> {
+  const trimmedGenre = genre.trim();
+  const trimmedArtist = artist.trim();
+  if (!trimmedGenre || !trimmedArtist) {
+    throw new Error('Genre en artiest zijn verplicht');
+  }
+  await post('/api/genre-curation/priority-artist', {
+    genre: trimmedGenre,
+    artist: trimmedArtist,
+    ...(label?.trim() ? { label: label.trim() } : {}),
+  });
+}
+
 function refreshState(): void {
   const url = getServerUrl();
   if (!url) return;

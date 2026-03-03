@@ -7,7 +7,9 @@
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
     "build": "tsc",
-    "start:dist": "node dist/server.js"
+    "start:dist": "node dist/server.js",
+    "classify-artists": "tsx scripts/classifyArtists.ts",
+    "apply-approved": "tsx scripts/applyApprovedGenreMappings.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.0",

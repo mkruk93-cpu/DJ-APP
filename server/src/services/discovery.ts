@@ -1,3 +1,5 @@
+import { getCuratedGenreRule, listCuratedGenreRules } from './genreCuratedConfig.js';
+
 export interface GenreItem {
   id: string;
   name: string;
@@ -78,11 +80,33 @@ interface GenreHints {
   deezerQueries: string[];
   relevanceTokens: string[];
   avoidTokens: string[];
+  requiredTokens?: string[];
+  priorityArtists?: string[];
+  priorityLabels?: string[];
   minScore: number;
 }
 
 function normalizeGenreName(name: string): string {
   return name.trim().toLowerCase();
+}
+
+function dedupeNormalized(items: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of items) {
+    const normalized = normalizeGenreName(item);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+}
+
+function isAllowedGenre(genre: string): boolean {
+  const normalized = normalizeGenreName(genre);
+  if (!normalized) return false;
+  if (ALLOWED_GENRE_SET.has(normalized)) return true;
+  return !!getCuratedGenreRule(normalized);
 }
 
 function getGenreHints(genre: string): GenreHints {
@@ -242,7 +266,7 @@ function getGenreHints(genre: string): GenreHints {
     },
   };
 
-  return hints[normalized] ?? {
+  const base = hints[normalized] ?? {
     spotifyQueries: [`genre:"${genre}" ${genre}`, genre],
     lastFmTags: [genre],
     deezerQueries: [genre],
@@ -250,34 +274,89 @@ function getGenreHints(genre: string): GenreHints {
     avoidTokens: [],
     minScore: 1,
   };
+
+  const curated = getCuratedGenreRule(normalized);
+  if (!curated) {
+    return {
+      ...base,
+      requiredTokens: base.requiredTokens ?? [],
+      priorityArtists: base.priorityArtists ?? [],
+      priorityLabels: base.priorityLabels ?? [],
+    };
+  }
+
+  return {
+    spotifyQueries: dedupeNormalized([...base.spotifyQueries, ...(curated.requiredTokens ?? [])]),
+    lastFmTags: dedupeNormalized([...base.lastFmTags, ...(curated.requiredTokens ?? []).slice(0, 2)]),
+    deezerQueries: dedupeNormalized([...base.deezerQueries, ...(curated.requiredTokens ?? [])]),
+    relevanceTokens: dedupeNormalized([...base.relevanceTokens, ...(curated.requiredTokens ?? [])]),
+    avoidTokens: dedupeNormalized([...base.avoidTokens, ...(curated.blockedTokens ?? [])]),
+    requiredTokens: dedupeNormalized([...(base.requiredTokens ?? []), ...(curated.requiredTokens ?? [])]),
+    priorityArtists: dedupeNormalized([...(base.priorityArtists ?? []), ...(curated.priorityArtists ?? [])]),
+    priorityLabels: dedupeNormalized([...(base.priorityLabels ?? []), ...(curated.priorityLabels ?? [])]),
+    minScore: Math.max(base.minScore, curated.minScore ?? base.minScore),
+  };
 }
 
 function scoreGenreRelevance(item: GenreHitItem, hints: GenreHints): number {
-  const text = `${item.artist} ${item.title}`.toLowerCase();
+  const text = `${item.artist} ${item.title} ${item.sourceHint}`.toLowerCase();
   let score = 0;
   for (const token of hints.relevanceTokens) {
     if (!token) continue;
-    if (text.includes(token.toLowerCase())) score += 3;
+    const normalized = token.toLowerCase();
+    if (text.includes(normalized)) score += normalized.includes(' ') ? 4 : 3;
   }
   for (const token of hints.avoidTokens) {
     if (!token) continue;
-    if (text.includes(token.toLowerCase())) score -= 4;
+    if (text.includes(token.toLowerCase())) score -= 5;
+  }
+  for (const artist of hints.priorityArtists ?? []) {
+    if (!artist) continue;
+    if (item.artist.toLowerCase().includes(artist.toLowerCase())) score += 8;
+  }
+  for (const label of hints.priorityLabels ?? []) {
+    if (!label) continue;
+    if (text.includes(label.toLowerCase())) score += 6;
   }
   return score;
 }
 
+function hasRequiredEvidence(item: GenreHitItem, hints: GenreHints): boolean {
+  const required = hints.requiredTokens ?? [];
+  const artistPriors = hints.priorityArtists ?? [];
+  const labelPriors = hints.priorityLabels ?? [];
+  if (required.length === 0 && artistPriors.length === 0 && labelPriors.length === 0) {
+    return true;
+  }
+
+  const artistText = item.artist.toLowerCase();
+  const fullText = `${item.artist} ${item.title} ${item.sourceHint}`.toLowerCase();
+  if (artistPriors.some((value) => artistText.includes(value.toLowerCase()))) return true;
+  if (labelPriors.some((value) => fullText.includes(value.toLowerCase()))) return true;
+  if (required.some((value) => fullText.includes(value.toLowerCase()))) return true;
+  return false;
+}
+
 function filterHitsByGenre(items: GenreHitItem[], hints: GenreHints, limit: number): GenreHitItem[] {
   const scored = dedupeHits(items)
-    .map((item) => ({ item, score: scoreGenreRelevance(item, hints) }))
+    .map((item) => ({
+      item,
+      score: scoreGenreRelevance(item, hints),
+      evidence: hasRequiredEvidence(item, hints),
+    }))
     .sort((a, b) => b.score - a.score);
 
-  const strict = scored.filter((row) => row.score >= hints.minScore).map((row) => row.item);
+  const strict = scored
+    .filter((row) => row.evidence && row.score >= hints.minScore)
+    .map((row) => row.item);
   if (strict.length >= Math.min(limit, 5)) {
     return strict.slice(0, limit);
   }
 
-  // Safety fallback: keep only positively matching tracks, never include negative matches.
-  const positive = scored.filter((row) => row.score > 0).map((row) => row.item);
+  // Safety fallback: keep only positive rows with at least one required signal.
+  const positive = scored
+    .filter((row) => row.evidence && row.score > 0)
+    .map((row) => row.item);
   return positive.slice(0, limit);
 }
 
@@ -297,6 +376,14 @@ function makeUniqueGenreMap(): Map<string, GenreItem> {
   for (const genre of DEFAULT_POPULAR_GENRES) {
     const normalized = normalizeGenreName(genre);
     map.set(normalized, { id: normalized, name: genre });
+  }
+  for (const rule of listCuratedGenreRules()) {
+    const normalized = normalizeGenreName(rule.id);
+    if (!normalized || map.has(normalized)) continue;
+    map.set(normalized, {
+      id: normalized,
+      name: rule.label?.trim() || normalized,
+    });
   }
   return map;
 }
@@ -331,6 +418,13 @@ export async function searchGenres(query?: string): Promise<GenreItem[]> {
   DEFAULT_POPULAR_GENRES.forEach((name, index) => {
     genreOrder.set(normalizeGenreName(name), index);
   });
+  const curatedRules = listCuratedGenreRules();
+  for (const rule of curatedRules) {
+    const normalized = normalizeGenreName(rule.id);
+    if (!genreOrder.has(normalized)) {
+      genreOrder.set(normalized, DEFAULT_POPULAR_GENRES.length + genreOrder.size);
+    }
+  }
 
   let items = [...uniqueGenres.values()];
   if (q) {
@@ -561,7 +655,7 @@ export async function getTopTracksByGenre(genre: string, limit = 20, offset = 0)
   const safeLimit = Math.max(1, Math.min(limit, 50));
   const safeOffset = Math.max(0, offset);
   if (!normalizedGenre) return [];
-  if (!ALLOWED_GENRE_SET.has(normalizeGenreName(normalizedGenre))) return [];
+  if (!isAllowedGenre(normalizedGenre)) return [];
 
   const hints = getGenreHints(normalizedGenre);
   const [spotifyRes, deezerRes, lastFmRes] = await Promise.allSettled([

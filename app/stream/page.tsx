@@ -27,6 +27,7 @@ import { useSyncedTrack } from "@/lib/useSyncedTrack";
 
 type StreamMode = "twitch" | "audio" | "radio" | "offline";
 type MobileTab = "chat" | "requests" | "radio" | "queue";
+type DesktopAccordionTab = "radio" | "queue";
 
 function firstNonEmpty(...values: Array<string | null | undefined>): string | null {
   for (const value of values) {
@@ -76,6 +77,7 @@ export default function StreamPage() {
   const [mode, setMode] = useState<StreamMode>("offline");
   const [icecastUrl, setIcecastUrl] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<MobileTab>("chat");
+  const [desktopAccordionTab, setDesktopAccordionTab] = useState<DesktopAccordionTab>("radio");
   const [chatBadge, setChatBadge] = useState(false);
   const [requestBadge, setRequestBadge] = useState(false);
   const [queueBadge, setQueueBadge] = useState(false);
@@ -208,6 +210,17 @@ export default function StreamPage() {
       else setActiveTab(showRequests ? "requests" : "chat");
     }
   }, [showQueuePanel, showRadioPanel, activeTab, showRequests]);
+
+  useEffect(() => {
+    if (desktopAccordionTab === "radio" && !showRadioPanel && showQueuePanel) {
+      setDesktopAccordionTab("queue");
+      return;
+    }
+    if (desktopAccordionTab === "queue" && !showQueuePanel && showRadioPanel) {
+      setDesktopAccordionTab("radio");
+    }
+  }, [desktopAccordionTab, showQueuePanel, showRadioPanel]);
+
 
   useEffect(() => {
     if (!voteState || voteState.votes <= 0) {
@@ -789,17 +802,63 @@ export default function StreamPage() {
             </div>
           )}
           {showRadioPanel && (
-            <div className={`min-h-0 min-w-0 flex-1 overflow-y-auto flex-col gap-2 ${activeTab === "radio" ? "flex" : "hidden"} landscape:flex lg:flex`}>
+            <div className={`min-h-0 min-w-0 flex-1 overflow-y-auto flex-col gap-2 ${activeTab === "radio" ? "flex" : "hidden"} lg:hidden`}>
               <RadioPanelErrorBoundary>
                 <QueueAdd />
               </RadioPanelErrorBoundary>
             </div>
           )}
           {showQueuePanel && (
-            <div className={`min-h-0 min-w-0 flex-1 overflow-y-auto flex-col gap-2 ${activeTab === "queue" ? "flex" : "hidden"} landscape:flex lg:flex`}>
+            <div className={`min-h-0 min-w-0 flex-1 overflow-y-auto flex-col gap-2 ${activeTab === "queue" ? "flex" : "hidden"} lg:hidden`}>
               <RadioPanelErrorBoundary>
                 <Queue />
               </RadioPanelErrorBoundary>
+            </div>
+          )}
+          {(showRadioPanel || showQueuePanel) && (
+            <div className="hidden min-h-0 min-w-0 flex-1 flex-col gap-2 lg:flex">
+              {showRadioPanel && (
+                <div className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5">
+                  <button
+                    type="button"
+                    onClick={() => setDesktopAccordionTab("radio")}
+                    className={`flex w-full items-center justify-between border-b border-gray-800 px-3 py-2 text-left text-sm font-semibold transition ${
+                      desktopAccordionTab === "radio" ? "text-white bg-gray-800/40" : "text-gray-200 hover:bg-gray-800/60"
+                    }`}
+                  >
+                    <span>Nummer toevoegen</span>
+                    <span className={`text-xs text-gray-400 transition ${desktopAccordionTab === "radio" ? "rotate-180" : ""}`}>▾</span>
+                  </button>
+                  {desktopAccordionTab === "radio" && (
+                    <div className="max-h-[56dvh] overflow-y-auto p-2">
+                      <RadioPanelErrorBoundary>
+                        <QueueAdd />
+                      </RadioPanelErrorBoundary>
+                    </div>
+                  )}
+                </div>
+              )}
+              {showQueuePanel && (
+                <div className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5">
+                  <button
+                    type="button"
+                    onClick={() => setDesktopAccordionTab("queue")}
+                    className={`flex w-full items-center justify-between border-b border-gray-800 px-3 py-2 text-left text-sm font-semibold transition ${
+                      desktopAccordionTab === "queue" ? "text-white bg-gray-800/40" : "text-gray-200 hover:bg-gray-800/60"
+                    }`}
+                  >
+                    <span>Wachtrij{queue.length > 0 ? ` (${queue.length})` : ""}</span>
+                    <span className={`text-xs text-gray-400 transition ${desktopAccordionTab === "queue" ? "rotate-180" : ""}`}>▾</span>
+                  </button>
+                  {desktopAccordionTab === "queue" && (
+                    <div className="max-h-[56dvh] overflow-y-auto p-2">
+                      <RadioPanelErrorBoundary>
+                        <Queue />
+                      </RadioPanelErrorBoundary>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>

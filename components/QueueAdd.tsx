@@ -6,7 +6,7 @@ import { useRadioStore } from "@/lib/radioStore";
 import { canPerformAction } from "@/lib/types";
 import { isRadioAdmin, getRadioToken } from "@/lib/auth";
 import { isSpotifyConfigured } from "@/lib/spotify";
-import { getGenres, getGenreHits, type GenreOption, type GenreHit } from "@/lib/radioApi";
+import { getGenres, getGenreHits, addPriorityArtistToGenre, type GenreOption, type GenreHit } from "@/lib/radioApi";
 import SpotifyBrowser from "@/components/SpotifyBrowser";
 
 class SpotifyErrorBoundary extends Component<
@@ -200,13 +200,18 @@ export default function QueueAdd() {
   const [genreHitsLoadingMore, setGenreHitsLoadingMore] = useState(false);
   const [genreHitsOffset, setGenreHitsOffset] = useState(0);
   const [genreHasMore, setGenreHasMore] = useState(false);
+  const [genrePrioritySaving, setGenrePrioritySaving] = useState<Record<string, boolean>>({});
+  const [genrePrioritySaved, setGenrePrioritySaved] = useState<Record<string, boolean>>({});
   const [activeGenre, setActiveGenre] = useState<string | null>(null);
   const [genreError, setGenreError] = useState<string | null>(null);
+  const [isMobile, setIsMobile] = useState(false);
+  const [mobileGenreMenuTop, setMobileGenreMenuTop] = useState<number | null>(null);
   const mode = useRadioStore((s) => s.mode);
   const queue = useRadioStore((s) => s.queue);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const genreListRef = useRef<HTMLDivElement>(null);
   const genreMenuRef = useRef<HTMLDetailsElement>(null);
+  const genreSummaryRef = useRef<HTMLElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const searchListRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -219,13 +224,15 @@ export default function QueueAdd() {
   const SEARCH_PAGE_SIZE = 12;
 
   const serverUrl = useRadioStore((s) => s.serverUrl) ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
-  const canAdd = canPerformAction(mode, "add_to_queue", isRadioAdmin());
+  const isAdmin = isRadioAdmin();
+  const canAdd = canPerformAction(mode, "add_to_queue", isAdmin);
   const isUrl = isSupportedUrl(input.trim());
   const hasSpotifySource = isSpotifyConfigured();
   const activeGenreLabel =
     genres.find((genre) => genre.name === activeGenre || genre.id === activeGenre)?.name
     ?? activeGenre
     ?? "Genre selecteren";
+  const showGenreHitsPanel = !!activeGenre || genreHitsLoading || genreHits.length > 0 || genreHitsLoadingMore;
 
   function filterSetResults(items: SearchResult[]): SearchResult[] {
     if (includeSets) return items;
@@ -254,6 +261,14 @@ export default function QueueAdd() {
       .replace(/[^a-z0-9]+/g, " ")
       .replace(/\s+/g, " ")
       .trim();
+  }
+
+  function getPrimaryArtist(rawArtist: string): string {
+    const first = rawArtist
+      .split(/[,&/]| feat\.| ft\./i)
+      .map((part) => part.trim())
+      .find((part) => part.length > 0);
+    return first ?? rawArtist.trim();
   }
 
   function titleMatchesUndoCandidate(queueTitle: string | null | undefined, pending: PendingUndoState): boolean {
@@ -504,6 +519,30 @@ export default function QueueAdd() {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [genreQuery, source, loadGenres]);
+
+  useEffect(() => {
+    function updateMobileState() {
+      setIsMobile(window.innerWidth < 640);
+    }
+    updateMobileState();
+    window.addEventListener("resize", updateMobileState);
+    return () => window.removeEventListener("resize", updateMobileState);
+  }, []);
+
+  useEffect(() => {
+    function updateGenreMenuPosition() {
+      if (!isMobile || !genreMenuRef.current?.open || !genreSummaryRef.current) return;
+      const rect = genreSummaryRef.current.getBoundingClientRect();
+      setMobileGenreMenuTop(Math.max(8, Math.round(rect.bottom + 8)));
+    }
+    updateGenreMenuPosition();
+    window.addEventListener("resize", updateGenreMenuPosition);
+    window.addEventListener("scroll", updateGenreMenuPosition, { passive: true });
+    return () => {
+      window.removeEventListener("resize", updateGenreMenuPosition);
+      window.removeEventListener("scroll", updateGenreMenuPosition);
+    };
+  }, [isMobile]);
 
   useEffect(() => {
     if (source !== "genres") return;
@@ -778,6 +817,24 @@ export default function QueueAdd() {
     submitUrl(track.query, undefined, track.title ?? null, track.artist ?? null);
   }
 
+  async function prioritizeGenreArtist(item: GenreHitRow) {
+    if (!isAdmin || !activeGenre) return;
+    const key = `${activeGenre}:${item.id}`;
+    const artist = getPrimaryArtist(item.artist);
+    if (!artist) return;
+    setGenrePrioritySaving((prev) => ({ ...prev, [key]: true }));
+    try {
+      await addPriorityArtistToGenre(activeGenre, artist, activeGenreLabel);
+      setGenrePrioritySaved((prev) => ({ ...prev, [key]: true }));
+      setFeedback({ msg: `Artiest "${artist}" krijgt voortaan voorrang in ${activeGenreLabel}.`, ok: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Kon voorrang artiest niet opslaan.";
+      setFeedback({ msg: message, ok: false });
+    } finally {
+      setGenrePrioritySaving((prev) => ({ ...prev, [key]: false }));
+    }
+  }
+
   return (
     <QueueAddErrorBoundary>
       <div ref={wrapperRef} className="relative">
@@ -892,8 +949,22 @@ export default function QueueAdd() {
               placeholder="Zoek genre (hardstyle, trance, rock, metal...)"
               className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-fuchsia-500"
             />
-            <details ref={genreMenuRef} className="group relative z-20">
-              <summary className="grid cursor-pointer list-none grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-gray-700 bg-gray-900/75 px-2.5 py-1.5 text-xs text-gray-200 transition hover:border-violet-500/60">
+            <details
+              ref={genreMenuRef}
+              className="group relative z-20"
+              onToggle={() => {
+                if (!genreMenuRef.current?.open || !isMobile || !genreSummaryRef.current) {
+                  setMobileGenreMenuTop(null);
+                  return;
+                }
+                const rect = genreSummaryRef.current.getBoundingClientRect();
+                setMobileGenreMenuTop(Math.max(8, Math.round(rect.bottom + 8)));
+              }}
+            >
+              <summary
+                ref={genreSummaryRef}
+                className="grid cursor-pointer list-none grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-gray-700 bg-gray-900/75 px-2.5 py-1.5 text-xs text-gray-200 transition hover:border-violet-500/60"
+              >
                 <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] font-semibold text-gray-300">
                   Genre
                 </span>
@@ -902,7 +973,14 @@ export default function QueueAdd() {
                 </span>
                 <span className="justify-self-end text-gray-400 transition group-open:rotate-180">▾</span>
               </summary>
-              <div className="relative z-20 mt-1 max-h-60 overflow-y-auto rounded-md border border-gray-700 bg-gray-900/95 p-1 shadow-lg shadow-black/40">
+              <div
+                className={`${isMobile ? "fixed left-2 right-2 mt-0" : "relative mt-1"} z-30 overflow-y-auto rounded-md border border-gray-700 bg-gray-900/95 p-1 shadow-lg shadow-black/40 sm:relative sm:mt-1 sm:left-auto sm:right-auto sm:max-h-60`}
+                style={
+                  isMobile && mobileGenreMenuTop !== null
+                    ? { top: mobileGenreMenuTop, maxHeight: `calc(100dvh - ${mobileGenreMenuTop + 8}px)` }
+                    : undefined
+                }
+              >
                 <button
                   type="button"
                   onClick={() => {
@@ -954,11 +1032,12 @@ export default function QueueAdd() {
               <p className="text-xs text-gray-400">Geen genres gevonden. Probeer een andere zoekterm.</p>
             )}
 
-            <div
-              ref={genreListRef}
-              onScroll={handleGenreListScroll}
-              className="min-h-[14rem] max-h-[70dvh] overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70"
-            >
+            {showGenreHitsPanel && (
+              <div
+                ref={genreListRef}
+                onScroll={handleGenreListScroll}
+                className="min-h-[14rem] max-h-[70dvh] overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70"
+              >
               {genreHitsLoading ? (
                 <p className="px-3 py-3 text-xs text-gray-400">Hitlijst laden...</p>
               ) : genreHits.length === 0 ? (
@@ -977,35 +1056,55 @@ export default function QueueAdd() {
                       <p className="truncate text-sm font-medium text-white">{item.title}</p>
                       <p className="truncate text-xs text-gray-400">{item.artist}</p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const key = `genres:${item.id}`;
-                        setResultStatus((prev) => ({ ...prev, [key]: "pending" }));
-                        setTimeout(() => {
-                          setResultStatus((prev) => ({ ...prev, [key]: "added" }));
-                        }, 120);
-                        setTimeout(() => {
-                          setResultStatus((prev) => ({ ...prev, [key]: "idle" }));
-                        }, 4000);
-                        startRecentAdd(key, item.query, item.title, item.artist);
-                        submitUrl(item.query, item.thumbnail || undefined, item.title, item.artist);
-                      }}
-                      disabled={submitting}
-                      className={`rounded-md px-2.5 py-1 text-xs font-semibold text-white transition disabled:opacity-50 ${
-                        resultStatus[`genres:${item.id}`] === "added"
-                          ? "bg-green-600 hover:bg-green-500"
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      {isAdmin && activeGenre && (
+                        <button
+                          type="button"
+                          onClick={() => prioritizeGenreArtist(item)}
+                          disabled={genrePrioritySaving[`${activeGenre}:${item.id}`]}
+                          className={`rounded-md border px-2 py-1 text-[11px] font-semibold transition disabled:opacity-60 ${
+                            genrePrioritySaved[`${activeGenre}:${item.id}`]
+                              ? "border-emerald-500/70 bg-emerald-500/20 text-emerald-200"
+                              : "border-fuchsia-600/70 bg-fuchsia-600/15 text-fuchsia-200 hover:bg-fuchsia-600/25"
+                          }`}
+                        >
+                          {genrePrioritySaving[`${activeGenre}:${item.id}`]
+                            ? "Opslaan..."
+                            : genrePrioritySaved[`${activeGenre}:${item.id}`]
+                              ? "Opgeslagen"
+                              : "Voorrang artiest"}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const key = `genres:${item.id}`;
+                          setResultStatus((prev) => ({ ...prev, [key]: "pending" }));
+                          setTimeout(() => {
+                            setResultStatus((prev) => ({ ...prev, [key]: "added" }));
+                          }, 120);
+                          setTimeout(() => {
+                            setResultStatus((prev) => ({ ...prev, [key]: "idle" }));
+                          }, 4000);
+                          startRecentAdd(key, item.query, item.title, item.artist);
+                          submitUrl(item.query, item.thumbnail || undefined, item.title, item.artist);
+                        }}
+                        disabled={submitting}
+                        className={`rounded-md px-2.5 py-1 text-xs font-semibold text-white transition disabled:opacity-50 ${
+                          resultStatus[`genres:${item.id}`] === "added"
+                            ? "bg-green-600 hover:bg-green-500"
+                            : resultStatus[`genres:${item.id}`] === "pending"
+                              ? "bg-violet-500/80"
+                              : "bg-violet-600 hover:bg-violet-500"
+                        }`}
+                      >
+                        {resultStatus[`genres:${item.id}`] === "added"
+                          ? "Toegevoegd"
                           : resultStatus[`genres:${item.id}`] === "pending"
-                            ? "bg-violet-500/80"
-                            : "bg-violet-600 hover:bg-violet-500"
-                      }`}
-                    >
-                      {resultStatus[`genres:${item.id}`] === "added"
-                        ? "Toegevoegd"
-                        : resultStatus[`genres:${item.id}`] === "pending"
-                          ? "Bezig..."
-                          : "Toevoegen"}
-                    </button>
+                            ? "Bezig..."
+                            : "Toevoegen"}
+                      </button>
+                    </div>
                   </div>
                 ))
               )}
@@ -1013,7 +1112,8 @@ export default function QueueAdd() {
                 <p className="px-3 py-2 text-xs text-gray-400">Meer tracks laden...</p>
               )}
               <div ref={loadMoreRef} className="h-1 w-full" />
-            </div>
+              </div>
+            )}
           </div>
         ) : (
           <>
@@ -1071,23 +1171,23 @@ export default function QueueAdd() {
         <div
           ref={searchListRef}
           onScroll={handleSearchListScroll}
-          className="absolute left-0 right-0 z-50 mt-1 max-h-[70dvh] overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50"
+          className="absolute left-0 right-0 z-50 mt-1 max-h-[70dvh] lg:max-h-[82dvh] overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50"
         >
           {results.map((r) => (
             <button
               key={r.id}
               type="button"
               onClick={() => selectResult(r)}
-              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition hover:bg-gray-800/80 first:rounded-t-xl last:rounded-b-xl"
+              className="flex w-full items-center gap-2 px-2.5 py-1 text-left transition hover:bg-gray-800/80 first:rounded-t-xl last:rounded-b-xl"
             >
               {r.thumbnail ? (
                 <img
                   src={r.thumbnail}
                   alt=""
-                  className="h-10 w-12 shrink-0 rounded object-cover"
+                  className="h-8 w-10 shrink-0 rounded object-cover lg:h-7 lg:w-9"
                 />
               ) : (
-                <div className="flex h-10 w-12 shrink-0 items-center justify-center rounded bg-gray-800 text-[10px] text-gray-500">
+                <div className="flex h-8 w-10 shrink-0 items-center justify-center rounded bg-gray-800 text-[10px] text-gray-500 lg:h-7 lg:w-9">
                   no art
                 </div>
               )}
