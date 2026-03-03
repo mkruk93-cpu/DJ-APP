@@ -214,6 +214,7 @@ export default function QueueAdd() {
   const recentAddTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const searchOffsetRef = useRef(0);
   const genreOffsetRef = useRef(0);
+  const latestSearchRunRef = useRef(0);
   const GENRE_PAGE_SIZE = 20;
   const SEARCH_PAGE_SIZE = 12;
 
@@ -327,6 +328,7 @@ export default function QueueAdd() {
 
   const search = useCallback((query: string, append = false) => {
     if (!serverUrl || query.length < 2) {
+      latestSearchRunRef.current += 1;
       setResults([]);
       setSearchOffsetSafe(0);
       setSearchHasMore(false);
@@ -337,6 +339,7 @@ export default function QueueAdd() {
     }
 
     const offset = append ? searchOffsetRef.current : 0;
+    const runId = ++latestSearchRunRef.current;
     if (append) setSearchingMore(true);
     else setSearching(true);
     fetch(
@@ -344,6 +347,7 @@ export default function QueueAdd() {
     )
       .then((r) => r.json())
       .then((data: SearchResult[]) => {
+        if (runId !== latestSearchRunRef.current) return;
         const normalized = Array.isArray(data) ? data : [];
         const visible = filterSetResults(normalized);
         setResults((prev) => {
@@ -357,6 +361,7 @@ export default function QueueAdd() {
         setShowResults(append ? true : visible.length > 0);
       })
       .catch(() => {
+        if (runId !== latestSearchRunRef.current) return;
         if (!append) {
           setResults([]);
           setSearchOffsetSafe(0);
@@ -364,6 +369,7 @@ export default function QueueAdd() {
         }
       })
       .finally(() => {
+        if (runId !== latestSearchRunRef.current) return;
         setSearching(false);
         setSearchingMore(false);
       });
@@ -610,7 +616,6 @@ export default function QueueAdd() {
     },
   ) {
     setSubmitting(true);
-    setFeedback({ msg: "Aanvraag verstuurd...", ok: true });
     if (!options?.keepResults) setShowResults(false);
 
     const nickname =
@@ -873,7 +878,7 @@ export default function QueueAdd() {
             <SpotifyBrowser onAddTrack={handleSpotifyAdd} submitting={submitting} />
           </SpotifyErrorBoundary>
         ) : source === "genres" ? (
-          <div className="space-y-2">
+          <div className="flex min-h-0 flex-col gap-2">
             <input
               type="text"
               value={genreQuery}
@@ -887,7 +892,7 @@ export default function QueueAdd() {
               placeholder="Zoek genre (hardstyle, trance, rock, metal...)"
               className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-fuchsia-500"
             />
-            <details ref={genreMenuRef} className="group relative z-40">
+            <details ref={genreMenuRef} className="group relative z-20">
               <summary className="grid cursor-pointer list-none grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-gray-700 bg-gray-900/75 px-2.5 py-1.5 text-xs text-gray-200 transition hover:border-violet-500/60">
                 <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] font-semibold text-gray-300">
                   Genre
@@ -897,7 +902,7 @@ export default function QueueAdd() {
                 </span>
                 <span className="justify-self-end text-gray-400 transition group-open:rotate-180">▾</span>
               </summary>
-              <div className="relative z-40 mt-1 max-h-60 overflow-y-auto rounded-md border border-gray-700 bg-gray-900/95 p-1 shadow-lg shadow-black/40">
+              <div className="relative z-20 mt-1 max-h-60 overflow-y-auto rounded-md border border-gray-700 bg-gray-900/95 p-1 shadow-lg shadow-black/40">
                 <button
                   type="button"
                   onClick={() => {
@@ -952,7 +957,7 @@ export default function QueueAdd() {
             <div
               ref={genreListRef}
               onScroll={handleGenreListScroll}
-              className="max-h-64 overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70"
+              className="min-h-[14rem] max-h-[70dvh] overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70"
             >
               {genreHitsLoading ? (
                 <p className="px-3 py-3 text-xs text-gray-400">Hitlijst laden...</p>

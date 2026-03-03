@@ -279,6 +279,17 @@ export default function StreamPage() {
     if (!nickname) router.replace("/");
   }, [router]);
 
+  useEffect(() => {
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    const prevBodyOverflow = document.body.style.overflow;
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.documentElement.style.overflow = prevHtmlOverflow;
+      document.body.style.overflow = prevBodyOverflow;
+    };
+  }, []);
+
   // Handle Spotify OAuth callback (code in URL after redirect)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -565,7 +576,7 @@ export default function StreamPage() {
   }, [syncedCurrentTrack, nextTitle, nextArtist, nextRequestedBy, nextIsFallback]);
 
   return (
-    <div className="relative flex h-dvh flex-col overflow-x-hidden overflow-y-hidden">
+    <div className="relative flex h-dvh max-h-dvh flex-col overflow-hidden">
       <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
         <div className="player-ambient absolute -left-20 top-10 h-72 w-72 rounded-full bg-violet-500/15 blur-3xl" />
         <div className="player-ambient absolute bottom-0 right-0 h-80 w-80 rounded-full bg-fuchsia-500/10 blur-3xl" />

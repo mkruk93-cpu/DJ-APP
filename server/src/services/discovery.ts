@@ -78,6 +78,7 @@ interface GenreHints {
   deezerQueries: string[];
   relevanceTokens: string[];
   avoidTokens: string[];
+  minScore: number;
 }
 
 function normalizeGenreName(name: string): string {
@@ -93,6 +94,7 @@ function getGenreHints(genre: string): GenreHints {
       deezerQueries: ['gabber hardcore', 'uptempo hardcore'],
       relevanceTokens: ['hardcore', 'gabber', 'uptempo', 'frenchcore', 'rawstyle'],
       avoidTokens: ['house', 'afrobeats', 'latin pop'],
+      minScore: 2,
     },
     'industrial hardcore': {
       spotifyQueries: ['industrial hardcore darkcore gabber', 'hardcore industrial'],
@@ -100,6 +102,7 @@ function getGenreHints(genre: string): GenreHints {
       deezerQueries: ['industrial hardcore', 'darkcore hardcore'],
       relevanceTokens: ['industrial', 'darkcore', 'hardcore', 'gabber'],
       avoidTokens: ['house', 'pop'],
+      minScore: 2,
     },
     krach: {
       spotifyQueries: ['krach hardcore gabber', 'hardcore krach'],
@@ -107,6 +110,7 @@ function getGenreHints(genre: string): GenreHints {
       deezerQueries: ['krach hardcore', 'gabber krach'],
       relevanceTokens: ['krach', 'hardcore', 'gabber', 'terror'],
       avoidTokens: ['house', 'trance'],
+      minScore: 2,
     },
     terror: {
       spotifyQueries: ['terror hardcore terrorcore', 'speedcore terror'],
@@ -114,6 +118,7 @@ function getGenreHints(genre: string): GenreHints {
       deezerQueries: ['terrorcore hardcore', 'terror hardcore'],
       relevanceTokens: ['terror', 'terrorcore', 'speedcore', 'hardcore'],
       avoidTokens: ['house', 'afrobeats'],
+      minScore: 2,
     },
     terrorcore: {
       spotifyQueries: ['terrorcore speedcore hardcore', 'terrorcore'],
@@ -121,6 +126,7 @@ function getGenreHints(genre: string): GenreHints {
       deezerQueries: ['terrorcore', 'speedcore hardcore'],
       relevanceTokens: ['terrorcore', 'speedcore', 'terror', 'hardcore'],
       avoidTokens: ['house', 'pop'],
+      minScore: 2,
     },
     hardstyle: {
       spotifyQueries: ['genre:"hardstyle" hardstyle rawstyle', 'hardstyle rawstyle euphoric'],
@@ -128,6 +134,7 @@ function getGenreHints(genre: string): GenreHints {
       deezerQueries: ['hardstyle rawstyle', 'hard dance hardstyle'],
       relevanceTokens: ['hardstyle', 'rawstyle', 'euphoric', 'defqon', 'qlimax'],
       avoidTokens: ['house', 'afrobeats', 'reggaeton'],
+      minScore: 2,
     },
     'euphoric hardstyle': {
       spotifyQueries: ['euphoric hardstyle melodic hardstyle', 'hardstyle euphoric anthem'],
@@ -135,6 +142,7 @@ function getGenreHints(genre: string): GenreHints {
       deezerQueries: ['euphoric hardstyle', 'melodic hardstyle'],
       relevanceTokens: ['euphoric', 'hardstyle', 'melodic', 'anthem'],
       avoidTokens: ['terror', 'industrial'],
+      minScore: 2,
     },
     techno: {
       spotifyQueries: ['genre:"techno" peak time techno', 'techno warehouse rave'],
@@ -142,6 +150,7 @@ function getGenreHints(genre: string): GenreHints {
       deezerQueries: ['techno', 'peak time techno'],
       relevanceTokens: ['techno', 'acid', 'warehouse', 'rave', 'hard techno'],
       avoidTokens: ['hip hop', 'reggaeton', 'afrobeats'],
+      minScore: 2,
     },
     trance: {
       spotifyQueries: ['trance uplifting trance vocal trance', 'trance progressive trance'],
@@ -149,6 +158,7 @@ function getGenreHints(genre: string): GenreHints {
       deezerQueries: ['trance', 'uplifting trance'],
       relevanceTokens: ['trance', 'uplifting', 'vocal trance', 'asot', 'psy'],
       avoidTokens: ['hardcore', 'hip hop'],
+      minScore: 2,
     },
     'psy trance': {
       spotifyQueries: ['psy trance psytrance full on', 'psychedelic trance'],
@@ -156,6 +166,7 @@ function getGenreHints(genre: string): GenreHints {
       deezerQueries: ['psy trance', 'psytrance'],
       relevanceTokens: ['psy', 'psytrance', 'psy trance', 'goa'],
       avoidTokens: ['house', 'hip hop'],
+      minScore: 2,
     },
     psytrance: {
       spotifyQueries: ['psytrance psy trance full on', 'psychedelic trance'],
@@ -163,6 +174,7 @@ function getGenreHints(genre: string): GenreHints {
       deezerQueries: ['psytrance', 'psy trance'],
       relevanceTokens: ['psytrance', 'psy trance', 'goa', 'psy'],
       avoidTokens: ['house', 'hip hop'],
+      minScore: 2,
     },
     'deep house': {
       spotifyQueries: ['deep house soulful deep house', 'deep house melodic house'],
@@ -170,6 +182,7 @@ function getGenreHints(genre: string): GenreHints {
       deezerQueries: ['deep house', 'melodic deep house'],
       relevanceTokens: ['deep house', 'deep', 'house', 'melodic'],
       avoidTokens: ['hardcore', 'terror'],
+      minScore: 2,
     },
     'future house': {
       spotifyQueries: ['future house bass house', 'future house edm'],
@@ -177,6 +190,7 @@ function getGenreHints(genre: string): GenreHints {
       deezerQueries: ['future house', 'future bass house'],
       relevanceTokens: ['future house', 'future', 'house', 'bass house'],
       avoidTokens: ['hardcore', 'terror'],
+      minScore: 2,
     },
     dubstep: {
       spotifyQueries: ['dubstep brostep bass music', 'dubstep riddim'],
@@ -184,6 +198,7 @@ function getGenreHints(genre: string): GenreHints {
       deezerQueries: ['dubstep', 'brostep'],
       relevanceTokens: ['dubstep', 'brostep', 'riddim', 'bass'],
       avoidTokens: ['trance', 'hardstyle'],
+      minScore: 2,
     },
     rock: {
       spotifyQueries: ['rock anthems modern rock', 'classic rock alternative rock'],
@@ -191,6 +206,7 @@ function getGenreHints(genre: string): GenreHints {
       deezerQueries: ['rock', 'modern rock'],
       relevanceTokens: ['rock', 'guitar', 'band', 'anthem'],
       avoidTokens: ['hardcore', 'techno'],
+      minScore: 2,
     },
     alternative: {
       spotifyQueries: ['alternative alternative rock indie', 'alt rock'],
@@ -198,6 +214,7 @@ function getGenreHints(genre: string): GenreHints {
       deezerQueries: ['alternative rock', 'alternative'],
       relevanceTokens: ['alternative', 'alt', 'indie', 'rock'],
       avoidTokens: ['hardcore', 'terror'],
+      minScore: 2,
     },
     metal: {
       spotifyQueries: ['metal heavy metal', 'metalcore melodic metal'],
@@ -205,6 +222,7 @@ function getGenreHints(genre: string): GenreHints {
       deezerQueries: ['metal', 'heavy metal'],
       relevanceTokens: ['metal', 'heavy', 'riff', 'core'],
       avoidTokens: ['house', 'trance'],
+      minScore: 2,
     },
     hiphop: {
       spotifyQueries: ['genre:"hip hop" hip hop rap', 'hip hop rap nl'],
@@ -212,6 +230,7 @@ function getGenreHints(genre: string): GenreHints {
       deezerQueries: ['hip hop rap', 'nederlandse hiphop'],
       relevanceTokens: ['hip hop', 'hiphop', 'rap', 'drill', 'trap'],
       avoidTokens: ['hardstyle', 'trance', 'techno'],
+      minScore: 2,
     },
     nederlands: {
       spotifyQueries: ['nederlandstalig nederlands hits dutch', 'nederlandse pop'],
@@ -219,6 +238,7 @@ function getGenreHints(genre: string): GenreHints {
       deezerQueries: ['nederlandstalig', 'nederlandse hits'],
       relevanceTokens: ['nederlands', 'nederlandstalig', 'dutch', 'holland'],
       avoidTokens: ['k-pop', 'afrobeats'],
+      minScore: 2,
     },
   };
 
@@ -228,6 +248,7 @@ function getGenreHints(genre: string): GenreHints {
     deezerQueries: [genre],
     relevanceTokens: [normalized],
     avoidTokens: [],
+    minScore: 1,
   };
 }
 
@@ -240,9 +261,24 @@ function scoreGenreRelevance(item: GenreHitItem, hints: GenreHints): number {
   }
   for (const token of hints.avoidTokens) {
     if (!token) continue;
-    if (text.includes(token.toLowerCase())) score -= 2;
+    if (text.includes(token.toLowerCase())) score -= 4;
   }
   return score;
+}
+
+function filterHitsByGenre(items: GenreHitItem[], hints: GenreHints, limit: number): GenreHitItem[] {
+  const scored = dedupeHits(items)
+    .map((item) => ({ item, score: scoreGenreRelevance(item, hints) }))
+    .sort((a, b) => b.score - a.score);
+
+  const strict = scored.filter((row) => row.score >= hints.minScore).map((row) => row.item);
+  if (strict.length >= Math.min(limit, 5)) {
+    return strict.slice(0, limit);
+  }
+
+  // Safety fallback: keep only positively matching tracks, never include negative matches.
+  const positive = scored.filter((row) => row.score > 0).map((row) => row.item);
+  return positive.slice(0, limit);
 }
 
 function dedupeHits(items: GenreHitItem[]): GenreHitItem[] {
@@ -443,9 +479,7 @@ async function fetchSpotifyTracksByGenre(genre: string, limit: number, offset: n
     }
   }
 
-  return dedupeHits(merged)
-    .sort((a, b) => scoreGenreRelevance(b, hints) - scoreGenreRelevance(a, hints))
-    .slice(0, limit);
+  return filterHitsByGenre(merged, hints, limit);
 }
 
 async function fetchLastFmTopTracksByGenre(genre: string, limit: number, offset: number): Promise<GenreHitItem[]> {
@@ -505,9 +539,7 @@ async function fetchLastFmTopTracksByGenre(genre: string, limit: number, offset:
     );
   }
 
-  return dedupeHits(merged)
-    .sort((a, b) => scoreGenreRelevance(b, hints) - scoreGenreRelevance(a, hints))
-    .slice(0, limit);
+  return filterHitsByGenre(merged, hints, limit);
 }
 
 async function fetchDeezerTracksByGenre(genre: string, limit: number, offset: number): Promise<GenreHitItem[]> {
@@ -521,9 +553,7 @@ async function fetchDeezerTracksByGenre(genre: string, limit: number, offset: nu
       console.warn('[discovery] Deezer genre search failed:', (err as Error).message);
     }
   }
-  return dedupeHits(merged)
-    .sort((a, b) => scoreGenreRelevance(b, hints) - scoreGenreRelevance(a, hints))
-    .slice(0, limit);
+  return filterHitsByGenre(merged, hints, limit);
 }
 
 export async function getTopTracksByGenre(genre: string, limit = 20, offset = 0): Promise<GenreHitItem[]> {
@@ -548,7 +578,5 @@ export async function getTopTracksByGenre(genre: string, limit = 20, offset = 0)
   if (lastFmRes.status === 'fulfilled') collected.push(...lastFmRes.value);
   else console.warn('[discovery] Last.fm genre search failed:', lastFmRes.reason);
 
-  return dedupeHits(collected)
-    .sort((a, b) => scoreGenreRelevance(b, hints) - scoreGenreRelevance(a, hints))
-    .slice(0, safeLimit);
+  return filterHitsByGenre(collected, hints, safeLimit);
 }

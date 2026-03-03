@@ -53,8 +53,16 @@ function setSkipLock(locked: boolean): void {
 }
 
 const STREAM_DELAY_MS = parseInt(process.env.STREAM_DELAY_MS ?? '8000', 10);
-const STREAM_BITRATE = process.env.STREAM_BITRATE ?? '256k';
+const STREAM_BITRATE_RAW = (process.env.STREAM_BITRATE ?? '256k').trim().toLowerCase();
+const STREAM_USE_SOURCE_MODE = STREAM_BITRATE_RAW === 'source' || STREAM_BITRATE_RAW === 'true';
+const STREAM_BITRATE = STREAM_USE_SOURCE_MODE ? '256k' : STREAM_BITRATE_RAW;
 let activeFallbackGenre: string | null = null;
+
+function getEncoderRateArgs(): string[] {
+  // "source"/"true": use high-quality VBR instead of fixed CBR cap.
+  if (STREAM_USE_SOURCE_MODE) return ['-q:a', '0'];
+  return ['-b:a', STREAM_BITRATE];
+}
 
 export function setActiveFallbackGenre(genreId: string | null): void {
   activeFallbackGenre = genreId;
@@ -517,7 +525,7 @@ function ensureEncoder(): ChildProcess {
       '-ac', '2',
       '-i', 'pipe:0',
       '-acodec', 'libmp3lame',
-      '-b:a', STREAM_BITRATE,
+      ...getEncoderRateArgs(),
       '-f', 'mp3',
       '-content_type', 'audio/mpeg',
       icecastUrl,
@@ -532,7 +540,7 @@ function ensureEncoder(): ChildProcess {
       '-ac', '2',
       '-i', 'pipe:0',
       '-acodec', 'libmp3lame',
-      '-b:a', STREAM_BITRATE,
+      ...getEncoderRateArgs(),
       '-f', 'mp3',
       'pipe:1',
     ]);
@@ -708,6 +716,21 @@ async function playNext(
   let isFallback = false;
   let source = '';
 
+  async function pickImmediateFallback(quickMeta = true): Promise<boolean> {
+    const fallbackFile = pickRandomFallbackForGenre(activeFallbackGenre, lastFallbackFile);
+    if (!fallbackFile) return false;
+    audioFile = fallbackFile;
+    trackTitle = titleFromFilename(fallbackFile);
+    trackYoutubeId = 'local';
+    trackDuration = quickMeta ? null : await getAudioDuration(fallbackFile);
+    trackThumbnail = quickMeta ? null : await getFallbackArtworkDataUrl(fallbackFile);
+    trackAddedBy = null;
+    isFallback = true;
+    source = quickMeta ? 'random/gap-guard' : 'random';
+    currentQueueItemId = null;
+    return true;
+  }
+
   // ── FAST PATH: use pre-prepared track (instant, no DB call) ──
   // Guard against stale prepare races where "next" accidentally equals current.
   if (nextReady?.queueItemId && !nextReady.isFallback) {
@@ -760,79 +783,39 @@ async function playNext(
         return;
       }
 
-      // Reserve this queue item immediately so background prepare/preload
-      // cannot pick the same item as "next" while we are fetching/downloading it.
-      const reservedQueueItemId = item.id;
-      currentQueueItemId = reservedQueueItemId;
-
-      try {
-        const buffered = takeFromBuffer(item.id);
-        if (buffered) {
-          audioFile = buffered.audioFile;
-          trackDuration = buffered.duration;
-          if (buffered.item.title) item.title = buffered.item.title;
-          source = 'preloaded';
-        } else {
-          const info = await fetchVideoInfo(item.youtube_url);
-          trackDuration = info.duration;
-          if (info.title && !item.title) item.title = info.title;
-
-          // Show "loading" state while downloading
-          currentTrack = {
-            id: item.id, youtube_id: item.youtube_id,
-            title: item.title, thumbnail: item.thumbnail,
-            added_by: item.added_by ?? null,
-            duration: trackDuration, started_at: 0,
-          };
-          io.emit('track:change', currentTrack);
-
-          console.log(`[player] Downloading: ${item.title ?? item.youtube_id}`);
-          audioFile = await downloadAudio(item, cacheDir);
-          source = 'downloaded';
-        }
-      } catch (err) {
-        if (currentQueueItemId === reservedQueueItemId) {
-          currentQueueItemId = null;
-        }
-        throw err;
-      }
-
-      const freshQueue = await getQueue(sb);
-      if (!freshQueue.some((q) => q.id === reservedQueueItemId)) {
-        if (audioFile && !keepFiles) cleanupFile(audioFile);
-        console.warn(`[player] Dropped removed queue item before playback: ${item.title ?? item.youtube_id}`);
-        if (currentQueueItemId === reservedQueueItemId) currentQueueItemId = null;
-        return;
-      }
-
-      trackTitle = item.title;
-      trackThumbnail = item.thumbnail;
-      trackYoutubeId = item.youtube_id;
-      trackQueueId = item.id;
-      trackAddedBy = item.added_by ?? null;
-      failCounts.delete(item.youtube_id);
-      currentQueueItemId = trackQueueId;
-    } else {
-      // Queue may still contain only the current track while async deletion catches up.
-      if (queue.length > 0) {
-        console.log('[player] Queue head still syncing — waiting before fallback');
-        await sleep(500);
-        return;
-      }
-      const fallbackFile = pickRandomFallbackForGenre(activeFallbackGenre, lastFallbackFile);
-      if (fallbackFile) {
-        audioFile = fallbackFile;
-        trackTitle = titleFromFilename(fallbackFile);
-        trackYoutubeId = 'local';
-        trackDuration = await getAudioDuration(fallbackFile);
-        trackThumbnail = await getFallbackArtworkDataUrl(fallbackFile);
-        trackAddedBy = null;
-        isFallback = true;
-        source = 'random';
-        currentQueueItemId = null;
+      const buffered = takeFromBuffer(item.id);
+      if (buffered) {
+        audioFile = buffered.audioFile;
+        trackDuration = buffered.duration;
+        if (buffered.item.title) item.title = buffered.item.title;
+        trackTitle = item.title;
+        trackThumbnail = item.thumbnail;
+        trackYoutubeId = item.youtube_id;
+        trackQueueId = item.id;
+        trackAddedBy = item.added_by ?? null;
+        failCounts.delete(item.youtube_id);
+        currentQueueItemId = trackQueueId;
+        source = 'preloaded';
       } else {
+        // Gap guard: never block transition on download preparation.
+        // If queue item isn't ready yet, play random fallback first.
+        console.log(`[player] Gap guard: queue item not ready, playing random first (${item.title ?? item.youtube_id})`);
+        void prepareNextTrack(sb, cacheDir, currentTrack?.id ?? null);
+        const fallbackPicked = await pickImmediateFallback(true);
+        if (!fallbackPicked) {
+          currentTrack = null;
+          currentQueueItemId = null;
+          io.emit('track:change', null);
+          console.log('[player] No fallback available while queue is preparing');
+          await sleep(500);
+          return;
+        }
+      }
+    } else {
+      const fallbackPicked = await pickImmediateFallback(queue.length > 0);
+      if (!fallbackPicked) {
         currentTrack = null;
-      currentQueueItemId = null;
+        currentQueueItemId = null;
         io.emit('track:change', null);
         console.log('[player] Queue empty — waiting for tracks...');
         await waitForQueueAdd();
