@@ -31,6 +31,7 @@ interface FallbackGenreRuntimeItem {
 let runtimeGenres: FallbackGenreRuntimeItem[] = [];
 let defaultGenreId: string | null = null;
 const AUTO_GENRE_PREFIX = 'auto:';
+export const LIKED_AUTO_GENRE_ID = 'liked';
 
 function normalizeGenreId(value: string): string {
   return value.trim().toLowerCase();
@@ -190,6 +191,7 @@ export function isKnownFallbackGenre(genreId: string | null | undefined): boolea
   if (localKnown) return true;
   const autoGenre = parseAutoFallbackGenreId(genreId);
   if (!autoGenre) return false;
+  if (autoGenre === LIKED_AUTO_GENRE_ID) return true;
   return isKnownDiscoveryGenre(autoGenre);
 }
 

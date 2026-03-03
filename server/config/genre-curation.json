@@ -147,7 +147,8 @@
         "lege batterij",
         "more kords",
         "jaws",
-        "luvvtige, unicorn on ketamine"
+        "luvvtige, unicorn on ketamine",
+        "superstrongman"
       ],
       "priorityLabels": [
         "cenobite",
@@ -168,8 +169,11 @@
       "minScore": 3,
       "priorityTracks": [
         "asbak anthem",
-        "krach x piiiip"
-      ]
+        "krach x piiiip",
+        "sound of the zaagkick",
+        "stuck in my zaag"
+      ],
+      "blockedTracks": []
     },
     {
       "id": "terror",
@@ -931,5 +935,8 @@
       ],
       "minScore": 3
     }
+  ],
+  "likedPlaylistTracks": [
+    "more kords - stuck in my zaag"
   ]
 }

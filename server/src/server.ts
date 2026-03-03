@@ -17,8 +17,8 @@ import { startNowPlayingWatcher } from './nowPlaying.js';
 import { StreamHub } from './streamHub.js';
 import type { Mode, ServerState, DurationVote, QueuePushVote, FallbackGenre } from './types.js';
 import { searchGenres, getTopTracksByGenre, type GenreItem, type GenreHitItem } from './services/discovery.js';
-import { reloadFallbackGenres, listFallbackGenres, getDefaultFallbackGenreId, isKnownFallbackGenre, toAutoFallbackGenreId, parseAutoFallbackGenreId } from './fallbackGenres.js';
-import { addPriorityArtistForGenre, addPriorityTrackForGenre } from './services/genreCuratedConfig.js';
+import { reloadFallbackGenres, listFallbackGenres, getDefaultFallbackGenreId, isKnownFallbackGenre, toAutoFallbackGenreId, parseAutoFallbackGenreId, LIKED_AUTO_GENRE_ID } from './fallbackGenres.js';
+import { addPriorityArtistForGenre, addPriorityTrackForGenre, addBlockedTrackForGenre, addLikedPlaylistTrack } from './services/genreCuratedConfig.js';
 
 // ── Environment ──────────────────────────────────────────────────────────────
 
@@ -170,7 +170,12 @@ async function getCombinedFallbackGenres(): Promise<FallbackGenre[]> {
     label: `Auto playlist · ${genre.name}`,
     trackCount: 0,
   }));
-  return [...localGenres, ...autoGenres];
+  const likedGenre: FallbackGenre = {
+    id: toAutoFallbackGenreId(LIKED_AUTO_GENRE_ID),
+    label: 'Auto playlist · Liked tracks',
+    trackCount: 0,
+  };
+  return [...localGenres, likedGenre, ...autoGenres];
 }
 
 async function getServerState(): Promise<ServerState> {
@@ -688,6 +693,7 @@ app.post('/api/genre-curation/like-current', async (req, res) => {
   try {
     const artistRule = addPriorityArtistForGenre(autoGenre, artist, autoGenre);
     addPriorityTrackForGenre(autoGenre, title, autoGenre);
+    addLikedPlaylistTrack(`${artist} - ${title}`);
     genreHitsCache.clear();
     genreCache.clear();
     return res.json({
@@ -700,6 +706,44 @@ app.post('/api/genre-curation/like-current', async (req, res) => {
   } catch (err) {
     console.error('[rest] /api/genre-curation/like-current error:', err);
     return res.status(500).json({ error: 'Kon like niet opslaan' });
+  }
+});
+
+app.post('/api/genre-curation/dislike-current', async (req, res) => {
+  const activeGenreId = await resolveActiveFallbackGenre();
+  const autoGenre = parseAutoFallbackGenreId(activeGenreId);
+  if (!autoGenre || autoGenre === LIKED_AUTO_GENRE_ID) {
+    return res.status(409).json({ error: 'Genre auto playlist is niet actief' });
+  }
+
+  const current = getCurrentTrack();
+  if (!current || current.youtube_id !== 'local' || !current.title) {
+    return res.status(409).json({ error: 'Er speelt geen auto playlist track' });
+  }
+
+  const rawArtist = String(req.body?.artist ?? '').trim();
+  const rawTitle = String(req.body?.title ?? '').trim();
+  const parsed = parseArtistTitle(current.title ?? '');
+  const artist = rawArtist || parsed.artist;
+  const title = rawTitle || parsed.title;
+  if (!artist || !title) {
+    return res.status(400).json({ error: 'Kon artiest/titel niet bepalen voor dislike' });
+  }
+
+  try {
+    const rule = addBlockedTrackForGenre(autoGenre, `${artist} - ${title}`, autoGenre);
+    genreHitsCache.clear();
+    genreCache.clear();
+    return res.json({
+      ok: true,
+      genre: autoGenre,
+      artist,
+      title,
+      blockedCount: rule.blockedTracks?.length ?? 0,
+    });
+  } catch (err) {
+    console.error('[rest] /api/genre-curation/dislike-current error:', err);
+    return res.status(500).json({ error: 'Kon dislike niet opslaan' });
   }
 });
 

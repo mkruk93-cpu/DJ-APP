@@ -8,9 +8,10 @@ import type { QueueItem, Track, UpcomingTrack } from './types.js';
 import { clearQueueItem, getQueue, fetchVideoInfo } from './queue.js';
 import { cleanupFile } from './cleanup.js';
 import type { StreamHub } from './streamHub.js';
-import { pickRandomFallbackForGenre, parseAutoFallbackGenreId } from './fallbackGenres.js';
+import { pickRandomFallbackForGenre, parseAutoFallbackGenreId, LIKED_AUTO_GENRE_ID } from './fallbackGenres.js';
 import { fetchArtworkCandidate } from './artwork.js';
 import { getTopTracksByGenre } from './services/discovery.js';
+import { listLikedPlaylistTracks } from './services/genreCuratedConfig.js';
 
 export const playerEvents = new EventEmitter();
 
@@ -67,8 +68,20 @@ function getEncoderRateArgs(): string[] {
 
 export function setActiveFallbackGenre(genreId: string | null): void {
   activeFallbackGenre = genreId;
-  if (!parseAutoFallbackGenreId(genreId)) {
+  const activeAuto = parseAutoFallbackGenreId(genreId);
+  if (!activeAuto) {
     pendingAutoUpcoming = null;
+    if (autoReadyBuffer.length > 0) {
+      for (const entry of autoReadyBuffer) {
+        if (entry.cleanupAfterUse && !keepFiles) cleanupFile(entry.audioFile);
+      }
+      autoReadyBuffer = [];
+    }
+    if (nextReady?.isAutoFallback) {
+      if (nextReady.cleanupAfterUse && !keepFiles) cleanupFile(nextReady.audioFile);
+      nextReady = null;
+    }
+    broadcastUpcomingTrack();
   }
 }
 
@@ -108,6 +121,19 @@ function buildAutoFallbackSource(genreId: string, artist: string, title: string)
   };
 }
 
+function buildAutoFallbackSourceForQuery(sourceId: string, search: string): QueueItem {
+  return {
+    id: `auto-${Date.now()}`,
+    youtube_url: `ytsearch1:${search}`,
+    youtube_id: `auto_${sanitizeAutoId(sourceId)}_${sanitizeAutoId(search)}`,
+    title: search,
+    thumbnail: null,
+    added_by: 'auto',
+    position: 0,
+    created_at: new Date().toISOString(),
+  };
+}
+
 const AUTO_RECENT_WINDOW = 60;
 const recentAutoTrackKeys: string[] = [];
 
@@ -118,6 +144,11 @@ function isRecentAutoTrack(artist: string, title: string): boolean {
 
 function rememberAutoTrack(artist: string, title: string): void {
   const key = normalizeAutoKey(`${artist} ${title}`);
+  rememberAutoTrackKey(key);
+}
+
+function rememberAutoTrackKey(raw: string): void {
+  const key = normalizeAutoKey(raw);
   if (!key) return;
   const idx = recentAutoTrackKeys.indexOf(key);
   if (idx >= 0) recentAutoTrackKeys.splice(idx, 1);
@@ -188,11 +219,56 @@ async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack |
       addedBy: null,
       queueItemId: null,
       isFallback: true,
+      isAutoFallback: true,
+      cleanupAfterUse: true,
     };
   } catch (err) {
     pendingAutoUpcoming = null;
     broadcastUpcomingTrack();
     console.warn(`[player] Auto fallback prepare failed (${genreId}): ${(err as Error).message}`);
+    return null;
+  }
+}
+
+async function prepareLikedAutoFallbackTrack(): Promise<ReadyTrack | null> {
+  try {
+    const likedTracks = listLikedPlaylistTracks();
+    if (likedTracks.length === 0) return null;
+
+    const fresh = likedTracks.filter((track) => !recentAutoTrackKeys.includes(normalizeAutoKey(track)));
+    const pool = fresh.length > 0 ? fresh : likedTracks;
+    const choice = pool[Math.floor(Math.random() * pool.length)];
+    if (!choice) return null;
+
+    pendingAutoUpcoming = {
+      youtube_id: 'auto',
+      title: choice,
+      thumbnail: null,
+      duration: null,
+      added_by: null,
+      isFallback: true,
+    };
+    broadcastUpcomingTrack();
+    const pseudo = buildAutoFallbackSourceForQuery(LIKED_AUTO_GENRE_ID, choice);
+    const audioFile = await downloadAudio(pseudo, _cacheDir);
+    rememberAutoTrackKey(choice);
+    pendingAutoUpcoming = null;
+    return {
+      audioFile,
+      title: choice,
+      thumbnail: null,
+      youtubeId: 'local',
+      duration: null,
+      addedBy: null,
+      queueItemId: null,
+      isFallback: true,
+      isAutoFallback: true,
+      cleanupAfterUse: true,
+    };
+  } catch (err) {
+    pendingAutoUpcoming = null;
+    broadcastUpcomingTrack();
+    console.warn(`[player] Liked auto fallback prepare failed: ${(err as Error).message}`);
     return null;
   }
 }
@@ -374,6 +450,8 @@ async function getFallbackArtworkDataUrl(filePath: string): Promise<string | nul
 
 const MAX_PRELOAD = 5;
 const PRELOAD_REFRESH_MS = 3000;
+const AUTO_READY_MIN = 2;
+const AUTO_READY_MAX = 3;
 
 interface PreloadedTrack {
   item: QueueItem;
@@ -397,15 +475,19 @@ interface ReadyTrack {
   addedBy: string | null;
   queueItemId: string | null;
   isFallback: boolean;
+  isAutoFallback: boolean;
+  cleanupAfterUse: boolean;
 }
 
 let nextReady: ReadyTrack | null = null;
 let preparingNext = false;
+let autoBufferFilling = false;
 let currentQueueItemId: string | null = null;
 let lastUpcomingKey: string | null = null;
 let lastFallbackFile: string | null = null;
 let pendingQueueUpcoming: UpcomingTrack | null = null;
 let pendingAutoUpcoming: UpcomingTrack | null = null;
+let autoReadyBuffer: ReadyTrack[] = [];
 const prepareFailCounts = new Map<string, number>();
 const PREPARE_FAIL_MAX = 3;
 
@@ -437,6 +519,17 @@ export function getUpcomingTrack(): UpcomingTrack | null {
   }
   if (pendingQueueUpcoming) {
     return pendingQueueUpcoming;
+  }
+  if (autoReadyBuffer.length > 0) {
+    const first = autoReadyBuffer[0];
+    return {
+      youtube_id: first.youtubeId,
+      title: first.title,
+      thumbnail: first.thumbnail,
+      duration: first.duration,
+      added_by: first.addedBy,
+      isFallback: first.isFallback,
+    };
   }
   if (pendingAutoUpcoming) {
     return pendingAutoUpcoming;
@@ -543,7 +636,7 @@ export function setKeepFiles(keep: boolean): void {
 }
 
 export function invalidatePreload(): void {
-  if (nextReady && !nextReady.isFallback && !keepFiles) {
+  if (nextReady && nextReady.cleanupAfterUse && !keepFiles) {
     cleanupFile(nextReady.audioFile);
   }
   nextReady = null;
@@ -553,13 +646,17 @@ export function invalidatePreload(): void {
     if (!keepFiles) cleanupFile(p.audioFile);
   }
   preloadBuffer = [];
+  for (const entry of autoReadyBuffer) {
+    if (entry.cleanupAfterUse && !keepFiles) cleanupFile(entry.audioFile);
+  }
+  autoReadyBuffer = [];
   console.log('[preload] Buffer invalidated');
   broadcastUpcomingTrack();
 }
 
 export function invalidateNextReady(): void {
   if (!nextReady) return;
-  if (!nextReady.isFallback && !keepFiles) {
+  if (nextReady.cleanupAfterUse && !keepFiles) {
     cleanupFile(nextReady.audioFile);
   }
   nextReady = null;
@@ -570,7 +667,7 @@ export function removeQueueItemFromPreload(itemId: string): void {
   if (!itemId) return;
 
   if (nextReady?.queueItemId === itemId) {
-    if (!nextReady.isFallback && !keepFiles) cleanupFile(nextReady.audioFile);
+    if (nextReady.cleanupAfterUse && !keepFiles) cleanupFile(nextReady.audioFile);
     nextReady = null;
   }
 
@@ -598,6 +695,17 @@ function takeFromBuffer(itemId: string): PreloadedTrack | null {
 
 function isInBuffer(itemId: string): boolean {
   return preloadBuffer.some((p) => p.item.id === itemId);
+}
+
+function takeAutoReadyFromBuffer(): ReadyTrack | null {
+  if (autoReadyBuffer.length === 0) return null;
+  const next = autoReadyBuffer.shift() ?? null;
+  broadcastUpcomingTrack();
+  return next;
+}
+
+function getAutoReadyCount(): number {
+  return autoReadyBuffer.length + (nextReady?.isAutoFallback ? 1 : 0);
 }
 
 function pickNextQueueItem(
@@ -649,7 +757,7 @@ async function markUnplayableQueueItem(
 
   // If the queued item was already prepared as nextReady, invalidate it.
   if (nextReady?.queueItemId === item.id) {
-    if (!nextReady.isFallback && !keepFiles) cleanupFile(nextReady.audioFile);
+    if (nextReady.cleanupAfterUse && !keepFiles) cleanupFile(nextReady.audioFile);
     nextReady = null;
   }
 
@@ -738,6 +846,7 @@ export async function startPlayCycle(
   playerEvents.on('queue:add', () => {
     // Invalidate fallback nextReady so queued track gets priority
     if (nextReady?.isFallback) {
+      if (nextReady.cleanupAfterUse && !keepFiles) cleanupFile(nextReady.audioFile);
       console.log('[prepare] Invalidated fallback — queue item added');
       nextReady = null;
     }
@@ -747,6 +856,7 @@ export async function startPlayCycle(
     if (_sb) {
       void refreshPendingQueueUpcoming(_sb, currentTrack?.id ?? null);
       void fillPreloadBuffer(_sb, _cacheDir, currentTrack?.id ?? null);
+      void ensureAutoReadyBuffer(_sb, _cacheDir);
       void prepareNextTrack(_sb, _cacheDir, currentTrack?.id ?? null);
     }
   });
@@ -755,6 +865,7 @@ export async function startPlayCycle(
     preloadRefreshTimer = setInterval(() => {
       if (!_sb || !isRunning) return;
       void fillPreloadBuffer(_sb, _cacheDir, currentTrack?.id ?? null);
+      void ensureAutoReadyBuffer(_sb, _cacheDir);
       void prepareNextTrack(_sb, _cacheDir, currentTrack?.id ?? null);
     }, PRELOAD_REFRESH_MS);
   }
@@ -790,6 +901,12 @@ export function stopPlayCycle(): void {
   if (preloadRefreshTimer) {
     clearInterval(preloadRefreshTimer);
     preloadRefreshTimer = null;
+  }
+  if (autoReadyBuffer.length > 0) {
+    for (const entry of autoReadyBuffer) {
+      if (entry.cleanupAfterUse && !keepFiles) cleanupFile(entry.audioFile);
+    }
+    autoReadyBuffer = [];
   }
 }
 
@@ -856,6 +973,36 @@ async function fillPreloadBuffer(sb: SupabaseClient, cacheDir: string, currentId
   }
 }
 
+async function ensureAutoReadyBuffer(sb: SupabaseClient, cacheDir: string): Promise<void> {
+  void sb;
+  void cacheDir;
+  const activeAutoGenre = parseAutoFallbackGenreId(activeFallbackGenre);
+  if (!activeAutoGenre) return;
+  if (autoBufferFilling) return;
+  autoBufferFilling = true;
+
+  try {
+    while (isRunning && getAutoReadyCount() < AUTO_READY_MIN && autoReadyBuffer.length < AUTO_READY_MAX) {
+      const ready = activeAutoGenre === LIKED_AUTO_GENRE_ID
+        ? await prepareLikedAutoFallbackTrack()
+        : await prepareAutoFallbackByGenre(activeAutoGenre);
+      if (!ready) break;
+      const stillActiveAuto = parseAutoFallbackGenreId(activeFallbackGenre);
+      if (stillActiveAuto !== activeAutoGenre) {
+        if (ready.cleanupAfterUse && !keepFiles) cleanupFile(ready.audioFile);
+        break;
+      }
+      autoReadyBuffer.push(ready);
+      console.log(`[auto-preload] Buffered auto track (${getAutoReadyCount()}/${AUTO_READY_MIN}): ${ready.title ?? activeAutoGenre}`);
+      broadcastUpcomingTrack();
+    }
+  } catch (err) {
+    console.warn(`[auto-preload] Failed: ${(err as Error).message}`);
+  } finally {
+    autoBufferFilling = false;
+  }
+}
+
 async function playNext(
   sb: SupabaseClient,
   io: IOServer,
@@ -871,6 +1018,7 @@ async function playNext(
   let trackAddedBy: string | null = null;
   let trackQueueId: string | null = null;
   let isFallback = false;
+  let trackCleanupAfterUse = false;
   let source = '';
   const activeAutoGenre = parseAutoFallbackGenreId(activeFallbackGenre);
 
@@ -885,6 +1033,7 @@ async function playNext(
     trackThumbnail = quickMeta ? null : await getFallbackArtworkDataUrl(fallbackFile);
     trackAddedBy = null;
     isFallback = true;
+    trackCleanupAfterUse = false;
     source = quickMeta ? 'random/gap-guard' : 'random';
     currentQueueItemId = null;
     return true;
@@ -892,7 +1041,16 @@ async function playNext(
 
   async function pickImmediateAutoFallback(): Promise<boolean> {
     if (!activeAutoGenre) return false;
-    const ready = await prepareAutoFallbackByGenre(activeAutoGenre);
+    let ready = takeAutoReadyFromBuffer();
+    if (!ready) {
+      await ensureAutoReadyBuffer(sb, cacheDir);
+      ready = takeAutoReadyFromBuffer();
+    }
+    if (!ready) {
+      ready = activeAutoGenre === LIKED_AUTO_GENRE_ID
+        ? await prepareLikedAutoFallbackTrack()
+        : await prepareAutoFallbackByGenre(activeAutoGenre);
+    }
     if (!ready) return false;
     audioFile = ready.audioFile;
     trackTitle = ready.title;
@@ -901,6 +1059,7 @@ async function playNext(
     trackDuration = ready.duration;
     trackAddedBy = null;
     isFallback = true;
+    trackCleanupAfterUse = ready.cleanupAfterUse;
     source = 'auto/random';
     currentQueueItemId = null;
     return true;
@@ -913,7 +1072,7 @@ async function playNext(
     if (!freshQueue.some((q) => q.id === nextReady?.queueItemId)) {
       const stale = nextReady;
       nextReady = null;
-      if (!keepFiles) cleanupFile(stale.audioFile);
+      if (stale.cleanupAfterUse && !keepFiles) cleanupFile(stale.audioFile);
       console.warn(`[prepare] Dropped stale nextReady removed from queue: ${stale.title ?? stale.youtubeId}`);
       broadcastUpcomingTrack();
     }
@@ -932,6 +1091,7 @@ async function playNext(
     trackAddedBy = ready.addedBy;
     trackQueueId = ready.queueItemId;
     isFallback = ready.isFallback;
+    trackCleanupAfterUse = ready.cleanupAfterUse;
     source = isFallback ? 'ready/random' : 'ready/preloaded';
     currentQueueItemId = trackQueueId;
     broadcastUpcomingTrack();
@@ -939,7 +1099,7 @@ async function playNext(
     if (nextReady && nextReady.queueItemId === currentTrack?.id) {
       const stale = nextReady;
       nextReady = null;
-      if (!stale.isFallback && !keepFiles) cleanupFile(stale.audioFile);
+      if (stale.cleanupAfterUse && !keepFiles) cleanupFile(stale.audioFile);
       console.warn(`[prepare] Dropped stale nextReady equal to current track: ${stale.title ?? stale.youtubeId}`);
       broadcastUpcomingTrack();
     }
@@ -972,6 +1132,7 @@ async function playNext(
         trackAddedBy = item.added_by ?? null;
         failCounts.delete(item.youtube_id);
         currentQueueItemId = trackQueueId;
+        trackCleanupAfterUse = true;
         source = 'preloaded';
       } else {
         // Gap guard: never block transition on download preparation.
@@ -1052,6 +1213,7 @@ async function playNext(
 
     // Start preparing next track in background while this one plays
     prepareNextTrack(sb, cacheDir, trackQueueId);
+    void ensureAutoReadyBuffer(sb, cacheDir);
 
     await decodeToEncoder(audioFile, enc);
 
@@ -1064,7 +1226,7 @@ async function playNext(
       completedSwap = null;
 
       // Clean up old track
-      if (audioFile && !isFallback && !keepFiles) cleanupFile(audioFile);
+      if (audioFile && trackCleanupAfterUse && !keepFiles) cleanupFile(audioFile);
       if (audioFile && !isFallback) {
         sb.from('played_history').insert({
           youtube_id: trackYoutubeId, title: trackTitle,
@@ -1081,6 +1243,7 @@ async function playNext(
       trackAddedBy = swap.ready.addedBy;
       trackQueueId = swap.ready.queueItemId;
       isFallback = swap.ready.isFallback;
+      trackCleanupAfterUse = swap.ready.cleanupAfterUse;
 
       const swapTrackId = trackQueueId ?? `fallback_${Date.now()}`;
       const durStr = trackDuration
@@ -1112,6 +1275,7 @@ async function playNext(
       }
 
       prepareNextTrack(sb, cacheDir, trackQueueId);
+      void ensureAutoReadyBuffer(sb, cacheDir);
 
       await pipeRunningDecoder(swap.decoder, ensureEncoder());
     }
@@ -1134,7 +1298,7 @@ async function playNext(
     currentDecoder = null;
     currentQueueItemId = null;
 
-    if (audioFile && !isFallback && !keepFiles) {
+    if (audioFile && trackCleanupAfterUse && !keepFiles) {
       cleanupFile(audioFile);
     }
 
@@ -1460,6 +1624,8 @@ async function prepareNextTrack(
           addedBy: item.added_by ?? null,
           queueItemId: item.id,
           isFallback: false,
+          isAutoFallback: false,
+          cleanupAfterUse: true,
         };
         pendingQueueUpcoming = null;
         console.log(`[prepare] Next ready (preloaded): ${item.title ?? item.youtube_id}`);
@@ -1490,6 +1656,8 @@ async function prepareNextTrack(
           addedBy: item.added_by ?? null,
           queueItemId: item.id,
           isFallback: false,
+          isAutoFallback: false,
+          cleanupAfterUse: true,
         };
         pendingQueueUpcoming = null;
         console.log(`[prepare] Next ready (downloaded): ${item.title ?? item.youtube_id}`);
@@ -1516,11 +1684,17 @@ async function prepareNextTrack(
         return;
       }
       if (activeAutoGenre) {
-        const autoReady = await prepareAutoFallbackByGenre(activeAutoGenre);
+        await ensureAutoReadyBuffer(sb, cacheDir);
+        const autoReady = takeAutoReadyFromBuffer() ?? (
+          activeAutoGenre === LIKED_AUTO_GENRE_ID
+            ? await prepareLikedAutoFallbackTrack()
+            : await prepareAutoFallbackByGenre(activeAutoGenre)
+        );
         if (autoReady) {
           nextReady = autoReady;
           console.log(`[prepare] Next ready (auto genre): ${autoReady.title ?? activeAutoGenre}`);
           broadcastUpcomingTrack();
+          void ensureAutoReadyBuffer(sb, cacheDir);
           return;
         }
       }
@@ -1539,15 +1713,23 @@ async function prepareNextTrack(
           addedBy: null,
           queueItemId: null,
           isFallback: true,
+          isAutoFallback: false,
+          cleanupAfterUse: false,
         };
         console.log(`[prepare] Next ready (random): ${title}`);
         broadcastUpcomingTrack();
       } else if (activeAutoGenre) {
-        const autoReady = await prepareAutoFallbackByGenre(activeAutoGenre);
+        await ensureAutoReadyBuffer(sb, cacheDir);
+        const autoReady = takeAutoReadyFromBuffer() ?? (
+          activeAutoGenre === LIKED_AUTO_GENRE_ID
+            ? await prepareLikedAutoFallbackTrack()
+            : await prepareAutoFallbackByGenre(activeAutoGenre)
+        );
         if (autoReady) {
           nextReady = autoReady;
           console.log(`[prepare] Next ready (auto genre): ${autoReady.title ?? activeAutoGenre}`);
           broadcastUpcomingTrack();
+          void ensureAutoReadyBuffer(sb, cacheDir);
         }
       }
     }

@@ -84,6 +84,7 @@ interface GenreHints {
   requiredTokens?: string[];
   priorityArtists?: string[];
   priorityTracks?: string[];
+  blockedTracks?: string[];
   priorityLabels?: string[];
   minScore: number;
 }
@@ -288,6 +289,7 @@ function getGenreHints(genre: string): GenreHints {
       requiredTokens: base.requiredTokens ?? [],
       priorityArtists: base.priorityArtists ?? [],
       priorityTracks: base.priorityTracks ?? [],
+      blockedTracks: [],
       priorityLabels: base.priorityLabels ?? [],
     };
   }
@@ -301,6 +303,7 @@ function getGenreHints(genre: string): GenreHints {
     requiredTokens: dedupeNormalized([...(base.requiredTokens ?? []), ...(curated.requiredTokens ?? [])]),
     priorityArtists: dedupeNormalized([...(base.priorityArtists ?? []), ...(curated.priorityArtists ?? [])]),
     priorityTracks: dedupeNormalized([...(base.priorityTracks ?? []), ...(curated.priorityTracks ?? [])]),
+    blockedTracks: dedupeNormalized([...(curated.blockedTracks ?? [])]),
     priorityLabels: dedupeNormalized([...(base.priorityLabels ?? []), ...(curated.priorityLabels ?? [])]),
     minScore: Math.max(base.minScore, curated.minScore ?? base.minScore),
   };
@@ -350,7 +353,20 @@ function hasRequiredEvidence(item: GenreHitItem, hints: GenreHints): boolean {
 }
 
 function filterHitsByGenre(items: GenreHitItem[], hints: GenreHints, limit: number): GenreHitItem[] {
+  const blocked = new Set((hints.blockedTracks ?? []).map((value) => value.toLowerCase()));
   const scored = dedupeHits(items)
+    .filter((item) => {
+      if (blocked.size === 0) return true;
+      const title = item.title.toLowerCase();
+      const artistTitle = `${item.artist} - ${item.title}`.toLowerCase();
+      for (const blockedTrack of blocked) {
+        if (!blockedTrack) continue;
+        if (title.includes(blockedTrack) || artistTitle.includes(blockedTrack)) {
+          return false;
+        }
+      }
+      return true;
+    })
     .map((item) => ({
       item,
       score: scoreGenreRelevance(item, hints),

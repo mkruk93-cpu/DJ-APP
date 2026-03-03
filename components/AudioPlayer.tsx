@@ -6,7 +6,7 @@ import { useRadioStore } from "@/lib/radioStore";
 import AudioVisualizer from "@/components/AudioVisualizer";
 import { parseTrackDisplay } from "@/lib/trackDisplay";
 import { useSyncedTrack } from "@/lib/useSyncedTrack";
-import { likeCurrentAutoTrack } from "@/lib/radioApi";
+import { dislikeCurrentAutoTrack, likeCurrentAutoTrack } from "@/lib/radioApi";
 import type { Track } from "@/lib/types";
 
 interface NowPlayingData {
@@ -92,9 +92,10 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const [currentArtwork, setCurrentArtwork] = useState<string | null>(null);
   const [incomingArtwork, setIncomingArtwork] = useState<string | null>(null);
   const [incomingArtworkVisible, setIncomingArtworkVisible] = useState(false);
-  const [likeSaving, setLikeSaving] = useState(false);
+  const [feedbackSaving, setFeedbackSaving] = useState(false);
   const [likedTrackKey, setLikedTrackKey] = useState<string | null>(null);
-  const [likeMessage, setLikeMessage] = useState<string | null>(null);
+  const [dislikedTrackKey, setDislikedTrackKey] = useState<string | null>(null);
+  const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const userPaused = useRef(false);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connected = useRadioStore((s) => s.connected);
@@ -213,34 +214,55 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const radioRequestedBy = syncedRadioTrack?.added_by ?? null;
   const radioIsRandom = syncedRadioTrack?.youtube_id === "local";
   const autoPlaylistActive = (activeFallbackGenre ?? "").startsWith("auto:");
+  const autoGenreIsLikedPlaylist = (activeFallbackGenre ?? "").toLowerCase() === "auto:liked";
   const displayTitle = syncedRadioTrack ? radioTitle : (showSupabaseData ? track.title : null);
   const displayArtist = syncedRadioTrack ? radioArtist : (showSupabaseData ? track.artist : null);
   const displayArtwork = syncedRadioTrack?.thumbnail ?? (showSupabaseData ? track.artwork_url : null);
   const hasTrack = displayTitle || displayArtist;
   const currentLikeKey = `${syncedRadioTrack?.id ?? ""}|${displayTitle ?? ""}|${displayArtist ?? ""}`;
-  const canLikeAutoTrack = !!(syncedRadioTrack && radioIsRandom && autoPlaylistActive && (displayTitle || displayArtist));
+  const canRateAutoTrack = !!(syncedRadioTrack && radioIsRandom && autoPlaylistActive && (displayTitle || displayArtist));
+  const canDislikeAutoTrack = canRateAutoTrack && !autoGenreIsLikedPlaylist;
   const backgroundArtBaseOpacity = 0.15;
 
   useEffect(() => {
-    if (!likeMessage) return;
-    const timer = setTimeout(() => setLikeMessage(null), 3000);
+    if (!feedbackMessage) return;
+    const timer = setTimeout(() => setFeedbackMessage(null), 3000);
     return () => clearTimeout(timer);
-  }, [likeMessage]);
+  }, [feedbackMessage]);
 
   async function likeTrack() {
-    if (!canLikeAutoTrack || likeSaving) return;
+    if (!canRateAutoTrack || feedbackSaving) return;
     const artist = displayArtist ?? null;
     const title = displayTitle ?? null;
     if (!artist && !title) return;
-    setLikeSaving(true);
+    setFeedbackSaving(true);
     try {
       await likeCurrentAutoTrack(artist, title);
       setLikedTrackKey(currentLikeKey);
-      setLikeMessage("Geliked voor dit genre");
+      setDislikedTrackKey(null);
+      setFeedbackMessage("Geliked voor genres + playlist");
     } catch {
-      setLikeMessage("Like opslaan mislukt");
+      setFeedbackMessage("Like opslaan mislukt");
     } finally {
-      setLikeSaving(false);
+      setFeedbackSaving(false);
+    }
+  }
+
+  async function dislikeTrack() {
+    if (!canDislikeAutoTrack || feedbackSaving) return;
+    const artist = displayArtist ?? null;
+    const title = displayTitle ?? null;
+    if (!artist && !title) return;
+    setFeedbackSaving(true);
+    try {
+      await dislikeCurrentAutoTrack(artist, title);
+      setDislikedTrackKey(currentLikeKey);
+      setLikedTrackKey(null);
+      setFeedbackMessage("Dislike opgeslagen voor dit genre");
+    } catch {
+      setFeedbackMessage("Dislike opslaan mislukt");
+    } finally {
+      setFeedbackSaving(false);
     }
   }
 
@@ -621,22 +643,36 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
                     )}
                   </p>
                 )}
-                {canLikeAutoTrack && (
+                {canRateAutoTrack && (
                   <div className="mt-0.5 flex items-center gap-1.5">
                     <button
                       type="button"
                       onClick={likeTrack}
-                      disabled={likeSaving || likedTrackKey === currentLikeKey}
+                      disabled={feedbackSaving}
                       className={`rounded px-1.5 py-0.5 text-[10px] font-semibold transition ${
                         likedTrackKey === currentLikeKey
                           ? "bg-pink-500/20 text-pink-200"
                           : "bg-gray-800 text-pink-300 hover:bg-gray-700"
                       } disabled:opacity-70`}
                     >
-                      {likedTrackKey === currentLikeKey ? "♥ Geliked" : likeSaving ? "Opslaan..." : "♡ Like"}
+                      {likedTrackKey === currentLikeKey ? "♥ Geliked" : feedbackSaving ? "Opslaan..." : "♡ Like"}
                     </button>
-                    {likeMessage && (
-                      <span className="truncate text-[10px] text-pink-200/90">{likeMessage}</span>
+                    {canDislikeAutoTrack && (
+                      <button
+                        type="button"
+                        onClick={dislikeTrack}
+                        disabled={feedbackSaving}
+                        className={`rounded px-1.5 py-0.5 text-[10px] font-semibold transition ${
+                          dislikedTrackKey === currentLikeKey
+                            ? "bg-red-500/20 text-red-200"
+                            : "bg-gray-800 text-red-300 hover:bg-gray-700"
+                        } disabled:opacity-70`}
+                      >
+                        {dislikedTrackKey === currentLikeKey ? "✕ Disliked" : feedbackSaving ? "Opslaan..." : "🚫 Dislike"}
+                      </button>
+                    )}
+                    {feedbackMessage && (
+                      <span className="truncate text-[10px] text-pink-200/90">{feedbackMessage}</span>
                     )}
                   </div>
                 )}
@@ -796,21 +832,35 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
                   )}
                 </p>
               )}
-              {canLikeAutoTrack && (
+              {canRateAutoTrack && (
                 <div className="mt-1 flex items-center gap-2">
                   <button
                     type="button"
                     onClick={likeTrack}
-                    disabled={likeSaving || likedTrackKey === currentLikeKey}
+                    disabled={feedbackSaving}
                     className={`rounded-md px-2 py-0.5 text-[11px] font-semibold transition ${
                       likedTrackKey === currentLikeKey
                         ? "bg-pink-500/20 text-pink-200"
                         : "bg-gray-800 text-pink-300 hover:bg-gray-700"
                     } disabled:opacity-70`}
                   >
-                    {likedTrackKey === currentLikeKey ? "♥ Geliked" : likeSaving ? "Opslaan..." : "♡ Like dit nummer"}
+                    {likedTrackKey === currentLikeKey ? "♥ Geliked" : feedbackSaving ? "Opslaan..." : "♡ Like dit nummer"}
                   </button>
-                  {likeMessage && <span className="text-[11px] text-pink-200/90">{likeMessage}</span>}
+                  {canDislikeAutoTrack && (
+                    <button
+                      type="button"
+                      onClick={dislikeTrack}
+                      disabled={feedbackSaving}
+                      className={`rounded-md px-2 py-0.5 text-[11px] font-semibold transition ${
+                        dislikedTrackKey === currentLikeKey
+                          ? "bg-red-500/20 text-red-200"
+                          : "bg-gray-800 text-red-300 hover:bg-gray-700"
+                      } disabled:opacity-70`}
+                    >
+                      {dislikedTrackKey === currentLikeKey ? "✕ Disliked" : feedbackSaving ? "Opslaan..." : "🚫 Dislike"}
+                    </button>
+                  )}
+                  {feedbackMessage && <span className="text-[11px] text-pink-200/90">{feedbackMessage}</span>}
                 </div>
               )}
             </div>

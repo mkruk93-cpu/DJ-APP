@@ -108,6 +108,13 @@ export async function likeCurrentAutoTrack(artist?: string | null, title?: strin
   });
 }
 
+export async function dislikeCurrentAutoTrack(artist?: string | null, title?: string | null): Promise<void> {
+  await post('/api/genre-curation/dislike-current', {
+    ...(artist?.trim() ? { artist: artist.trim() } : {}),
+    ...(title?.trim() ? { title: title.trim() } : {}),
+  });
+}
+
 function refreshState(): void {
   const url = getServerUrl();
   if (!url) return;
