@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import PwaRegistrar from "@/components/PwaRegistrar";
+import PwaRefreshButton from "@/components/PwaRefreshButton";
 
 export const metadata: Metadata = {
   title: "KrukkeX DJ Stream",
@@ -34,6 +35,7 @@ export default function RootLayout({
     <html lang="nl" className="dark">
       <body className="min-h-dvh bg-gray-950 text-gray-100 antialiased">
         <PwaRegistrar />
+        <PwaRefreshButton />
         {children}
       </body>
     </html>

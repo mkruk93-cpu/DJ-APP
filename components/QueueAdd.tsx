@@ -6,7 +6,7 @@ import { useRadioStore } from "@/lib/radioStore";
 import { canPerformAction } from "@/lib/types";
 import { isRadioAdmin, getRadioToken } from "@/lib/auth";
 import { isSpotifyConfigured } from "@/lib/spotify";
-import { getGenres, getGenreHits, addPriorityArtistToGenre, type GenreOption, type GenreHit } from "@/lib/radioApi";
+import { getGenres, getGenreHits, addPriorityArtistToGenre, blockArtistForGenre, type GenreOption, type GenreHit } from "@/lib/radioApi";
 import SpotifyBrowser from "@/components/SpotifyBrowser";
 
 class SpotifyErrorBoundary extends Component<
@@ -203,6 +203,8 @@ export default function QueueAdd() {
   const [genreHasMore, setGenreHasMore] = useState(false);
   const [genrePrioritySaving, setGenrePrioritySaving] = useState<Record<string, boolean>>({});
   const [genrePrioritySaved, setGenrePrioritySaved] = useState<Record<string, boolean>>({});
+  const [genreBlockSaving, setGenreBlockSaving] = useState<Record<string, boolean>>({});
+  const [genreBlockSaved, setGenreBlockSaved] = useState<Record<string, boolean>>({});
   const [activeGenre, setActiveGenre] = useState<string | null>(null);
   const [genreError, setGenreError] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
@@ -219,6 +221,7 @@ export default function QueueAdd() {
   const recentAddTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recentAddTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const genreLoadInFlightRef = useRef(false);
+  const genreNoProgressPagesRef = useRef(0);
   const genreHitsCacheRef = useRef(new Map<string, GenreHit[]>());
   const searchOffsetRef = useRef(0);
   const genreOffsetRef = useRef(0);
@@ -452,9 +455,20 @@ export default function QueueAdd() {
         addedUniqueCount = Math.max(0, deduped.length - prev.length);
         return deduped;
       });
-      setGenreOffsetSafe(offset + cached.length);
+      const nextOffset = offset + GENRE_PAGE_SIZE;
+      setGenreOffsetSafe(nextOffset);
+      if (!append) {
+        genreNoProgressPagesRef.current = 0;
+      } else if (addedUniqueCount > 0) {
+        genreNoProgressPagesRef.current = 0;
+      } else {
+        genreNoProgressPagesRef.current += 1;
+      }
+      const allowRetryOnStall = append && cached.length > 0 && genreNoProgressPagesRef.current < 3;
       setGenreHasMore(
-        cached.length >= GENRE_PAGE_SIZE || (append ? addedUniqueCount > 0 : cached.length > 0),
+        cached.length >= GENRE_PAGE_SIZE
+          || (append ? addedUniqueCount > 0 : cached.length > 0)
+          || allowRetryOnStall,
       );
       setActiveGenre(genre);
       return;
@@ -467,6 +481,7 @@ export default function QueueAdd() {
       setGenreHits([]);
       setGenreOffsetSafe(0);
       setGenreHasMore(false);
+      genreNoProgressPagesRef.current = 0;
     }
     setActiveGenre(genre);
     Promise.resolve()
@@ -491,9 +506,20 @@ export default function QueueAdd() {
           addedUniqueCount = Math.max(0, deduped.length - prev.length);
           return deduped;
         });
-        setGenreOffsetSafe(offset + normalized.length);
+        const nextOffset = offset + GENRE_PAGE_SIZE;
+        setGenreOffsetSafe(nextOffset);
+        if (!append) {
+          genreNoProgressPagesRef.current = 0;
+        } else if (addedUniqueCount > 0) {
+          genreNoProgressPagesRef.current = 0;
+        } else {
+          genreNoProgressPagesRef.current += 1;
+        }
+        const allowRetryOnStall = append && normalized.length > 0 && genreNoProgressPagesRef.current < 3;
         setGenreHasMore(
-          normalized.length >= GENRE_PAGE_SIZE || (append ? addedUniqueCount > 0 : normalized.length > 0),
+          normalized.length >= GENRE_PAGE_SIZE
+            || (append ? addedUniqueCount > 0 : normalized.length > 0)
+            || allowRetryOnStall,
         );
       })
       .catch(() => {
@@ -810,6 +836,7 @@ export default function QueueAdd() {
       setGenreHits([]);
       setGenreOffsetSafe(0);
       setGenreHasMore(false);
+      genreNoProgressPagesRef.current = 0;
       setActiveGenre(null);
       loadGenres(genreQuery);
       return;
@@ -867,6 +894,32 @@ export default function QueueAdd() {
       setFeedback({ msg: message, ok: false });
     } finally {
       setGenrePrioritySaving((prev) => ({ ...prev, [key]: false }));
+    }
+  }
+
+  async function blockGenreArtist(item: GenreHitRow) {
+    if (!isAdmin || !activeGenre) return;
+    const key = `${activeGenre}:${item.id}`;
+    const artist = getPrimaryArtist(item.artist);
+    if (!artist) return;
+    setGenreBlockSaving((prev) => ({ ...prev, [key]: true }));
+    try {
+      await blockArtistForGenre(activeGenre, artist, activeGenreLabel);
+      setGenreBlockSaved((prev) => ({ ...prev, [key]: true }));
+      for (const cacheKey of genreHitsCacheRef.current.keys()) {
+        if (cacheKey.startsWith(`${activeGenre.toLowerCase()}::`)) {
+          genreHitsCacheRef.current.delete(cacheKey);
+        }
+      }
+      setGenreHits((prev) =>
+        prev.filter((row) => getPrimaryArtist(row.artist).toLowerCase() !== artist.toLowerCase()),
+      );
+      setFeedback({ msg: `Artiest "${artist}" wordt genegeerd in ${activeGenreLabel}.`, ok: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Kon artiest niet blokkeren.";
+      setFeedback({ msg: message, ok: false });
+    } finally {
+      setGenreBlockSaving((prev) => ({ ...prev, [key]: false }));
     }
   }
 
@@ -1023,6 +1076,7 @@ export default function QueueAdd() {
                     setGenreHits([]);
                     setGenreOffsetSafe(0);
                     setGenreHasMore(false);
+                    genreNoProgressPagesRef.current = 0;
                     if (genreMenuRef.current) genreMenuRef.current.open = false;
                   }}
                   className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
@@ -1093,22 +1147,40 @@ export default function QueueAdd() {
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
                       {isAdmin && activeGenre && (
-                        <button
-                          type="button"
-                          onClick={() => prioritizeGenreArtist(item)}
-                          disabled={genrePrioritySaving[`${activeGenre}:${item.id}`]}
-                          className={`rounded-md border px-2 py-1 text-[11px] font-semibold transition disabled:opacity-60 ${
-                            genrePrioritySaved[`${activeGenre}:${item.id}`]
-                              ? "border-emerald-500/70 bg-emerald-500/20 text-emerald-200"
-                              : "border-fuchsia-600/70 bg-fuchsia-600/15 text-fuchsia-200 hover:bg-fuchsia-600/25"
-                          }`}
-                        >
-                          {genrePrioritySaving[`${activeGenre}:${item.id}`]
-                            ? "Opslaan..."
-                            : genrePrioritySaved[`${activeGenre}:${item.id}`]
-                              ? "Opgeslagen"
-                              : "Voorrang artiest"}
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => prioritizeGenreArtist(item)}
+                            disabled={genrePrioritySaving[`${activeGenre}:${item.id}`] || genreBlockSaving[`${activeGenre}:${item.id}`]}
+                            className={`rounded-md border px-2 py-1 text-[11px] font-semibold transition disabled:opacity-60 ${
+                              genrePrioritySaved[`${activeGenre}:${item.id}`]
+                                ? "border-emerald-500/70 bg-emerald-500/20 text-emerald-200"
+                                : "border-fuchsia-600/70 bg-fuchsia-600/15 text-fuchsia-200 hover:bg-fuchsia-600/25"
+                            }`}
+                          >
+                            {genrePrioritySaving[`${activeGenre}:${item.id}`]
+                              ? "Opslaan..."
+                              : genrePrioritySaved[`${activeGenre}:${item.id}`]
+                                ? "Opgeslagen"
+                                : "Voorrang artiest"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => blockGenreArtist(item)}
+                            disabled={genreBlockSaving[`${activeGenre}:${item.id}`] || genrePrioritySaving[`${activeGenre}:${item.id}`]}
+                            className={`rounded-md border px-2 py-1 text-[11px] font-semibold transition disabled:opacity-60 ${
+                              genreBlockSaved[`${activeGenre}:${item.id}`]
+                                ? "border-rose-500/70 bg-rose-500/20 text-rose-100"
+                                : "border-rose-600/70 bg-rose-600/15 text-rose-200 hover:bg-rose-600/25"
+                            }`}
+                          >
+                            {genreBlockSaving[`${activeGenre}:${item.id}`]
+                              ? "Blokkeren..."
+                              : genreBlockSaved[`${activeGenre}:${item.id}`]
+                                ? "Geblokkeerd"
+                                : "Negeer artiest"}
+                          </button>
+                        </>
                       )}
                       <button
                         type="button"

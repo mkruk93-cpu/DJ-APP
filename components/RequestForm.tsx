@@ -125,10 +125,15 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
   const cooldownTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const genreListRef = useRef<HTMLDivElement>(null);
+  const genreMenuRef = useRef<HTMLDetailsElement>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const nickname = typeof window !== "undefined" ? localStorage.getItem("nickname") ?? "anon" : "anon";
   const serverUrl = useRadioStore((s) => s.serverUrl) ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
+  const activeGenreLabel =
+    genres.find((genre) => genre.name === activeGenre || genre.id === activeGenre)?.name
+    ?? activeGenre
+    ?? "Genre selecteren";
 
   const load = useCallback(async () => {
     try {
@@ -427,6 +432,7 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
       setGenreHasMore(false);
       setActiveGenre(null);
       loadGenres(genreQuery);
+      if (genreMenuRef.current) genreMenuRef.current.open = true;
       return;
     }
     if (newSource === "spotify") return;
@@ -447,50 +453,93 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
 
   return (
     <div ref={wrapperRef} className="relative flex h-full flex-col overflow-hidden rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5">
-      <div className="border-b border-gray-800 px-3 py-2 sm:px-4 sm:py-3">
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-violet-400 sm:text-sm">
-          Verzoekjes
-        </h2>
-      </div>
+      <form onSubmit={handleSubmit} className="m-3 space-y-2 rounded-xl border border-gray-800 bg-gray-900 p-3 shadow-lg shadow-violet-500/5 sm:m-4 sm:p-4">
+        <label className="block text-xs font-semibold uppercase tracking-wider text-violet-400">
+          Nummer aanvragen
+        </label>
 
-      <form onSubmit={handleSubmit} className="space-y-2 border-b border-gray-800 px-3 py-2 sm:px-4 sm:py-3">
-        <div className="flex flex-wrap gap-1 rounded-lg bg-gray-800 p-0.5">
+        <div className="flex items-center gap-1 rounded-lg bg-gray-800 p-0.5">
           <button
             type="button"
             onClick={() => switchSource("youtube")}
-            className={`flex min-w-0 flex-1 basis-[calc(50%-0.125rem)] items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition sm:basis-0 sm:gap-1.5 sm:px-3 sm:text-xs ${
-              source === "youtube" ? "bg-red-500/20 text-red-400" : "text-gray-400 hover:text-gray-200"
+            className={`group flex h-8 min-w-0 basis-0 items-center justify-center rounded-md px-1.5 text-[11px] font-semibold transition-all duration-200 ${
+              source === "youtube"
+                ? "flex-[1.4] bg-red-500/20 text-red-400"
+                : "flex-1 text-gray-400 hover:text-gray-200"
             }`}
           >
-            <span className="truncate">YouTube</span>
+            <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M23.5 6.2a3.02 3.02 0 00-2.12-2.14C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.38.56A3.02 3.02 0 00.5 6.2 31.7 31.7 0 000 12a31.7 31.7 0 00.5 5.8 3.02 3.02 0 002.12 2.14c1.88.56 9.38.56 9.38.56s7.5 0 9.38-.56a3.02 3.02 0 002.12-2.14A31.7 31.7 0 0024 12a31.7 31.7 0 00-.5-5.8zM9.55 15.5V8.5l6.27 3.5-6.27 3.5z" />
+            </svg>
+            <span
+              className={`overflow-hidden whitespace-nowrap transition-all duration-200 ${
+                source === "youtube" ? "ml-1 max-w-[86px] opacity-100" : "max-w-0 opacity-0"
+              }`}
+            >
+              YouTube
+            </span>
           </button>
           <button
             type="button"
             onClick={() => switchSource("soundcloud")}
-            className={`flex min-w-0 flex-1 basis-[calc(50%-0.125rem)] items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition sm:basis-0 sm:gap-1.5 sm:px-3 sm:text-xs ${
-              source === "soundcloud" ? "bg-orange-500/20 text-orange-400" : "text-gray-400 hover:text-gray-200"
+            className={`group flex h-8 min-w-0 basis-0 items-center justify-center rounded-md px-1.5 text-[11px] font-semibold transition-all duration-200 ${
+              source === "soundcloud"
+                ? "flex-[1.4] bg-orange-500/20 text-orange-400"
+                : "flex-1 text-gray-400 hover:text-gray-200"
             }`}
           >
-            <span className="truncate">SoundCloud</span>
+            <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M1.175 12.225c-.05 0-.075.025-.075.075v4.4c0 .05.025.075.075.075s.075-.025.075-.075v-4.4c0-.05-.025-.075-.075-.075zm-.9.825c-.05 0-.075.025-.075.075v2.75c0 .05.025.075.075.075s.075-.025.075-.075v-2.75c0-.05-.025-.075-.075-.075zm1.8-.6c-.05 0-.075.025-.075.075v5c0 .05.025.075.075.075s.075-.025.075-.075v-5c0-.05-.025-.075-.075-.075zm.9-.75c-.05 0-.075.025-.075.075v6.5c0 .05.025.075.075.075s.075-.025.075-.075v-6.5c0-.05-.025-.075-.075-.075zm.9.275c-.05 0-.075.025-.075.075v5.95c0 .05.025.075.075.075s.075-.025.075-.075v-5.95c0-.05-.025-.075-.075-.075zm.9-.9c-.05 0-.075.025-.075.075v7.75c0 .05.025.075.075.075s.075-.025.075-.075v-7.75c0-.05-.025-.075-.075-.075zm.9 1.05c-.05 0-.075.025-.075.075v5.65c0 .05.025.075.075.075s.075-.025.075-.075v-5.65c0-.05-.025-.075-.075-.075zm.9-2.025c-.05 0-.075.025-.075.075v9.7c0 .05.025.075.075.075s.075-.025.075-.075v-9.7c0-.05-.025-.075-.075-.075zm.9-.475c-.05 0-.075.025-.075.075v10.65c0 .05.025.075.075.075s.075-.025.075-.075V9.55c0-.05-.025-.075-.075-.075zm.9.45c-.05 0-.075.025-.075.075v9.75c0 .05.025.075.075.075s.075-.025.075-.075v-9.75c0-.05-.025-.075-.075-.075zm1.3-.275c-.827 0-1.587.262-2.213.708a5.346 5.346 0 00-1.587-3.658A5.346 5.346 0 009.175 5C6.388 5 4.1 7.163 3.95 9.9c-.013.05-.013.1-.013.15 0 .05 0 .1.013.15h-.175c-.975 0-1.775.8-1.775 1.775v5.05c0 .975.8 1.775 1.775 1.775H12.5c2.375 0 4.3-1.925 4.3-4.3S14.875 10.2 12.5 10.2z" />
+            </svg>
+            <span
+              className={`overflow-hidden whitespace-nowrap transition-all duration-200 ${
+                source === "soundcloud" ? "ml-1 max-w-[86px] opacity-100" : "max-w-0 opacity-0"
+              }`}
+            >
+              SoundCloud
+            </span>
           </button>
           <button
             type="button"
             onClick={() => switchSource("genres")}
-            className={`flex min-w-0 flex-1 basis-[calc(50%-0.125rem)] items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition sm:basis-0 sm:gap-1.5 sm:px-3 sm:text-xs ${
-              source === "genres" ? "bg-fuchsia-500/20 text-fuchsia-300" : "text-gray-400 hover:text-gray-200"
+            className={`group flex h-8 min-w-0 basis-0 items-center justify-center rounded-md px-1.5 text-[11px] font-semibold transition-all duration-200 ${
+              source === "genres"
+                ? "flex-[1.4] bg-fuchsia-500/20 text-fuchsia-300"
+                : "flex-1 text-gray-400 hover:text-gray-200"
             }`}
           >
-            <span className="truncate">Genres</span>
+            <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 3v18M3 12h18" />
+            </svg>
+            <span
+              className={`overflow-hidden whitespace-nowrap transition-all duration-200 ${
+                source === "genres" ? "ml-1 max-w-[86px] opacity-100" : "max-w-0 opacity-0"
+              }`}
+            >
+              Genres
+            </span>
           </button>
           {isSpotifyConfigured() && (
             <button
               type="button"
               onClick={() => switchSource("spotify")}
-              className={`flex min-w-0 flex-1 basis-[calc(50%-0.125rem)] items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition sm:basis-0 sm:gap-1.5 sm:px-3 sm:text-xs ${
-                source === "spotify" ? "bg-[#1DB954]/20 text-[#1DB954]" : "text-gray-400 hover:text-gray-200"
+              className={`group flex h-8 min-w-0 basis-0 items-center justify-center rounded-md px-1.5 text-[11px] font-semibold transition-all duration-200 ${
+                source === "spotify"
+                  ? "flex-[1.4] bg-[#1DB954]/20 text-[#1DB954]"
+                  : "flex-1 text-gray-400 hover:text-gray-200"
               }`}
             >
-              <span className="truncate">Spotify</span>
+              <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z" />
+              </svg>
+              <span
+                className={`overflow-hidden whitespace-nowrap transition-all duration-200 ${
+                  source === "spotify" ? "ml-1 max-w-[86px] opacity-100" : "max-w-0 opacity-0"
+                }`}
+              >
+                Spotify
+              </span>
             </button>
           )}
         </div>
@@ -503,32 +552,71 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
               type="text"
               value={genreQuery}
               onChange={(e) => setGenreQuery(e.target.value)}
-              placeholder="Zoek genre..."
+              onFocus={() => {
+                if (genreMenuRef.current) genreMenuRef.current.open = true;
+              }}
+              placeholder="Zoek genre (hardstyle, trance, rock, metal...)"
               className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-fuchsia-500"
             />
-            <div className="flex gap-2 overflow-x-auto pb-1">
-              {genres.map((genre) => (
+            <details ref={genreMenuRef} className="group relative z-20">
+              <summary className="grid cursor-pointer list-none grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-gray-700 bg-gray-900/75 px-2.5 py-1.5 text-xs text-gray-200 transition hover:border-violet-500/60">
+                <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] font-semibold text-gray-300">
+                  Genre
+                </span>
+                <span className="min-w-0 truncate text-center text-[12px] font-semibold text-fuchsia-300">
+                  {activeGenreLabel}
+                </span>
+                <span className="justify-self-end text-gray-400 transition group-open:rotate-180">▾</span>
+              </summary>
+              <div className="relative mt-1 max-h-60 overflow-y-auto rounded-md border border-gray-700 bg-gray-900/95 p-1 shadow-lg shadow-black/40">
                 <button
-                  key={genre.id}
                   type="button"
-                  onClick={() => loadGenreHits(genre.name, false)}
-                  className={`shrink-0 rounded-full border px-3 py-1 text-xs font-semibold transition ${
-                    activeGenre === genre.name
-                      ? "border-fuchsia-400 bg-fuchsia-500/20 text-fuchsia-200"
-                      : "border-gray-700 bg-gray-800 text-gray-300 hover:border-fuchsia-500/60 hover:text-white"
+                  onClick={() => {
+                    setActiveGenre(null);
+                    setGenreHits([]);
+                    setGenreHitsOffset(0);
+                    setGenreHasMore(false);
+                    if (genreMenuRef.current) genreMenuRef.current.open = false;
+                  }}
+                  className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
+                    !activeGenre
+                      ? "bg-violet-600/25 text-violet-100"
+                      : "text-gray-300 hover:bg-gray-800 hover:text-white"
                   }`}
                 >
-                  {genre.name}
+                  <span className="truncate">Genre selecteren</span>
                 </button>
-              ))}
-            </div>
+                <div className="my-1 border-b border-gray-800/80" />
+                {genres.map((genre) => {
+                  const isActive = activeGenre === genre.name || activeGenre === genre.id;
+                  return (
+                    <button
+                      key={genre.id}
+                      type="button"
+                      onClick={() => {
+                        setActiveGenre(genre.name);
+                        loadGenreHits(genre.name, false);
+                        if (genreMenuRef.current) genreMenuRef.current.open = false;
+                      }}
+                      className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
+                        isActive
+                          ? "bg-violet-600/25 text-violet-100"
+                          : "text-gray-300 hover:bg-gray-800 hover:text-white"
+                      }`}
+                    >
+                      <span className="truncate">{genre.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </details>
             {genresLoading && <p className="text-xs text-gray-400">Genres laden...</p>}
             {genreError && <p className="text-xs text-amber-300">{genreError}</p>}
             {!genresLoading && genres.length === 0 && (
               <p className="text-xs text-gray-400">Geen genres gevonden.</p>
             )}
 
-            <div ref={genreListRef} className="max-h-56 overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70">
+            <div ref={genreListRef} className="min-h-[14rem] max-h-[56dvh] overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70">
               {genreHitsLoading ? (
                 <p className="px-3 py-3 text-xs text-gray-400">Hitlijst laden...</p>
               ) : genreHits.length === 0 ? (
@@ -592,7 +680,7 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
               disabled={submitting || !input.trim()}
               className="w-full rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-violet-500 active:scale-[0.98] disabled:opacity-40"
             >
-              {submitting ? "Laden..." : "Insturen"}
+              {submitting ? "Checken..." : "Verzoek sturen"}
             </button>
           </>
         )}
@@ -604,7 +692,7 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
       </form>
 
       {showResults && results.length > 0 && (
-        <div className="mx-3 mb-2 -mt-1 max-h-80 overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50 sm:mx-4">
+        <div className="mx-3 mb-2 -mt-2 max-h-80 overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50 sm:mx-4">
           {results.map((r) => (
             <button
               key={r.id}
@@ -629,7 +717,7 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
         </div>
       )}
 
-      <div className="chat-scroll min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-2 sm:px-4 sm:py-3">
+      <div className="chat-scroll min-h-0 flex-1 space-y-2 overflow-y-auto px-3 pb-3 sm:px-4 sm:pb-4">
         {allRequests.length === 0 && (
           <p className="text-center text-sm text-gray-500">Nog geen verzoekjes</p>
         )}

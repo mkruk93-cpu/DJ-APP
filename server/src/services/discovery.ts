@@ -19,6 +19,20 @@ const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID?.trim() ?? '';
 const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET?.trim() ?? '';
 let spotifyTokenCache: { token: string; expiresAt: number } | null = null;
 
+async function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((resolve) => {
+        timer = setTimeout(() => resolve(fallback), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 const DEFAULT_POPULAR_GENRES = [
   'hardcore',
   'uptempo',
@@ -83,6 +97,7 @@ interface GenreHints {
   avoidTokens: string[];
   requiredTokens?: string[];
   priorityArtists?: string[];
+  blockedArtists?: string[];
   priorityTracks?: string[];
   blockedTracks?: string[];
   priorityLabels?: string[];
@@ -288,6 +303,7 @@ function getGenreHints(genre: string): GenreHints {
       ...base,
       requiredTokens: base.requiredTokens ?? [],
       priorityArtists: base.priorityArtists ?? [],
+      blockedArtists: [],
       priorityTracks: base.priorityTracks ?? [],
       blockedTracks: [],
       priorityLabels: base.priorityLabels ?? [],
@@ -302,6 +318,7 @@ function getGenreHints(genre: string): GenreHints {
     avoidTokens: dedupeNormalized([...base.avoidTokens, ...(curated.blockedTokens ?? [])]),
     requiredTokens: dedupeNormalized([...(base.requiredTokens ?? []), ...(curated.requiredTokens ?? [])]),
     priorityArtists: dedupeNormalized([...(base.priorityArtists ?? []), ...(curated.priorityArtists ?? [])]),
+    blockedArtists: dedupeNormalized([...(curated.blockedArtists ?? [])]),
     priorityTracks: dedupeNormalized([...(base.priorityTracks ?? []), ...(curated.priorityTracks ?? [])]),
     blockedTracks: dedupeNormalized([...(curated.blockedTracks ?? [])]),
     priorityLabels: dedupeNormalized([...(base.priorityLabels ?? []), ...(curated.priorityLabels ?? [])]),
@@ -354,8 +371,13 @@ function hasRequiredEvidence(item: GenreHitItem, hints: GenreHints): boolean {
 
 function filterHitsByGenre(items: GenreHitItem[], hints: GenreHints, limit: number): GenreHitItem[] {
   const blocked = new Set((hints.blockedTracks ?? []).map((value) => value.toLowerCase()));
+  const blockedArtists = (hints.blockedArtists ?? []).map((value) => value.toLowerCase());
   const scored = dedupeHits(items)
     .filter((item) => {
+      const artist = item.artist.toLowerCase();
+      if (blockedArtists.some((blockedArtist) => blockedArtist && artist.includes(blockedArtist))) {
+        return false;
+      }
       if (blocked.size === 0) return true;
       const title = item.title.toLowerCase();
       const artistTitle = `${item.artist} - ${item.title}`.toLowerCase();
@@ -389,6 +411,28 @@ function filterHitsByGenre(items: GenreHitItem[], hints: GenreHints, limit: numb
     .filter((row) => row.evidence && row.score > 0)
     .map((row) => row.item);
   return positive.slice(0, limit);
+}
+
+function filterBlockedTracksOnly(items: GenreHitItem[], hints: GenreHints, limit: number): GenreHitItem[] {
+  const blocked = new Set((hints.blockedTracks ?? []).map((value) => value.toLowerCase()));
+  const blockedArtists = (hints.blockedArtists ?? []).map((value) => value.toLowerCase());
+  const filtered = dedupeHits(items).filter((item) => {
+    const artist = item.artist.toLowerCase();
+    if (blockedArtists.some((blockedArtist) => blockedArtist && artist.includes(blockedArtist))) {
+      return false;
+    }
+    if (blocked.size === 0) return true;
+    const title = item.title.toLowerCase();
+    const artistTitle = `${item.artist} - ${item.title}`.toLowerCase();
+    for (const blockedTrack of blocked) {
+      if (!blockedTrack) continue;
+      if (title.includes(blockedTrack) || artistTitle.includes(blockedTrack)) {
+        return false;
+      }
+    }
+    return true;
+  });
+  return shuffleCopy(filtered).slice(0, limit);
 }
 
 function dedupeHits(items: GenreHitItem[]): GenreHitItem[] {
@@ -499,7 +543,7 @@ async function searchTopTracks(query: string, limit: number, offset: number): Pr
   });
 
   const res = await fetch(`https://api.deezer.com/search/track?${params}`, {
-    signal: AbortSignal.timeout(7000),
+    signal: AbortSignal.timeout(3500),
   });
 
   if (!res.ok) {
@@ -722,7 +766,7 @@ function ytdlpSearchPlatform(
       '--flat-playlist',
       '-j',
       '--no-warnings',
-    ], { timeout: 12_000 });
+    ], { timeout: 5_000 });
 
     let output = '';
     proc.stdout.on('data', (chunk: Buffer) => { output += chunk.toString(); });
@@ -768,12 +812,14 @@ async function fetchPriorityArtistPlatformHits(
   hints: GenreHints,
   limit: number,
   offset: number,
-  options?: { artistSampleSize?: number; perPlatformLimit?: number },
+  options?: { artistSampleSize?: number; perPlatformLimit?: number; maxRuntimeMs?: number },
 ): Promise<GenreHitItem[]> {
   const artists = [...(hints.priorityArtists ?? [])].filter(Boolean);
   if (artists.length === 0) return [];
   const sampleSize = Math.max(1, Math.min(options?.artistSampleSize ?? 6, artists.length));
   const perPlatformLimit = Math.max(1, Math.min(options?.perPlatformLimit ?? 5, 8));
+  const maxRuntimeMs = Math.max(300, Math.min(options?.maxRuntimeMs ?? 3500, 7000));
+  const startedAt = Date.now();
   const page = Math.floor(offset / Math.max(1, limit));
   const selected = shuffleCopy(artists).slice(0, sampleSize);
   if (selected.length > 1 && page > 0) {
@@ -787,10 +833,11 @@ async function fetchPriorityArtistPlatformHits(
   const seen = new Set<string>();
 
   for (const artist of selected) {
+    if (Date.now() - startedAt > maxRuntimeMs) break;
     const query = `${artist} ${genre}`;
     const [ytRes, scRes] = await Promise.allSettled([
-      ytdlpSearchPlatform('yt', query, perPlatformLimit),
-      ytdlpSearchPlatform('sc', query, perPlatformLimit),
+      withTimeout(ytdlpSearchPlatform('yt', query, perPlatformLimit), Math.min(2200, maxRuntimeMs), [] as GenreHitItem[]),
+      withTimeout(ytdlpSearchPlatform('sc', query, perPlatformLimit), Math.min(2200, maxRuntimeMs), [] as GenreHitItem[]),
     ]);
     const merged = [
       ...(ytRes.status === 'fulfilled' ? ytRes.value : []),
@@ -807,6 +854,37 @@ async function fetchPriorityArtistPlatformHits(
   return filterHitsByGenre(shuffleCopy(results), hints, limit);
 }
 
+async function fetchEmergencyGenreFallbackHits(
+  genre: string,
+  hints: GenreHints,
+  limit: number,
+  offset: number,
+): Promise<GenreHitItem[]> {
+  const query = genre.trim();
+  if (!query) return [];
+
+  const deezerPromise = withTimeout(
+    searchTopTracks(query, Math.min(30, Math.max(limit * 2, 12)), offset),
+    2800,
+    [] as GenreHitItem[],
+  );
+  const ytPromise = withTimeout(
+    ytdlpSearchPlatform('yt', `${query} music`, Math.min(10, Math.max(limit, 6))),
+    2200,
+    [] as GenreHitItem[],
+  );
+  const scPromise = withTimeout(
+    ytdlpSearchPlatform('sc', `${query} music`, Math.min(10, Math.max(limit, 6))),
+    2200,
+    [] as GenreHitItem[],
+  );
+
+  const [deezer, yt, sc] = await Promise.all([deezerPromise, ytPromise, scPromise]);
+  const combined = [...deezer, ...yt, ...sc];
+  if (combined.length === 0) return [];
+  return filterBlockedTracksOnly(combined, hints, limit);
+}
+
 export async function getTopTracksByGenre(genre: string, limit = 20, offset = 0): Promise<GenreHitItem[]> {
   const normalizedGenre = genre.trim();
   const safeLimit = Math.max(1, Math.min(limit, 50));
@@ -820,15 +898,19 @@ export async function getTopTracksByGenre(genre: string, limit = 20, offset = 0)
   const deezerQueries = isFastMode ? 1 : 2;
   const lastFmTags = isFastMode ? 0 : 1;
   const priorityOptions = isFastMode
-    ? { artistSampleSize: 2, perPlatformLimit: 2 }
-    : { artistSampleSize: 6, perPlatformLimit: 5 };
+    ? { artistSampleSize: 2, perPlatformLimit: 2, maxRuntimeMs: 1200 }
+    : { artistSampleSize: 6, perPlatformLimit: 5, maxRuntimeMs: 4500 };
   const [spotifyRes, deezerRes, lastFmRes, priorityRes] = await Promise.allSettled([
     spotifyQueries > 0
       ? fetchSpotifyTracksByGenre(normalizedGenre, safeLimit, safeOffset, spotifyQueries)
       : Promise.resolve<GenreHitItem[]>([]),
-    fetchDeezerTracksByGenre(normalizedGenre, safeLimit, safeOffset, deezerQueries),
+    isFastMode
+      ? withTimeout(fetchDeezerTracksByGenre(normalizedGenre, safeLimit, safeOffset, deezerQueries), 2200, [] as GenreHitItem[])
+      : fetchDeezerTracksByGenre(normalizedGenre, safeLimit, safeOffset, deezerQueries),
     fetchLastFmTopTracksByGenre(normalizedGenre, safeLimit, safeOffset, lastFmTags),
-    fetchPriorityArtistPlatformHits(normalizedGenre, hints, safeLimit, safeOffset, priorityOptions),
+    isFastMode
+      ? withTimeout(fetchPriorityArtistPlatformHits(normalizedGenre, hints, safeLimit, safeOffset, priorityOptions), 1200, [] as GenreHitItem[])
+      : fetchPriorityArtistPlatformHits(normalizedGenre, hints, safeLimit, safeOffset, priorityOptions),
   ]);
 
   const collected: GenreHitItem[] = [];
@@ -841,5 +923,13 @@ export async function getTopTracksByGenre(genre: string, limit = 20, offset = 0)
   if (priorityRes.status === 'fulfilled') collected.push(...priorityRes.value);
   else console.warn('[discovery] Priority artist platform search failed:', priorityRes.reason);
 
-  return filterHitsByGenre(collected, hints, safeLimit);
+  const strict = filterHitsByGenre(collected, hints, safeLimit);
+  if (strict.length > 0) return strict;
+
+  // Always provide data when possible, even if strict genre evidence is sparse.
+  const emergency = await fetchEmergencyGenreFallbackHits(normalizedGenre, hints, safeLimit, safeOffset);
+  if (emergency.length > 0) return emergency;
+
+  // Last resort: at least return something from collected results without hard scoring.
+  return filterBlockedTracksOnly(collected, hints, safeLimit);
 }

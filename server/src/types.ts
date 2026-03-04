@@ -93,4 +93,5 @@ export interface ServerState {
   durationVote: DurationVote | null;
   queuePushVote: Omit<QueuePushVote, 'voters'> | null;
   queuePushLocked: boolean;
+  skipLocked: boolean;
 }

@@ -18,7 +18,7 @@ import { StreamHub } from './streamHub.js';
 import type { Mode, ServerState, DurationVote, QueuePushVote, FallbackGenre } from './types.js';
 import { searchGenres, getTopTracksByGenre, type GenreItem, type GenreHitItem } from './services/discovery.js';
 import { reloadFallbackGenres, listFallbackGenres, getDefaultFallbackGenreId, isKnownFallbackGenre, toAutoFallbackGenreId, parseAutoFallbackGenreId, LIKED_AUTO_GENRE_ID } from './fallbackGenres.js';
-import { addPriorityArtistForGenre, addPriorityTrackForGenre, addBlockedTrackForGenre, addLikedPlaylistTrack } from './services/genreCuratedConfig.js';
+import { addPriorityArtistForGenre, addBlockedArtistForGenre, addPriorityTrackForGenre, addBlockedTrackForGenre, addLikedPlaylistTrack } from './services/genreCuratedConfig.js';
 
 // ── Environment ──────────────────────────────────────────────────────────────
 
@@ -219,6 +219,7 @@ async function getServerState(): Promise<ServerState> {
         }
       : null,
     queuePushLocked,
+    skipLocked: isSkipLocked(),
   };
 }
 
@@ -285,6 +286,22 @@ const CACHE_TTL = 60_000;
 const DISCOVERY_CACHE_TTL = 180_000;
 const genreCache = new Map<string, { results: GenreItem[]; ts: number }>();
 const genreHitsCache = new Map<string, { results: GenreHitItem[]; ts: number }>();
+const genreHitsRefreshInFlight = new Set<string>();
+
+function refreshGenreHitsCache(cacheKey: string, genre: string, limit: number, offset: number): void {
+  if (genreHitsRefreshInFlight.has(cacheKey)) return;
+  genreHitsRefreshInFlight.add(cacheKey);
+  void getTopTracksByGenre(genre, limit, offset)
+    .then((results) => {
+      genreHitsCache.set(cacheKey, { results, ts: Date.now() });
+    })
+    .catch((err) => {
+      console.warn('[rest] /api/genre-hits refresh failed:', (err as Error).message);
+    })
+    .finally(() => {
+      genreHitsRefreshInFlight.delete(cacheKey);
+    });
+}
 
 function parseDuration(text: string): number | null {
   const parts = text.split(':').map(Number);
@@ -627,7 +644,11 @@ app.get('/api/genre-hits', async (req, res) => {
   const offset = Number.isFinite(parsedOffset) ? Math.max(0, parsedOffset) : 0;
   const cacheKey = `${genre.toLowerCase()}::${limit}::${offset}`;
   const cached = genreHitsCache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < DISCOVERY_CACHE_TTL) {
+  if (cached) {
+    const fresh = Date.now() - cached.ts < DISCOVERY_CACHE_TTL;
+    if (!fresh) {
+      refreshGenreHitsCache(cacheKey, genre, limit, offset);
+    }
     res.json(cached.results);
     return;
   }
@@ -669,6 +690,36 @@ app.post('/api/genre-curation/priority-artist', async (req, res) => {
   } catch (err) {
     console.error('[rest] /api/genre-curation/priority-artist error:', err);
     res.status(500).json({ error: 'Failed to save priority artist' });
+  }
+});
+
+app.post('/api/genre-curation/block-artist', async (req, res) => {
+  const { token, genre, artist, label } = req.body ?? {};
+  if (!isAdmin(token)) return res.status(403).json({ error: 'Unauthorized' });
+
+  const genreName = String(genre ?? '').trim();
+  const artistName = String(artist ?? '').trim();
+  const genreLabel = String(label ?? '').trim();
+  if (genreName.length < 2) {
+    return res.status(400).json({ error: 'Missing or invalid genre' });
+  }
+  if (artistName.length < 2) {
+    return res.status(400).json({ error: 'Missing or invalid artist' });
+  }
+
+  try {
+    const rule = addBlockedArtistForGenre(genreName, artistName, genreLabel || undefined);
+    genreHitsCache.clear();
+    genreCache.clear();
+    res.json({
+      ok: true,
+      genre: rule.id,
+      artist: artistName,
+      blockedCount: rule.blockedArtists?.length ?? 0,
+    });
+  } catch (err) {
+    console.error('[rest] /api/genre-curation/block-artist error:', err);
+    res.status(500).json({ error: 'Failed to save blocked artist' });
   }
 });
 
@@ -1202,6 +1253,7 @@ io.on('connection', (socket) => {
   if (activeQueuePushVote) socket.emit('queuePushVote:update', activeQueuePushVote);
   else socket.emit('queuePushVote:end', null);
   socket.emit('queuePush:lock', { locked: queuePushLocked });
+  socket.emit('skip:lock', { locked: isSkipLocked() });
 
   // ── auth:verify ──
   socket.on('auth:verify', (data: { token: string }, callback?: (valid: boolean) => void) => {

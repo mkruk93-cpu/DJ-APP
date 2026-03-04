@@ -5,6 +5,7 @@ export interface CuratedGenreRule {
   id: string;
   label?: string;
   priorityArtists?: string[];
+  blockedArtists?: string[];
   priorityTracks?: string[];
   blockedTracks?: string[];
   priorityLabels?: string[];
@@ -93,6 +94,7 @@ function normalizeRule(rule: CuratedGenreRule): CuratedGenreRule | null {
     id,
     label: rule.label?.trim() || undefined,
     priorityArtists: dedupe(rule.priorityArtists),
+    blockedArtists: dedupe(rule.blockedArtists),
     priorityTracks: dedupe(rule.priorityTracks),
     blockedTracks: dedupe(rule.blockedTracks),
     priorityLabels: dedupe(rule.priorityLabels),
@@ -204,11 +206,13 @@ export function addPriorityArtistForGenre(
   } else {
     const current = genres[existingIndex] ?? { id: normalizedGenreId };
     const priorityArtists = uniqueByNormalized([...(current.priorityArtists ?? []), normalizedArtist]).map(normalize);
+    const blockedArtists = dedupe((current.blockedArtists ?? []).filter((value) => normalize(value) !== normalizedArtist));
     genres[existingIndex] = {
       ...current,
       id: normalizedGenreId,
       label: current.label?.trim() || trimmedLabel,
       priorityArtists,
+      blockedArtists,
       priorityTracks: dedupe(current.priorityTracks),
       blockedTracks: dedupe(current.blockedTracks),
       priorityLabels: dedupe(current.priorityLabels),
@@ -277,6 +281,7 @@ export function addPriorityTrackForGenre(
       id: normalizedGenreId,
       label: current.label?.trim() || trimmedLabel,
       priorityArtists: dedupe(current.priorityArtists),
+      blockedArtists: dedupe(current.blockedArtists),
       priorityTracks,
       blockedTracks: dedupe(current.blockedTracks),
       priorityLabels: dedupe(current.priorityLabels),
@@ -346,8 +351,79 @@ export function addBlockedTrackForGenre(
       id: normalizedGenreId,
       label: current.label?.trim() || trimmedLabel,
       priorityArtists: dedupe(current.priorityArtists),
+      blockedArtists: dedupe(current.blockedArtists),
       priorityTracks,
       blockedTracks,
+      priorityLabels: dedupe(current.priorityLabels),
+      requiredTokens: dedupe(current.requiredTokens),
+      blockedTokens: dedupe(current.blockedTokens),
+      minScore: typeof current.minScore === 'number' && Number.isFinite(current.minScore)
+        ? Math.max(0, Math.round(current.minScore))
+        : current.minScore,
+    };
+  }
+
+  parsed.genres = genres;
+  if (typeof parsed.version !== 'number') parsed.version = 1;
+  fs.writeFileSync(configPath, `${JSON.stringify(parsed, null, 2)}\n`, 'utf8');
+
+  cachedConfigPath = null;
+  cachedConfigMtime = 0;
+  cachedConfigRules = new Map();
+  const updated = getCuratedGenreRule(normalizedGenreId);
+  if (!updated) {
+    throw new Error('Failed to reload curated rule');
+  }
+  return updated;
+}
+
+export function addBlockedArtistForGenre(
+  genreId: string,
+  artistName: string,
+  label?: string,
+): CuratedGenreRule {
+  const normalizedGenreId = normalize(genreId);
+  const normalizedArtist = normalize(artistName);
+  const trimmedLabel = label?.trim() || undefined;
+  if (!normalizedGenreId) {
+    throw new Error('Invalid genre');
+  }
+  if (!normalizedArtist) {
+    throw new Error('Invalid artist');
+  }
+
+  const configPath = getGenreCurationConfigPath();
+  const base: CuratedGenreConfigFile = { version: 1, genres: [] };
+  let parsed: CuratedGenreConfigFile = base;
+  if (fs.existsSync(configPath)) {
+    const raw = fs.readFileSync(configPath, 'utf8');
+    parsed = JSON.parse(raw) as CuratedGenreConfigFile;
+    if (!Array.isArray(parsed.genres)) parsed.genres = [];
+    if (typeof parsed.version !== 'number') parsed.version = 1;
+  } else {
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  }
+
+  const genres = parsed.genres ?? [];
+  const existingIndex = genres.findIndex((rule) => normalize(rule.id ?? '') === normalizedGenreId);
+  if (existingIndex === -1) {
+    genres.push({
+      id: normalizedGenreId,
+      label: trimmedLabel,
+      blockedArtists: [normalizedArtist],
+    });
+  } else {
+    const current = genres[existingIndex] ?? { id: normalizedGenreId };
+    const blockedArtists = uniqueByNormalized([...(current.blockedArtists ?? []), normalizedArtist]).map(normalize);
+    const priorityArtists = dedupe((current.priorityArtists ?? []).filter((value) => normalize(value) !== normalizedArtist));
+    genres[existingIndex] = {
+      ...current,
+      id: normalizedGenreId,
+      label: current.label?.trim() || trimmedLabel,
+      priorityArtists,
+      blockedArtists,
+      priorityTracks: dedupe(current.priorityTracks),
+      blockedTracks: dedupe(current.blockedTracks),
       priorityLabels: dedupe(current.priorityLabels),
       requiredTokens: dedupe(current.requiredTokens),
       blockedTokens: dedupe(current.blockedTokens),

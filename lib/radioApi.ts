@@ -101,6 +101,23 @@ export async function addPriorityArtistToGenre(
   });
 }
 
+export async function blockArtistForGenre(
+  genre: string,
+  artist: string,
+  label?: string,
+): Promise<void> {
+  const trimmedGenre = genre.trim();
+  const trimmedArtist = artist.trim();
+  if (!trimmedGenre || !trimmedArtist) {
+    throw new Error('Genre en artiest zijn verplicht');
+  }
+  await post('/api/genre-curation/block-artist', {
+    genre: trimmedGenre,
+    artist: trimmedArtist,
+    ...(label?.trim() ? { label: label.trim() } : {}),
+  });
+}
+
 export async function likeCurrentAutoTrack(artist?: string | null, title?: string | null): Promise<void> {
   await post('/api/genre-curation/like-current', {
     ...(artist?.trim() ? { artist: artist.trim() } : {}),

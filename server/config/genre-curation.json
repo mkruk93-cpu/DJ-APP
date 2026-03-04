@@ -17,7 +17,11 @@
       "minScore": 3,
       "priorityLabels": [],
       "requiredTokens": [],
-      "blockedTokens": []
+      "blockedTokens": [],
+      "priorityTracks": [],
+      "blockedTracks": [
+        "johnny jane - hardcore (clip officiel)"
+      ]
     },
     {
       "id": "uptempo",
@@ -177,10 +181,12 @@
         "krachland",
         "more kords - zaag on the ceiling",
         "topic - overdrive",
-        "just be zaag"
+        "just be zaag",
+        "make it zaag"
       ],
       "blockedTracks": [
-        "more kords - just be zaag"
+        "more kords - just be zaag",
+        "future - used to this (official music video) ft. drake"
       ]
     },
     {
@@ -318,12 +324,14 @@
         "sanger",
         "d'ort",
         "the sickest squad",
-        "sefa, vertile"
+        "sefa, vertile",
+        "sefa & d-block & s-te-fan"
       ],
       "minScore": 3,
       "priorityTracks": [
         "sefa & relianze - going under",
-        "battlefield"
+        "battlefield",
+        "infinity"
       ],
       "blockedTracks": [],
       "priorityLabels": [],
@@ -457,7 +465,8 @@
         "brooks",
         "julian jordan",
         "mike williams",
-        "retrovision"
+        "retrovision",
+        "dj. volkan u�a"
       ],
       "priorityLabels": [
         "hexagon",
@@ -472,7 +481,13 @@
         "terror",
         "gabber"
       ],
-      "minScore": 3
+      "minScore": 3,
+      "priorityTracks": [
+        "hasta siempre (feat. jessie black) [future house radio version]"
+      ],
+      "blockedTracks": [
+        "future - honest"
+      ]
     },
     {
       "id": "house",
@@ -970,6 +985,9 @@
     "more kords - just be zaag",
     "эхшчтхёђхэ - aint nobody loves me better makes me happy",
     "sefa - sefa & relianze - going under",
-    "sefa, vertile - battlefield"
+    "sefa, vertile - battlefield",
+    "sefa & d-block & s-te-fan - infinity",
+    "dj. volkan u�a - hasta siempre (feat. jessie black) [future house radio version]",
+    "more kords - make it zaag"
   ]
 }

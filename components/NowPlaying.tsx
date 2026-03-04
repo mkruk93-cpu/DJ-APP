@@ -46,6 +46,7 @@ export default function NowPlaying({ radioTrack, showFallback = false, preferSup
   const [displayNextTrack, setDisplayNextTrack] = useState<DisplayNextTrack | null>(null);
   const prevTrack = useRef<string>("");
   const prevCurrentTrackKeyRef = useRef<string>("");
+  const prevNextCandidateKeyRef = useRef<string>("none");
   const connected = useRadioStore((s) => s.connected);
   const queue = useRadioStore((s) => s.queue);
   const upcomingTrack = useRadioStore((s) => s.upcomingTrack);
@@ -133,12 +134,14 @@ export default function NowPlaying({ radioTrack, showFallback = false, preferSup
       : "none";
     const currentTrackChanged = prevCurrentTrackKeyRef.current !== currentTrackKey;
     const hasCandidate = !!(nextTitle || nextArtist);
-    const hasDisplayedNext = !!(displayNextTrack?.title || displayNextTrack?.artist);
+    const nextCandidateKey = hasCandidate
+      ? `${nextTitle ?? ""}|${nextArtist ?? ""}|${nextRequestedBy ?? ""}|${nextIsFallback ? "1" : "0"}`
+      : "none";
+    const nextCandidateChanged = prevNextCandidateKeyRef.current !== nextCandidateKey;
 
     // Keep "Volgende" stable while current track is the same.
-    // Only advance when the visible current track actually changes,
-    // except if there is no visible "next" info yet.
-    if (currentTrackChanged || !syncedRadioTrack || (hasCandidate && !hasDisplayedNext)) {
+    // Also refresh immediately when the server publishes a new upcoming candidate.
+    if (currentTrackChanged || !syncedRadioTrack || nextCandidateChanged) {
       if (hasCandidate) {
         setDisplayNextTrack({
           title: nextTitle ?? null,
@@ -152,13 +155,13 @@ export default function NowPlaying({ radioTrack, showFallback = false, preferSup
     }
 
     prevCurrentTrackKeyRef.current = currentTrackKey;
+    prevNextCandidateKeyRef.current = nextCandidateKey;
   }, [
     syncedRadioTrack,
     nextTitle,
     nextArtist,
     nextRequestedBy,
     nextIsFallback,
-    displayNextTrack,
   ]);
 
   const showNextTrack = isRadioMode && !!displayNextTrack && (!!displayNextTrack.title || !!displayNextTrack.artist);

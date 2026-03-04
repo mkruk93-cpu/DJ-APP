@@ -42,6 +42,7 @@ let pendingSwap: PendingSwap | null = null;
 let completedSwap: CompletedSwap | null = null;
 let skipLocked = false;
 let skipWhenReady = false;
+let skipLockWatchdog: ReturnType<typeof setTimeout> | null = null;
 let _io: IOServer | null = null;
 
 export function isSkipLocked(): boolean {
@@ -51,6 +52,21 @@ export function isSkipLocked(): boolean {
 function setSkipLock(locked: boolean): void {
   if (skipLocked === locked) return;
   skipLocked = locked;
+  if (skipLockWatchdog) {
+    clearTimeout(skipLockWatchdog);
+    skipLockWatchdog = null;
+  }
+  if (locked) {
+    // Never leave skip button stuck disabled on edge-case paths.
+    skipLockWatchdog = setTimeout(() => {
+      if (skipLocked) {
+        skipLocked = false;
+        _io?.emit('skip:lock', { locked: false });
+        console.warn('[player] Skip lock watchdog released stale lock');
+      }
+      skipLockWatchdog = null;
+    }, 15_000);
+  }
   _io?.emit('skip:lock', { locked });
 }
 
@@ -118,6 +134,56 @@ function autoTrackTitle(artist: string, title: string): string {
   return `${artist} - ${title}`.trim();
 }
 
+const DISPLAY_TITLE_SEPARATORS = [' - ', ' – ', ' — ', ' | ', ': '];
+
+function hasDisplayArtistSeparator(value: string): boolean {
+  const text = value.trim();
+  if (!text) return false;
+  return DISPLAY_TITLE_SEPARATORS.some((sep) => {
+    const idx = text.indexOf(sep);
+    return idx > 0 && idx < text.length - sep.length;
+  });
+}
+
+function parseDisplayArtistTitle(value: string): { artist: string | null; title: string } {
+  const text = value.trim();
+  for (const sep of DISPLAY_TITLE_SEPARATORS) {
+    const idx = text.indexOf(sep);
+    if (idx <= 0 || idx >= text.length - sep.length) continue;
+    const artist = text.slice(0, idx).trim();
+    const title = text.slice(idx + sep.length).trim();
+    if (artist && title) return { artist, title };
+  }
+  return { artist: null, title: text };
+}
+
+function stripLeadingArtistFromTitle(title: string, artist: string): string {
+  const cleanTitle = title.trim();
+  const cleanArtist = artist.trim();
+  if (!cleanTitle || !cleanArtist) return cleanTitle;
+  for (const sep of DISPLAY_TITLE_SEPARATORS) {
+    const prefix = `${cleanArtist}${sep}`.toLowerCase();
+    if (cleanTitle.toLowerCase().startsWith(prefix)) {
+      return cleanTitle.slice(prefix.length).trim();
+    }
+  }
+  return cleanTitle;
+}
+
+function buildAutoDisplayTitle(
+  detectedTitle: string | null | undefined,
+  fallbackArtist: string | null | undefined,
+  fallbackTitle: string | null | undefined,
+): string {
+  const detected = (detectedTitle ?? '').trim();
+  if (detected && hasDisplayArtistSeparator(detected)) return detected;
+  const artist = (fallbackArtist ?? '').trim();
+  const baseTitle = (fallbackTitle ?? '').trim();
+  if (!artist) return detected || baseTitle || 'Unknown title';
+  const candidate = stripLeadingArtistFromTitle(detected || baseTitle, artist) || baseTitle || detected;
+  return autoTrackTitle(artist, candidate || 'Unknown title');
+}
+
 function sanitizeAutoId(input: string): string {
   return input.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 40) || 'auto';
 }
@@ -160,6 +226,10 @@ function buildAutoFallbackSourceForQuery(sourceId: string, search: string): Queu
 const AUTO_RECENT_WINDOW = 60;
 const AUTO_MAX_DURATION_SECONDS = 10 * 60;
 const recentAutoTrackKeys: string[] = [];
+const DAILY_AUTO_HISTORY_REFRESH_MS = 60_000;
+let dailyAutoPlayedKeys = new Set<string>();
+let dailyAutoPlayedDayKey = '';
+let dailyAutoPlayedLoadedAt = 0;
 
 function isSetLikeAutoTitle(title: string): boolean {
   return /\b(set|mix|liveset|live set|podcast|radio show|megamix|full mix|dj set|hour mix|hours mix)\b/i.test(title);
@@ -175,6 +245,69 @@ function isAllowedAutoTrack(title: string, duration: number | null): boolean {
 function isRecentAutoTrack(artist: string, title: string): boolean {
   const key = normalizeAutoKey(`${artist} ${title}`);
   return recentAutoTrackKeys.includes(key);
+}
+
+function getUtcDayKey(now = new Date()): string {
+  return now.toISOString().slice(0, 10);
+}
+
+function toAutoHistoryId(title: string | null | undefined): string {
+  const normalized = normalizeAutoKey(title ?? '');
+  return `auto:${sanitizeAutoId(normalized || 'unknown')}`;
+}
+
+async function refreshDailyAutoPlayedKeys(force = false): Promise<void> {
+  if (!_sb) return;
+  const dayKey = getUtcDayKey();
+  const now = Date.now();
+  if (!force && dailyAutoPlayedDayKey === dayKey && now - dailyAutoPlayedLoadedAt < DAILY_AUTO_HISTORY_REFRESH_MS) {
+    return;
+  }
+  const dayStartIso = `${dayKey}T00:00:00.000Z`;
+  const { data, error } = await _sb
+    .from('played_history')
+    .select('title,youtube_id,played_at')
+    .gte('played_at', dayStartIso)
+    .like('youtube_id', 'auto:%')
+    .order('played_at', { ascending: false })
+    .limit(2000);
+  if (error) {
+    console.warn(`[player] Failed loading daily auto history: ${error.message}`);
+    return;
+  }
+  const next = new Set<string>();
+  for (const row of data ?? []) {
+    const key = normalizeAutoKey(String((row as { title?: string | null }).title ?? ''));
+    if (!key) continue;
+    next.add(key);
+  }
+  dailyAutoPlayedKeys = next;
+  dailyAutoPlayedDayKey = dayKey;
+  dailyAutoPlayedLoadedAt = now;
+}
+
+function wasPlayedAutoToday(title: string | null | undefined): boolean {
+  const dayKey = getUtcDayKey();
+  if (dailyAutoPlayedDayKey !== dayKey) {
+    dailyAutoPlayedKeys = new Set();
+    dailyAutoPlayedDayKey = dayKey;
+    dailyAutoPlayedLoadedAt = 0;
+  }
+  const key = normalizeAutoKey(title ?? '');
+  if (!key) return false;
+  return dailyAutoPlayedKeys.has(key);
+}
+
+function markPlayedAutoToday(title: string | null | undefined): void {
+  const key = normalizeAutoKey(title ?? '');
+  if (!key) return;
+  const dayKey = getUtcDayKey();
+  if (dailyAutoPlayedDayKey !== dayKey) {
+    dailyAutoPlayedKeys = new Set();
+    dailyAutoPlayedDayKey = dayKey;
+  }
+  dailyAutoPlayedKeys.add(key);
+  dailyAutoPlayedLoadedAt = Date.now();
 }
 
 function rememberAutoTrack(artist: string, title: string): void {
@@ -203,6 +336,7 @@ function shuffleInPlace<T>(items: T[]): T[] {
 
 async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack | null> {
   try {
+    await refreshDailyAutoPlayedKeys();
     const baseOffsets = [0, 20, 40, 60, 80, 120, 160, 200, 260, 320];
     const randomOffsets = shuffleInPlace([...baseOffsets]).slice(0, 2);
     const offsets = [0, ...randomOffsets];
@@ -227,14 +361,17 @@ async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack |
     }
 
     if (mergedHits.length === 0) return null;
-    const freshCandidates = mergedHits.filter((hit) => !isRecentAutoTrack(hit.artist, hit.title));
+    const freshCandidates = mergedHits.filter((hit) =>
+      !isRecentAutoTrack(hit.artist, hit.title)
+      && !wasPlayedAutoToday(autoTrackTitle(hit.artist, hit.title)),
+    );
     const candidates = freshCandidates.length > 0 ? freshCandidates : mergedHits;
     if (candidates.length === 0) return null;
     const choices = shuffleInPlace([...candidates]).slice(0, Math.min(8, candidates.length));
     for (const choice of choices) {
       const pseudo = buildAutoFallbackSource(genreId, choice.artist, choice.title);
       const info = await fetchVideoInfo(pseudo.youtube_url).catch(() => ({ title: null, duration: null, thumbnail: null }));
-      const resolvedTitle = info.title?.trim() || autoTrackTitle(choice.artist, choice.title);
+      const resolvedTitle = buildAutoDisplayTitle(info.title, choice.artist, choice.title);
       const hintedDuration = typeof info.duration === 'number' && Number.isFinite(info.duration) ? Math.round(info.duration) : null;
       if (!isAllowedAutoTrack(resolvedTitle, hintedDuration)) {
         continue;
@@ -290,17 +427,22 @@ async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack |
 
 async function prepareLikedAutoFallbackTrack(): Promise<ReadyTrack | null> {
   try {
+    await refreshDailyAutoPlayedKeys();
     const likedTracks = listLikedPlaylistTracks();
     if (likedTracks.length === 0) return null;
 
-    const fresh = likedTracks.filter((track) => !recentAutoTrackKeys.includes(normalizeAutoKey(track)));
+    const fresh = likedTracks.filter((track) =>
+      !recentAutoTrackKeys.includes(normalizeAutoKey(track))
+      && !wasPlayedAutoToday(track),
+    );
     const pool = fresh.length > 0 ? fresh : likedTracks;
     const choice = pool[Math.floor(Math.random() * pool.length)];
     if (!choice) return null;
 
     const pseudo = buildAutoFallbackSourceForQuery(LIKED_AUTO_GENRE_ID, choice);
     const info = await fetchVideoInfo(pseudo.youtube_url).catch(() => ({ title: null, duration: null, thumbnail: null }));
-    const resolvedTitle = info.title?.trim() || choice;
+    const parsedChoice = parseDisplayArtistTitle(choice);
+    const resolvedTitle = buildAutoDisplayTitle(info.title, parsedChoice.artist, parsedChoice.title);
     const hintedDuration = typeof info.duration === 'number' && Number.isFinite(info.duration) ? Math.round(info.duration) : null;
     if (!isAllowedAutoTrack(resolvedTitle, hintedDuration)) {
       return null;
@@ -963,6 +1105,10 @@ export function stopPlayCycle(): void {
   isRunning = false;
   skipWhenReady = false;
   setSkipLock(false);
+  if (skipLockWatchdog) {
+    clearTimeout(skipLockWatchdog);
+    skipLockWatchdog = null;
+  }
   if (pendingSwap) {
     killDecoderProcess(pendingSwap.newDecoder);
     pendingSwap = null;
@@ -1102,9 +1248,28 @@ async function playNext(
   let trackAddedBy: string | null = null;
   let trackQueueId: string | null = null;
   let isFallback = false;
+  let trackIsAutoFallback = false;
   let trackCleanupAfterUse = false;
   let source = '';
   const activeAutoGenre = parseAutoFallbackGenreId(activeFallbackGenre);
+
+  const persistPlayedHistory = (): void => {
+    if (!audioFile) return;
+    const shouldPersist = !isFallback || trackIsAutoFallback;
+    if (!shouldPersist) return;
+    const historyYoutubeId = trackIsAutoFallback
+      ? toAutoHistoryId(trackTitle)
+      : trackYoutubeId;
+    sb.from('played_history').insert({
+      youtube_id: historyYoutubeId,
+      title: trackTitle,
+      thumbnail: trackThumbnail,
+      duration_s: trackDuration,
+    }).then(() => {}, () => {});
+    if (trackIsAutoFallback) {
+      markPlayedAutoToday(trackTitle);
+    }
+  };
 
   async function pickImmediateFallback(quickMeta = true): Promise<boolean> {
     if (activeAutoGenre) return false;
@@ -1130,6 +1295,7 @@ async function playNext(
     trackThumbnail = quickMeta ? null : await getFallbackArtworkDataUrl(fallbackFile);
     trackAddedBy = null;
     isFallback = true;
+    trackIsAutoFallback = false;
     trackCleanupAfterUse = false;
     source = quickMeta ? 'random/gap-guard' : 'random';
     currentQueueItemId = null;
@@ -1152,6 +1318,7 @@ async function playNext(
     trackDuration = ready.duration;
     trackAddedBy = null;
     isFallback = true;
+    trackIsAutoFallback = true;
     trackCleanupAfterUse = ready.cleanupAfterUse;
     source = 'auto/random';
     currentQueueItemId = null;
@@ -1186,6 +1353,7 @@ async function playNext(
     trackAddedBy = ready.addedBy;
     trackQueueId = ready.queueItemId;
     isFallback = ready.isFallback;
+    trackIsAutoFallback = ready.isAutoFallback;
     trackCleanupAfterUse = ready.cleanupAfterUse;
     source = isFallback ? 'ready/random' : 'ready/preloaded';
     currentQueueItemId = trackQueueId;
@@ -1228,6 +1396,7 @@ async function playNext(
         failCounts.delete(item.youtube_id);
         currentQueueItemId = trackQueueId;
         trackCleanupAfterUse = true;
+        trackIsAutoFallback = false;
         source = 'preloaded';
       } else {
         // Gap guard: never block transition on download preparation.
@@ -1323,12 +1492,7 @@ async function playNext(
 
       // Clean up old track
       if (audioFile && trackCleanupAfterUse && !keepFiles) cleanupFile(audioFile);
-      if (audioFile && !isFallback) {
-        sb.from('played_history').insert({
-          youtube_id: trackYoutubeId, title: trackTitle,
-          thumbnail: trackThumbnail, duration_s: trackDuration,
-        }).then(() => {}, () => {});
-      }
+      persistPlayedHistory();
 
       // Set up new track metadata
       audioFile = swap.ready.audioFile;
@@ -1339,6 +1503,7 @@ async function playNext(
       trackAddedBy = swap.ready.addedBy;
       trackQueueId = swap.ready.queueItemId;
       isFallback = swap.ready.isFallback;
+      trackIsAutoFallback = swap.ready.isAutoFallback;
       trackCleanupAfterUse = swap.ready.cleanupAfterUse;
 
       const swapTrackId = trackQueueId ?? `fallback_${Date.now()}`;
@@ -1399,14 +1564,7 @@ async function playNext(
       cleanupFile(audioFile);
     }
 
-    if (audioFile && !isFallback) {
-      sb.from('played_history').insert({
-        youtube_id: trackYoutubeId,
-        title: trackTitle,
-        thumbnail: trackThumbnail,
-        duration_s: trackDuration,
-      }).then(() => {}, () => {});
-    }
+    persistPlayedHistory();
   }
 }
 

@@ -28,6 +28,7 @@ import { useSyncedTrack } from "@/lib/useSyncedTrack";
 type StreamMode = "twitch" | "audio" | "radio" | "offline";
 type MobileTab = "chat" | "requests" | "radio" | "queue";
 type DesktopAccordionTab = "radio" | "queue";
+const TUNNEL_RECOVERY_WINDOW_MS = 150_000;
 
 function firstNonEmpty(...values: Array<string | null | undefined>): string | null {
   for (const value of values) {
@@ -111,9 +112,12 @@ export default function StreamPage() {
     requestedBy: string | null;
     isFallback: boolean;
   } | null>(null);
+  const [tunnelRecoveryUntil, setTunnelRecoveryUntil] = useState<number | null>(null);
+  const [tunnelRecoverySecondsLeft, setTunnelRecoverySecondsLeft] = useState(0);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const infoToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipVoteCountdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const tunnelRecoveryTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const suppressNextQueueBadgeRef = useRef(false);
   const prevVisibleTrackKeyRef = useRef("");
 
@@ -288,6 +292,40 @@ export default function StreamPage() {
   }, [skipVoteToastExpiresAt]);
 
   useEffect(() => {
+    if (!tunnelRecoveryUntil) {
+      setTunnelRecoverySecondsLeft(0);
+      if (tunnelRecoveryTickRef.current) {
+        clearInterval(tunnelRecoveryTickRef.current);
+        tunnelRecoveryTickRef.current = null;
+      }
+      return;
+    }
+
+    const tick = () => {
+      const next = Math.max(0, Math.ceil((tunnelRecoveryUntil - Date.now()) / 1000));
+      setTunnelRecoverySecondsLeft(next);
+      if (next <= 0) {
+        setTunnelRecoveryUntil(null);
+        if (tunnelRecoveryTickRef.current) {
+          clearInterval(tunnelRecoveryTickRef.current);
+          tunnelRecoveryTickRef.current = null;
+        }
+      }
+    };
+
+    tick();
+    if (tunnelRecoveryTickRef.current) clearInterval(tunnelRecoveryTickRef.current);
+    tunnelRecoveryTickRef.current = setInterval(tick, 1000);
+
+    return () => {
+      if (tunnelRecoveryTickRef.current) {
+        clearInterval(tunnelRecoveryTickRef.current);
+        tunnelRecoveryTickRef.current = null;
+      }
+    };
+  }, [tunnelRecoveryUntil]);
+
+  useEffect(() => {
     const nickname = localStorage.getItem("nickname");
     if (!nickname) router.replace("/");
   }, [router]);
@@ -352,6 +390,7 @@ export default function StreamPage() {
             durationVote: state.durationVote ?? null,
             queuePushVote: state.queuePushVote ?? null,
             queuePushLocked: state.queuePushLocked ?? false,
+            skipLocked: state.skipLocked ?? false,
           });
         })
         .catch((err) => {
@@ -364,10 +403,12 @@ export default function StreamPage() {
       store.getState().setConnected(true);
       setPreferRadioUi(true);
       setSuppressFallback(false);
+      setTunnelRecoveryUntil(null);
       fetchState();
     });
 
     socket.on("disconnect", () => {
+      const hadActiveStream = !!(store.getState().streamOnline || store.getState().currentTrack);
       store.getState().setConnected(false);
       store.getState().setStreamOnline(false);
       store.getState().setCurrentTrack(null);
@@ -376,8 +417,12 @@ export default function StreamPage() {
       previousQueueLengthRef.current = 0;
       store.getState().setQueuePushVote(null);
       store.getState().setQueuePushLocked(false);
+      store.getState().setSkipLocked(false);
       setQueueBadge(false);
       setSuppressFallback(true);
+      if (hadActiveStream) {
+        setTunnelRecoveryUntil(Date.now() + TUNNEL_RECOVERY_WINDOW_MS);
+      }
     });
 
     socket.on("track:change", (track: Track | null) => {
@@ -505,6 +550,10 @@ export default function StreamPage() {
         clearInterval(skipVoteCountdownRef.current);
         skipVoteCountdownRef.current = null;
       }
+      if (tunnelRecoveryTickRef.current) {
+        clearInterval(tunnelRecoveryTickRef.current);
+        tunnelRecoveryTickRef.current = null;
+      }
       suppressNextQueueBadgeRef.current = false;
       clearInterval(stateSyncInterval);
       disconnectSocket();
@@ -549,9 +598,18 @@ export default function StreamPage() {
   const radioStreamUrl = radioServerUrl
     ? `${radioServerUrl}/listen`
     : process.env.NEXT_PUBLIC_STREAM_URL ?? icecastUrl;
+  const isDjModeConnected = radioMode === "dj" && radioConnected;
+  const showTunnelRecoveryState =
+    mode === "radio" &&
+    !!radioStreamUrl &&
+    !!radioServerUrl &&
+    !radioConnected &&
+    !!tunnelRecoveryUntil &&
+    tunnelRecoverySecondsLeft > 0;
   const showRadioOfflineState =
     mode === "radio" &&
-    (!radioStreamUrl || !radioConnected || !streamOnline);
+    (!radioStreamUrl || (!radioConnected && !showTunnelRecoveryState) || (!isDjModeConnected && radioConnected && !streamOnline));
+  const shouldPollCommunityWidgets = radioMode === "dj" && radioConnected;
   const nextQueueItem = queue[0] ?? null;
   const nextSourceTitle = firstNonEmpty(
     nextQueueItem?.title,
@@ -564,7 +622,7 @@ export default function StreamPage() {
   const nextArtist = parsedNext.artist;
   const nextRequestedBy = nextQueueItem?.added_by ?? upcomingTrack?.added_by ?? null;
   const nextIsFallback = !nextQueueItem && !!upcomingTrack?.isFallback;
-  const showHeaderNextOnly = mode === "radio" && !showRadioOfflineState;
+  const showHeaderNextOnly = mode === "radio" && !showRadioOfflineState && !showTunnelRecoveryState;
 
   useEffect(() => {
     const visibleTrackKey = syncedCurrentTrack
@@ -642,7 +700,20 @@ export default function StreamPage() {
             />
           </div>
         )}
-        {showRadioOfflineState && (
+        {showTunnelRecoveryState ? (
+          <div className="mt-2 rounded-lg border border-amber-800/50 bg-amber-950/20 px-3 py-2 text-xs text-amber-100">
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-300/70" />
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-400" />
+              </span>
+              <span className="font-semibold uppercase tracking-wide">Verbinding herstellen...</span>
+            </div>
+            <p className="mt-1 text-[11px] text-amber-100/85">
+              Tunnel lijkt verbroken. We proberen automatisch opnieuw te verbinden ({tunnelRecoverySecondsLeft}s).
+            </p>
+          </div>
+        ) : showRadioOfflineState && (
           <div className="mt-2 rounded-lg border border-red-900/50 bg-red-950/20 px-3 py-2 text-xs text-red-200">
             <div className="flex items-center gap-2">
               <span className="relative flex h-2.5 w-2.5">
@@ -661,18 +732,36 @@ export default function StreamPage() {
       <main className="flex min-h-0 flex-1 flex-col gap-1.5 p-1.5 sm:gap-4 sm:p-4 landscape:flex-row lg:flex-row">
         {/* Player */}
         <div className="min-h-0 shrink-0 max-h-[38dvh] overflow-x-hidden overflow-y-auto landscape:min-w-0 landscape:flex-1 landscape:max-h-none landscape:min-h-0 landscape:overflow-visible lg:min-w-0 lg:flex-1 lg:max-h-none lg:min-h-0 lg:overflow-visible">
-          <ShoutoutBanner />
+          {shouldPollCommunityWidgets && <ShoutoutBanner />}
           {mode === "twitch" && <TwitchPlayer />}
           {mode === "audio" && icecastUrl && (
             <AudioPlayer src={icecastUrl} radioTrack={radioConnected ? radioTrack : undefined} showFallback={!suppressFallback} />
           )}
-          {mode === "radio" && radioStreamUrl && !showRadioOfflineState && (
+          {mode === "radio" && radioStreamUrl && !showRadioOfflineState && !showTunnelRecoveryState && (
             <AudioPlayer
               src={radioStreamUrl}
               radioTrack={radioMode === "dj" ? null : radioTrack}
               showFallback={radioMode === "dj" || !radioTrack}
               preferSupabase={radioMode === "dj" || !radioTrack}
             />
+          )}
+          {mode === "radio" && showTunnelRecoveryState && (
+            <div className="relative overflow-hidden rounded-xl border border-amber-900/60 bg-gradient-to-br from-amber-950/30 via-gray-900 to-gray-900 px-4 py-6 shadow-lg shadow-amber-900/20 sm:py-12">
+              <div className="pointer-events-none absolute -left-10 -top-10 h-32 w-32 rounded-full bg-amber-500/15 blur-2xl" />
+              <div className="pointer-events-none absolute -bottom-12 right-0 h-36 w-36 rounded-full bg-violet-500/10 blur-3xl" />
+              <div className="relative z-10 flex items-center justify-center gap-3">
+                <span className="relative flex h-3 w-3">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-300 opacity-75" />
+                  <span className="relative inline-flex h-3 w-3 rounded-full bg-amber-400" />
+                </span>
+                <p className="text-sm font-semibold text-amber-100 sm:text-base">
+                  Verbinding herstellen...
+                </p>
+              </div>
+              <p className="relative z-10 mt-2 text-center text-xs text-gray-200 sm:text-sm">
+                Tunnel wordt opnieuw opgezet. Proberen in de achtergrond ({tunnelRecoverySecondsLeft}s).
+              </p>
+            </div>
           )}
           {mode === "radio" && showRadioOfflineState && (
             <div className="relative overflow-hidden rounded-xl border border-red-900/60 bg-gradient-to-br from-red-950/30 via-gray-900 to-gray-900 px-4 py-6 shadow-lg shadow-red-900/20 sm:py-12">
@@ -727,9 +816,11 @@ export default function StreamPage() {
               <QueuePushVotePanel />
             </div>
           )}
-          <div className="mt-2">
-            <LivePollCard />
-          </div>
+          {shouldPollCommunityWidgets && (
+            <div className="mt-2">
+              <LivePollCard />
+            </div>
+          )}
         </div>
 
         {/* Mobile: tab bar */}

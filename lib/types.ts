@@ -94,6 +94,7 @@ export interface RadioState {
   durationVote: DurationVote | null;
   queuePushVote: QueuePushVote | null;
   queuePushLocked: boolean;
+  skipLocked: boolean;
   serverUrl: string | null;
 }
 
