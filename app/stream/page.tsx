@@ -957,7 +957,9 @@ export default function StreamPage() {
           {(showRadioPanel || showQueuePanel) && (
             <div className="hidden min-h-0 min-w-0 flex-1 flex-col gap-2 lg:flex">
               {showRadioPanel && (
-                <div className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5">
+                <div className={`relative flex min-h-0 min-w-0 flex-col rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5 ${
+                  desktopAccordionTab === "radio" ? "z-40 overflow-visible" : "z-20 overflow-hidden"
+                }`}>
                   <button
                     type="button"
                     onClick={() => setDesktopAccordionTab("radio")}
@@ -969,7 +971,7 @@ export default function StreamPage() {
                     <span className={`text-xs text-gray-400 transition ${desktopAccordionTab === "radio" ? "rotate-180" : ""}`}>▾</span>
                   </button>
                   {desktopAccordionTab === "radio" && (
-                    <div className="max-h-[56dvh] overflow-y-auto p-2">
+                    <div className="overflow-visible p-2">
                       <RadioPanelErrorBoundary>
                         <QueueAdd />
                       </RadioPanelErrorBoundary>
@@ -978,7 +980,9 @@ export default function StreamPage() {
                 </div>
               )}
               {showQueuePanel && (
-                <div className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5">
+                <div className={`relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5 ${
+                  desktopAccordionTab === "queue" ? "z-30" : "z-10"
+                }`}>
                   <button
                     type="button"
                     onClick={() => setDesktopAccordionTab("queue")}

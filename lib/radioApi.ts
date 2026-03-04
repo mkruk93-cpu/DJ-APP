@@ -75,12 +75,12 @@ export async function getGenres(query = ''): Promise<GenreOption[]> {
   return get<GenreOption[]>(path);
 }
 
-export async function getGenreHits(genre: string, limit = 20, offset = 0): Promise<GenreHit[]> {
+export async function getGenreHits(genre: string, limit = 20, offset = 0, includeLocal = true): Promise<GenreHit[]> {
   const trimmed = genre.trim();
   if (!trimmed) return [];
   const safeLimit = Math.max(1, Math.min(limit, 50));
   const safeOffset = Math.max(0, offset);
-  const path = `/api/genre-hits?genre=${encodeURIComponent(trimmed)}&limit=${safeLimit}&offset=${safeOffset}`;
+  const path = `/api/genre-hits?genre=${encodeURIComponent(trimmed)}&limit=${safeLimit}&offset=${safeOffset}&includeLocal=${includeLocal ? "1" : "0"}`;
   return get<GenreHit[]>(path);
 }
 

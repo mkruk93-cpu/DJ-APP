@@ -4,12 +4,13 @@ import http from 'node:http';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join as pathJoin } from 'node:path';
+import fs from 'node:fs';
+import { join as pathJoin, extname, basename, resolve as pathResolve } from 'node:path';
 import { Server as IOServer } from 'socket.io';
 import { createClient } from '@supabase/supabase-js';
 import { initCache } from './cleanup.js';
 import { seedSettings, getActiveMode, getActiveFallbackGenre, getModeSettings, getSetting, setSetting } from './settings.js';
-import { getQueue, addToQueue, removeFromQueue, reorderQueue, fetchVideoInfo, extractYoutubeId, extractSourceId, isSoundcloudUrl, getThumbnailUrl } from './queue.js';
+import { getQueue, addToQueue, removeFromQueue, reorderQueue, fetchVideoInfo, extractYoutubeId, extractSourceId, isSoundcloudUrl, getThumbnailUrl, encodeLocalFileUrl } from './queue.js';
 import { canPerformAction } from './permissions.js';
 import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, playerEvents, setKeepFiles, invalidatePreload, invalidateNextReady, removeQueueItemFromPreload, setActiveFallbackGenre } from './player.js';
 import { startBridge } from './bridge.js';
@@ -234,6 +235,13 @@ interface SearchResult {
   channel: string;
 }
 
+interface LocalTrack {
+  id: string;
+  title: string;
+  artist: string;
+  filePath: string;
+}
+
 const MAX_LONG_CONTENT_SECONDS = 65 * 60;
 const MAX_SET_LIKE_SECONDS = 12 * 60;
 const MIN_SOUNDCLOUD_SECONDS = 30;
@@ -283,17 +291,183 @@ function postProcessResults(
 
 const searchCache = new Map<string, { results: SearchResult[]; ts: number }>();
 const CACHE_TTL = 60_000;
-const DISCOVERY_CACHE_TTL = 180_000;
+const DISCOVERY_CACHE_TTL = 1_800_000;
 const genreCache = new Map<string, { results: GenreItem[]; ts: number }>();
 const genreHitsCache = new Map<string, { results: GenreHitItem[]; ts: number }>();
 const genreHitsRefreshInFlight = new Set<string>();
+const LOCAL_INDEX_TTL = 120_000;
+const LOCAL_AUDIO_EXTS = new Set([
+  '.mp3', '.wav', '.flac', '.m4a', '.aac', '.ogg', '.opus', '.aiff', '.alac', '.wma',
+]);
+let localTrackIndexCache: { rootsKey: string; tracks: LocalTrack[]; ts: number } | null = null;
 
-function refreshGenreHitsCache(cacheKey: string, genre: string, limit: number, offset: number): void {
+function normalizeLoose(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function splitTitleArtistFromFilename(fileName: string): { artist: string; title: string } {
+  const clean = fileName.replace(/\[[^\]]+\]/g, ' ').replace(/\([^)]*\)/g, ' ').trim();
+  const separators = [' - ', ' — ', ' – ', ' | '];
+  for (const separator of separators) {
+    const idx = clean.indexOf(separator);
+    if (idx > 0 && idx < clean.length - separator.length) {
+      const artist = clean.slice(0, idx).trim();
+      const title = clean.slice(idx + separator.length).trim();
+      if (artist && title) return { artist, title };
+    }
+  }
+  return { artist: 'Local Library', title: clean || fileName };
+}
+
+function getLocalSearchRoots(): string[] {
+  const fromEnv = (process.env.LOCAL_SEARCH_PATHS ?? '')
+    .split(/[;,]/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const roots = [DOWNLOAD_PATH, ...fromEnv]
+    .filter(Boolean)
+    .map((root) => pathResolve(root));
+  return Array.from(new Set(roots)).filter((root) => fs.existsSync(root));
+}
+
+function scanLocalTracks(roots: string[]): LocalTrack[] {
+  const tracks: LocalTrack[] = [];
+  const queue: string[] = [...roots];
+  const seen = new Set<string>();
+  const maxFiles = 12_000;
+
+  while (queue.length > 0 && tracks.length < maxFiles) {
+    const dir = queue.shift();
+    if (!dir) break;
+    let entries: fs.Dirent[] = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue;
+      const full = pathJoin(dir, entry.name);
+      if (entry.isDirectory()) {
+        queue.push(full);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const ext = extname(entry.name).toLowerCase();
+      if (!LOCAL_AUDIO_EXTS.has(ext)) continue;
+      const abs = pathResolve(full);
+      if (seen.has(abs)) continue;
+      seen.add(abs);
+      const stem = basename(entry.name, ext);
+      const parsed = splitTitleArtistFromFilename(stem);
+      tracks.push({
+        id: `local-${normalizeLoose(abs).slice(-42)}`,
+        title: parsed.title,
+        artist: parsed.artist,
+        filePath: abs,
+      });
+      if (tracks.length >= maxFiles) break;
+    }
+  }
+  return tracks;
+}
+
+function getLocalTrackIndex(): LocalTrack[] {
+  const roots = getLocalSearchRoots();
+  const rootsKey = roots.join('|');
+  const now = Date.now();
+  if (
+    localTrackIndexCache
+    && localTrackIndexCache.rootsKey === rootsKey
+    && now - localTrackIndexCache.ts < LOCAL_INDEX_TTL
+  ) {
+    return localTrackIndexCache.tracks;
+  }
+  const tracks = scanLocalTracks(roots);
+  localTrackIndexCache = { rootsKey, tracks, ts: now };
+  return tracks;
+}
+
+function localTrackToSearchResult(item: LocalTrack): SearchResult {
+  return {
+    id: item.id,
+    title: item.title,
+    url: encodeLocalFileUrl(item.filePath),
+    duration: null,
+    thumbnail: '',
+    channel: item.artist,
+  };
+}
+
+function searchLocalTracks(query: string, limit: number, offset: number): SearchResult[] {
+  const q = normalizeLoose(query);
+  if (q.length < 2) return [];
+  const terms = q.split(' ').filter(Boolean);
+  const scored = getLocalTrackIndex()
+    .map((item) => {
+      const hay = normalizeLoose(`${item.artist} ${item.title}`);
+      let score = 0;
+      for (const term of terms) {
+        if (hay.includes(term)) score += 1;
+      }
+      if (normalizeLoose(item.title).includes(q)) score += 2;
+      if (normalizeLoose(item.artist).includes(q)) score += 1;
+      return { item, score };
+    })
+    .filter((row) => row.score > 0)
+    .sort((a, b) => b.score - a.score);
+  return scored.slice(offset, offset + limit).map((row) => localTrackToSearchResult(row.item));
+}
+
+function genreTokens(genre: string): string[] {
+  const normalized = normalizeLoose(genre.replace(/_/g, ' '));
+  const tokens = normalized.split(' ').filter((token) => token.length >= 3);
+  if (normalized.includes('drum and bass')) tokens.push('dnb');
+  if (normalized.includes('hardstyle')) tokens.push('rawstyle');
+  if (normalized.includes('techno trance')) tokens.push('trance', 'techno');
+  return Array.from(new Set(tokens));
+}
+
+function searchLocalGenreHits(genre: string, limit: number, offset: number): GenreHitItem[] {
+  const tokens = genreTokens(genre);
+  if (tokens.length === 0) return [];
+  const scored = getLocalTrackIndex()
+    .map((item) => {
+      const hay = normalizeLoose(`${item.artist} ${item.title}`);
+      let score = 0;
+      for (const token of tokens) {
+        if (hay.includes(token)) score += 1;
+      }
+      return { item, score };
+    })
+    .filter((row) => row.score > 0)
+    .sort((a, b) => b.score - a.score);
+  return scored.slice(offset, offset + limit).map((row) => ({
+    id: row.item.id,
+    title: row.item.title,
+    artist: row.item.artist,
+    thumbnail: '',
+    sourceHint: encodeLocalFileUrl(row.item.filePath),
+  }));
+}
+
+function refreshGenreHitsCache(cacheKey: string, genre: string, limit: number, offset: number, includeLocal: boolean): void {
   if (genreHitsRefreshInFlight.has(cacheKey)) return;
   genreHitsRefreshInFlight.add(cacheKey);
   void getTopTracksByGenre(genre, limit, offset)
     .then((results) => {
-      genreHitsCache.set(cacheKey, { results, ts: Date.now() });
+      const local = includeLocal ? searchLocalGenreHits(genre, Math.max(limit * 2, 20), offset) : [];
+      const merged = Array.from(
+        new Map(
+          [...local, ...results]
+            .map((item) => [`${item.artist}-${item.title}`.toLowerCase().replace(/\s+/g, ' ').trim(), item]),
+        ).values(),
+      ).slice(0, limit);
+      genreHitsCache.set(cacheKey, { results: merged, ts: Date.now() });
     })
     .catch((err) => {
       console.warn('[rest] /api/genre-hits refresh failed:', (err as Error).message);
@@ -591,6 +765,7 @@ app.get('/health', (_req, res) => {
 app.get('/search', async (req, res) => {
   const q = String(req.query.q ?? '').trim();
   const source = String(req.query.source ?? 'youtube').toLowerCase();
+  const includeLocal = String(req.query.includeLocal ?? '1') !== '0';
   const parsedLimit = parseInt(String(req.query.limit ?? '12'), 10);
   const parsedOffset = parseInt(String(req.query.offset ?? '0'), 10);
   const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(parsedLimit, 50)) : 12;
@@ -601,11 +776,18 @@ app.get('/search', async (req, res) => {
   }
 
   try {
-    const requested = Math.min(50, limit + offset);
+    const requested = Math.min(80, limit + offset + (includeLocal ? limit : 0));
     const allResults = source === 'soundcloud'
       ? await soundcloudSearch(q, requested)
       : await youtubeSearch(q, requested);
-    res.json(allResults.slice(offset, offset + limit));
+    const localResults = includeLocal ? searchLocalTracks(q, requested, 0) : [];
+    const merged = Array.from(
+      new Map(
+        [...localResults, ...allResults]
+          .map((item) => [item.url, item]),
+      ).values(),
+    );
+    res.json(merged.slice(offset, offset + limit));
   } catch (err) {
     console.error('[rest] /search error:', err);
     res.status(500).json({ error: 'Search failed' });
@@ -640,14 +822,23 @@ app.get('/api/genre-hits', async (req, res) => {
 
   const parsedLimit = parseInt(String(req.query.limit ?? '20'), 10);
   const parsedOffset = parseInt(String(req.query.offset ?? '0'), 10);
+  const includeLocal = String(req.query.includeLocal ?? '1') !== '0';
   const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(parsedLimit, 50)) : 20;
   const offset = Number.isFinite(parsedOffset) ? Math.max(0, parsedOffset) : 0;
-  const cacheKey = `${genre.toLowerCase()}::${limit}::${offset}`;
+  const cacheKey = `${genre.toLowerCase()}::${limit}::${offset}::local=${includeLocal ? '1' : '0'}`;
+  const nextOffset = offset + limit;
+  const nextCacheKey = `${genre.toLowerCase()}::${limit}::${nextOffset}::local=${includeLocal ? '1' : '0'}`;
   const cached = genreHitsCache.get(cacheKey);
   if (cached) {
     const fresh = Date.now() - cached.ts < DISCOVERY_CACHE_TTL;
     if (!fresh) {
-      refreshGenreHitsCache(cacheKey, genre, limit, offset);
+      refreshGenreHitsCache(cacheKey, genre, limit, offset, includeLocal);
+    }
+    if (cached.results.length >= Math.max(8, Math.ceil(limit * 0.6))) {
+      const nextCached = genreHitsCache.get(nextCacheKey);
+      if (!nextCached || Date.now() - nextCached.ts >= DISCOVERY_CACHE_TTL) {
+        refreshGenreHitsCache(nextCacheKey, genre, limit, nextOffset, includeLocal);
+      }
     }
     res.json(cached.results);
     return;
@@ -655,8 +846,14 @@ app.get('/api/genre-hits', async (req, res) => {
 
   try {
     // Keep genre hit loading snappy: try one broad page first, then one backfill pass if needed.
-    const collected: GenreHitItem[] = [];
+    const localCollected = includeLocal ? searchLocalGenreHits(genre, Math.max(limit * 2, 20), offset) : [];
+    const collected: GenreHitItem[] = [...localCollected];
     const seen = new Set<string>();
+    for (const item of collected) {
+      const key = `${item.artist}-${item.title}`.toLowerCase().replace(/\s+/g, ' ').trim();
+      if (!key) continue;
+      seen.add(key);
+    }
     let probeOffset = offset;
     const probeLimit = Math.min(50, Math.max(limit * 2, 20));
 
@@ -677,6 +874,9 @@ app.get('/api/genre-hits', async (req, res) => {
 
     const results = collected.slice(0, limit);
     genreHitsCache.set(cacheKey, { results, ts: Date.now() });
+    if (results.length >= Math.max(8, Math.ceil(limit * 0.6))) {
+      refreshGenreHitsCache(nextCacheKey, genre, limit, nextOffset, includeLocal);
+    }
     res.json(results);
   } catch (err) {
     console.error('[rest] /api/genre-hits error:', err);
@@ -1317,8 +1517,10 @@ io.on('connection', (socket) => {
 
       const ytId = extractYoutubeId(url);
       const thumbnail = data.thumbnail ?? (ytId ? getThumbnailUrl(ytId) : null);
-
-      const info = await fetchVideoInfo(url);
+      const isLocalSelection = url.startsWith('local://');
+      const info = isLocalSelection
+        ? { title: null, duration: null, thumbnail: null }
+        : await fetchVideoInfo(url);
 
       if (info.duration !== null && info.duration > MAX_DURATION) {
         socket.emit('error:toast', {

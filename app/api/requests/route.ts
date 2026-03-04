@@ -36,6 +36,7 @@ function getSupabaseServerClient() {
 }
 
 function isSupportedUrl(input: string): boolean {
+  if (/^local:\/\/.+/i.test(input)) return true;
   return /^https?:\/\/(www\.)?(youtube\.com|youtu\.be|soundcloud\.com)\/.+$/i.test(
     input,
   );
@@ -109,11 +110,11 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const metadata = await getRequestMetadata(inputUrl);
-    if (
-      metadata.duration_seconds &&
-      metadata.duration_seconds > MAX_DURATION_SEC
-    ) {
+    const isLocalUrl = /^local:\/\/.+/i.test(inputUrl);
+    const metadata = isLocalUrl
+      ? { title: body.title ?? null, artist: body.artist ?? null, thumbnail: body.thumbnail ?? null, duration_seconds: body.duration ?? null }
+      : await getRequestMetadata(inputUrl);
+    if (!isLocalUrl && metadata.duration_seconds && metadata.duration_seconds > MAX_DURATION_SEC) {
       const mins = Math.ceil(metadata.duration_seconds / 60);
       return NextResponse.json(
         { error: `Dit nummer is ${mins} minuten — maximaal 10 minuten toegestaan.` },

@@ -5,7 +5,7 @@ import { EventEmitter } from 'node:events';
 import { SupabaseClient } from '@supabase/supabase-js';
 import type { Server as IOServer } from 'socket.io';
 import type { QueueItem, Track, UpcomingTrack } from './types.js';
-import { clearQueueItem, getQueue, fetchVideoInfo } from './queue.js';
+import { clearQueueItem, getQueue, fetchVideoInfo, decodeLocalFileUrl, isLocalUrl } from './queue.js';
 import { cleanupFile } from './cleanup.js';
 import type { StreamHub } from './streamHub.js';
 import { pickRandomFallbackForGenre, parseAutoFallbackGenreId, LIKED_AUTO_GENRE_ID } from './fallbackGenres.js';
@@ -43,7 +43,17 @@ let completedSwap: CompletedSwap | null = null;
 let skipLocked = false;
 let skipWhenReady = false;
 let skipLockWatchdog: ReturnType<typeof setTimeout> | null = null;
+let selfHealTimer: ReturnType<typeof setInterval> | null = null;
+let lastAudioProgressAt = 0;
+let lastTrackAnnouncedAt = 0;
+let lastPrepareKickAt = 0;
+let lastSelfHealAt = 0;
 let _io: IOServer | null = null;
+
+const SELF_HEAL_CHECK_MS = 5_000;
+const SELF_HEAL_COOLDOWN_MS = 6_000;
+const SELF_HEAL_STALL_MS = 35_000;
+const SELF_HEAL_DURATION_GRACE_SECONDS = 45;
 
 export function isSkipLocked(): boolean {
   return skipLocked;
@@ -797,6 +807,96 @@ function killDecoderProcess(dec: ChildProcess | null): void {
   } catch {}
 }
 
+function killEncoderProcess(enc: ChildProcess | null): void {
+  if (!enc || !enc.pid || enc.exitCode !== null) return;
+  try {
+    if (process.platform === 'win32') {
+      spawn('taskkill', ['/pid', String(enc.pid), '/f', '/t']);
+    } else {
+      process.kill(enc.pid, 'SIGTERM');
+    }
+  } catch {}
+}
+
+function markAudioProgress(): void {
+  lastAudioProgressAt = Date.now();
+}
+
+function triggerSelfHeal(reason: string): void {
+  if (!isRunning) return;
+  const now = Date.now();
+  if (now - lastSelfHealAt < SELF_HEAL_COOLDOWN_MS) return;
+  lastSelfHealAt = now;
+  console.warn(`[self-heal] ${reason}`);
+
+  if (pendingSwap) {
+    killDecoderProcess(pendingSwap.newDecoder);
+    pendingSwap = null;
+  }
+  completedSwap = null;
+  skipWhenReady = false;
+  setSkipLock(false);
+
+  if (nextReady?.cleanupAfterUse && !keepFiles) {
+    cleanupFile(nextReady.audioFile);
+  }
+  nextReady = null;
+  pendingQueueUpcoming = null;
+  pendingAutoUpcoming = null;
+  broadcastUpcomingTrack();
+
+  killDecoderProcess(currentDecoder);
+  currentDecoder = null;
+
+  if (encoder?.stdin && !encoder.stdin.destroyed) {
+    try { encoder.stdin.end(); } catch {}
+  }
+  killEncoderProcess(encoder);
+  encoder = null;
+
+  if (_sb && isRunning) {
+    lastPrepareKickAt = Date.now();
+    void refreshPendingQueueUpcoming(_sb, currentTrack?.id ?? null);
+    void fillPreloadBuffer(_sb, _cacheDir, currentTrack?.id ?? null);
+    void ensureAutoReadyBuffer(_sb, _cacheDir);
+    void prepareNextTrack(_sb, _cacheDir, currentTrack?.id ?? null);
+  }
+}
+
+function runSelfHealChecks(): void {
+  if (!isRunning || !_sb) return;
+  const now = Date.now();
+
+  if (skipWhenReady && nextReady && (!encoder?.stdin || encoder.stdin.destroyed)) {
+    triggerSelfHeal('skip pending while encoder unavailable');
+    return;
+  }
+
+  if (currentTrack?.duration && Number.isFinite(currentTrack.duration) && currentTrack.duration > 0) {
+    const startedAt = currentTrack.started_at - STREAM_DELAY_MS;
+    const elapsedMs = now - startedAt;
+    const maxExpectedMs = (currentTrack.duration + SELF_HEAL_DURATION_GRACE_SECONDS) * 1000;
+    if (elapsedMs > maxExpectedMs) {
+      triggerSelfHeal(`track runtime exceeded (${Math.round(elapsedMs / 1000)}s)`);
+      return;
+    }
+  }
+
+  if (currentTrack) {
+    const idleMs = now - Math.max(lastAudioProgressAt, lastTrackAnnouncedAt);
+    if (idleMs > SELF_HEAL_STALL_MS) {
+      triggerSelfHeal(`audio stalled for ${Math.round(idleMs / 1000)}s`);
+      return;
+    }
+  }
+
+  if (!nextReady && now - lastPrepareKickAt > 15_000) {
+    lastPrepareKickAt = now;
+    void prepareNextTrack(_sb, _cacheDir, currentTrack?.id ?? null);
+    void ensureAutoReadyBuffer(_sb, _cacheDir);
+  }
+}
+
 function beginSeamlessSwap(ready: ReadyTrack): void {
   const newDecoder = spawn('ffmpeg', [
     '-hide_banner', '-re',
@@ -1034,11 +1134,17 @@ function ensureEncoder(): ChildProcess {
   encoder.on('close', (code) => {
     console.log(`[encoder] Exited with code ${code}`);
     encoder = null;
+    if (isRunning) {
+      setTimeout(() => triggerSelfHeal(`encoder exited (${code})`), 100);
+    }
   });
 
   encoder.on('error', (err) => {
     console.error(`[encoder] Error: ${err.message}`);
     encoder = null;
+    if (isRunning) {
+      setTimeout(() => triggerSelfHeal(`encoder error (${err.message})`), 100);
+    }
   });
 
   return encoder;
@@ -1058,6 +1164,10 @@ export async function startPlayCycle(
   _cacheDir = cacheDir;
   _icecast = icecast;
   _streamHub = streamHub ?? null;
+  lastAudioProgressAt = Date.now();
+  lastTrackAnnouncedAt = Date.now();
+  lastPrepareKickAt = Date.now();
+  lastSelfHealAt = 0;
 
   playerEvents.on('queue:add', () => {
     // Invalidate fallback nextReady so queued track gets priority
@@ -1084,6 +1194,12 @@ export async function startPlayCycle(
       void ensureAutoReadyBuffer(_sb, _cacheDir);
       void prepareNextTrack(_sb, _cacheDir, currentTrack?.id ?? null);
     }, PRELOAD_REFRESH_MS);
+  }
+
+  if (!selfHealTimer) {
+    selfHealTimer = setInterval(() => {
+      runSelfHealChecks();
+    }, SELF_HEAL_CHECK_MS);
   }
 
   console.log('[player] Play cycle started');
@@ -1121,6 +1237,10 @@ export function stopPlayCycle(): void {
   if (preloadRefreshTimer) {
     clearInterval(preloadRefreshTimer);
     preloadRefreshTimer = null;
+  }
+  if (selfHealTimer) {
+    clearInterval(selfHealTimer);
+    selfHealTimer = null;
   }
   if (autoReadyBuffer.length > 0) {
     for (const entry of autoReadyBuffer) {
@@ -1436,6 +1556,14 @@ async function playNext(
   const trackId = trackQueueId ?? `fallback_${Date.now()}`;
 
   try {
+    // If we are starting a real queue item, an older fallback preview can linger in nextReady.
+    // Drop only fallback nextReady entries to keep "next track" in sync with the active queue.
+    if (trackQueueId && nextReady?.isFallback) {
+      if (nextReady.cleanupAfterUse && !keepFiles) cleanupFile(nextReady.audioFile);
+      nextReady = null;
+      broadcastUpcomingTrack();
+    }
+
     // Remove from queue in background
     if (trackQueueId) {
       clearQueueItem(sb, trackQueueId)
@@ -1459,6 +1587,7 @@ async function playNext(
     pendingQueueUpcoming = null;
     pendingAutoUpcoming = null;
     io.emit('track:change', currentTrack);
+    lastTrackAnnouncedAt = Date.now();
     if (isFallback) {
       lastFallbackFile = audioFile;
     }
@@ -1521,6 +1650,7 @@ async function playNext(
         started_at: Date.now() + STREAM_DELAY_MS,
       };
       io.emit('track:change', currentTrack);
+      lastTrackAnnouncedAt = Date.now();
       if (isFallback) {
         lastFallbackFile = audioFile;
       }
@@ -1622,6 +1752,7 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess): Promise<void> {
 
     decoder.stdout?.on('data', (chunk: Buffer) => {
       if (settled || pipeError) return;
+      markAudioProgress();
 
       // ── Check for seamless swap ──
       if (pendingSwap?.firstChunk) {
@@ -1630,7 +1761,10 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess): Promise<void> {
 
         // Write the NEW track's first audio chunk to the encoder
         if (enc.stdin && !enc.stdin.destroyed) {
-          try { enc.stdin.write(swap.firstChunk); } catch {}
+          try {
+            enc.stdin.write(swap.firstChunk);
+            markAudioProgress();
+          } catch {}
         }
 
         // Kill old decoder — its last chunk was already written above (or skipped)
@@ -1647,6 +1781,7 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess): Promise<void> {
       if (enc.stdin && !enc.stdin.destroyed) {
         try {
           const ok = enc.stdin.write(chunk);
+          markAudioProgress();
           if (!ok) {
             decoder.stdout?.pause();
             enc.stdin.once('drain', () => decoder.stdout?.resume());
@@ -1685,16 +1820,38 @@ function pipeRunningDecoder(decoder: ChildProcess, enc: ChildProcess): Promise<v
   return new Promise((resolve) => {
     currentDecoder = decoder;
     let settled = false;
+    let pipeError = false;
 
     function finish() {
       if (settled) return;
       settled = true;
       currentDecoder = null;
+      enc.stdin?.removeListener('error', onStdinError);
+      enc.removeListener('close', onEncClose);
       resolve();
     }
 
+    function onStdinError(err: Error) {
+      if (pipeError) return;
+      pipeError = true;
+      console.warn(`[encoder] stdin error during chained decode: ${err.message}`);
+      killDecoderProcess(decoder);
+      finish();
+    }
+
+    function onEncClose() {
+      if (pipeError) return;
+      pipeError = true;
+      killDecoderProcess(decoder);
+      finish();
+    }
+
+    enc.stdin?.on('error', onStdinError);
+    enc.on('close', onEncClose);
+
     decoder.stdout?.on('data', (chunk: Buffer) => {
-      if (settled) return;
+      if (settled || pipeError) return;
+      markAudioProgress();
 
       // Support chained skips during the swapped track
       if (pendingSwap?.firstChunk) {
@@ -1702,7 +1859,10 @@ function pipeRunningDecoder(decoder: ChildProcess, enc: ChildProcess): Promise<v
         pendingSwap = null;
 
         if (enc.stdin && !enc.stdin.destroyed) {
-          try { enc.stdin.write(swap.firstChunk); } catch {}
+          try {
+            enc.stdin.write(swap.firstChunk);
+            markAudioProgress();
+          } catch {}
         }
 
         killDecoderProcess(decoder);
@@ -1715,11 +1875,16 @@ function pipeRunningDecoder(decoder: ChildProcess, enc: ChildProcess): Promise<v
       if (enc.stdin && !enc.stdin.destroyed) {
         try {
           const ok = enc.stdin.write(chunk);
+          markAudioProgress();
           if (!ok) {
             decoder.stdout?.pause();
             enc.stdin.once('drain', () => decoder.stdout?.resume());
           }
-        } catch {}
+        } catch {
+          pipeError = true;
+          killDecoderProcess(decoder);
+          finish();
+        }
       }
     });
 
@@ -1753,7 +1918,9 @@ function downloadQueueItemShared(
   if (existing) return existing;
 
   const run = (async () => {
-    const info = await fetchVideoInfo(item.youtube_url);
+    const info = isLocalUrl(item.youtube_url)
+      ? { title: item.title ?? null, duration: null, thumbnail: item.thumbnail ?? null }
+      : await fetchVideoInfo(item.youtube_url);
     if (info.title && !item.title) item.title = info.title;
     const audioFile = await downloadAudio(item, cacheDir);
     return { audioFile, info };
@@ -1811,6 +1978,18 @@ function resolveAlternativeYoutubeUrl(item: QueueItem): Promise<string | null> {
 
 function downloadAudio(item: QueueItem, cacheDir: string): Promise<string> {
   return new Promise((resolve, reject) => {
+    const localPath = decodeLocalFileUrl(item.youtube_url);
+    if (localPath) {
+      fs.access(localPath, fs.constants.R_OK, (err) => {
+        if (err) {
+          reject(new Error(`Lokale file niet gevonden: ${localPath}`));
+          return;
+        }
+        resolve(localPath);
+      });
+      return;
+    }
+
     const safeId = item.youtube_id.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 30);
     const uniqueTag = `${safeId}_${Date.now()}_${downloadCounter++}`;
     const outputTemplate = path.join(cacheDir, `${uniqueTag}.%(ext)s`);
@@ -1886,6 +2065,7 @@ async function prepareNextTrack(
   currentItemId: string | null,
 ): Promise<void> {
   if (preparingNext || nextReady) return;
+  lastPrepareKickAt = Date.now();
   const activeAutoGenre = parseAutoFallbackGenreId(activeFallbackGenre);
   preparingNext = true;
 
@@ -2039,14 +2219,22 @@ async function prepareNextTrack(
     preparingNext = false;
   }
 
-  // If a skip is waiting for this track, trigger the seamless swap now
-  if (skipWhenReady && nextReady && encoder?.stdin && !encoder.stdin.destroyed) {
-    skipWhenReady = false;
-    const ready = nextReady;
-    nextReady = null;
-    broadcastUpcomingTrack();
-    beginSeamlessSwap(ready);
-    console.log('[player] skipWhenReady triggered — seamless swap started');
+  // If a skip is waiting for this track, trigger swap now.
+  if (skipWhenReady && nextReady) {
+    if (encoder?.stdin && !encoder.stdin.destroyed) {
+      skipWhenReady = false;
+      const ready = nextReady;
+      nextReady = null;
+      broadcastUpcomingTrack();
+      beginSeamlessSwap(ready);
+      console.log('[player] skipWhenReady triggered — seamless swap started');
+    } else {
+      // Encoder is down: force a hard transition so playback loop can restart encoder.
+      skipWhenReady = false;
+      setSkipLock(false);
+      killDecoderProcess(currentDecoder);
+      console.warn('[player] skipWhenReady forced hard transition (encoder unavailable)');
+    }
   }
 }
 

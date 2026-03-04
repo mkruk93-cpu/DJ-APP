@@ -146,14 +146,17 @@
         "krachpilot",
         "radera",
         "zaag!",
-        "dikka",
         "blavor-d",
         "lege batterij",
         "more kords",
         "jaws",
         "luvvtige, unicorn on ketamine",
         "superstrongman",
-        "noiseflow, kior"
+        "noiseflow, kior",
+        "actek",
+        "d-fence",
+        "neue deutsche säge",
+        "wetnloud"
       ],
       "priorityLabels": [
         "cenobite",
@@ -182,11 +185,44 @@
         "more kords - zaag on the ceiling",
         "topic - overdrive",
         "just be zaag",
-        "make it zaag"
+        "make it zaag",
+        "krachtekk",
+        "krach the halls"
       ],
       "blockedTracks": [
         "more kords - just be zaag",
-        "future - used to this (official music video) ft. drake"
+        "future - used to this (official music video) ft. drake",
+        "h-tône - fils de krach",
+        "krach - mushnik und sohn",
+        "nkr007: 04. noisekick - ik schop u dood (hellseeker & doctor terror remix) (290 bpm)",
+        "sepalot - krachledern",
+        "acidus - krachzen",
+        "normaal - krachttoer",
+        "drama kuba - kickdown"
+      ],
+      "blockedArtists": [
+        "krach",
+        "stichting opwekking",
+        "stephen janetzko",
+        "trio",
+        "iris mareike steen",
+        "krăchno horo",
+        "sothy seing",
+        "elfmorgen",
+        "krokante kaaskorst",
+        "dikka",
+        "astrid lindgren deutsch",
+        "stefan eckel",
+        "witze erzähler ta",
+        "leftovers",
+        "normaal",
+        "carlo5",
+        "ernst mosch",
+        "yanitsa",
+        "medimeisterschaften varna",
+        "woozle goozle",
+        "eo nederland zingt",
+        "maarten van roozendaal"
       ]
     },
     {
@@ -269,9 +305,22 @@
         "brennan heart",
         "frontliner",
         "coone",
-        "da tweekaz"
+        "da tweekaz",
+        "imagine dragons"
       ],
-      "minScore": 3
+      "minScore": 3,
+      "blockedArtists": [],
+      "priorityTracks": [
+        "radioactive (vaskan hardstyle remix)"
+      ],
+      "blockedTracks": [
+        "oppa toby style (undertale - hard mode)",
+        "cyber-screamer - war of the minds",
+        "vaskan - mr. saxobeat (hardstyle)"
+      ],
+      "priorityLabels": [],
+      "requiredTokens": [],
+      "blockedTokens": []
     },
     {
       "id": "euphoric hardstyle",
@@ -295,7 +344,12 @@
         "terrorcore",
         "industrial"
       ],
-      "minScore": 3
+      "minScore": 3,
+      "blockedArtists": [],
+      "priorityTracks": [],
+      "blockedTracks": [
+        "dj farly - hopeful voltage"
+      ]
     },
     {
       "id": "rawstyle",
@@ -988,6 +1042,9 @@
     "sefa, vertile - battlefield",
     "sefa & d-block & s-te-fan - infinity",
     "dj. volkan u�a - hasta siempre (feat. jessie black) [future house radio version]",
-    "more kords - make it zaag"
+    "more kords - make it zaag",
+    "neue deutsche säge - krachtekk",
+    "wetnloud - krach the halls",
+    "imagine dragons - radioactive (vaskan hardstyle remix)"
   ]
 }

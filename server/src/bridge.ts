@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { SupabaseClient } from '@supabase/supabase-js';
+import { decodeLocalFileUrl } from './queue.js';
 
 const POLL_INTERVAL_BASE = 5_000;
 const POLL_INTERVAL_MAX = 60_000;
@@ -42,6 +43,27 @@ function stripArtistPrefixFromTitle(artistRaw: string, titleRaw: string): string
 
 function downloadRequest(row: RequestRow, downloadPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
+    const localPath = decodeLocalFileUrl(row.url);
+    if (localPath) {
+      fs.access(localPath, fs.constants.R_OK, (accessErr) => {
+        if (accessErr) {
+          reject(new Error(`Lokale file niet leesbaar: ${localPath}`));
+          return;
+        }
+        const ext = path.extname(localPath) || '.mp3';
+        const artistRaw = (row.artist ?? '').trim() || 'Unknown Artist';
+        const titleRaw = stripArtistPrefixFromTitle(artistRaw, (row.title ?? '').trim() || path.basename(localPath, ext));
+        const artist = cleanPart(artistRaw, 'Unknown Artist');
+        const title = cleanPart(titleRaw, 'Unknown Title');
+        const target = path.join(downloadPath, `${artist} - ${title}${ext}`);
+        fs.copyFile(localPath, target, (copyErr) => {
+          if (copyErr) reject(copyErr);
+          else resolve();
+        });
+      });
+      return;
+    }
+
     const artistRaw = (row.artist ?? '').trim() || 'Unknown Artist';
     const titleRaw = stripArtistPrefixFromTitle(artistRaw, (row.title ?? '').trim() || 'Unknown Title');
     const artist = cleanPart(artistRaw, 'Unknown Artist');

@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { SupabaseClient } from '@supabase/supabase-js';
 import type { QueueItem } from './types.js';
 
@@ -12,6 +13,26 @@ const YT_URL_PATTERNS = [
 ];
 
 const SC_URL_PATTERN = /soundcloud\.com\/([\w-]+)\/([\w-]+)/;
+const LOCAL_URL_PREFIX = 'local://';
+
+export function isLocalUrl(url: string): boolean {
+  return url.trim().toLowerCase().startsWith(LOCAL_URL_PREFIX);
+}
+
+export function encodeLocalFileUrl(filePath: string): string {
+  return `${LOCAL_URL_PREFIX}${encodeURIComponent(filePath)}`;
+}
+
+export function decodeLocalFileUrl(url: string): string | null {
+  if (!isLocalUrl(url)) return null;
+  const raw = url.slice(LOCAL_URL_PREFIX.length);
+  if (!raw) return null;
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return null;
+  }
+}
 
 export function extractYoutubeId(url: string): string | null {
   for (const pattern of YT_URL_PATTERNS) {
@@ -28,6 +49,11 @@ export function extractSoundcloudSlug(url: string): string | null {
 }
 
 export function extractSourceId(url: string): string | null {
+  const localPath = decodeLocalFileUrl(url);
+  if (localPath) {
+    const hash = createHash('sha1').update(localPath).digest('hex').slice(0, 16);
+    return `local-${hash}`;
+  }
   return extractYoutubeId(url) ?? extractSoundcloudSlug(url);
 }
 

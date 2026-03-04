@@ -197,6 +197,7 @@ export default function QueueAdd() {
   const [showResults, setShowResults] = useState(false);
   const [source, setSource] = useState<SearchSource>("youtube");
   const [includeSets, setIncludeSets] = useState(false);
+  const [includeLocal, setIncludeLocal] = useState(true);
   const [resultStatus, setResultStatus] = useState<Record<string, "idle" | "pending" | "added">>({});
   const [recentAdd, setRecentAdd] = useState<RecentAddState | null>(null);
   const [pendingUndo, setPendingUndo] = useState<PendingUndoState | null>(null);
@@ -376,7 +377,7 @@ export default function QueueAdd() {
     if (append) setSearchingMore(true);
     else setSearching(true);
     fetch(
-      `${serverUrl}/search?q=${encodeURIComponent(query)}&source=${source}&limit=${SEARCH_PAGE_SIZE}&offset=${offset}`,
+      `${serverUrl}/search?q=${encodeURIComponent(query)}&source=${source}&limit=${SEARCH_PAGE_SIZE}&offset=${offset}&includeLocal=${includeLocal ? "1" : "0"}`,
     )
       .then((r) => r.json())
       .then((data: SearchResult[]) => {
@@ -406,7 +407,7 @@ export default function QueueAdd() {
         setSearching(false);
         setSearchingMore(false);
       });
-  }, [serverUrl, source, includeSets]);
+  }, [serverUrl, source, includeSets, includeLocal]);
 
   const loadGenres = useCallback((query: string) => {
     if (!serverUrl) {
@@ -446,7 +447,7 @@ export default function QueueAdd() {
     if (!serverUrl) return;
     if (genreLoadInFlightRef.current) return;
     const offset = append ? genreOffsetRef.current : 0;
-    const cacheKey = `${genre.toLowerCase()}::${offset}::${GENRE_PAGE_SIZE}`;
+    const cacheKey = `${genre.toLowerCase()}::${offset}::${GENRE_PAGE_SIZE}::local=${includeLocal ? "1" : "0"}`;
     const cached = genreHitsCacheRef.current.get(cacheKey);
     if (cached) {
       const genreNorm = normalizeLoose(genre);
@@ -496,7 +497,7 @@ export default function QueueAdd() {
     }
     setActiveGenre(genre);
     Promise.resolve()
-      .then(() => getGenreHits(genre, GENRE_PAGE_SIZE, offset))
+      .then(() => getGenreHits(genre, GENRE_PAGE_SIZE, offset, includeLocal))
       .then((items) => {
         genreHitsCacheRef.current.set(cacheKey, items);
         const genreNorm = normalizeLoose(genre);
@@ -545,7 +546,7 @@ export default function QueueAdd() {
         setGenreHitsLoading(false);
         setGenreHitsLoadingMore(false);
       });
-  }, [serverUrl]);
+  }, [serverUrl, includeLocal]);
 
   useEffect(() => {
     if (source !== "genres" || !activeGenre) return;
@@ -592,6 +593,15 @@ export default function QueueAdd() {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [genreQuery, source, loadGenres]);
+
+  useEffect(() => {
+    if (source !== "genres" || !activeGenre) return;
+    setGenreHits([]);
+    setGenreOffsetSafe(0);
+    setGenreHasMore(false);
+    genreNoProgressPagesRef.current = 0;
+    loadGenreHits(activeGenre, false);
+  }, [includeLocal]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     function updateMobileState() {
@@ -679,7 +689,7 @@ export default function QueueAdd() {
     setSearchOffsetSafe(0);
     setSearchHasMore(false);
     search(query, false);
-  }, [includeSets, source, searchQuery, search]);
+  }, [includeSets, includeLocal, source, searchQuery, search]);
 
   if (!canAdd) return null;
 
@@ -860,7 +870,7 @@ export default function QueueAdd() {
       debounceRef.current = setTimeout(() => {
         setSearching(true);
         const url = serverUrl ?? "";
-        fetch(`${url}/search?q=${encodeURIComponent(query)}&source=${newSource}&limit=${SEARCH_PAGE_SIZE}&offset=0`)
+        fetch(`${url}/search?q=${encodeURIComponent(query)}&source=${newSource}&limit=${SEARCH_PAGE_SIZE}&offset=0&includeLocal=${includeLocal ? "1" : "0"}`)
           .then((r) => r.json())
           .then((data: SearchResult[]) => {
             const normalized = Array.isArray(data) ? data : [];
@@ -937,8 +947,8 @@ export default function QueueAdd() {
 
   return (
     <QueueAddErrorBoundary>
-      <div ref={wrapperRef} className="relative">
-      <form onSubmit={handleSubmit} className="space-y-2 rounded-xl border border-gray-800 bg-gray-900 p-3 shadow-lg shadow-violet-500/5 sm:p-4">
+      <div ref={wrapperRef} className="relative z-[90] overflow-visible">
+      <form onSubmit={handleSubmit} className="relative z-[90] space-y-2 overflow-visible rounded-xl border border-gray-800 bg-gray-900 p-3 shadow-lg shadow-violet-500/5 sm:p-4">
         <label className="block text-xs font-semibold uppercase tracking-wider text-violet-400">
           Nummer toevoegen
         </label>
@@ -1049,6 +1059,19 @@ export default function QueueAdd() {
               placeholder="Zoek genre (hardstyle, trance, rock, metal...)"
               className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-fuchsia-500"
             />
+            <button
+              type="button"
+              onClick={() => setIncludeLocal((prev) => !prev)}
+              className={`self-start rounded-full border px-2 py-0.5 text-[11px] font-semibold transition ${
+                includeLocal
+                  ? "border-violet-500/70 bg-violet-500/20 text-violet-200"
+                  : "border-gray-600 bg-gray-800/80 text-gray-300 hover:border-gray-500"
+              }`}
+              aria-pressed={includeLocal}
+              title="Lokale tracks meenemen"
+            >
+              Lokale tracks
+            </button>
             <details
               ref={genreMenuRef}
               className="group relative z-20"
@@ -1205,8 +1228,9 @@ export default function QueueAdd() {
                           setTimeout(() => {
                             setResultStatus((prev) => ({ ...prev, [key]: "idle" }));
                           }, 4000);
-                          startRecentAdd(key, item.query, item.title, item.artist);
-                          submitUrl(item.query, item.thumbnail || undefined, item.title, item.artist);
+                          const localOrQuery = item.sourceHint?.startsWith("local://") ? item.sourceHint : item.query;
+                          startRecentAdd(key, localOrQuery, item.title, item.artist);
+                          submitUrl(localOrQuery, item.thumbnail || undefined, item.title, item.artist);
                         }}
                         disabled={submitting}
                         className={`rounded-md px-2.5 py-1 text-xs font-semibold text-white transition disabled:opacity-50 ${
@@ -1247,12 +1271,12 @@ export default function QueueAdd() {
                     ? "Zoek op YouTube of plak een link..."
                     : "Zoek op SoundCloud of plak een link..."
                 }
-                className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 pr-20 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
+                className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 pr-40 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
               />
               <button
                 type="button"
                 onClick={() => setIncludeSets((prev) => !prev)}
-                className={`absolute right-10 top-1/2 -translate-y-1/2 rounded-full border px-2 py-0.5 text-[10px] font-semibold transition ${
+                className={`absolute right-20 top-1/2 -translate-y-1/2 rounded-full border px-2 py-0.5 text-[10px] font-semibold transition ${
                   includeSets
                     ? "border-violet-500/70 bg-violet-500/20 text-violet-200"
                     : "border-gray-600 bg-gray-800/80 text-gray-300 hover:border-gray-500"
@@ -1263,9 +1287,82 @@ export default function QueueAdd() {
               >
                 Sets tonen
               </button>
+              <button
+                type="button"
+                onClick={() => setIncludeLocal((prev) => !prev)}
+                className={`absolute right-3 top-1/2 -translate-y-1/2 rounded-full border px-2 py-0.5 text-[10px] font-semibold transition ${
+                  includeLocal
+                    ? "border-violet-500/70 bg-violet-500/20 text-violet-200"
+                    : "border-gray-600 bg-gray-800/80 text-gray-300 hover:border-gray-500"
+                }`}
+                aria-pressed={includeLocal}
+                title="Lokale tracks meenemen"
+              >
+                Lokaal
+              </button>
               {searching && (
-                <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                <div className="absolute right-36 top-1/2 -translate-y-1/2">
                   <span className="block h-4 w-4 animate-spin rounded-full border-2 border-violet-400 border-t-transparent" />
+                </div>
+              )}
+              {showResults && results.length > 0 && (
+                <div
+                  ref={searchListRef}
+                  onScroll={handleSearchListScroll}
+                  className="absolute left-0 right-0 top-full z-[95] mt-1 max-h-[70dvh] overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50"
+                >
+                  {results.map((r) => (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => selectResult(r)}
+                      className="flex w-full items-center gap-2 px-2.5 py-1 text-left transition hover:bg-gray-800/80 first:rounded-t-xl last:rounded-b-xl"
+                    >
+                      {r.thumbnail ? (
+                        <img
+                          src={r.thumbnail}
+                          alt=""
+                          className="h-8 w-10 shrink-0 rounded object-cover lg:h-7 lg:w-9"
+                        />
+                      ) : (
+                        <div className="flex h-8 w-10 shrink-0 items-center justify-center rounded bg-gray-800 text-[10px] text-gray-500 lg:h-7 lg:w-9">
+                          no art
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="line-clamp-2 text-xs font-medium leading-snug text-white sm:line-clamp-1">{r.title}</p>
+                        <div className="mt-0.5 flex items-center gap-2">
+                          {r.channel && (
+                            <span className="truncate text-[11px] text-gray-400">{r.channel}</span>
+                          )}
+                          {r.duration !== null && (
+                            <span className="shrink-0 text-[11px] tabular-nums text-gray-500">
+                              {formatDuration(r.duration)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      {resultStatus[`${source}:${r.id}`] === "added" && (
+                        <span className="shrink-0 rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
+                          Toegevoegd
+                        </span>
+                      )}
+                      {resultStatus[`${source}:${r.id}`] === "pending" && (
+                        <span className="shrink-0 rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-300">
+                          Bezig...
+                        </span>
+                      )}
+                      {r.duration !== null && r.duration > 3900 && (
+                        <span className="shrink-0 rounded bg-red-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-red-400">
+                          Te lang
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                  {searchingMore && (
+                    <p className="px-3 py-2 text-[11px] text-gray-400">Meer resultaten laden...</p>
+                  )}
+                  <div ref={loadMoreRef} className="h-1 w-full" />
                 </div>
               )}
             </div>
@@ -1285,67 +1382,6 @@ export default function QueueAdd() {
         )}
       </form>
 
-      {/* Search results dropdown */}
-      {showResults && results.length > 0 && (
-        <div
-          ref={searchListRef}
-          onScroll={handleSearchListScroll}
-          className="absolute left-0 right-0 z-50 mt-1 max-h-[70dvh] lg:max-h-[82dvh] overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50"
-        >
-          {results.map((r) => (
-            <button
-              key={r.id}
-              type="button"
-              onClick={() => selectResult(r)}
-              className="flex w-full items-center gap-2 px-2.5 py-1 text-left transition hover:bg-gray-800/80 first:rounded-t-xl last:rounded-b-xl"
-            >
-              {r.thumbnail ? (
-                <img
-                  src={r.thumbnail}
-                  alt=""
-                  className="h-8 w-10 shrink-0 rounded object-cover lg:h-7 lg:w-9"
-                />
-              ) : (
-                <div className="flex h-8 w-10 shrink-0 items-center justify-center rounded bg-gray-800 text-[10px] text-gray-500 lg:h-7 lg:w-9">
-                  no art
-                </div>
-              )}
-              <div className="min-w-0 flex-1">
-                <p className="line-clamp-2 text-xs font-medium leading-snug text-white sm:line-clamp-1">{r.title}</p>
-                <div className="mt-0.5 flex items-center gap-2">
-                  {r.channel && (
-                    <span className="truncate text-[11px] text-gray-400">{r.channel}</span>
-                  )}
-                  {r.duration !== null && (
-                    <span className="shrink-0 text-[11px] tabular-nums text-gray-500">
-                      {formatDuration(r.duration)}
-                    </span>
-                  )}
-                </div>
-              </div>
-              {resultStatus[`${source}:${r.id}`] === "added" && (
-                <span className="shrink-0 rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
-                  Toegevoegd
-                </span>
-              )}
-              {resultStatus[`${source}:${r.id}`] === "pending" && (
-                <span className="shrink-0 rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-300">
-                  Bezig...
-                </span>
-              )}
-              {r.duration !== null && r.duration > 3900 && (
-                <span className="shrink-0 rounded bg-red-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-red-400">
-                  Te lang
-                </span>
-              )}
-            </button>
-          ))}
-          {searchingMore && (
-            <p className="px-3 py-2 text-[11px] text-gray-400">Meer resultaten laden...</p>
-          )}
-          <div ref={loadMoreRef} className="h-1 w-full" />
-        </div>
-      )}
       {recentAdd && (
         <div className="pointer-events-none absolute left-0 right-0 top-2 z-[70] px-2">
           <div className="pointer-events-auto flex items-center justify-between gap-2 rounded-lg border border-violet-800/60 bg-violet-950/95 px-3 py-2 text-xs text-violet-100 shadow-lg shadow-violet-900/30 backdrop-blur">

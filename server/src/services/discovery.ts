@@ -19,6 +19,55 @@ const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID?.trim() ?? '';
 const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET?.trim() ?? '';
 let spotifyTokenCache: { token: string; expiresAt: number } | null = null;
 
+type ExternalProvider = 'spotify' | 'deezer';
+
+type ProviderHealth = {
+  failCount: number;
+  cooldownUntil: number;
+};
+
+const providerHealth: Record<ExternalProvider, ProviderHealth> = {
+  spotify: { failCount: 0, cooldownUntil: 0 },
+  deezer: { failCount: 0, cooldownUntil: 0 },
+};
+
+const BASE_PROVIDER_COOLDOWN_MS = 45_000;
+const MAX_PROVIDER_COOLDOWN_MS = 4 * 60_000;
+
+function getErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err ?? 'unknown');
+}
+
+function isTimeoutLikeError(err: unknown): boolean {
+  const message = getErrorMessage(err).toLowerCase();
+  return message.includes('timeout')
+    || message.includes('aborted')
+    || message.includes('aborterror');
+}
+
+function shouldUseProvider(name: ExternalProvider): boolean {
+  const state = providerHealth[name];
+  return state.cooldownUntil <= Date.now();
+}
+
+function markProviderSuccess(name: ExternalProvider): void {
+  providerHealth[name] = { failCount: 0, cooldownUntil: 0 };
+}
+
+function markProviderFailure(name: ExternalProvider, err: unknown): void {
+  const state = providerHealth[name];
+  const now = Date.now();
+  state.failCount += 1;
+  if (!isTimeoutLikeError(err)) return;
+
+  if (state.failCount >= 3) {
+    const exp = Math.min(state.failCount - 3, 3);
+    const cooldown = Math.min(BASE_PROVIDER_COOLDOWN_MS * (2 ** exp), MAX_PROVIDER_COOLDOWN_MS);
+    state.cooldownUntil = now + cooldown;
+  }
+}
+
 async function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   try {
@@ -375,6 +424,7 @@ function filterHitsByGenre(items: GenreHitItem[], hints: GenreHints, limit: numb
   const scored = dedupeHits(items)
     .filter((item) => {
       if (isLikelyGenreNameOnlyHit(item, hints)) return false;
+      if (isGenreKeywordNoiseHit(item, hints)) return false;
       const artist = item.artist.toLowerCase();
       if (blockedArtists.some((blockedArtist) => blockedArtist && artist.includes(blockedArtist))) {
         return false;
@@ -419,6 +469,7 @@ function filterBlockedTracksOnly(items: GenreHitItem[], hints: GenreHints, limit
   const blockedArtists = (hints.blockedArtists ?? []).map((value) => value.toLowerCase());
   const filtered = dedupeHits(items).filter((item) => {
     if (isLikelyGenreNameOnlyHit(item, hints)) return false;
+    if (isGenreKeywordNoiseHit(item, hints)) return false;
     const artist = item.artist.toLowerCase();
     if (blockedArtists.some((blockedArtist) => blockedArtist && artist.includes(blockedArtist))) {
       return false;
@@ -482,6 +533,34 @@ function isLikelyGenreNameOnlyHit(item: GenreHitItem, hints: GenreHints): boolea
   }
 
   return false;
+}
+
+function isGenreKeywordNoiseHit(item: GenreHitItem, hints: GenreHints): boolean {
+  const title = normalizeLooseText(item.title);
+  const artist = normalizeLooseText(item.artist);
+  if (!title && !artist) return true;
+
+  const hasPriorityArtist = (hints.priorityArtists ?? []).some((value) => {
+    const token = normalizeLooseText(value);
+    return token.length > 0 && artist.includes(token);
+  });
+  if (hasPriorityArtist) return false;
+
+  const hasPriorityTrack = (hints.priorityTracks ?? []).some((value) => {
+    const token = normalizeLooseText(value);
+    return token.length > 0 && title.includes(token);
+  });
+  if (hasPriorityTrack) return false;
+
+  const genreTokens = [
+    ...hints.relevanceTokens,
+    ...(hints.requiredTokens ?? []),
+  ]
+    .map(normalizeLooseText)
+    .filter((token) => token.length >= 3);
+
+  // If a result is only matching on generic genre words in title/artist, treat as noise.
+  return genreTokens.some((token) => title.includes(token) || artist.includes(token));
 }
 
 function makeUniqueGenreMap(): Map<string, GenreItem> {
@@ -630,7 +709,15 @@ async function fetchSpotifyTracksByGenre(
   offset: number,
   maxQueries = Number.POSITIVE_INFINITY,
 ): Promise<GenreHitItem[]> {
-  const token = await getSpotifyAppToken();
+  if (!shouldUseProvider('spotify')) return [];
+  let token: string | null = null;
+  try {
+    token = await getSpotifyAppToken();
+    markProviderSuccess('spotify');
+  } catch (err) {
+    markProviderFailure('spotify', err);
+    return [];
+  }
   if (!token) return [];
   const hints = getGenreHints(genre);
 
@@ -685,9 +772,10 @@ async function fetchSpotifyTracksByGenre(
     try {
       const result = await run(query);
       merged.push(...result);
+      markProviderSuccess('spotify');
       if (merged.length >= limit * 2) break;
     } catch (err) {
-      console.warn('[discovery] Spotify tagged genre search failed:', (err as Error).message);
+      markProviderFailure('spotify', err);
     }
   }
 
@@ -765,14 +853,16 @@ async function fetchDeezerTracksByGenre(
   offset: number,
   maxQueries = Number.POSITIVE_INFINITY,
 ): Promise<GenreHitItem[]> {
+  if (!shouldUseProvider('deezer')) return [];
   const hints = getGenreHints(genre);
   const merged: GenreHitItem[] = [];
   for (const query of hints.deezerQueries.slice(0, Math.max(0, maxQueries))) {
     try {
       const items = await searchTopTracks(query, limit, offset);
       merged.push(...items);
+      markProviderSuccess('deezer');
     } catch (err) {
-      console.warn('[discovery] Deezer genre search failed:', (err as Error).message);
+      markProviderFailure('deezer', err);
     }
   }
   return filterHitsByGenre(merged, hints, limit);
@@ -966,13 +1056,9 @@ export async function getTopTracksByGenre(genre: string, limit = 20, offset = 0)
 
   const collected: GenreHitItem[] = [];
   if (spotifyRes.status === 'fulfilled') collected.push(...spotifyRes.value);
-  else console.warn('[discovery] Spotify genre search failed:', spotifyRes.reason);
   if (deezerRes.status === 'fulfilled') collected.push(...deezerRes.value);
-  else console.warn('[discovery] Deezer genre search failed:', deezerRes.reason);
   if (lastFmRes.status === 'fulfilled') collected.push(...lastFmRes.value);
-  else console.warn('[discovery] Last.fm genre search failed:', lastFmRes.reason);
   if (priorityRes.status === 'fulfilled') collected.push(...priorityRes.value);
-  else console.warn('[discovery] Priority artist platform search failed:', priorityRes.reason);
 
   const strict = filterHitsByGenre(collected, hints, safeLimit);
   if (strict.length >= Math.min(safeLimit, 6)) return strict.slice(0, safeLimit);
