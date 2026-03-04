@@ -676,13 +676,16 @@ export default function StreamPage() {
   }, [syncedCurrentTrack, nextTitle, nextArtist, nextRequestedBy, nextIsFallback]);
 
   return (
-    <div className="relative flex h-dvh max-h-dvh flex-col overflow-hidden">
+    <div className="relative flex min-h-[100svh] h-dvh max-h-dvh flex-col overflow-hidden">
       <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
         <div className="player-ambient absolute -left-20 top-10 h-72 w-72 rounded-full bg-violet-500/15 blur-3xl" />
         <div className="player-ambient absolute bottom-0 right-0 h-80 w-80 rounded-full bg-fuchsia-500/10 blur-3xl" />
       </div>
       {/* Header */}
-      <header className="relative z-50 border-b border-gray-800 bg-gray-900/80 px-2 py-1.5 backdrop-blur-sm sm:px-6 sm:py-3">
+      <header
+        className="relative z-50 border-b border-gray-800 bg-gray-900/80 px-2 py-1.5 backdrop-blur-sm sm:px-6 sm:py-3"
+        style={{ paddingTop: "max(env(safe-area-inset-top), 0px)" }}
+      >
         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5">
           <h1 className="min-w-0 truncate text-sm font-bold tracking-tight text-white sm:text-lg">
             🎵 <span className="text-violet-400">{process.env.NEXT_PUBLIC_TWITCH_CHANNEL ?? "Stream"}</span>

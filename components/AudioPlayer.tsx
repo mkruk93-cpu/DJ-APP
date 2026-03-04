@@ -437,6 +437,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
 
   const duration = syncedRadioTrack?.duration ?? null;
   const progress = duration && duration > 0 ? Math.min(elapsed / duration, 1) : 0;
+  const durationLabel = duration && duration > 0 ? formatTime(duration) : "--:--";
 
   const artworkFallback = (
     <svg
@@ -687,9 +688,9 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
                 <span className="h-2 w-2 animate-spin rounded-full border border-violet-400 border-t-transparent" />
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-yellow-400">Laden...</span>
               </div>
-            ) : isRadioMode && duration && duration > 0 ? (
+            ) : isRadioMode ? (
               <p className="mt-0.5 text-[10px] tabular-nums text-gray-500">
-                {formatTime(elapsed)} / {formatTime(duration)}
+                {formatTime(elapsed)} / {durationLabel}
               </p>
             ) : (
               <div className="mt-1 flex items-center gap-2">
@@ -871,17 +872,19 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
               <span className="h-2.5 w-2.5 animate-spin rounded-full border-2 border-violet-400 border-t-transparent" />
               <span className="text-xs font-semibold uppercase tracking-wider text-yellow-400">Downloaden...</span>
             </div>
-          ) : isRadioMode && duration && duration > 0 ? (
+          ) : isRadioMode ? (
             <div className="flex w-full flex-col gap-1">
-              <div className="h-1 w-full overflow-hidden rounded-full bg-gray-700">
-                <div
-                  className="h-full rounded-full bg-violet-500 transition-all duration-1000 ease-linear"
-                  style={{ width: `${progress * 100}%` }}
-                />
-              </div>
+              {duration && duration > 0 && (
+                <div className="h-1 w-full overflow-hidden rounded-full bg-gray-700">
+                  <div
+                    className="h-full rounded-full bg-violet-500 transition-all duration-1000 ease-linear"
+                    style={{ width: `${progress * 100}%` }}
+                  />
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-[10px] tabular-nums text-gray-500">{formatTime(elapsed)}</span>
-                <span className="text-[10px] tabular-nums text-gray-500">{formatTime(duration)}</span>
+                <span className="text-[10px] tabular-nums text-gray-500">{durationLabel}</span>
               </div>
             </div>
           ) : (

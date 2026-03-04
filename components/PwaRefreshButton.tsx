@@ -35,9 +35,28 @@ export default function PwaRefreshButton() {
     let triggered = false;
     const threshold = 110;
 
+    const hasScrollableAncestor = (target: EventTarget | null): boolean => {
+      if (!(target instanceof Element)) return false;
+      if (target.closest('[data-prevent-pull-refresh="1"]')) return true;
+      let node: Element | null = target;
+      while (node && node !== document.body) {
+        if (!(node instanceof HTMLElement)) {
+          node = node.parentElement;
+          continue;
+        }
+        const style = window.getComputedStyle(node);
+        const overflowY = style.overflowY;
+        const canScroll = (overflowY === "auto" || overflowY === "scroll") && node.scrollHeight > node.clientHeight;
+        if (canScroll) return true;
+        node = node.parentElement;
+      }
+      return false;
+    };
+
     const onTouchStart = (event: TouchEvent) => {
       if (window.scrollY > 0) return;
       if (event.touches.length !== 1) return;
+      if (hasScrollableAncestor(event.target)) return;
       startY = event.touches[0].clientY;
       tracking = true;
       triggered = false;

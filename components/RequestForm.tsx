@@ -658,7 +658,7 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
               <p className="text-xs text-gray-400">Geen genres gevonden.</p>
             )}
 
-            <div ref={genreListRef} className="min-h-[14rem] max-h-[56dvh] overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70">
+            <div ref={genreListRef} className="min-h-[14rem] max-h-[56dvh] overscroll-contain overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70">
               {genreHitsLoading ? (
                 <p className="px-3 py-3 text-xs text-gray-400">Hitlijst laden...</p>
               ) : genreHits.length === 0 ? (
@@ -729,6 +729,40 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
                   <span className="block h-4 w-4 animate-spin rounded-full border-2 border-violet-400 border-t-transparent" />
                 </div>
               )}
+              {showResults && results.length > 0 && (
+                <div
+                  data-prevent-pull-refresh="1"
+                  className="absolute left-0 right-0 top-full z-40 mt-1 max-h-[45dvh] overscroll-contain overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50 sm:max-h-80"
+                >
+                  {results.map((r) => (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => { void selectResult(r); }}
+                      className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition hover:bg-gray-800/80 first:rounded-t-xl last:rounded-b-xl"
+                    >
+                      {r.thumbnail ? (
+                        <img src={r.thumbnail} alt="" className="h-12 w-16 shrink-0 rounded-md object-cover" />
+                      ) : (
+                        <div className="flex h-12 w-16 shrink-0 items-center justify-center rounded-md bg-gray-800 text-[10px] text-gray-500">
+                          lokaal
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-white">{r.title}</p>
+                        <div className="flex items-center gap-2">
+                          {r.channel && <span className="truncate text-xs text-gray-400">{r.channel}</span>}
+                          {r.duration !== null && (
+                            <span className="shrink-0 text-xs tabular-nums text-gray-500">
+                              {Math.floor(r.duration / 60)}:{String(r.duration % 60).padStart(2, "0")}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             <button
               type="submit"
@@ -746,39 +780,7 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
         )}
       </form>
 
-      {showResults && results.length > 0 && (
-        <div className="mx-3 mb-2 -mt-2 max-h-80 overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50 sm:mx-4">
-          {results.map((r) => (
-            <button
-              key={r.id}
-              type="button"
-              onClick={() => { void selectResult(r); }}
-              className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition hover:bg-gray-800/80 first:rounded-t-xl last:rounded-b-xl"
-            >
-              {r.thumbnail ? (
-                <img src={r.thumbnail} alt="" className="h-12 w-16 shrink-0 rounded-md object-cover" />
-              ) : (
-                <div className="flex h-12 w-16 shrink-0 items-center justify-center rounded-md bg-gray-800 text-[10px] text-gray-500">
-                  lokaal
-                </div>
-              )}
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-white">{r.title}</p>
-                <div className="flex items-center gap-2">
-                  {r.channel && <span className="truncate text-xs text-gray-400">{r.channel}</span>}
-                  {r.duration !== null && (
-                    <span className="shrink-0 text-xs tabular-nums text-gray-500">
-                      {Math.floor(r.duration / 60)}:{String(r.duration % 60).padStart(2, "0")}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
-
-      <div className="chat-scroll min-h-0 flex-1 space-y-2 overflow-y-auto px-3 pb-3 sm:px-4 sm:pb-4">
+      <div className="chat-scroll min-h-0 flex-1 space-y-2 overscroll-contain overflow-y-auto px-3 pb-3 sm:px-4 sm:pb-4">
         {allRequests.length === 0 && (
           <p className="text-center text-sm text-gray-500">Nog geen verzoekjes</p>
         )}

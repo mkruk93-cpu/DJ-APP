@@ -1918,12 +1918,21 @@ function downloadQueueItemShared(
   if (existing) return existing;
 
   const run = (async () => {
-    const info = isLocalUrl(item.youtube_url)
+    const localSource = isLocalUrl(item.youtube_url);
+    const baseInfo = localSource
       ? { title: item.title ?? null, duration: null, thumbnail: item.thumbnail ?? null }
       : await fetchVideoInfo(item.youtube_url);
-    if (info.title && !item.title) item.title = info.title;
+    if (baseInfo.title && !item.title) item.title = baseInfo.title;
     const audioFile = await downloadAudio(item, cacheDir);
-    return { audioFile, info };
+    const measuredDuration = baseInfo.duration ?? (localSource ? await getAudioDuration(audioFile) : null);
+    return {
+      audioFile,
+      info: {
+        title: baseInfo.title,
+        duration: measuredDuration,
+        thumbnail: baseInfo.thumbnail,
+      },
+    };
   })();
 
   queueDownloadInFlight.set(key, run);
