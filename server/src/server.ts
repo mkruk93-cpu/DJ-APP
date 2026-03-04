@@ -403,23 +403,53 @@ function localTrackToSearchResult(item: LocalTrack): SearchResult {
   };
 }
 
+function matchesStrictQuery(haystack: string, query: string): boolean {
+  const hay = normalizeLoose(haystack);
+  const q = normalizeLoose(query);
+  if (!hay || q.length < 2) return false;
+
+  // Exact phrase match first.
+  if (hay.includes(q)) return true;
+
+  const parts = q.split(' ').filter(Boolean);
+  if (parts.length <= 1) {
+    // Single word query: allow contains for unfinished typing.
+    return hay.includes(parts[0] ?? q);
+  }
+
+  // Multi-word query: all full words must match in order, last word may be prefix.
+  const base = parts.slice(0, -1).join(' ');
+  const last = parts[parts.length - 1];
+  if (!base || !last) return false;
+
+  let idx = hay.indexOf(`${base} `);
+  while (idx !== -1) {
+    const rest = hay.slice(idx + base.length + 1);
+    const nextWord = rest.split(' ').find(Boolean) ?? '';
+    if (nextWord.startsWith(last)) return true;
+    idx = hay.indexOf(`${base} `, idx + 1);
+  }
+
+  return false;
+}
+
 function searchLocalTracks(query: string, limit: number, offset: number): SearchResult[] {
   const q = normalizeLoose(query);
   if (q.length < 2) return [];
-  const terms = q.split(' ').filter(Boolean);
   const scored = getLocalTrackIndex()
     .map((item) => {
       const hay = normalizeLoose(`${item.artist} ${item.title}`);
-      let score = 0;
-      for (const term of terms) {
-        if (hay.includes(term)) score += 1;
-      }
-      if (normalizeLoose(item.title).includes(q)) score += 2;
-      if (normalizeLoose(item.artist).includes(q)) score += 1;
-      return { item, score };
+      const strict = matchesStrictQuery(hay, q);
+      if (!strict) return null;
+      const phraseIdx = hay.indexOf(q);
+      const score = phraseIdx >= 0 ? 1000 - phraseIdx : 100;
+      return { item, score, phraseIdx };
     })
-    .filter((row) => row.score > 0)
-    .sort((a, b) => b.score - a.score);
+    .filter((row): row is { item: LocalTrack; score: number; phraseIdx: number } => row !== null)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.item.title.localeCompare(b.item.title, 'nl', { sensitivity: 'base' });
+    });
   return scored.slice(offset, offset + limit).map((row) => localTrackToSearchResult(row.item));
 }
 
@@ -786,7 +816,7 @@ app.get('/search', async (req, res) => {
         [...localResults, ...allResults]
           .map((item) => [item.url, item]),
       ).values(),
-    );
+    ).filter((item) => matchesStrictQuery(`${item.channel} ${item.title}`, q));
     res.json(merged.slice(offset, offset + limit));
   } catch (err) {
     console.error('[rest] /search error:', err);
