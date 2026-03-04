@@ -1147,19 +1147,19 @@ export default function QueueAdd() {
                 </p>
               ) : (
                 genreHits.map((item) => (
-                  <div key={item.id} className="flex items-center gap-3 border-b border-gray-800/80 px-3 py-2 last:border-b-0">
+                  <div key={item.id} className="flex items-start gap-3 border-b border-gray-800/80 px-3 py-2 last:border-b-0">
                     {item.thumbnail ? (
                       <img src={item.thumbnail} alt="" className="h-10 w-10 rounded object-cover" />
                     ) : (
                       <div className="h-10 w-10 rounded bg-gray-800" />
                     )}
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-white">{item.title}</p>
+                    <div className="min-w-0 flex-1 pr-1">
+                      <p className="line-clamp-2 text-sm font-medium leading-snug text-white">{item.title}</p>
                       <p className="truncate text-xs text-gray-400">{item.artist}</p>
                     </div>
-                    <div className="flex shrink-0 items-center gap-1.5">
+                    <div className="ml-auto flex max-w-[50%] shrink-0 flex-col items-end gap-1.5 sm:max-w-none sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
                       {isAdmin && activeGenre && (
-                        <>
+                        <div className="flex flex-wrap justify-end gap-1.5">
                           <button
                             type="button"
                             onClick={() => prioritizeGenreArtist(item)}
@@ -1174,7 +1174,7 @@ export default function QueueAdd() {
                               ? "Opslaan..."
                               : genrePrioritySaved[`${activeGenre}:${item.id}`]
                                 ? "Opgeslagen"
-                                : "Voorrang artiest"}
+                                : "Voorrang"}
                           </button>
                           <button
                             type="button"
@@ -1190,9 +1190,9 @@ export default function QueueAdd() {
                               ? "Blokkeren..."
                               : genreBlockSaved[`${activeGenre}:${item.id}`]
                                 ? "Geblokkeerd"
-                                : "Negeer artiest"}
+                                : "Negeer"}
                           </button>
-                        </>
+                        </div>
                       )}
                       <button
                         type="button"
