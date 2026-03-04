@@ -962,12 +962,20 @@ export async function getTopTracksByGenre(genre: string, limit = 20, offset = 0)
   else console.warn('[discovery] Priority artist platform search failed:', priorityRes.reason);
 
   const strict = filterHitsByGenre(collected, hints, safeLimit);
-  if (strict.length > 0) return strict;
+  if (strict.length >= Math.min(safeLimit, 6)) return strict.slice(0, safeLimit);
 
   // Always provide data when possible, even if strict genre evidence is sparse.
   const emergency = await fetchEmergencyGenreFallbackHits(normalizedGenre, hints, safeLimit, safeOffset);
-  if (emergency.length > 0) return emergency;
+  const broadFallback = filterBlockedTracksOnly(collected, hints, safeLimit);
 
-  // Last resort: at least return something from collected results without hard scoring.
-  return filterBlockedTracksOnly(collected, hints, safeLimit);
+  const merged = dedupeHits([
+    ...strict,
+    ...emergency,
+    ...broadFallback,
+  ]).slice(0, safeLimit);
+
+  if (merged.length > 0) return merged;
+
+  // Last resort.
+  return broadFallback;
 }

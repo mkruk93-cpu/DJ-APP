@@ -234,7 +234,7 @@ export default function QueueAdd() {
   const searchOffsetRef = useRef(0);
   const genreOffsetRef = useRef(0);
   const latestSearchRunRef = useRef(0);
-  const GENRE_PAGE_SIZE = 12;
+  const GENRE_PAGE_SIZE = 20;
   const SEARCH_PAGE_SIZE = 12;
 
   useEffect(() => {

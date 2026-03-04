@@ -76,6 +76,7 @@ class RadioPanelErrorBoundary extends Component<
 export default function StreamPage() {
   const router = useRouter();
   const [mode, setMode] = useState<StreamMode>("offline");
+  const [twitchPlayerHidden, setTwitchPlayerHidden] = useState(false);
   const [icecastUrl, setIcecastUrl] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<MobileTab>("chat");
   const [desktopAccordionTab, setDesktopAccordionTab] = useState<DesktopAccordionTab>("radio");
@@ -121,9 +122,11 @@ export default function StreamPage() {
   const suppressNextQueueBadgeRef = useRef(false);
   const prevVisibleTrackKeyRef = useRef("");
 
-  const showRequests = twitchLive || (radioConnected && radioMode === "dj");
-  const showRadioPanel = radioMode !== "dj";
-  const showQueuePanel = radioMode !== "dj";
+  const isStreamUnavailable = radioMode === "dj" ? !twitchLive : !streamOnline;
+  const tabsAllowed = !isStreamUnavailable;
+  const showRequests = tabsAllowed && (twitchLive || (radioConnected && radioMode === "dj"));
+  const showRadioPanel = tabsAllowed && radioMode !== "dj";
+  const showQueuePanel = tabsAllowed && radioMode !== "dj";
   const voteState = useRadioStore((s) => s.voteState);
   const syncedCurrentTrack = useSyncedTrack(radioMode === "dj" ? null : radioTrack);
 
@@ -339,6 +342,28 @@ export default function StreamPage() {
       document.documentElement.style.overflow = prevHtmlOverflow;
       document.body.style.overflow = prevBodyOverflow;
     };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if ("scrollRestoration" in window.history) {
+      window.history.scrollRestoration = "manual";
+    }
+    const forceTop = () => {
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+      const resetScrollContainers = () => {
+        document
+          .querySelectorAll<HTMLElement>(".overflow-y-auto, .chat-scroll")
+          .forEach((el) => {
+            el.scrollTop = 0;
+          });
+      };
+      resetScrollContainers();
+      setTimeout(resetScrollContainers, 0);
+    };
+    forceTop();
+    window.addEventListener("pageshow", forceTop);
+    return () => window.removeEventListener("pageshow", forceTop);
   }, []);
 
   // Handle Spotify OAuth callback (code in URL after redirect)
@@ -582,11 +607,7 @@ export default function StreamPage() {
   }, []);
 
   useEffect(() => {
-    const hasTwitchChannel = !!process.env.NEXT_PUBLIC_TWITCH_CHANNEL;
-    if (radioMode === "dj" && hasTwitchChannel) {
-      setSuppressFallback(false);
-      setMode("twitch");
-    } else if (twitchLive) {
+    if (twitchLive) {
       setSuppressFallback(false);
       setMode("twitch");
     } else if (preferRadioUi || radioConnected || !!radioServerUrl) {
@@ -596,7 +617,11 @@ export default function StreamPage() {
     } else {
       setMode("offline");
     }
-  }, [twitchLive, radioConnected, icecastUrl, preferRadioUi, radioServerUrl, radioMode]);
+  }, [twitchLive, radioConnected, icecastUrl, preferRadioUi, radioServerUrl]);
+
+  useEffect(() => {
+    if (!twitchLive) setTwitchPlayerHidden(false);
+  }, [twitchLive]);
 
   // Derive the audio source for radio mode
   const radioStreamUrl = radioServerUrl
@@ -696,7 +721,7 @@ export default function StreamPage() {
           </div>
         )}
         {mode !== "offline" && mode !== "radio" && !showRadioOfflineState && (
-          <div className="hidden landscape:block sm:block">
+          <div className={mode === "twitch" ? "block" : "hidden landscape:block sm:block"}>
             <NowPlaying
               radioTrack={radioConnected && radioMode !== "dj" ? radioTrack : null}
               showFallback={!suppressFallback || radioMode === "dj"}
@@ -735,9 +760,28 @@ export default function StreamPage() {
 
       <main className="flex min-h-0 flex-1 flex-col gap-1.5 p-1.5 sm:gap-4 sm:p-4 landscape:flex-row lg:flex-row">
         {/* Player */}
-        <div className="min-h-0 shrink-0 max-h-[38dvh] overflow-x-hidden overflow-y-auto landscape:min-w-0 landscape:flex-1 landscape:max-h-none landscape:min-h-0 landscape:overflow-visible lg:min-w-0 lg:flex-1 lg:max-h-none lg:min-h-0 lg:overflow-visible">
+        <div className="min-h-0 shrink-0 max-h-[38dvh] overflow-hidden landscape:min-w-0 landscape:flex-1 landscape:max-h-none landscape:min-h-0 landscape:overflow-hidden lg:min-w-0 lg:flex-1 lg:max-h-none lg:min-h-0 lg:overflow-hidden">
           {shouldPollCommunityWidgets && <ShoutoutBanner />}
-          {mode === "twitch" && <TwitchPlayer />}
+          {mode === "twitch" && twitchLive && (
+            <div className="space-y-2">
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setTwitchPlayerHidden((prev) => !prev)}
+                  className="rounded-md border border-gray-700 bg-gray-900/80 px-2.5 py-1 text-[11px] font-semibold text-violet-200 transition hover:border-violet-500/70 hover:text-white"
+                >
+                  {twitchPlayerHidden ? "Toon Twitch player" : "Verberg Twitch player"}
+                </button>
+              </div>
+              {twitchPlayerHidden ? (
+                <div className="rounded-xl border border-gray-800 bg-gray-900 px-4 py-6 text-center text-sm text-gray-400">
+                  Twitch player verborgen
+                </div>
+              ) : (
+                <TwitchPlayer />
+              )}
+            </div>
+          )}
           {mode === "audio" && icecastUrl && (
             <AudioPlayer src={icecastUrl} radioTrack={radioConnected ? radioTrack : undefined} showFallback={!suppressFallback} />
           )}
@@ -806,7 +850,7 @@ export default function StreamPage() {
           )}
 
           {/* Skip / vote button below player */}
-          {radioConnected && (
+          {radioConnected && radioMode !== "dj" && !showRadioOfflineState && (
             <div className="mt-1.5 space-y-1.5">
               <div className="flex min-w-0 flex-wrap items-center gap-1.5 pb-0.5">
                 <div className="min-w-0 flex-[1.2]">
