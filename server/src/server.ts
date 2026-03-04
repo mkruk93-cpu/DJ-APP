@@ -654,13 +654,13 @@ app.get('/api/genre-hits', async (req, res) => {
   }
 
   try {
-    // Backfill sparse pages so clients get a consistently full hit-list.
+    // Keep genre hit loading snappy: try one broad page first, then one backfill pass if needed.
     const collected: GenreHitItem[] = [];
     const seen = new Set<string>();
     let probeOffset = offset;
-    const probeLimit = Math.min(50, Math.max(limit, 20));
+    const probeLimit = Math.min(50, Math.max(limit * 2, 20));
 
-    for (let pass = 0; pass < 4 && collected.length < limit; pass += 1) {
+    for (let pass = 0; pass < 2 && collected.length < limit; pass += 1) {
       const page = await getTopTracksByGenre(genre, probeLimit, probeOffset);
       if (!page.length) break;
       for (const item of page) {
@@ -670,6 +670,8 @@ app.get('/api/genre-hits', async (req, res) => {
         collected.push(item);
         if (collected.length >= limit) break;
       }
+      // Only backfill if the page was clearly too sparse.
+      if (pass === 0 && collected.length >= Math.max(8, Math.ceil(limit * 0.6))) break;
       probeOffset += probeLimit;
     }
 

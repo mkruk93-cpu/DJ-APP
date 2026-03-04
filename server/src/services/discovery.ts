@@ -852,36 +852,49 @@ async function fetchPriorityArtistPlatformHits(
   offset: number,
   options?: { artistSampleSize?: number; perPlatformLimit?: number; maxRuntimeMs?: number },
 ): Promise<GenreHitItem[]> {
-  const artists = [...(hints.priorityArtists ?? [])].filter(Boolean);
+  const normalizePriorityArtistSeed = (value: string): string => {
+    return value
+      .split(',')
+      .map((part) => part.trim())
+      .find((part) => part.length > 0) ?? value.trim();
+  };
+
+  const artists = [...(hints.priorityArtists ?? [])]
+    .map(normalizePriorityArtistSeed)
+    .filter(Boolean);
   if (artists.length === 0) return [];
   const sampleSize = Math.max(1, Math.min(options?.artistSampleSize ?? 6, artists.length));
   const perPlatformLimit = Math.max(1, Math.min(options?.perPlatformLimit ?? 5, 8));
   const maxRuntimeMs = Math.max(300, Math.min(options?.maxRuntimeMs ?? 3500, 7000));
   const startedAt = Date.now();
   const page = Math.floor(offset / Math.max(1, limit));
-  const selected = shuffleCopy(artists).slice(0, sampleSize);
-  if (selected.length > 1 && page > 0) {
-    const rotateBy = page % selected.length;
-    for (let i = 0; i < rotateBy; i++) {
-      selected.push(selected.shift()!);
-    }
-  }
+  const start = (page * sampleSize) % artists.length;
+  const selected = Array.from({ length: sampleSize }).map((_, index) => {
+    const pos = (start + index) % artists.length;
+    return artists[pos];
+  });
 
   const results: GenreHitItem[] = [];
   const seen = new Set<string>();
 
-  for (const artist of selected) {
-    if (Date.now() - startedAt > maxRuntimeMs) break;
-    const query = `${artist} ${genre}`;
-    const [ytRes, scRes] = await Promise.allSettled([
-      withTimeout(ytdlpSearchPlatform('yt', query, perPlatformLimit), Math.min(2200, maxRuntimeMs), [] as GenreHitItem[]),
-      withTimeout(ytdlpSearchPlatform('sc', query, perPlatformLimit), Math.min(2200, maxRuntimeMs), [] as GenreHitItem[]),
-    ]);
-    const merged = [
-      ...(ytRes.status === 'fulfilled' ? ytRes.value : []),
-      ...(scRes.status === 'fulfilled' ? scRes.value : []),
-    ];
-    for (const item of merged) {
+  const settled = await Promise.allSettled(
+    selected.map(async (artist) => {
+      if (Date.now() - startedAt > maxRuntimeMs) return [] as GenreHitItem[];
+      const query = `${artist} ${genre}`;
+      const [ytRes, scRes] = await Promise.allSettled([
+        withTimeout(ytdlpSearchPlatform('yt', query, perPlatformLimit), Math.min(2200, maxRuntimeMs), [] as GenreHitItem[]),
+        withTimeout(ytdlpSearchPlatform('sc', query, perPlatformLimit), Math.min(2200, maxRuntimeMs), [] as GenreHitItem[]),
+      ]);
+      return [
+        ...(ytRes.status === 'fulfilled' ? ytRes.value : []),
+        ...(scRes.status === 'fulfilled' ? scRes.value : []),
+      ];
+    }),
+  );
+
+  for (const bucket of settled) {
+    if (bucket.status !== 'fulfilled') continue;
+    for (const item of bucket.value) {
       const key = normalizeHitKey(item.artist, item.title);
       if (!key || seen.has(key)) continue;
       seen.add(key);
@@ -932,12 +945,12 @@ export async function getTopTracksByGenre(genre: string, limit = 20, offset = 0)
 
   const hints = getGenreHints(normalizedGenre);
   const isFastMode = safeOffset === 0 || safeOffset <= safeLimit * 2;
-  const spotifyQueries = isFastMode ? 0 : 2;
-  const deezerQueries = isFastMode ? 1 : 2;
-  const lastFmTags = isFastMode ? 0 : 1;
+  const spotifyQueries = isFastMode ? 1 : 2;
+  const deezerQueries = isFastMode ? 2 : 3;
+  const lastFmTags = isFastMode ? 1 : 2;
   const priorityOptions = isFastMode
-    ? { artistSampleSize: 2, perPlatformLimit: 2, maxRuntimeMs: 1200 }
-    : { artistSampleSize: 6, perPlatformLimit: 5, maxRuntimeMs: 4500 };
+    ? { artistSampleSize: 7, perPlatformLimit: 4, maxRuntimeMs: 3200 }
+    : { artistSampleSize: 10, perPlatformLimit: 5, maxRuntimeMs: 5500 };
   const [spotifyRes, deezerRes, lastFmRes, priorityRes] = await Promise.allSettled([
     spotifyQueries > 0
       ? fetchSpotifyTracksByGenre(normalizedGenre, safeLimit, safeOffset, spotifyQueries)
