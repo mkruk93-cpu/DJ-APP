@@ -27,17 +27,50 @@ export default function PwaRefreshButton() {
     };
   }, []);
 
-  if (!standalone) return null;
+  useEffect(() => {
+    if (!standalone) return;
 
-  return (
-    <button
-      type="button"
-      aria-label="Ververs app"
-      onClick={() => window.location.reload()}
-      className="fixed right-3 top-3 z-[80] inline-flex items-center gap-1.5 rounded-full border border-violet-400/60 bg-gray-900/90 px-3 py-1.5 text-xs font-semibold text-violet-100 shadow-lg shadow-black/40 backdrop-blur transition hover:bg-gray-800"
-    >
-      <span aria-hidden>↻</span>
-      <span>Ververs</span>
-    </button>
-  );
+    let startY = 0;
+    let tracking = false;
+    let triggered = false;
+    const threshold = 110;
+
+    const onTouchStart = (event: TouchEvent) => {
+      if (window.scrollY > 0) return;
+      if (event.touches.length !== 1) return;
+      startY = event.touches[0].clientY;
+      tracking = true;
+      triggered = false;
+    };
+
+    const onTouchMove = (event: TouchEvent) => {
+      if (!tracking || triggered) return;
+      const currentY = event.touches[0]?.clientY ?? startY;
+      const pullDistance = currentY - startY;
+      if (pullDistance >= threshold && window.scrollY <= 0) {
+        triggered = true;
+        tracking = false;
+        window.location.reload();
+      }
+    };
+
+    const onTouchEnd = () => {
+      tracking = false;
+      triggered = false;
+    };
+
+    window.addEventListener("touchstart", onTouchStart, { passive: true });
+    window.addEventListener("touchmove", onTouchMove, { passive: true });
+    window.addEventListener("touchend", onTouchEnd, { passive: true });
+    window.addEventListener("touchcancel", onTouchEnd, { passive: true });
+
+    return () => {
+      window.removeEventListener("touchstart", onTouchStart);
+      window.removeEventListener("touchmove", onTouchMove);
+      window.removeEventListener("touchend", onTouchEnd);
+      window.removeEventListener("touchcancel", onTouchEnd);
+    };
+  }, [standalone]);
+
+  return null;
 }

@@ -582,7 +582,11 @@ export default function StreamPage() {
   }, []);
 
   useEffect(() => {
-    if (twitchLive) {
+    const hasTwitchChannel = !!process.env.NEXT_PUBLIC_TWITCH_CHANNEL;
+    if (radioMode === "dj" && hasTwitchChannel) {
+      setSuppressFallback(false);
+      setMode("twitch");
+    } else if (twitchLive) {
       setSuppressFallback(false);
       setMode("twitch");
     } else if (preferRadioUi || radioConnected || !!radioServerUrl) {
@@ -592,7 +596,7 @@ export default function StreamPage() {
     } else {
       setMode("offline");
     }
-  }, [twitchLive, radioConnected, icecastUrl, preferRadioUi, radioServerUrl]);
+  }, [twitchLive, radioConnected, icecastUrl, preferRadioUi, radioServerUrl, radioMode]);
 
   // Derive the audio source for radio mode
   const radioStreamUrl = radioServerUrl

@@ -44,7 +44,7 @@ export async function GET() {
           "Client-ID": TWITCH_CLIENT_ID,
           Authorization: `Bearer ${token}`,
         },
-        next: { revalidate: 30 },
+        cache: "no-store",
       }
     );
 
