@@ -654,7 +654,26 @@ app.get('/api/genre-hits', async (req, res) => {
   }
 
   try {
-    const results = await getTopTracksByGenre(genre, limit, offset);
+    // Backfill sparse pages so clients get a consistently full hit-list.
+    const collected: GenreHitItem[] = [];
+    const seen = new Set<string>();
+    let probeOffset = offset;
+    const probeLimit = Math.min(50, Math.max(limit, 20));
+
+    for (let pass = 0; pass < 4 && collected.length < limit; pass += 1) {
+      const page = await getTopTracksByGenre(genre, probeLimit, probeOffset);
+      if (!page.length) break;
+      for (const item of page) {
+        const key = `${item.artist}-${item.title}`.toLowerCase().replace(/\s+/g, ' ').trim();
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        collected.push(item);
+        if (collected.length >= limit) break;
+      }
+      probeOffset += probeLimit;
+    }
+
+    const results = collected.slice(0, limit);
     genreHitsCache.set(cacheKey, { results, ts: Date.now() });
     res.json(results);
   } catch (err) {

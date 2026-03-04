@@ -175,6 +175,14 @@ function isSupportedUrl(input: string): boolean {
   return YT_URL_REGEX.test(input) || SC_URL_REGEX.test(input);
 }
 
+function normalizeLoose(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export default function QueueAdd() {
   const [hydrated, setHydrated] = useState(false);
   const [input, setInput] = useState("");
@@ -441,10 +449,13 @@ export default function QueueAdd() {
     const cacheKey = `${genre.toLowerCase()}::${offset}::${GENRE_PAGE_SIZE}`;
     const cached = genreHitsCacheRef.current.get(cacheKey);
     if (cached) {
-      const mapped = cached.map((item) => ({
+      const genreNorm = normalizeLoose(genre);
+      const mapped = cached
+        .filter((item) => normalizeLoose(item.title) !== genreNorm)
+        .map((item) => ({
         ...item,
         query: `${item.artist} - ${item.title}`,
-      }));
+        }));
       let addedUniqueCount = mapped.length;
       setGenreHits((prev) => {
         if (!append) return mapped;
@@ -488,10 +499,11 @@ export default function QueueAdd() {
       .then(() => getGenreHits(genre, GENRE_PAGE_SIZE, offset))
       .then((items) => {
         genreHitsCacheRef.current.set(cacheKey, items);
+        const genreNorm = normalizeLoose(genre);
         const normalized = items.filter(
           (item): item is GenreHit =>
             !!item?.id && !!item?.title && !!item?.artist,
-        );
+        ).filter((item) => normalizeLoose(item.title) !== genreNorm);
         const mapped = normalized.map((item) => ({
           ...item,
           query: `${item.artist} - ${item.title}`,

@@ -36,6 +36,14 @@ interface GenreHitRow extends GenreHit {
   query: string;
 }
 
+function normalizeLoose(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 const URL_REGEX = /^https?:\/\/(www\.)?(youtube\.com|youtu\.be|soundcloud\.com)\/.+$/i;
 const COOLDOWN_SEC = 20;
 const GENRE_PAGE_SIZE = 20;
@@ -207,22 +215,30 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
     Promise.resolve()
       .then(() => getGenreHits(genre, GENRE_PAGE_SIZE, offset))
       .then((items) => {
+        const genreNorm = normalizeLoose(genre);
         const normalized = items.filter(
-          (item): item is GenreHit => !!item?.id && !!item?.title && !!item?.artist,
+          (item): item is GenreHit =>
+            !!item?.id
+            && !!item?.title
+            && !!item?.artist
+            && normalizeLoose(item.title) !== genreNorm,
         );
         const mapped = normalized.map((item) => ({
           ...item,
           query: `${item.artist} - ${item.title}`,
         }));
+        let addedUniqueCount = mapped.length;
         setGenreHits((prev) => {
           if (!append) return mapped;
           const merged = [...prev, ...mapped];
-          return Array.from(
+          const deduped = Array.from(
             new Map(merged.map((track) => [`${track.artist}-${track.title}`.toLowerCase(), track])).values(),
           );
+          addedUniqueCount = Math.max(0, deduped.length - prev.length);
+          return deduped;
         });
         setGenreHitsOffset(offset + GENRE_PAGE_SIZE);
-        setGenreHasMore(mapped.length >= GENRE_PAGE_SIZE);
+        setGenreHasMore(normalized.length >= GENRE_PAGE_SIZE || (append && addedUniqueCount > 0));
       })
       .catch(() => {
         if (!append) setGenreHits([]);

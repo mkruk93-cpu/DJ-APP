@@ -374,6 +374,7 @@ function filterHitsByGenre(items: GenreHitItem[], hints: GenreHints, limit: numb
   const blockedArtists = (hints.blockedArtists ?? []).map((value) => value.toLowerCase());
   const scored = dedupeHits(items)
     .filter((item) => {
+      if (isLikelyGenreNameOnlyHit(item, hints)) return false;
       const artist = item.artist.toLowerCase();
       if (blockedArtists.some((blockedArtist) => blockedArtist && artist.includes(blockedArtist))) {
         return false;
@@ -417,6 +418,7 @@ function filterBlockedTracksOnly(items: GenreHitItem[], hints: GenreHints, limit
   const blocked = new Set((hints.blockedTracks ?? []).map((value) => value.toLowerCase()));
   const blockedArtists = (hints.blockedArtists ?? []).map((value) => value.toLowerCase());
   const filtered = dedupeHits(items).filter((item) => {
+    if (isLikelyGenreNameOnlyHit(item, hints)) return false;
     const artist = item.artist.toLowerCase();
     if (blockedArtists.some((blockedArtist) => blockedArtist && artist.includes(blockedArtist))) {
       return false;
@@ -444,6 +446,42 @@ function dedupeHits(items: GenreHitItem[]): GenreHitItem[] {
       ]),
     ).values(),
   );
+}
+
+function normalizeLooseText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isLikelyGenreNameOnlyHit(item: GenreHitItem, hints: GenreHints): boolean {
+  const title = normalizeLooseText(item.title);
+  const artist = normalizeLooseText(item.artist);
+  if (!title) return true;
+
+  const genreTokens = [
+    ...hints.relevanceTokens,
+    ...(hints.requiredTokens ?? []),
+  ]
+    .map(normalizeLooseText)
+    .filter(Boolean);
+
+  // Common wrong-hit pattern: title is just the genre keyword itself.
+  if (genreTokens.some((token) => token === title)) return true;
+
+  // Another wrong-hit pattern: both artist and title collapse to genre terms only.
+  if (
+    artist &&
+    genreTokens.some((token) => artist === token || artist.includes(token)) &&
+    genreTokens.some((token) => title.includes(token))
+  ) {
+    const titleWordCount = title.split(' ').filter(Boolean).length;
+    if (titleWordCount <= 2) return true;
+  }
+
+  return false;
 }
 
 function makeUniqueGenreMap(): Map<string, GenreItem> {
