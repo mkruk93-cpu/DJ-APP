@@ -69,7 +69,7 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
   const [searching, setSearching] = useState(false);
   const [showResults, setShowResults] = useState(false);
   const [source, setSource] = useState<SearchSource>("youtube");
-  const [includeLocal, setIncludeLocal] = useState(true);
+  const [includeLocal, setIncludeLocal] = useState(false);
   const [genreQuery, setGenreQuery] = useState("");
   const [genres, setGenres] = useState<GenreOption[]>([]);
   const [genresLoading, setGenresLoading] = useState(false);
@@ -167,7 +167,7 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
       .then(async () => {
         const genreMembers = getGenreGroupMembers(genre);
         const pages = await Promise.allSettled(
-          genreMembers.map((member) => getGenreHits(member, GENRE_PAGE_SIZE, offset, includeLocal)),
+          genreMembers.map((member) => getGenreHits(member, GENRE_PAGE_SIZE, offset, false)),
         );
         const merged = pages.flatMap((page) => (page.status === "fulfilled" ? page.value : []));
         return merged;
@@ -209,7 +209,7 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
         setGenreHitsLoading(false);
         setGenreHitsLoadingMore(false);
       });
-  }, [serverUrl, genreHitsOffset, includeLocal]);
+  }, [serverUrl, genreHitsOffset]);
 
   useEffect(() => {
     load();
@@ -547,19 +547,6 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
               placeholder="Zoek genre (hardstyle, trance, rock, metal...)"
               className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-fuchsia-500"
             />
-            <button
-              type="button"
-              onClick={() => setIncludeLocal((prev) => !prev)}
-              className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold transition ${
-                includeLocal
-                  ? "border-violet-500/70 bg-violet-500/20 text-violet-200"
-                  : "border-gray-600 bg-gray-800/80 text-gray-300 hover:border-gray-500"
-              }`}
-              aria-pressed={includeLocal}
-              title="Lokale tracks meenemen"
-            >
-              Lokale tracks
-            </button>
             <details ref={genreMenuRef} className="group relative z-20">
               <summary className="grid cursor-pointer list-none grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-gray-700 bg-gray-900/75 px-2.5 py-1.5 text-xs text-gray-200 transition hover:border-violet-500/60">
                 <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] font-semibold text-gray-300">

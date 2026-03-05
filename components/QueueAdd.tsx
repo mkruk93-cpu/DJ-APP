@@ -146,7 +146,7 @@ export default function QueueAdd() {
   const [showResults, setShowResults] = useState(false);
   const [source, setSource] = useState<SearchSource>("youtube");
   const [includeSets, setIncludeSets] = useState(false);
-  const [includeLocal, setIncludeLocal] = useState(true);
+  const [includeLocal, setIncludeLocal] = useState(false);
   const [resultStatus, setResultStatus] = useState<Record<string, "idle" | "pending" | "added">>({});
   const [recentAdd, setRecentAdd] = useState<RecentAddState | null>(null);
   const [pendingUndo, setPendingUndo] = useState<PendingUndoState | null>(null);
@@ -451,7 +451,7 @@ export default function QueueAdd() {
     Promise.resolve()
       .then(async () => {
         const pages = await Promise.allSettled(
-          genreMembers.map((member) => getGenreHits(member, GENRE_PAGE_SIZE, offset, includeLocal)),
+          genreMembers.map((member) => getGenreHits(member, GENRE_PAGE_SIZE, offset, false)),
         );
         return pages.flatMap((page) => (page.status === "fulfilled" ? page.value : []));
       })
@@ -504,7 +504,7 @@ export default function QueueAdd() {
         setGenreHitsLoading(false);
         setGenreHitsLoadingMore(false);
       });
-  }, [serverUrl, includeLocal]);
+  }, [serverUrl]);
 
   useEffect(() => {
     if (source !== "genres" || !activeGenre) return;
@@ -1017,19 +1017,6 @@ export default function QueueAdd() {
               placeholder="Zoek genre (hardstyle, trance, rock, metal...)"
               className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-fuchsia-500"
             />
-            <button
-              type="button"
-              onClick={() => setIncludeLocal((prev) => !prev)}
-              className={`self-start rounded-full border px-2 py-0.5 text-[11px] font-semibold transition ${
-                includeLocal
-                  ? "border-violet-500/70 bg-violet-500/20 text-violet-200"
-                  : "border-gray-600 bg-gray-800/80 text-gray-300 hover:border-gray-500"
-              }`}
-              aria-pressed={includeLocal}
-              title="Lokale tracks meenemen"
-            >
-              Lokale tracks
-            </button>
             <details
               ref={genreMenuRef}
               className="group relative z-20"

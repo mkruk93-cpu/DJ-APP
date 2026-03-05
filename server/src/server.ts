@@ -20,6 +20,7 @@ import type { Mode, ServerState, DurationVote, QueuePushVote, FallbackGenre } fr
 import {
   searchGenres,
   getTopTracksByGenre,
+  getPriorityArtistQuickHitsByGenre,
   resolveMergedGenreId,
   getMergedGenreTags,
   normalizeTrackIdentity,
@@ -311,7 +312,7 @@ const DISCOVERY_CACHE_TTL = 1_800_000;
 const EMPTY_GENRE_CACHE_TTL = 15_000;
 const genreCache = new Map<string, { results: GenreItem[]; ts: number }>();
 const activeRefreshes = new Set<string>();
-const LOCAL_INDEX_TTL = 120_000;
+const LOCAL_INDEX_TTL = 15 * 60_000;
 const LOCAL_AUDIO_EXTS = new Set([
   '.mp3', '.wav', '.flac', '.m4a', '.aac', '.ogg', '.opus', '.aiff', '.alac', '.wma',
 ]);
@@ -402,10 +403,15 @@ function getLocalTrackIndex(): LocalTrack[] {
   const roots = getLocalSearchRoots();
   const rootsKey = roots.join('|');
   const now = Date.now();
+  const streamIsActive = getCurrentTrack() !== null;
   if (
     localTrackIndexCache
     && localTrackIndexCache.rootsKey === rootsKey
-    && now - localTrackIndexCache.ts < LOCAL_INDEX_TTL
+    && (
+      now - localTrackIndexCache.ts < LOCAL_INDEX_TTL
+      // Avoid synchronous disk rescans while streaming; use stale cache to keep audio stable.
+      || streamIsActive
+    )
   ) {
     return localTrackIndexCache.tracks;
   }
@@ -530,6 +536,7 @@ function refreshGenreHitsCache(cacheKey: string, genre: string, limit: number, o
   if (activeRefreshes.has(cacheKey)) return;
   activeRefreshes.add(cacheKey);
   void Promise.allSettled([
+    getPriorityArtistQuickHitsByGenre(genre, Math.max(limit, 12)),
     getTopTracksByGenre(genre, limit, offset),
     getTopTracksByGenre(genre, limit, offset + limit),
   ])
@@ -851,18 +858,42 @@ app.get('/search', async (req, res) => {
   }
 
   try {
-    const requested = Math.min(80, limit + offset + (includeLocal ? limit : 0));
-    const allResults = source === 'soundcloud'
+    const LOCAL_BUCKET_MAX = 20;
+
+    if (includeLocal) {
+      // Keep local results discoverable without blocking remote pagination forever.
+      const localWindowOffset = Math.min(offset, LOCAL_BUCKET_MAX);
+      const localBudget = Math.max(0, Math.min(limit, LOCAL_BUCKET_MAX - localWindowOffset));
+      const localSlice = localBudget > 0 ? searchLocalTracks(q, localBudget, localWindowOffset) : [];
+
+      const remoteBudget = Math.max(0, limit - localSlice.length);
+      const remoteOffset = Math.max(0, offset - LOCAL_BUCKET_MAX);
+      const remoteRequested = Math.min(120, remoteOffset + Math.max(remoteBudget, limit));
+      const remotePool = source === 'soundcloud'
+        ? await soundcloudSearch(q, remoteRequested)
+        : await youtubeSearch(q, remoteRequested);
+      const remoteFiltered = remotePool
+        .filter((item) => matchesStrictQuery(`${item.channel} ${item.title}`, q))
+        .slice(remoteOffset, remoteOffset + remoteBudget);
+
+      const page = Array.from(
+        new Map(
+          [...localSlice, ...remoteFiltered]
+            .map((item) => [item.url, item]),
+        ).values(),
+      );
+      res.json(page);
+      return;
+    }
+
+    const requested = Math.min(120, limit + offset);
+    const remotePool = source === 'soundcloud'
       ? await soundcloudSearch(q, requested)
       : await youtubeSearch(q, requested);
-    const localResults = includeLocal ? searchLocalTracks(q, requested, 0) : [];
-    const merged = Array.from(
-      new Map(
-        [...localResults, ...allResults]
-          .map((item) => [item.url, item]),
-      ).values(),
-    ).filter((item) => matchesStrictQuery(`${item.channel} ${item.title}`, q));
-    res.json(merged.slice(offset, offset + limit));
+    const remoteFiltered = remotePool
+      .filter((item) => matchesStrictQuery(`${item.channel} ${item.title}`, q))
+      .slice(offset, offset + limit);
+    res.json(remoteFiltered);
   } catch (err) {
     console.error('[rest] /search error:', err);
     res.status(500).json({ error: 'Search failed' });
@@ -898,7 +929,8 @@ app.get('/api/genre-hits', async (req, res) => {
 
   const parsedLimit = parseInt(String(req.query.limit ?? '20'), 10);
   const parsedOffset = parseInt(String(req.query.offset ?? '0'), 10);
-  const includeLocal = String(req.query.includeLocal ?? '1') !== '0';
+  // Local search is intentionally disabled for genre hits to protect stream stability.
+  const includeLocal = false;
   const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(parsedLimit, 50)) : 20;
   const offset = Number.isFinite(parsedOffset) ? Math.max(0, parsedOffset) : 0;
   const cacheKey = makeGenreHitsCacheKey(genre, limit, offset, includeLocal);
@@ -929,8 +961,28 @@ app.get('/api/genre-hits', async (req, res) => {
   // Cold cache bootstrap: return an initial page immediately when possible.
   try {
     const local = includeLocal ? searchLocalGenreHits(genre, Math.max(limit * 2, 20), offset) : [];
+    const quickPriority = await Promise.race([
+      getPriorityArtistQuickHitsByGenre(genre, Math.max(limit, 12)),
+      new Promise<GenreHitItem[]>((resolve) => setTimeout(() => resolve([]), 1200)),
+    ]);
+    if (quickPriority.length > 0 || local.length > 0) {
+      const immediate = Array.from(
+        new Map(
+          [...quickPriority, ...local]
+            .map((item) => [normalizeTrackIdentity(item.artist, item.title), item]),
+        ).values(),
+      ).slice(0, limit);
+      if (immediate.length > 0) {
+        setGenreHitsCacheEntry(cacheKey, immediate);
+        // Continue enriching in background.
+        refreshGenreHitsCache(cacheKey, genre, limit, offset, includeLocal);
+        res.json(immediate);
+        return;
+      }
+    }
     const remote = await Promise.race([
       Promise.allSettled([
+        getPriorityArtistQuickHitsByGenre(genre, Math.max(limit, 12)),
         getTopTracksByGenre(genre, limit, offset),
         getTopTracksByGenre(genre, limit, offset + limit),
       ]).then((pages) => pages.flatMap((page) => (page.status === 'fulfilled' ? page.value : [] as GenreHitItem[]))),

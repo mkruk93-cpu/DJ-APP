@@ -56,6 +56,17 @@ const SELF_HEAL_COOLDOWN_MS = 6_000;
 const SELF_HEAL_STALL_MS = 35_000;
 const SELF_HEAL_DURATION_GRACE_SECONDS = 45;
 
+function toWindowsSystemErrorCode(exitCode: number | null): number | null {
+  if (exitCode === null) return null;
+  // Node can report Windows process exit codes as unsigned 32-bit numbers.
+  return exitCode > 0x7fffffff ? (0x1_0000_0000 - exitCode) : null;
+}
+
+function isBrokenPipeError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? '');
+  return /\bEPIPE\b/i.test(msg) || /\bbroken pipe\b/i.test(msg);
+}
+
 export function isSkipLocked(): boolean {
   return skipLocked;
 }
@@ -207,12 +218,21 @@ function normalizeAutoKey(value: string): string {
     .trim();
 }
 
-function buildAutoFallbackSource(genreId: string, artist: string, title: string, mergedTags: string[] = []): QueueItem {
+function buildAutoFallbackSource(
+  genreId: string,
+  artist: string,
+  title: string,
+  mergedTags: string[] = [],
+  withGenreTags = false,
+): QueueItem {
+  const baseSearch = autoTrackTitle(artist, title);
   const tagBlock = Array.from(new Set([genreId, ...mergedTags]))
     .filter(Boolean)
-    .slice(0, 5)
+    .slice(0, 2)
     .join(' ');
-  const search = `${tagBlock} ${autoTrackTitle(artist, title)}`.trim();
+  const search = withGenreTags && tagBlock
+    ? `${baseSearch} ${tagBlock}`.trim()
+    : baseSearch;
   return {
     id: `auto-${Date.now()}`,
     youtube_url: `ytsearch1:${search}`,
@@ -241,6 +261,7 @@ function buildAutoFallbackSourceForQuery(sourceId: string, search: string): Queu
 const AUTO_RECENT_WINDOW = 60;
 const AUTO_MAX_DURATION_SECONDS = 10 * 60;
 const recentAutoTrackKeys: string[] = [];
+const inFlightAutoTrackKeys = new Set<string>();
 const DAILY_AUTO_HISTORY_REFRESH_MS = 60_000;
 let dailyAutoPlayedKeys = new Set<string>();
 let dailyAutoPlayedDayKey = '';
@@ -331,6 +352,25 @@ function rememberAutoTrack(artist: string, title: string): void {
   rememberAutoTrackKey(key);
 }
 
+function collectReservedAutoKeys(): Set<string> {
+  const keys = new Set<string>();
+  const addKey = (value: string | null | undefined): void => {
+    const key = normalizeAutoKey(value ?? '');
+    if (!key) return;
+    keys.add(key);
+  };
+  addKey(currentTrack?.title);
+  addKey(nextReady?.title);
+  addKey(pendingAutoUpcoming?.title);
+  for (const buffered of autoReadyBuffer) {
+    addKey(buffered.title);
+  }
+  for (const key of inFlightAutoTrackKeys) {
+    if (key) keys.add(key);
+  }
+  return keys;
+}
+
 function rememberAutoTrackKey(raw: string): void {
   const key = normalizeAutoKey(raw);
   if (!key) return;
@@ -407,60 +447,88 @@ async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack |
       }
     }
     if (mergedHits.length === 0) return null;
+    const reservedKeys = collectReservedAutoKeys();
     const freshCandidates = mergedHits.filter((hit) =>
       !isRecentAutoTrack(hit.artist, hit.title)
       && !wasPlayedAutoToday(autoTrackTitle(hit.artist, hit.title)),
-    );
-    if (freshCandidates.length === 0) {
+    ).filter((hit) => {
+      const key = normalizeAutoKey(`${hit.artist} ${hit.title}`);
+      return !!key && !reservedKeys.has(key);
+    });
+    let candidates = freshCandidates;
+    if (candidates.length === 0) {
+      const queueEmpty = _sb ? (await getQueue(_sb)).length === 0 : true;
+      const encoderUnavailable = !encoder || encoder.killed || encoder.exitCode !== null || !encoder.stdin || encoder.stdin.destroyed;
+      const streamIdle = (!currentTrack || encoderUnavailable) && queueEmpty;
+      if (streamIdle) {
+        // Self-heal guard: allow strict replay if 24h pool is exhausted while stream is idle.
+        console.warn(`[auto-playlist] 24h pool exhausted for "${genreId}" while idle; allowing strict replay to avoid silence`);
+        candidates = mergedHits.filter((hit) => {
+          const key = normalizeAutoKey(`${hit.artist} ${hit.title}`);
+          return !!key && !reservedKeys.has(key);
+        });
+      }
+    }
+    if (candidates.length === 0) {
       console.warn(`[auto-playlist] Exhausted 24h candidate pool for genre "${genreId}"`);
       return null;
     }
-    const candidates = freshCandidates;
     const choices = shuffleInPlace([...candidates]).slice(0, Math.min(8, candidates.length));
     for (const choice of choices) {
-      const pseudo = buildAutoFallbackSource(canonicalGenreId, choice.artist, choice.title, mergedGenreTags);
-      const info = await fetchVideoInfo(pseudo.youtube_url).catch(() => ({ title: null, duration: null, thumbnail: null }));
-      const resolvedTitle = buildAutoDisplayTitle(info.title, choice.artist, choice.title);
-      const hintedDuration = typeof info.duration === 'number' && Number.isFinite(info.duration) ? Math.round(info.duration) : null;
-      if (!isAllowedAutoTrack(resolvedTitle, hintedDuration)) {
+      const choiceKey = normalizeAutoKey(`${choice.artist} ${choice.title}`);
+      if (!choiceKey || inFlightAutoTrackKeys.has(choiceKey)) {
         continue;
       }
-      pendingAutoUpcoming = {
-        youtube_id: 'auto',
-        title: resolvedTitle,
-        thumbnail: choice.thumbnail ?? info.thumbnail ?? null,
-        duration: hintedDuration,
-        added_by: null,
-        isFallback: true,
-      };
-      broadcastUpcomingTrack();
+      inFlightAutoTrackKeys.add(choiceKey);
       try {
-        const audioFile = await downloadAudio(pseudo, _cacheDir);
-        const fileDuration = await getAudioDuration(audioFile);
-        const finalDuration = hintedDuration ?? fileDuration ?? AUTO_MAX_DURATION_SECONDS;
-        if (!isAllowedAutoTrack(resolvedTitle, finalDuration)) {
-          if (!keepFiles) cleanupFile(audioFile);
-          pendingAutoUpcoming = null;
+        for (const withGenreTags of [false, true]) {
+          const pseudo = buildAutoFallbackSource(canonicalGenreId, choice.artist, choice.title, mergedGenreTags, withGenreTags);
+          const info = await fetchVideoInfo(pseudo.youtube_url).catch(() => ({ title: null, duration: null, thumbnail: null }));
+          const resolvedTitle = buildAutoDisplayTitle(info.title, choice.artist, choice.title);
+          const hintedDuration = typeof info.duration === 'number' && Number.isFinite(info.duration) ? Math.round(info.duration) : null;
+          if (!isAllowedAutoTrack(resolvedTitle, hintedDuration)) {
+            continue;
+          }
+          pendingAutoUpcoming = {
+            youtube_id: 'auto',
+            title: resolvedTitle,
+            thumbnail: choice.thumbnail ?? info.thumbnail ?? null,
+            duration: hintedDuration,
+            added_by: null,
+            isFallback: true,
+          };
           broadcastUpcomingTrack();
-          continue;
+          try {
+            const audioFile = await downloadAudio(pseudo, _cacheDir);
+            const fileDuration = await getAudioDuration(audioFile);
+            const finalDuration = hintedDuration ?? fileDuration ?? AUTO_MAX_DURATION_SECONDS;
+            if (!isAllowedAutoTrack(resolvedTitle, finalDuration)) {
+              if (!keepFiles) cleanupFile(audioFile);
+              pendingAutoUpcoming = null;
+              broadcastUpcomingTrack();
+              continue;
+            }
+            rememberAutoTrack(choice.artist, choice.title);
+            pendingAutoUpcoming = null;
+            return {
+              audioFile,
+              title: resolvedTitle,
+              thumbnail: choice.thumbnail ?? info.thumbnail ?? null,
+              youtubeId: 'local',
+              duration: finalDuration,
+              addedBy: null,
+              queueItemId: null,
+              isFallback: true,
+              isAutoFallback: true,
+              cleanupAfterUse: true,
+            };
+          } catch {
+            pendingAutoUpcoming = null;
+            broadcastUpcomingTrack();
+          }
         }
-        rememberAutoTrack(choice.artist, choice.title);
-        pendingAutoUpcoming = null;
-        return {
-          audioFile,
-          title: resolvedTitle,
-          thumbnail: choice.thumbnail ?? info.thumbnail ?? null,
-          youtubeId: 'local',
-          duration: finalDuration,
-          addedBy: null,
-          queueItemId: null,
-          isFallback: true,
-          isAutoFallback: true,
-          cleanupAfterUse: true,
-        };
-      } catch {
-        pendingAutoUpcoming = null;
-        broadcastUpcomingTrack();
+      } finally {
+        inFlightAutoTrackKeys.delete(choiceKey);
       }
     }
     pendingAutoUpcoming = null;
@@ -1132,13 +1200,20 @@ let _streamHub: StreamHub | null = null;
 let _icecast: IcecastConfig | null = null;
 
 function ensureEncoder(): ChildProcess {
-  if (encoder && !encoder.killed && encoder.exitCode === null) return encoder;
+  const encoderHasWritableStdin = !!encoder?.stdin && !encoder.stdin.destroyed && encoder.stdin.writable;
+  if (encoder && !encoder.killed && encoder.exitCode === null && encoderHasWritableStdin) return encoder;
+  if (encoder && (!encoderHasWritableStdin || encoder.killed || encoder.exitCode !== null)) {
+    // Stale encoder process: force replacement so decode never writes into dead stdin.
+    killEncoderProcess(encoder);
+    encoder = null;
+  }
 
+  let nextEncoder: ChildProcess;
   if (_icecast) {
     const icecastUrl = `icecast://source:${_icecast.password}@${_icecast.host}:${_icecast.port}${_icecast.mount}`;
     console.log('[encoder] Starting persistent encoder → Icecast');
 
-    encoder = spawn('ffmpeg', [
+    nextEncoder = spawn('ffmpeg', [
       '-hide_banner',
       '-f', 's16le',
       '-ar', '44100',
@@ -1153,7 +1228,7 @@ function ensureEncoder(): ChildProcess {
   } else {
     console.log('[encoder] Starting persistent encoder → StreamHub (stdout)');
 
-    encoder = spawn('ffmpeg', [
+    nextEncoder = spawn('ffmpeg', [
       '-hide_banner',
       '-f', 's16le',
       '-ar', '44100',
@@ -1165,23 +1240,42 @@ function ensureEncoder(): ChildProcess {
       'pipe:1',
     ]);
 
-    encoder.stdout?.on('data', (chunk: Buffer) => {
+    nextEncoder.stdout?.on('data', (chunk: Buffer) => {
       _streamHub?.broadcast(chunk);
     });
   }
 
-  encoder.stderr?.on('data', () => {});
-  encoder.stdin?.on('error', () => {});
+  encoder = nextEncoder;
 
-  encoder.on('close', (code) => {
-    console.log(`[encoder] Exited with code ${code}`);
+  let encoderStderrTail = '';
+  nextEncoder.stderr?.on('data', (chunk: Buffer) => {
+    encoderStderrTail += chunk.toString();
+    if (encoderStderrTail.length > 4000) {
+      encoderStderrTail = encoderStderrTail.slice(-4000);
+    }
+  });
+  nextEncoder.stdin?.on('error', () => {});
+
+  nextEncoder.on('close', (code) => {
+    // Ignore stale close events from an older encoder process.
+    if (encoder !== nextEncoder) return;
+    const winSystemCode = toWindowsSystemErrorCode(code);
+    const tail = encoderStderrTail.trim().split('\n').slice(-2).join(' | ').trim();
+    const suffix = tail ? ` — ${tail}` : '';
+    if (winSystemCode === 10053) {
+      console.warn(`[encoder] Exited with code ${code} (Windows socket 10053: verbinding met Icecast verbroken)${suffix}`);
+    } else {
+      console.log(`[encoder] Exited with code ${code}${suffix}`);
+    }
     encoder = null;
     if (isRunning) {
       setTimeout(() => triggerSelfHeal(`encoder exited (${code})`), 100);
     }
   });
 
-  encoder.on('error', (err) => {
+  nextEncoder.on('error', (err) => {
+    // Ignore stale error events from an older encoder process.
+    if (encoder !== nextEncoder) return;
     console.error(`[encoder] Error: ${err.message}`);
     encoder = null;
     if (isRunning) {
@@ -1189,7 +1283,7 @@ function ensureEncoder(): ChildProcess {
     }
   });
 
-  return encoder;
+  return nextEncoder;
 }
 
 export async function startPlayCycle(
@@ -1383,6 +1477,12 @@ async function ensureAutoReadyBuffer(sb: SupabaseClient, cacheDir: string): Prom
       if (stillActiveAuto !== activeAutoGenre) {
         if (ready.cleanupAfterUse && !keepFiles) cleanupFile(ready.audioFile);
         break;
+      }
+      const readyKey = normalizeAutoKey(ready.title ?? '');
+      const reservedKeys = collectReservedAutoKeys();
+      if (readyKey && reservedKeys.has(readyKey)) {
+        if (ready.cleanupAfterUse && !keepFiles) cleanupFile(ready.audioFile);
+        continue;
       }
       autoReadyBuffer.push(ready);
       console.log(`[auto-preload] Buffered auto track (${getAutoReadyCount()}/${AUTO_READY_MIN}): ${ready.title ?? activeAutoGenre}`);
@@ -1586,6 +1686,12 @@ async function playNext(
         currentQueueItemId = null;
         pendingQueueUpcoming = null;
         io.emit('track:change', null);
+        if (activeAutoGenre) {
+          // In auto mode we should keep probing for strict candidates; never park forever waiting for queue:add.
+          console.log('[player] Auto mode: no immediate fallback yet — retrying shortly');
+          await sleep(700);
+          return;
+        }
         console.log('[player] Queue empty — waiting for tracks...');
         await waitForQueueAdd();
         return;
@@ -1715,10 +1821,17 @@ async function playNext(
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Onbekende fout';
-    const isEncoderCrash = !encoder || encoder.killed || encoder.exitCode !== null;
+    const encoderStdinUnavailable = !encoder?.stdin || encoder.stdin.destroyed || !encoder.stdin.writable;
+    const isEncoderCrash = !encoder || encoder.killed || encoder.exitCode !== null || encoderStdinUnavailable || /encoder stdin not available/i.test(message);
 
     if (isEncoderCrash) {
       console.warn(`[player] Encoder crashed during ${trackTitle ?? trackYoutubeId} — restarting encoder (not counting as track failure)`);
+      currentTrack = null;
+      currentQueueItemId = null;
+      pendingQueueUpcoming = null;
+      pendingAutoUpcoming = null;
+      io.emit('track:change', null);
+      broadcastUpcomingTrack();
     } else {
       console.error(`[player] Error playing ${trackYoutubeId}: ${message}`);
       if (!isFallback) {
@@ -1783,6 +1896,7 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess): Promise<void> {
       pipeError = true;
       console.warn(`[encoder] stdin error during decode: ${err.message}`);
       killDecoderProcess(decoder);
+      finish(new Error(`encoder write failed: ${err.message}`));
     }
 
     function onEncClose() {
@@ -1802,11 +1916,16 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess): Promise<void> {
         pendingSwap = null;
 
         // Write the NEW track's first audio chunk to the encoder
-        if (enc.stdin && !enc.stdin.destroyed) {
+        if (enc.stdin && !enc.stdin.destroyed && enc.stdin.writable) {
           try {
             enc.stdin.write(swap.firstChunk);
             markAudioProgress();
-          } catch {}
+          } catch (err) {
+            pipeError = true;
+            killDecoderProcess(decoder);
+            finish(new Error(`encoder write failed during swap: ${(err as Error).message}`));
+            return;
+          }
         }
 
         // Kill old decoder — its last chunk was already written above (or skipped)
@@ -1820,7 +1939,7 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess): Promise<void> {
       }
 
       // ── Normal: pipe old track's audio to encoder ──
-      if (enc.stdin && !enc.stdin.destroyed) {
+      if (enc.stdin && !enc.stdin.destroyed && enc.stdin.writable) {
         try {
           const ok = enc.stdin.write(chunk);
           markAudioProgress();
@@ -1828,9 +1947,21 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess): Promise<void> {
             decoder.stdout?.pause();
             enc.stdin.once('drain', () => decoder.stdout?.resume());
           }
-        } catch {
+        } catch (err) {
           pipeError = true;
+          killDecoderProcess(decoder);
+          if (isBrokenPipeError(err)) {
+            finish(new Error('encoder write failed: EPIPE'));
+          } else {
+            finish(new Error(`encoder write failed: ${(err as Error).message}`));
+          }
+          return;
         }
+      } else if (enc.exitCode !== null || !enc.stdin || enc.stdin.destroyed || !enc.stdin.writable) {
+        pipeError = true;
+        killDecoderProcess(decoder);
+        finish(new Error('Encoder stdin not available'));
+        return;
       }
     });
 
