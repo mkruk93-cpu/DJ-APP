@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback, Component, type ReactNode } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, Component, type ReactNode } from "react";
 import { getSocket } from "@/lib/socket";
 import { useRadioStore } from "@/lib/radioStore";
 import { canPerformAction } from "@/lib/types";
 import { isRadioAdmin, getRadioToken } from "@/lib/auth";
 import { isSpotifyConfigured } from "@/lib/spotify";
 import { getGenres, getGenreHits, addPriorityArtistToGenre, blockArtistForGenre, type GenreOption, type GenreHit } from "@/lib/radioApi";
+import { buildGroupedGenreSections, GENRE_FALLBACK_OPTIONS, getGenreGroupMembers, isGroupedParentGenre, resolveGenreLabel } from "@/lib/genreDropdown";
 import SpotifyBrowser from "@/components/SpotifyBrowser";
 
 class SpotifyErrorBoundary extends Component<
@@ -110,59 +111,7 @@ interface PendingUndoState {
   requestedAt: number;
 }
 
-const FALLBACK_GENRES: GenreOption[] = [
-  "hardcore",
-  "uptempo",
-  "gabber",
-  "industrial hardcore",
-  "krach",
-  "terror",
-  "terrorcore",
-  "mainstream hardcore",
-  "happy hardcore",
-  "hardstyle",
-  "euphoric hardstyle",
-  "rawstyle",
-  "frenchcore",
-  "techno",
-  "hard techno",
-  "trance",
-  "psy trance",
-  "psytrance",
-  "deep house",
-  "future house",
-  "house",
-  "tech house",
-  "progressive house",
-  "electro house",
-  "drum and bass",
-  "liquid drum and bass",
-  "neurofunk",
-  "bass house",
-  "big room",
-  "melodic techno",
-  "hard dance",
-  "dubstep",
-  "brostep",
-  "uk garage",
-  "rock",
-  "alternative",
-  "alternative rock",
-  "indie rock",
-  "metal",
-  "heavy metal",
-  "metalcore",
-  "death metal",
-  "punk",
-  "pop punk",
-  "edm",
-  "dance",
-  "hiphop",
-  "nederlandse hiphop",
-  "nederlands",
-  "top 40",
-  "pop",
-].map((name) => ({ id: name, name }));
+const FALLBACK_GENRES: GenreOption[] = GENRE_FALLBACK_OPTIONS;
 
 function formatDuration(seconds: number | null): string {
   if (!seconds) return "";
@@ -247,10 +196,11 @@ export default function QueueAdd() {
   const canAdd = canPerformAction(mode, "add_to_queue", isAdmin);
   const isUrl = isSupportedUrl(input.trim());
   const hasSpotifySource = isSpotifyConfigured();
-  const activeGenreLabel =
-    genres.find((genre) => genre.name === activeGenre || genre.id === activeGenre)?.name
-    ?? activeGenre
-    ?? "Genre selecteren";
+  const activeGenreLabel = resolveGenreLabel(activeGenre, genres);
+  const groupedGenreSections = useMemo(
+    () => buildGroupedGenreSections(genres, genreQuery),
+    [genres, genreQuery],
+  );
   const showGenreHitsPanel = !!activeGenre || genreHitsLoading || genreHits.length > 0 || genreHitsLoadingMore;
 
   function filterSetResults(items: SearchResult[]): SearchResult[] {
@@ -447,12 +397,14 @@ export default function QueueAdd() {
     if (!serverUrl) return;
     if (genreLoadInFlightRef.current) return;
     const offset = append ? genreOffsetRef.current : 0;
-    const cacheKey = `${genre.toLowerCase()}::${offset}::${GENRE_PAGE_SIZE}::local=${includeLocal ? "1" : "0"}`;
+    const genreMembers = getGenreGroupMembers(genre);
+    const cacheKey = `${genreMembers.join("|")}::${offset}::${GENRE_PAGE_SIZE}::local=${includeLocal ? "1" : "0"}`;
     const cached = genreHitsCacheRef.current.get(cacheKey);
     if (cached) {
-      const genreNorm = normalizeLoose(genre);
+      const hiddenGenreNames = new Set(genreMembers.map((item) => normalizeLoose(item)));
+      hiddenGenreNames.add(normalizeLoose(genre));
       const mapped = cached
-        .filter((item) => normalizeLoose(item.title) !== genreNorm)
+        .filter((item) => !hiddenGenreNames.has(normalizeLoose(item.title)))
         .map((item) => ({
         ...item,
         query: `${item.artist} - ${item.title}`,
@@ -478,7 +430,7 @@ export default function QueueAdd() {
       }
       const allowRetryOnStall = append && cached.length > 0 && genreNoProgressPagesRef.current < 3;
       setGenreHasMore(
-        cached.length >= GENRE_PAGE_SIZE
+        cached.length >= GENRE_PAGE_SIZE * Math.max(1, genreMembers.length)
           || (append ? addedUniqueCount > 0 : cached.length > 0)
           || allowRetryOnStall,
       );
@@ -497,14 +449,20 @@ export default function QueueAdd() {
     }
     setActiveGenre(genre);
     Promise.resolve()
-      .then(() => getGenreHits(genre, GENRE_PAGE_SIZE, offset, includeLocal))
+      .then(async () => {
+        const pages = await Promise.allSettled(
+          genreMembers.map((member) => getGenreHits(member, GENRE_PAGE_SIZE, offset, includeLocal)),
+        );
+        return pages.flatMap((page) => (page.status === "fulfilled" ? page.value : []));
+      })
       .then((items) => {
         genreHitsCacheRef.current.set(cacheKey, items);
-        const genreNorm = normalizeLoose(genre);
+        const hiddenGenreNames = new Set(genreMembers.map((item) => normalizeLoose(item)));
+        hiddenGenreNames.add(normalizeLoose(genre));
         const normalized = items.filter(
           (item): item is GenreHit =>
             !!item?.id && !!item?.title && !!item?.artist,
-        ).filter((item) => normalizeLoose(item.title) !== genreNorm);
+        ).filter((item) => !hiddenGenreNames.has(normalizeLoose(item.title)));
         const mapped = normalized.map((item) => ({
           ...item,
           query: `${item.artist} - ${item.title}`,
@@ -530,7 +488,7 @@ export default function QueueAdd() {
         }
         const allowRetryOnStall = append && normalized.length > 0 && genreNoProgressPagesRef.current < 3;
         setGenreHasMore(
-          normalized.length >= GENRE_PAGE_SIZE
+          normalized.length >= GENRE_PAGE_SIZE * Math.max(1, genreMembers.length)
             || (append ? addedUniqueCount > 0 : normalized.length > 0)
             || allowRetryOnStall,
         );
@@ -1123,25 +1081,50 @@ export default function QueueAdd() {
                   <span className="truncate">Genre selecteren</span>
                 </button>
                 <div className="my-1 border-b border-gray-800/80" />
-                {genres.map((genre) => {
-                  const isActive = activeGenre === genre.name || activeGenre === genre.id;
+                {groupedGenreSections.map((section) => {
+                  const parentActive = activeGenre === section.parent.id;
                   return (
-                    <button
-                      key={genre.id}
-                      type="button"
-                      onClick={() => {
-                        setActiveGenre(genre.name);
-                        loadGenreHits(genre.name, false);
-                        if (genreMenuRef.current) genreMenuRef.current.open = false;
-                      }}
-                      className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
-                        isActive
-                          ? "bg-violet-600/25 text-violet-100"
-                          : "text-gray-300 hover:bg-gray-800 hover:text-white"
-                      }`}
-                    >
-                      <span className="truncate">{genre.name}</span>
-                    </button>
+                    <div key={section.id} className="mb-1 last:mb-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveGenre(section.parent.id);
+                          loadGenreHits(section.parent.id, false);
+                          if (genreMenuRef.current) genreMenuRef.current.open = false;
+                        }}
+                        className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs font-semibold transition ${
+                          parentActive
+                            ? "bg-fuchsia-600/25 text-fuchsia-100"
+                            : "text-fuchsia-200 hover:bg-gray-800 hover:text-white"
+                        }`}
+                      >
+                        <span className="truncate">{section.parent.name}</span>
+                        {isGroupedParentGenre(section.parent.id) && (
+                          <span className="ml-2 text-[10px] text-gray-400">alles</span>
+                        )}
+                      </button>
+                      {section.children.map((genre) => {
+                        const isActive = activeGenre === genre.id || activeGenre === genre.name;
+                        return (
+                          <button
+                            key={`${section.id}:${genre.id}`}
+                            type="button"
+                            onClick={() => {
+                              setActiveGenre(genre.id);
+                              loadGenreHits(genre.id, false);
+                              if (genreMenuRef.current) genreMenuRef.current.open = false;
+                            }}
+                            className={`ml-2 mt-0.5 flex w-[calc(100%-0.5rem)] items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
+                              isActive
+                                ? "bg-violet-600/25 text-violet-100"
+                                : "text-gray-300 hover:bg-gray-800 hover:text-white"
+                            }`}
+                          >
+                            <span className="truncate">- {genre.name}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   );
                 })}
               </div>
@@ -1152,7 +1135,7 @@ export default function QueueAdd() {
             {genreError && (
               <p className="text-xs text-amber-300">{genreError}</p>
             )}
-            {!genresLoading && genres.length === 0 && (
+            {!genresLoading && groupedGenreSections.length === 0 && (
               <p className="text-xs text-gray-400">Geen genres gevonden. Probeer een andere zoekterm.</p>
             )}
 

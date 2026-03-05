@@ -155,7 +155,85 @@ interface GenreHints {
 }
 
 function normalizeGenreName(name: string): string {
-  return name.trim().toLowerCase();
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ');
+}
+
+interface MergedGenreCluster {
+  canonical: string;
+  aliases: string[];
+  tags: string[];
+}
+
+const MERGED_GENRE_CLUSTERS: MergedGenreCluster[] = [
+  {
+    canonical: 'house',
+    aliases: ['tech house'],
+    tags: ['house', 'tech house'],
+  },
+  {
+    canonical: 'pop',
+    aliases: ['top 40', 'nederlands'],
+    tags: ['pop', 'top 40', 'nederlands', 'nederlandstalig', 'dutch pop', 'nl pop'],
+  },
+  {
+    canonical: 'terror',
+    aliases: ['terrorcore'],
+    tags: ['terror', 'terrorcore', 'speedcore', 'hardcore terror'],
+  },
+  {
+    canonical: 'psy trance',
+    aliases: ['psytrance'],
+    tags: ['psy trance', 'psytrance', 'goa', 'psychedelic trance'],
+  },
+  {
+    canonical: 'drum and bass',
+    aliases: ['liquid drum and bass', 'neurofunk'],
+    tags: [
+      'drum and bass',
+      'dnb',
+      'liquid drum and bass',
+      'liquid dnb',
+      'neurofunk',
+      'neuro dnb',
+    ],
+  },
+];
+
+const MERGED_GENRE_ALIAS_TO_CANONICAL = new Map<string, string>();
+const MERGED_GENRE_CANONICAL_TO_TAGS = new Map<string, string[]>();
+const MERGED_GENRE_CANONICAL_TO_FAMILY = new Map<string, string[]>();
+
+for (const cluster of MERGED_GENRE_CLUSTERS) {
+  const canonical = normalizeGenreName(cluster.canonical);
+  const aliases = cluster.aliases.map((value) => normalizeGenreName(value)).filter(Boolean);
+  const family = Array.from(new Set([canonical, ...aliases]));
+  const tags = Array.from(new Set(
+    [canonical, ...aliases, ...cluster.tags.map((value) => normalizeGenreName(value)).filter(Boolean)],
+  ));
+  MERGED_GENRE_CANONICAL_TO_FAMILY.set(canonical, family);
+  MERGED_GENRE_CANONICAL_TO_TAGS.set(canonical, tags);
+  for (const member of family) {
+    MERGED_GENRE_ALIAS_TO_CANONICAL.set(member, canonical);
+  }
+}
+
+export function resolveMergedGenreId(genre: string): string {
+  const normalized = normalizeGenreName(genre);
+  return MERGED_GENRE_ALIAS_TO_CANONICAL.get(normalized) ?? normalized;
+}
+
+function getMergedGenreFamily(genre: string): string[] {
+  const canonical = resolveMergedGenreId(genre);
+  return MERGED_GENRE_CANONICAL_TO_FAMILY.get(canonical) ?? [canonical];
+}
+
+export function getMergedGenreTags(genre: string): string[] {
+  const canonical = resolveMergedGenreId(genre);
+  return MERGED_GENRE_CANONICAL_TO_TAGS.get(canonical) ?? [canonical];
 }
 
 /** Removes noisy suffixes/tags from titles used in deduplication keys. */
@@ -189,7 +267,7 @@ function dedupeNormalized(items: string[]): string[] {
 }
 
 function isAllowedGenre(genre: string): boolean {
-  const normalized = normalizeGenreName(genre);
+  const normalized = resolveMergedGenreId(genre);
   if (!normalized) return false;
   if (ALLOWED_GENRE_SET.has(normalized)) return true;
   return !!getCuratedGenreRule(normalized);
@@ -200,9 +278,13 @@ export function isKnownDiscoveryGenre(genre: string): boolean {
 }
 
 function getGenreHints(genre: string): GenreHints {
-  const normalized = normalizeGenreName(genre);
-  const baseGenreTokens = normalized.split(' ').filter((token) => token.length >= 3);
-  const defaultRelevanceTokens = Array.from(new Set([normalized, ...baseGenreTokens]));
+  const normalized = resolveMergedGenreId(genre);
+  const mergedFamily = getMergedGenreFamily(normalized);
+  const mergedTags = getMergedGenreTags(normalized);
+  const baseGenreTokens = mergedTags
+    .flatMap((value) => value.split(' '))
+    .filter((token) => token.length >= 3);
+  const defaultRelevanceTokens = Array.from(new Set([...mergedFamily, ...mergedTags, ...baseGenreTokens]));
   if (normalized.includes('drum and bass')) defaultRelevanceTokens.push('dnb');
   if (normalized.includes('dnb')) defaultRelevanceTokens.push('drum and bass');
   if (normalized.includes('hardstyle')) defaultRelevanceTokens.push('rawstyle');
@@ -388,8 +470,11 @@ function getGenreHints(genre: string): GenreHints {
     minScore: 1,
   };
 
-  const curated = getCuratedGenreRule(normalized);
-  if (!curated) {
+  const curatedRules = mergedFamily
+    .map((id) => getCuratedGenreRule(id))
+    .filter((rule): rule is NonNullable<ReturnType<typeof getCuratedGenreRule>> => !!rule);
+
+  if (curatedRules.length === 0) {
     return {
       ...base,
       requiredTokens: base.requiredTokens ?? [],
@@ -401,19 +486,31 @@ function getGenreHints(genre: string): GenreHints {
     };
   }
 
+  const mergedCuratedRequired = dedupeNormalized(curatedRules.flatMap((rule) => rule.requiredTokens ?? []));
+  const mergedCuratedPriorityArtists = dedupeNormalized(curatedRules.flatMap((rule) => rule.priorityArtists ?? []));
+  const mergedCuratedBlockedArtists = dedupeNormalized(curatedRules.flatMap((rule) => rule.blockedArtists ?? []));
+  const mergedCuratedPriorityTracks = dedupeNormalized(curatedRules.flatMap((rule) => rule.priorityTracks ?? []));
+  const mergedCuratedBlockedTracks = dedupeNormalized(curatedRules.flatMap((rule) => rule.blockedTracks ?? []));
+  const mergedCuratedPriorityLabels = dedupeNormalized(curatedRules.flatMap((rule) => rule.priorityLabels ?? []));
+  const mergedCuratedBlockedTokens = dedupeNormalized(curatedRules.flatMap((rule) => rule.blockedTokens ?? []));
+  const mergedMinScore = curatedRules.reduce((acc, rule) => {
+    const value = typeof rule.minScore === 'number' ? rule.minScore : acc;
+    return Math.max(acc, value);
+  }, base.minScore);
+
   return {
-    spotifyQueries: dedupeNormalized([...base.spotifyQueries, ...(curated.requiredTokens ?? [])]),
-    lastFmTags: dedupeNormalized([...base.lastFmTags, ...(curated.requiredTokens ?? []).slice(0, 2)]),
-    deezerQueries: dedupeNormalized([...base.deezerQueries, ...(curated.requiredTokens ?? [])]),
-    relevanceTokens: dedupeNormalized([...base.relevanceTokens, ...(curated.requiredTokens ?? [])]),
-    avoidTokens: dedupeNormalized([...base.avoidTokens, ...(curated.blockedTokens ?? [])]),
-    requiredTokens: dedupeNormalized([...(base.requiredTokens ?? []), ...(curated.requiredTokens ?? [])]),
-    priorityArtists: dedupeNormalized([...(base.priorityArtists ?? []), ...(curated.priorityArtists ?? [])]),
-    blockedArtists: dedupeNormalized([...(curated.blockedArtists ?? [])]),
-    priorityTracks: dedupeNormalized([...(base.priorityTracks ?? []), ...(curated.priorityTracks ?? [])]),
-    blockedTracks: dedupeNormalized([...(curated.blockedTracks ?? [])]),
-    priorityLabels: dedupeNormalized([...(base.priorityLabels ?? []), ...(curated.priorityLabels ?? [])]),
-    minScore: Math.max(base.minScore, curated.minScore ?? base.minScore),
+    spotifyQueries: dedupeNormalized([...base.spotifyQueries, ...mergedCuratedRequired]),
+    lastFmTags: dedupeNormalized([...base.lastFmTags, ...mergedCuratedRequired.slice(0, 2)]),
+    deezerQueries: dedupeNormalized([...base.deezerQueries, ...mergedCuratedRequired]),
+    relevanceTokens: dedupeNormalized([...base.relevanceTokens, ...mergedCuratedRequired, ...mergedTags]),
+    avoidTokens: dedupeNormalized([...base.avoidTokens, ...mergedCuratedBlockedTokens]),
+    requiredTokens: dedupeNormalized([...(base.requiredTokens ?? []), ...mergedCuratedRequired]),
+    priorityArtists: dedupeNormalized([...(base.priorityArtists ?? []), ...mergedCuratedPriorityArtists]),
+    blockedArtists: mergedCuratedBlockedArtists,
+    priorityTracks: dedupeNormalized([...(base.priorityTracks ?? []), ...mergedCuratedPriorityTracks]),
+    blockedTracks: mergedCuratedBlockedTracks,
+    priorityLabels: dedupeNormalized([...(base.priorityLabels ?? []), ...mergedCuratedPriorityLabels]),
+    minScore: mergedMinScore,
   };
 }
 
@@ -588,11 +685,13 @@ function isGenreKeywordNoiseHit(item: GenreHitItem, hints: GenreHints): boolean 
 function makeUniqueGenreMap(): Map<string, GenreItem> {
   const map = new Map<string, GenreItem>();
   for (const genre of DEFAULT_POPULAR_GENRES) {
-    const normalized = normalizeGenreName(genre);
-    map.set(normalized, { id: normalized, name: genre });
+    const normalized = resolveMergedGenreId(genre);
+    if (!map.has(normalized)) {
+      map.set(normalized, { id: normalized, name: genre });
+    }
   }
   for (const rule of listCuratedGenreRules()) {
-    const normalized = normalizeGenreName(rule.id);
+    const normalized = resolveMergedGenreId(rule.id);
     if (!normalized || map.has(normalized)) continue;
     map.set(normalized, {
       id: normalized,
@@ -630,11 +729,14 @@ export async function searchGenres(query?: string): Promise<GenreItem[]> {
   const q = normalizeGenreName(query ?? '');
   const genreOrder = new Map<string, number>();
   DEFAULT_POPULAR_GENRES.forEach((name, index) => {
-    genreOrder.set(normalizeGenreName(name), index);
+    const normalized = resolveMergedGenreId(name);
+    if (!genreOrder.has(normalized)) {
+      genreOrder.set(normalized, index);
+    }
   });
   const curatedRules = listCuratedGenreRules();
   for (const rule of curatedRules) {
-    const normalized = normalizeGenreName(rule.id);
+    const normalized = resolveMergedGenreId(rule.id);
     if (!genreOrder.has(normalized)) {
       genreOrder.set(normalized, DEFAULT_POPULAR_GENRES.length + genreOrder.size);
     }
@@ -642,13 +744,17 @@ export async function searchGenres(query?: string): Promise<GenreItem[]> {
 
   let items = [...uniqueGenres.values()];
   if (q) {
-    items = items.filter((genre) => normalizeGenreName(genre.name).includes(q));
+    items = items.filter((genre) => {
+      const normalizedName = normalizeGenreName(genre.name);
+      if (normalizedName.includes(q)) return true;
+      return getMergedGenreTags(genre.id).some((tag) => tag.includes(q));
+    });
   }
 
   return items
     .sort((a, b) => {
-      const orderA = genreOrder.get(normalizeGenreName(a.name)) ?? Number.MAX_SAFE_INTEGER;
-      const orderB = genreOrder.get(normalizeGenreName(b.name)) ?? Number.MAX_SAFE_INTEGER;
+      const orderA = genreOrder.get(resolveMergedGenreId(a.name)) ?? Number.MAX_SAFE_INTEGER;
+      const orderB = genreOrder.get(resolveMergedGenreId(b.name)) ?? Number.MAX_SAFE_INTEGER;
       if (orderA !== orderB) return orderA - orderB;
       return a.name.localeCompare(b.name, 'nl', { sensitivity: 'base' });
     })
@@ -693,8 +799,10 @@ async function searchTopTracks(query: string, limit: number, offset: number): Pr
   }
 
   const data = await res.json() as { data?: Array<Record<string, unknown>> };
+  const queryHint = normalizeGenreName(query);
   return (data.data ?? [])
     .map(mapTrackToHit)
+    .map((item) => (item ? { ...item, sourceHint: `${item.sourceHint} q:${queryHint}`.trim() } : null))
     .filter((item): item is GenreHitItem => item !== null)
     .slice(0, limit);
 }
@@ -794,7 +902,10 @@ async function fetchSpotifyTracksByGenre(
       throw new Error(`Spotify search HTTP ${res.status}`);
     }
     const data = await res.json() as { tracks?: { items?: Array<Record<string, unknown>> } };
-    return mapItems(data.tracks?.items ?? []).slice(0, limit);
+    const queryHint = normalizeGenreName(q);
+    return mapItems(data.tracks?.items ?? [])
+      .map((item) => ({ ...item, sourceHint: `${item.sourceHint} q:${queryHint}`.trim() }))
+      .slice(0, limit);
   };
 
   const merged: GenreHitItem[] = [];
@@ -867,7 +978,7 @@ async function fetchLastFmTopTracksByGenre(
             title,
             artist,
             thumbnail: bestImage,
-            sourceHint: track.url ?? '',
+            sourceHint: `${track.url ?? ''} q:${normalizeGenreName(tag)}`.trim(),
           } satisfies GenreHitItem;
         })
         .filter((item): item is GenreHitItem => item !== null),
@@ -956,7 +1067,7 @@ function ytdlpSearchPlatform(
             title,
             artist,
             thumbnail,
-            sourceHint,
+            sourceHint: `${sourceHint} q:${normalizeGenreName(query)}`.trim(),
             duration,
           });
         } catch {
@@ -1031,7 +1142,7 @@ async function fetchPriorityArtistPlatformHits(
 }
 
 export async function getTopTracksByGenre(genre: string, limit = 20, offset = 0): Promise<GenreHitItem[]> {
-  const normalizedGenre = genre.trim();
+  const normalizedGenre = resolveMergedGenreId(genre.trim());
   const safeLimit = Math.max(1, Math.min(limit, 50));
   const safeOffset = Math.max(0, offset);
   if (!normalizedGenre) return [];
@@ -1043,7 +1154,7 @@ export async function getTopTracksByGenre(genre: string, limit = 20, offset = 0)
   const deezerQueries = isFastMode ? 2 : 3;
   const lastFmTags = isFastMode ? 1 : 2;
   const priorityOptions = isFastMode
-    ? { artistSampleSize: 7, perPlatformLimit: 4, maxRuntimeMs: 3200 }
+    ? { artistSampleSize: 10, perPlatformLimit: 5, maxRuntimeMs: 5200 }
     : { artistSampleSize: 10, perPlatformLimit: 5, maxRuntimeMs: 5500 };
   const [spotifyRes, deezerRes, lastFmRes, priorityRes] = await Promise.allSettled([
     spotifyQueries > 0
@@ -1054,7 +1165,7 @@ export async function getTopTracksByGenre(genre: string, limit = 20, offset = 0)
       : fetchDeezerTracksByGenre(normalizedGenre, safeLimit, safeOffset, deezerQueries),
     fetchLastFmTopTracksByGenre(normalizedGenre, safeLimit, safeOffset, lastFmTags),
     isFastMode
-      ? withTimeout(fetchPriorityArtistPlatformHits(normalizedGenre, hints, safeLimit, safeOffset, priorityOptions), 1200, [] as GenreHitItem[])
+      ? withTimeout(fetchPriorityArtistPlatformHits(normalizedGenre, hints, safeLimit, safeOffset, priorityOptions), 2600, [] as GenreHitItem[])
       : fetchPriorityArtistPlatformHits(normalizedGenre, hints, safeLimit, safeOffset, priorityOptions),
   ]);
 
@@ -1063,6 +1174,15 @@ export async function getTopTracksByGenre(genre: string, limit = 20, offset = 0)
   if (deezerRes.status === 'fulfilled') collected.push(...deezerRes.value);
   if (lastFmRes.status === 'fulfilled') collected.push(...lastFmRes.value);
   if (priorityRes.status === 'fulfilled') collected.push(...priorityRes.value);
+
+  // If curated priority artists already yield strict hits, surface them immediately.
+  if (priorityRes.status === 'fulfilled' && priorityRes.value.length > 0) {
+    const priorityStrict = filterHitsByGenre(priorityRes.value, hints, safeLimit);
+    if (priorityStrict.length >= Math.min(3, safeLimit)) {
+      const merged = dedupeHits([...priorityStrict, ...collected]).slice(0, safeLimit);
+      return merged;
+    }
+  }
 
   return filterHitsByGenre(collected, hints, safeLimit);
 }

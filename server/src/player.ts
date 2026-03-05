@@ -11,7 +11,7 @@ import type { StreamHub } from './streamHub.js';
 import { pickRandomFallbackForGenre, parseAutoFallbackGenreId, LIKED_AUTO_GENRE_ID } from './fallbackGenres.js';
 import { fetchArtworkCandidate } from './artwork.js';
 import { listLikedPlaylistTracks } from './services/genreCuratedConfig.js';
-import { getTopTracksByGenre, type GenreHitItem } from './services/discovery.js';
+import { getTopTracksByGenre, getMergedGenreTags, resolveMergedGenreId, type GenreHitItem } from './services/discovery.js';
 import { getCachedGenreHits, makeGenreHitsCacheKey, setGenreHitsCacheEntry } from './genreHitsStore.js';
 
 export const playerEvents = new EventEmitter();
@@ -207,8 +207,12 @@ function normalizeAutoKey(value: string): string {
     .trim();
 }
 
-function buildAutoFallbackSource(genreId: string, artist: string, title: string): QueueItem {
-  const search = autoTrackTitle(artist, title);
+function buildAutoFallbackSource(genreId: string, artist: string, title: string, mergedTags: string[] = []): QueueItem {
+  const tagBlock = Array.from(new Set([genreId, ...mergedTags]))
+    .filter(Boolean)
+    .slice(0, 5)
+    .join(' ');
+  const search = `${tagBlock} ${autoTrackTitle(artist, title)}`.trim();
   return {
     id: `auto-${Date.now()}`,
     youtube_url: `ytsearch1:${search}`,
@@ -348,13 +352,15 @@ function shuffleInPlace<T>(items: T[]): T[] {
 
 async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack | null> {
   try {
+    const canonicalGenreId = resolveMergedGenreId(genreId);
+    const mergedGenreTags = getMergedGenreTags(canonicalGenreId);
     await refreshDailyAutoPlayedKeys();
     const offsets = [0, 20, 40, 60, 80, 120, 160, 200, 260, 320];
     const mergedHits: Array<{ title: string; artist: string; thumbnail: string | null }> = [];
     const seen = new Set<string>();
 
     for (const offset of offsets) {
-      const hits = getCachedGenreHits(genreId, 20, offset, true);
+      const hits = getCachedGenreHits(canonicalGenreId, 20, offset, true);
       for (const hit of hits) {
         const title = hit.title?.trim() || '';
         const artist = hit.artist?.trim() || '';
@@ -371,14 +377,14 @@ async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack |
       // Warm strict cache once when user switches to an auto genre.
       const warmOffsets = [0, 20, 40];
       const warmPages = await Promise.allSettled(
-        warmOffsets.map((offset) => getTopTracksByGenre(genreId, 20, offset)),
+        warmOffsets.map((offset) => getTopTracksByGenre(canonicalGenreId, 20, offset)),
       );
       const warmed = warmPages.flatMap((page) => (page.status === 'fulfilled' ? page.value : [] as GenreHitItem[]));
       if (warmed.length > 0) {
         for (const offset of warmOffsets) {
           const page = warmPages.find((_, index) => warmOffsets[index] === offset);
           if (!page || page.status !== 'fulfilled') continue;
-          setGenreHitsCacheEntry(makeGenreHitsCacheKey(genreId, 20, offset, true), page.value);
+          setGenreHitsCacheEntry(makeGenreHitsCacheKey(canonicalGenreId, 20, offset, true), page.value);
         }
         for (const hit of warmed) {
           const title = hit.title?.trim() || '';
@@ -405,11 +411,14 @@ async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack |
       !isRecentAutoTrack(hit.artist, hit.title)
       && !wasPlayedAutoToday(autoTrackTitle(hit.artist, hit.title)),
     );
-    const candidates = freshCandidates.length > 0 ? freshCandidates : mergedHits;
-    if (candidates.length === 0) return null;
+    if (freshCandidates.length === 0) {
+      console.warn(`[auto-playlist] Exhausted 24h candidate pool for genre "${genreId}"`);
+      return null;
+    }
+    const candidates = freshCandidates;
     const choices = shuffleInPlace([...candidates]).slice(0, Math.min(8, candidates.length));
     for (const choice of choices) {
-      const pseudo = buildAutoFallbackSource(genreId, choice.artist, choice.title);
+      const pseudo = buildAutoFallbackSource(canonicalGenreId, choice.artist, choice.title, mergedGenreTags);
       const info = await fetchVideoInfo(pseudo.youtube_url).catch(() => ({ title: null, duration: null, thumbnail: null }));
       const resolvedTitle = buildAutoDisplayTitle(info.title, choice.artist, choice.title);
       const hintedDuration = typeof info.duration === 'number' && Number.isFinite(info.duration) ? Math.round(info.duration) : null;
@@ -475,8 +484,11 @@ async function prepareLikedAutoFallbackTrack(): Promise<ReadyTrack | null> {
       !recentAutoTrackKeys.includes(normalizeAutoKey(track))
       && !wasPlayedAutoToday(track),
     );
-    const pool = fresh.length > 0 ? fresh : likedTracks;
-    const choice = pool[Math.floor(Math.random() * pool.length)];
+    if (fresh.length === 0) {
+      console.warn('[auto-playlist] Exhausted 24h candidate pool for liked tracks');
+      return null;
+    }
+    const choice = fresh[Math.floor(Math.random() * fresh.length)];
     if (!choice) return null;
 
     const pseudo = buildAutoFallbackSourceForQuery(LIKED_AUTO_GENRE_ID, choice);

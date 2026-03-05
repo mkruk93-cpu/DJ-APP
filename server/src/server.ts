@@ -20,6 +20,8 @@ import type { Mode, ServerState, DurationVote, QueuePushVote, FallbackGenre } fr
 import {
   searchGenres,
   getTopTracksByGenre,
+  resolveMergedGenreId,
+  getMergedGenreTags,
   normalizeTrackIdentity,
   type GenreItem,
   type GenreHitItem,
@@ -306,6 +308,7 @@ function postProcessResults(
 const searchCache = new Map<string, { results: SearchResult[]; ts: number }>();
 const CACHE_TTL = 60_000;
 const DISCOVERY_CACHE_TTL = 1_800_000;
+const EMPTY_GENRE_CACHE_TTL = 15_000;
 const genreCache = new Map<string, { results: GenreItem[]; ts: number }>();
 const activeRefreshes = new Set<string>();
 const LOCAL_INDEX_TTL = 120_000;
@@ -473,8 +476,12 @@ function searchLocalTracks(query: string, limit: number, offset: number): Search
 }
 
 function genreTokens(genre: string): string[] {
-  const normalized = normalizeLoose(genre.replace(/_/g, ' '));
-  const tokens = normalized.split(' ').filter((token) => token.length >= 3);
+  const normalized = normalizeLoose(resolveMergedGenreId(genre).replace(/_/g, ' '));
+  const mergedTags = getMergedGenreTags(genre)
+    .map((tag) => normalizeLoose(tag.replace(/_/g, ' ')))
+    .filter(Boolean);
+  const tokens = mergedTags
+    .flatMap((tag) => tag.split(' ').filter((token) => token.length >= 3));
   if (normalized.includes('drum and bass')) tokens.push('dnb');
   if (normalized.includes('hardstyle')) tokens.push('rawstyle');
   if (normalized.includes('techno trance')) tokens.push('trance', 'techno');
@@ -882,11 +889,12 @@ app.get('/api/genres', async (req, res) => {
 });
 
 app.get('/api/genre-hits', async (req, res) => {
-  const genre = String(req.query.genre ?? '').trim();
-  if (genre.length < 2) {
+  const requestedGenre = String(req.query.genre ?? '').trim();
+  if (requestedGenre.length < 2) {
     res.status(400).json({ error: 'Missing or invalid genre' });
     return;
   }
+  const genre = resolveMergedGenreId(requestedGenre);
 
   const parsedLimit = parseInt(String(req.query.limit ?? '20'), 10);
   const parsedOffset = parseInt(String(req.query.offset ?? '0'), 10);
@@ -897,7 +905,8 @@ app.get('/api/genre-hits', async (req, res) => {
   const nextOffset = offset + limit;
   const nextCacheKey = makeGenreHitsCacheKey(genre, limit, nextOffset, includeLocal);
   const cached = getGenreHitsCacheEntry(cacheKey);
-  const isStale = !cached || Date.now() - cached.ts >= DISCOVERY_CACHE_TTL;
+  const ttl = cached && cached.results.length === 0 ? EMPTY_GENRE_CACHE_TTL : DISCOVERY_CACHE_TTL;
+  const isStale = !cached || Date.now() - cached.ts >= ttl;
 
   if (isStale) {
     refreshGenreHitsCache(cacheKey, genre, limit, offset, includeLocal);

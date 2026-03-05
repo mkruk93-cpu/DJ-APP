@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useRadioStore } from "@/lib/radioStore";
 import { isSpotifyConfigured } from "@/lib/spotify";
 import { getGenres, getGenreHits, type GenreOption, type GenreHit } from "@/lib/radioApi";
+import { buildGroupedGenreSections, GENRE_FALLBACK_OPTIONS, getGenreGroupMembers, isGroupedParentGenre, resolveGenreLabel } from "@/lib/genreDropdown";
 import SpotifyBrowser from "@/components/SpotifyBrowser";
 
 interface Request {
@@ -48,59 +49,7 @@ const URL_REGEX = /^https?:\/\/(www\.)?(youtube\.com|youtu\.be|soundcloud\.com)\
 const COOLDOWN_SEC = 20;
 const GENRE_PAGE_SIZE = 20;
 
-const FALLBACK_GENRES: GenreOption[] = [
-  "hardcore",
-  "uptempo",
-  "gabber",
-  "industrial hardcore",
-  "krach",
-  "terror",
-  "terrorcore",
-  "mainstream hardcore",
-  "happy hardcore",
-  "hardstyle",
-  "euphoric hardstyle",
-  "rawstyle",
-  "frenchcore",
-  "techno",
-  "hard techno",
-  "trance",
-  "psy trance",
-  "psytrance",
-  "deep house",
-  "future house",
-  "house",
-  "tech house",
-  "progressive house",
-  "electro house",
-  "drum and bass",
-  "liquid drum and bass",
-  "neurofunk",
-  "bass house",
-  "big room",
-  "melodic techno",
-  "hard dance",
-  "dubstep",
-  "brostep",
-  "uk garage",
-  "rock",
-  "alternative",
-  "alternative rock",
-  "indie rock",
-  "metal",
-  "heavy metal",
-  "metalcore",
-  "death metal",
-  "punk",
-  "pop punk",
-  "edm",
-  "dance",
-  "hiphop",
-  "nederlandse hiphop",
-  "nederlands",
-  "top 40",
-  "pop",
-].map((name) => ({ id: name, name }));
+const FALLBACK_GENRES: GenreOption[] = GENRE_FALLBACK_OPTIONS;
 
 const statusConfig: Record<string, { label: string; color: string }> = {
   pending: { label: "Wachtrij", color: "bg-yellow-500/20 text-yellow-400" },
@@ -139,10 +88,11 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const nickname = typeof window !== "undefined" ? localStorage.getItem("nickname") ?? "anon" : "anon";
   const serverUrl = useRadioStore((s) => s.serverUrl) ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
-  const activeGenreLabel =
-    genres.find((genre) => genre.name === activeGenre || genre.id === activeGenre)?.name
-    ?? activeGenre
-    ?? "Genre selecteren";
+  const activeGenreLabel = resolveGenreLabel(activeGenre, genres);
+  const groupedGenreSections = useMemo(
+    () => buildGroupedGenreSections(genres, genreQuery),
+    [genres, genreQuery],
+  );
 
   const load = useCallback(async () => {
     try {
@@ -214,15 +164,23 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
     }
     setActiveGenre(genre);
     Promise.resolve()
-      .then(() => getGenreHits(genre, GENRE_PAGE_SIZE, offset, includeLocal))
+      .then(async () => {
+        const genreMembers = getGenreGroupMembers(genre);
+        const pages = await Promise.allSettled(
+          genreMembers.map((member) => getGenreHits(member, GENRE_PAGE_SIZE, offset, includeLocal)),
+        );
+        const merged = pages.flatMap((page) => (page.status === "fulfilled" ? page.value : []));
+        return merged;
+      })
       .then((items) => {
-        const genreNorm = normalizeLoose(genre);
+        const hiddenGenreNames = new Set(getGenreGroupMembers(genre).map((item) => normalizeLoose(item)));
+        hiddenGenreNames.add(normalizeLoose(genre));
         const normalized = items.filter(
           (item): item is GenreHit =>
             !!item?.id
             && !!item?.title
             && !!item?.artist
-            && normalizeLoose(item.title) !== genreNorm,
+            && !hiddenGenreNames.has(normalizeLoose(item.title)),
         );
         const mapped = normalized.map((item) => ({
           ...item,
@@ -239,7 +197,9 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
           return deduped;
         });
         setGenreHitsOffset(offset + GENRE_PAGE_SIZE);
-        setGenreHasMore(normalized.length >= GENRE_PAGE_SIZE || (append && addedUniqueCount > 0));
+        const groupMembers = getGenreGroupMembers(genre);
+        const minExpected = Math.max(1, groupMembers.length) * GENRE_PAGE_SIZE;
+        setGenreHasMore(normalized.length >= minExpected || (append && addedUniqueCount > 0));
       })
       .catch(() => {
         if (!append) setGenreHits([]);
@@ -629,32 +589,57 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
                   <span className="truncate">Genre selecteren</span>
                 </button>
                 <div className="my-1 border-b border-gray-800/80" />
-                {genres.map((genre) => {
-                  const isActive = activeGenre === genre.name || activeGenre === genre.id;
+                {groupedGenreSections.map((section) => {
+                  const parentActive = activeGenre === section.parent.id;
                   return (
-                    <button
-                      key={genre.id}
-                      type="button"
-                      onClick={() => {
-                        setActiveGenre(genre.name);
-                        loadGenreHits(genre.name, false);
-                        if (genreMenuRef.current) genreMenuRef.current.open = false;
-                      }}
-                      className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
-                        isActive
-                          ? "bg-violet-600/25 text-violet-100"
-                          : "text-gray-300 hover:bg-gray-800 hover:text-white"
-                      }`}
-                    >
-                      <span className="truncate">{genre.name}</span>
-                    </button>
+                    <div key={section.id} className="mb-1 last:mb-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveGenre(section.parent.id);
+                          loadGenreHits(section.parent.id, false);
+                          if (genreMenuRef.current) genreMenuRef.current.open = false;
+                        }}
+                        className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs font-semibold transition ${
+                          parentActive
+                            ? "bg-fuchsia-600/25 text-fuchsia-100"
+                            : "text-fuchsia-200 hover:bg-gray-800 hover:text-white"
+                        }`}
+                      >
+                        <span className="truncate">{section.parent.name}</span>
+                        {isGroupedParentGenre(section.parent.id) && (
+                          <span className="ml-2 text-[10px] text-gray-400">alles</span>
+                        )}
+                      </button>
+                      {section.children.map((genre) => {
+                        const isActive = activeGenre === genre.id || activeGenre === genre.name;
+                        return (
+                          <button
+                            key={`${section.id}:${genre.id}`}
+                            type="button"
+                            onClick={() => {
+                              setActiveGenre(genre.id);
+                              loadGenreHits(genre.id, false);
+                              if (genreMenuRef.current) genreMenuRef.current.open = false;
+                            }}
+                            className={`ml-2 mt-0.5 flex w-[calc(100%-0.5rem)] items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
+                              isActive
+                                ? "bg-violet-600/25 text-violet-100"
+                                : "text-gray-300 hover:bg-gray-800 hover:text-white"
+                            }`}
+                          >
+                            <span className="truncate">- {genre.name}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   );
                 })}
               </div>
             </details>
             {genresLoading && <p className="text-xs text-gray-400">Genres laden...</p>}
             {genreError && <p className="text-xs text-amber-300">{genreError}</p>}
-            {!genresLoading && genres.length === 0 && (
+            {!genresLoading && groupedGenreSections.length === 0 && (
               <p className="text-xs text-gray-400">Geen genres gevonden.</p>
             )}
 
