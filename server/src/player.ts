@@ -10,8 +10,8 @@ import { cleanupFile } from './cleanup.js';
 import type { StreamHub } from './streamHub.js';
 import { pickRandomFallbackForGenre, parseAutoFallbackGenreId, LIKED_AUTO_GENRE_ID } from './fallbackGenres.js';
 import { fetchArtworkCandidate } from './artwork.js';
-import { getTopTracksByGenre } from './services/discovery.js';
 import { listLikedPlaylistTracks } from './services/genreCuratedConfig.js';
+import { getCachedGenreHits } from './genreHitsStore.js';
 
 export const playerEvents = new EventEmitter();
 
@@ -248,7 +248,7 @@ function isSetLikeAutoTitle(title: string): boolean {
 function isAllowedAutoTrack(title: string, duration: number | null): boolean {
   if (!title.trim()) return false;
   if (isSetLikeAutoTitle(title)) return false;
-  if (duration !== null && duration > AUTO_MAX_DURATION_SECONDS) return false;
+  if (duration !== null && (duration < 120 || duration > AUTO_MAX_DURATION_SECONDS)) return false;
   return true;
 }
 
@@ -347,17 +347,12 @@ function shuffleInPlace<T>(items: T[]): T[] {
 async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack | null> {
   try {
     await refreshDailyAutoPlayedKeys();
-    const baseOffsets = [0, 20, 40, 60, 80, 120, 160, 200, 260, 320];
-    const randomOffsets = shuffleInPlace([...baseOffsets]).slice(0, 2);
-    const offsets = [0, ...randomOffsets];
+    const offsets = [0, 20, 40, 60, 80, 120, 160, 200, 260, 320];
     const mergedHits: Array<{ title: string; artist: string; thumbnail: string | null }> = [];
     const seen = new Set<string>();
 
-    const pages = await Promise.allSettled(
-      offsets.map((offset) => getTopTracksByGenre(genreId, 16, offset)),
-    );
-    for (const page of pages) {
-      const hits = page.status === 'fulfilled' ? page.value : [];
+    for (const offset of offsets) {
+      const hits = getCachedGenreHits(genreId, 20, offset, true);
       for (const hit of hits) {
         const title = hit.title?.trim() || '';
         const artist = hit.artist?.trim() || '';
@@ -370,6 +365,9 @@ async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack |
       }
     }
 
+    if (mergedHits.length < 10) {
+      console.warn(`[auto-playlist] Low buffer for genre "${genreId}": only ${mergedHits.length} strict hits available. Tune curation rules.`);
+    }
     if (mergedHits.length === 0) return null;
     const freshCandidates = mergedHits.filter((hit) =>
       !isRecentAutoTrack(hit.artist, hit.title)

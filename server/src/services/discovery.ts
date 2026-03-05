@@ -12,6 +12,7 @@ export interface GenreHitItem {
   artist: string;
   thumbnail: string;
   sourceHint: string;
+  duration?: number | null;
 }
 
 const LASTFM_API_KEY = process.env.LASTFM_API_KEY?.trim() ?? '';
@@ -155,6 +156,24 @@ interface GenreHints {
 
 function normalizeGenreName(name: string): string {
   return name.trim().toLowerCase();
+}
+
+/** Removes noisy suffixes/tags from titles used in deduplication keys. */
+const TITLE_NOISE_RE = /\s*[\(\[](official\s*(music\s*)?video|official\s*audio|hq|lyrics?|audio|full\s*stream|visuali[sz]er|clip\s*officiel)[\)\]]/gi;
+/** Removes year-only tags like "(2024)" or "[2023]" from dedupe keys. */
+const YEAR_TAG_RE = /\s*[\(\[]20[0-9]{2}[\)\]]/g;
+
+export function normalizeTrackIdentity(artist: string, title: string): string {
+  const cleanArtist = artist.trim();
+  const cleanTitle = title
+    .replace(TITLE_NOISE_RE, '')
+    .replace(YEAR_TAG_RE, '')
+    .trim();
+  return `${cleanArtist}-${cleanTitle}`
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function dedupeNormalized(items: string[]): string[] {
@@ -445,54 +464,27 @@ function filterHitsByGenre(items: GenreHitItem[], hints: GenreHints, limit: numb
       score: scoreGenreRelevance(item, hints),
       evidence: hasRequiredEvidence(item, hints),
     }))
+    .filter((row) => {
+      const duration = row.item.duration;
+      if (duration == null) return true;
+      return duration >= 120 && duration <= 600;
+    })
     .sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
       return Math.random() - 0.5;
     });
 
-  const strict = scored
+  return scored
     .filter((row) => row.evidence && row.score >= hints.minScore)
-    .map((row) => row.item);
-  if (strict.length >= Math.min(limit, 5)) {
-    return strict.slice(0, limit);
-  }
-
-  // Safety fallback: keep only positive rows with at least one required signal.
-  const positive = scored
-    .filter((row) => row.evidence && row.score > 0)
-    .map((row) => row.item);
-  return positive.slice(0, limit);
-}
-
-function filterBlockedTracksOnly(items: GenreHitItem[], hints: GenreHints, limit: number): GenreHitItem[] {
-  const blocked = new Set((hints.blockedTracks ?? []).map((value) => value.toLowerCase()));
-  const blockedArtists = (hints.blockedArtists ?? []).map((value) => value.toLowerCase());
-  const filtered = dedupeHits(items).filter((item) => {
-    if (isLikelyGenreNameOnlyHit(item, hints)) return false;
-    if (isGenreKeywordNoiseHit(item, hints)) return false;
-    const artist = item.artist.toLowerCase();
-    if (blockedArtists.some((blockedArtist) => blockedArtist && artist.includes(blockedArtist))) {
-      return false;
-    }
-    if (blocked.size === 0) return true;
-    const title = item.title.toLowerCase();
-    const artistTitle = `${item.artist} - ${item.title}`.toLowerCase();
-    for (const blockedTrack of blocked) {
-      if (!blockedTrack) continue;
-      if (title.includes(blockedTrack) || artistTitle.includes(blockedTrack)) {
-        return false;
-      }
-    }
-    return true;
-  });
-  return shuffleCopy(filtered).slice(0, limit);
+    .map((row) => row.item)
+    .slice(0, limit);
 }
 
 function dedupeHits(items: GenreHitItem[]): GenreHitItem[] {
   return Array.from(
     new Map(
       items.map((item) => [
-        `${item.artist}-${item.title}`.toLowerCase().replace(/\s+/g, ' ').trim(),
+        normalizeTrackIdentity(item.artist, item.title),
         item,
       ]),
     ).values(),
@@ -558,9 +550,16 @@ function isGenreKeywordNoiseHit(item: GenreHitItem, hints: GenreHints): boolean 
   ]
     .map(normalizeLooseText)
     .filter((token) => token.length >= 3);
+  if (genreTokens.length === 0) return false;
 
-  // If a result is only matching on generic genre words in title/artist, treat as noise.
-  return genreTokens.some((token) => title.includes(token) || artist.includes(token));
+  const wordsAreGenreOnly = (value: string): boolean => {
+    const words = value.split(' ').filter(Boolean);
+    if (words.length === 0) return false;
+    return words.every((word) => genreTokens.some((token) => token.includes(word) || word.includes(token)));
+  };
+
+  // Conservative noise check: only reject when both fields collapse to genre-only words.
+  return wordsAreGenreOnly(title) && wordsAreGenreOnly(artist);
 }
 
 function makeUniqueGenreMap(): Map<string, GenreItem> {
@@ -641,6 +640,8 @@ function mapTrackToHit(item: Record<string, unknown>): GenreHitItem | null {
 
   const cover = String((item.album as { cover_medium?: string } | undefined)?.cover_medium ?? '').trim();
   const id = String(item.id ?? `${artist}-${title}`);
+  const rawDuration = Number(item.duration ?? NaN);
+  const duration = Number.isFinite(rawDuration) && rawDuration > 0 ? Math.round(rawDuration) : null;
 
   return {
     id,
@@ -648,6 +649,7 @@ function mapTrackToHit(item: Record<string, unknown>): GenreHitItem | null {
     artist,
     thumbnail: cover,
     sourceHint: link,
+    duration,
   };
 }
 
@@ -734,7 +736,7 @@ async function fetchSpotifyTracksByGenre(
 
   const mapItems = (items: Array<Record<string, unknown>>): GenreHitItem[] =>
     items
-      .map((item) => {
+      .map((item): GenreHitItem | null => {
         const title = String(item.name ?? '').trim();
         const artists = Array.isArray(item.artists)
           ? item.artists
@@ -745,13 +747,18 @@ async function fetchSpotifyTracksByGenre(
         if (!title || !artists) return null;
         const album = (item.album as { images?: Array<{ url?: string }> } | undefined);
         const image = album?.images?.[1]?.url ?? album?.images?.[0]?.url ?? '';
+        const rawDuration = Number(item.duration_ms ?? NaN);
+        const duration = Number.isFinite(rawDuration) && rawDuration > 0
+          ? Math.round(rawDuration / 1000)
+          : null;
         return {
           id: String(item.id ?? `${artists}-${title}`).toLowerCase(),
           title,
           artist: artists,
           thumbnail: image,
           sourceHint: String(((item.external_urls as { spotify?: string } | undefined)?.spotify) ?? ''),
-        } satisfies GenreHitItem;
+          duration,
+        };
       })
       .filter((hit): hit is GenreHitItem => hit !== null);
 
@@ -869,7 +876,7 @@ async function fetchDeezerTracksByGenre(
 }
 
 function normalizeHitKey(artist: string, title: string): string {
-  return `${artist}-${title}`.toLowerCase().replace(/\s+/g, ' ').trim();
+  return normalizeTrackIdentity(artist, title);
 }
 
 function shuffleCopy<T>(items: T[]): T[] {
@@ -917,12 +924,17 @@ function ytdlpSearchPlatform(
             ? String((item.thumbnails[item.thumbnails.length - 1] as { url?: string })?.url ?? '').trim()
             : '';
           const sourceHint = String(item.url ?? item.webpage_url ?? '').trim();
+          const rawDuration = Number(item.duration ?? NaN);
+          const duration = Number.isFinite(rawDuration) && rawDuration > 0
+            ? Math.round(rawDuration)
+            : null;
           hits.push({
             id: `${platform}-${String(item.id ?? `${artist}-${title}`)}`,
             title,
             artist,
             thumbnail,
             sourceHint,
+            duration,
           });
         } catch {
           // ignore malformed line
@@ -995,37 +1007,6 @@ async function fetchPriorityArtistPlatformHits(
   return filterHitsByGenre(shuffleCopy(results), hints, limit);
 }
 
-async function fetchEmergencyGenreFallbackHits(
-  genre: string,
-  hints: GenreHints,
-  limit: number,
-  offset: number,
-): Promise<GenreHitItem[]> {
-  const query = genre.trim();
-  if (!query) return [];
-
-  const deezerPromise = withTimeout(
-    searchTopTracks(query, Math.min(30, Math.max(limit * 2, 12)), offset),
-    2800,
-    [] as GenreHitItem[],
-  );
-  const ytPromise = withTimeout(
-    ytdlpSearchPlatform('yt', `${query} music`, Math.min(10, Math.max(limit, 6))),
-    2200,
-    [] as GenreHitItem[],
-  );
-  const scPromise = withTimeout(
-    ytdlpSearchPlatform('sc', `${query} music`, Math.min(10, Math.max(limit, 6))),
-    2200,
-    [] as GenreHitItem[],
-  );
-
-  const [deezer, yt, sc] = await Promise.all([deezerPromise, ytPromise, scPromise]);
-  const combined = [...deezer, ...yt, ...sc];
-  if (combined.length === 0) return [];
-  return filterBlockedTracksOnly(combined, hints, limit);
-}
-
 export async function getTopTracksByGenre(genre: string, limit = 20, offset = 0): Promise<GenreHitItem[]> {
   const normalizedGenre = genre.trim();
   const safeLimit = Math.max(1, Math.min(limit, 50));
@@ -1060,21 +1041,5 @@ export async function getTopTracksByGenre(genre: string, limit = 20, offset = 0)
   if (lastFmRes.status === 'fulfilled') collected.push(...lastFmRes.value);
   if (priorityRes.status === 'fulfilled') collected.push(...priorityRes.value);
 
-  const strict = filterHitsByGenre(collected, hints, safeLimit);
-  if (strict.length >= Math.min(safeLimit, 6)) return strict.slice(0, safeLimit);
-
-  // Always provide data when possible, even if strict genre evidence is sparse.
-  const emergency = await fetchEmergencyGenreFallbackHits(normalizedGenre, hints, safeLimit, safeOffset);
-  const broadFallback = filterBlockedTracksOnly(collected, hints, safeLimit);
-
-  const merged = dedupeHits([
-    ...strict,
-    ...emergency,
-    ...broadFallback,
-  ]).slice(0, safeLimit);
-
-  if (merged.length > 0) return merged;
-
-  // Last resort.
-  return broadFallback;
+  return filterHitsByGenre(collected, hints, safeLimit);
 }

@@ -17,9 +17,23 @@ import { startBridge } from './bridge.js';
 import { startNowPlayingWatcher } from './nowPlaying.js';
 import { StreamHub } from './streamHub.js';
 import type { Mode, ServerState, DurationVote, QueuePushVote, FallbackGenre } from './types.js';
-import { searchGenres, getTopTracksByGenre, type GenreItem, type GenreHitItem } from './services/discovery.js';
+import {
+  searchGenres,
+  getTopTracksByGenre,
+  normalizeTrackIdentity,
+  type GenreItem,
+  type GenreHitItem,
+} from './services/discovery.js';
 import { reloadFallbackGenres, listFallbackGenres, getDefaultFallbackGenreId, isKnownFallbackGenre, toAutoFallbackGenreId, parseAutoFallbackGenreId, LIKED_AUTO_GENRE_ID } from './fallbackGenres.js';
 import { addPriorityArtistForGenre, addBlockedArtistForGenre, addPriorityTrackForGenre, addBlockedTrackForGenre, addLikedPlaylistTrack } from './services/genreCuratedConfig.js';
+import {
+  hydrateGenreHitsCacheFromDisk,
+  clearGenreHitsCache,
+  getGenreHitsCacheEntry,
+  hasGenreHitsCacheEntry,
+  makeGenreHitsCacheKey,
+  setGenreHitsCacheEntry,
+} from './genreHitsStore.js';
 
 // ── Environment ──────────────────────────────────────────────────────────────
 
@@ -293,12 +307,13 @@ const searchCache = new Map<string, { results: SearchResult[]; ts: number }>();
 const CACHE_TTL = 60_000;
 const DISCOVERY_CACHE_TTL = 1_800_000;
 const genreCache = new Map<string, { results: GenreItem[]; ts: number }>();
-const genreHitsCache = new Map<string, { results: GenreHitItem[]; ts: number }>();
-const genreHitsRefreshInFlight = new Set<string>();
+const activeRefreshes = new Set<string>();
 const LOCAL_INDEX_TTL = 120_000;
 const LOCAL_AUDIO_EXTS = new Set([
   '.mp3', '.wav', '.flac', '.m4a', '.aac', '.ogg', '.opus', '.aiff', '.alac', '.wma',
 ]);
+/** Local files containing these words are blocked from genre hits. */
+const LOCAL_SET_BLOCK_RE = /\b(podcast|set|mix|session|live|megamix|liveset)\b/i;
 let localTrackIndexCache: { rootsKey: string; tracks: LocalTrack[]; ts: number } | null = null;
 
 function normalizeLoose(value: string): string {
@@ -462,15 +477,22 @@ function genreTokens(genre: string): string[] {
   return Array.from(new Set(tokens));
 }
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function searchLocalGenreHits(genre: string, limit: number, offset: number): GenreHitItem[] {
   const tokens = genreTokens(genre);
   if (tokens.length === 0) return [];
+  /** Match whole words only, so "techno" won't match "technoboy". */
+  const tokenPatterns = tokens.map((token) => new RegExp(`\\b${escapeRegex(token)}\\b`, 'i'));
   const scored = getLocalTrackIndex()
+    .filter((item) => !LOCAL_SET_BLOCK_RE.test(`${item.artist} ${item.title}`))
     .map((item) => {
-      const hay = normalizeLoose(`${item.artist} ${item.title}`);
+      const hay = `${item.artist} ${item.title}`;
       let score = 0;
-      for (const token of tokens) {
-        if (hay.includes(token)) score += 1;
+      for (const pattern of tokenPatterns) {
+        if (pattern.test(hay)) score += 1;
       }
       return { item, score };
     })
@@ -486,24 +508,24 @@ function searchLocalGenreHits(genre: string, limit: number, offset: number): Gen
 }
 
 function refreshGenreHitsCache(cacheKey: string, genre: string, limit: number, offset: number, includeLocal: boolean): void {
-  if (genreHitsRefreshInFlight.has(cacheKey)) return;
-  genreHitsRefreshInFlight.add(cacheKey);
+  if (activeRefreshes.has(cacheKey)) return;
+  activeRefreshes.add(cacheKey);
   void getTopTracksByGenre(genre, limit, offset)
     .then((results) => {
       const local = includeLocal ? searchLocalGenreHits(genre, Math.max(limit * 2, 20), offset) : [];
       const merged = Array.from(
         new Map(
           [...local, ...results]
-            .map((item) => [`${item.artist}-${item.title}`.toLowerCase().replace(/\s+/g, ' ').trim(), item]),
+            .map((item) => [normalizeTrackIdentity(item.artist, item.title), item]),
         ).values(),
       ).slice(0, limit);
-      genreHitsCache.set(cacheKey, { results: merged, ts: Date.now() });
+      setGenreHitsCacheEntry(cacheKey, merged);
     })
     .catch((err) => {
       console.warn('[rest] /api/genre-hits refresh failed:', (err as Error).message);
     })
     .finally(() => {
-      genreHitsRefreshInFlight.delete(cacheKey);
+      activeRefreshes.delete(cacheKey);
     });
 }
 
@@ -855,62 +877,49 @@ app.get('/api/genre-hits', async (req, res) => {
   const includeLocal = String(req.query.includeLocal ?? '1') !== '0';
   const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(parsedLimit, 50)) : 20;
   const offset = Number.isFinite(parsedOffset) ? Math.max(0, parsedOffset) : 0;
-  const cacheKey = `${genre.toLowerCase()}::${limit}::${offset}::local=${includeLocal ? '1' : '0'}`;
+  const cacheKey = makeGenreHitsCacheKey(genre, limit, offset, includeLocal);
   const nextOffset = offset + limit;
-  const nextCacheKey = `${genre.toLowerCase()}::${limit}::${nextOffset}::local=${includeLocal ? '1' : '0'}`;
-  const cached = genreHitsCache.get(cacheKey);
+  const nextCacheKey = makeGenreHitsCacheKey(genre, limit, nextOffset, includeLocal);
+  const cached = getGenreHitsCacheEntry(cacheKey);
+  const isStale = !cached || Date.now() - cached.ts >= DISCOVERY_CACHE_TTL;
+
+  if (isStale) {
+    refreshGenreHitsCache(cacheKey, genre, limit, offset, includeLocal);
+  }
+
+  if (cached && cached.results.length >= Math.max(8, Math.ceil(limit * 0.6))) {
+    const nextCached = getGenreHitsCacheEntry(nextCacheKey);
+    if (!nextCached || Date.now() - nextCached.ts >= DISCOVERY_CACHE_TTL) {
+      refreshGenreHitsCache(nextCacheKey, genre, limit, nextOffset, includeLocal);
+    }
+  } else if (!hasGenreHitsCacheEntry(nextCacheKey)) {
+    refreshGenreHitsCache(nextCacheKey, genre, limit, nextOffset, includeLocal);
+  }
+
   if (cached) {
-    const fresh = Date.now() - cached.ts < DISCOVERY_CACHE_TTL;
-    if (!fresh) {
-      refreshGenreHitsCache(cacheKey, genre, limit, offset, includeLocal);
-    }
-    if (cached.results.length >= Math.max(8, Math.ceil(limit * 0.6))) {
-      const nextCached = genreHitsCache.get(nextCacheKey);
-      if (!nextCached || Date.now() - nextCached.ts >= DISCOVERY_CACHE_TTL) {
-        refreshGenreHitsCache(nextCacheKey, genre, limit, nextOffset, includeLocal);
-      }
-    }
     res.json(cached.results);
     return;
   }
 
+  // Cold cache bootstrap: return an initial page immediately when possible.
   try {
-    // Keep genre hit loading snappy: try one broad page first, then one backfill pass if needed.
-    const localCollected = includeLocal ? searchLocalGenreHits(genre, Math.max(limit * 2, 20), offset) : [];
-    const collected: GenreHitItem[] = [...localCollected];
-    const seen = new Set<string>();
-    for (const item of collected) {
-      const key = `${item.artist}-${item.title}`.toLowerCase().replace(/\s+/g, ' ').trim();
-      if (!key) continue;
-      seen.add(key);
+    const local = includeLocal ? searchLocalGenreHits(genre, Math.max(limit * 2, 20), offset) : [];
+    const remote = await Promise.race([
+      getTopTracksByGenre(genre, limit, offset),
+      new Promise<GenreHitItem[]>((resolve) => setTimeout(() => resolve([]), 2500)),
+    ]);
+    const merged = Array.from(
+      new Map(
+        [...local, ...remote]
+          .map((item) => [normalizeTrackIdentity(item.artist, item.title), item]),
+      ).values(),
+    ).slice(0, limit);
+    if (merged.length > 0) {
+      setGenreHitsCacheEntry(cacheKey, merged);
     }
-    let probeOffset = offset;
-    const probeLimit = Math.min(50, Math.max(limit * 2, 20));
-
-    for (let pass = 0; pass < 2 && collected.length < limit; pass += 1) {
-      const page = await getTopTracksByGenre(genre, probeLimit, probeOffset);
-      if (!page.length) break;
-      for (const item of page) {
-        const key = `${item.artist}-${item.title}`.toLowerCase().replace(/\s+/g, ' ').trim();
-        if (!key || seen.has(key)) continue;
-        seen.add(key);
-        collected.push(item);
-        if (collected.length >= limit) break;
-      }
-      // Only backfill if the page was clearly too sparse.
-      if (pass === 0 && collected.length >= Math.max(8, Math.ceil(limit * 0.6))) break;
-      probeOffset += probeLimit;
-    }
-
-    const results = collected.slice(0, limit);
-    genreHitsCache.set(cacheKey, { results, ts: Date.now() });
-    if (results.length >= Math.max(8, Math.ceil(limit * 0.6))) {
-      refreshGenreHitsCache(nextCacheKey, genre, limit, nextOffset, includeLocal);
-    }
-    res.json(results);
-  } catch (err) {
-    console.error('[rest] /api/genre-hits error:', err);
-    res.status(500).json({ error: 'Genre hitlist lookup failed' });
+    res.json(merged);
+  } catch {
+    res.json([]);
   }
 });
 
@@ -930,7 +939,7 @@ app.post('/api/genre-curation/priority-artist', async (req, res) => {
 
   try {
     const rule = addPriorityArtistForGenre(genreName, artistName, genreLabel || undefined);
-    genreHitsCache.clear();
+    clearGenreHitsCache();
     genreCache.clear();
     res.json({
       ok: true,
@@ -960,7 +969,7 @@ app.post('/api/genre-curation/block-artist', async (req, res) => {
 
   try {
     const rule = addBlockedArtistForGenre(genreName, artistName, genreLabel || undefined);
-    genreHitsCache.clear();
+    clearGenreHitsCache();
     genreCache.clear();
     res.json({
       ok: true,
@@ -999,7 +1008,7 @@ app.post('/api/genre-curation/like-current', async (req, res) => {
     const artistRule = addPriorityArtistForGenre(autoGenre, artist, autoGenre);
     addPriorityTrackForGenre(autoGenre, title, autoGenre);
     addLikedPlaylistTrack(`${artist} - ${title}`);
-    genreHitsCache.clear();
+    clearGenreHitsCache();
     genreCache.clear();
     return res.json({
       ok: true,
@@ -1037,7 +1046,7 @@ app.post('/api/genre-curation/dislike-current', async (req, res) => {
 
   try {
     const rule = addBlockedTrackForGenre(autoGenre, `${artist} - ${title}`, autoGenre);
-    genreHitsCache.clear();
+    clearGenreHitsCache();
     genreCache.clear();
     return res.json({
       ok: true,
@@ -1912,6 +1921,7 @@ async function main(): Promise<void> {
 
   // Initialize cache
   initCache(CACHE_DIR);
+  hydrateGenreHitsCacheFromDisk();
 
   // Seed default settings
   await seedSettings(sb);
