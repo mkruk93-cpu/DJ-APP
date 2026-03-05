@@ -201,6 +201,13 @@ export function isKnownDiscoveryGenre(genre: string): boolean {
 
 function getGenreHints(genre: string): GenreHints {
   const normalized = normalizeGenreName(genre);
+  const baseGenreTokens = normalized.split(' ').filter((token) => token.length >= 3);
+  const defaultRelevanceTokens = Array.from(new Set([normalized, ...baseGenreTokens]));
+  if (normalized.includes('drum and bass')) defaultRelevanceTokens.push('dnb');
+  if (normalized.includes('dnb')) defaultRelevanceTokens.push('drum and bass');
+  if (normalized.includes('hardstyle')) defaultRelevanceTokens.push('rawstyle');
+  if (normalized.includes('psy trance')) defaultRelevanceTokens.push('psytrance');
+  if (normalized.includes('psytrance')) defaultRelevanceTokens.push('psy trance');
   const hints: Record<string, GenreHints> = {
     hardcore: {
       spotifyQueries: ['genre:"hardcore" gabber hardcore dance', 'gabber hardcore uptempo'],
@@ -314,6 +321,22 @@ function getGenreHints(genre: string): GenreHints {
       avoidTokens: ['trance', 'hardstyle'],
       minScore: 2,
     },
+    'liquid drum and bass': {
+      spotifyQueries: ['liquid drum and bass melodic dnb', 'liquid dnb drum and bass'],
+      lastFmTags: ['liquid drum and bass', 'drum and bass'],
+      deezerQueries: ['liquid drum and bass', 'liquid dnb'],
+      relevanceTokens: ['liquid', 'drum and bass', 'dnb', 'liquid dnb', 'neurofunk'],
+      avoidTokens: ['hardstyle', 'trance', 'house'],
+      minScore: 2,
+    },
+    liquid_drum_and_bass: {
+      spotifyQueries: ['liquid drum and bass melodic dnb', 'liquid dnb drum and bass'],
+      lastFmTags: ['liquid drum and bass', 'drum and bass'],
+      deezerQueries: ['liquid drum and bass', 'liquid dnb'],
+      relevanceTokens: ['liquid', 'drum and bass', 'dnb', 'liquid dnb', 'neurofunk'],
+      avoidTokens: ['hardstyle', 'trance', 'house'],
+      minScore: 2,
+    },
     rock: {
       spotifyQueries: ['rock anthems modern rock', 'classic rock alternative rock'],
       lastFmTags: ['rock'],
@@ -360,7 +383,7 @@ function getGenreHints(genre: string): GenreHints {
     spotifyQueries: [`genre:"${genre}" ${genre}`, genre],
     lastFmTags: [genre],
     deezerQueries: [genre],
-    relevanceTokens: [normalized],
+    relevanceTokens: dedupeNormalized(defaultRelevanceTokens),
     avoidTokens: [],
     minScore: 1,
   };

@@ -314,6 +314,10 @@ const LOCAL_AUDIO_EXTS = new Set([
 ]);
 /** Local files containing these words are blocked from genre hits. */
 const LOCAL_SET_BLOCK_RE = /\b(podcast|set|mix|session|live|megamix|liveset)\b/i;
+const LOCAL_GENRE_BLOCK_PHRASES: Record<string, string[]> = {
+  // Avoid hardstyle artist "Digital Punk" when user searches for punk genre.
+  punk: ['digital punk'],
+};
 let localTrackIndexCache: { rootsKey: string; tracks: LocalTrack[]; ts: number } | null = null;
 
 function normalizeLoose(value: string): string {
@@ -484,10 +488,18 @@ function escapeRegex(value: string): string {
 function searchLocalGenreHits(genre: string, limit: number, offset: number): GenreHitItem[] {
   const tokens = genreTokens(genre);
   if (tokens.length === 0) return [];
+  const genreKey = normalizeLoose(genre.replace(/_/g, ' '));
+  const blockedPhrases = LOCAL_GENRE_BLOCK_PHRASES[genreKey] ?? [];
   /** Match whole words only, so "techno" won't match "technoboy". */
   const tokenPatterns = tokens.map((token) => new RegExp(`\\b${escapeRegex(token)}\\b`, 'i'));
   const scored = getLocalTrackIndex()
-    .filter((item) => !LOCAL_SET_BLOCK_RE.test(`${item.artist} ${item.title}`))
+    .filter((item) => {
+      const hay = `${item.artist} ${item.title}`;
+      if (LOCAL_SET_BLOCK_RE.test(hay)) return false;
+      const normalized = normalizeLoose(hay);
+      if (blockedPhrases.some((phrase) => normalized.includes(phrase))) return false;
+      return true;
+    })
     .map((item) => {
       const hay = `${item.artist} ${item.title}`;
       let score = 0;
@@ -510,12 +522,16 @@ function searchLocalGenreHits(genre: string, limit: number, offset: number): Gen
 function refreshGenreHitsCache(cacheKey: string, genre: string, limit: number, offset: number, includeLocal: boolean): void {
   if (activeRefreshes.has(cacheKey)) return;
   activeRefreshes.add(cacheKey);
-  void getTopTracksByGenre(genre, limit, offset)
-    .then((results) => {
+  void Promise.allSettled([
+    getTopTracksByGenre(genre, limit, offset),
+    getTopTracksByGenre(genre, limit, offset + limit),
+  ])
+    .then((pages) => {
+      const remote = pages.flatMap((page) => (page.status === 'fulfilled' ? page.value : []));
       const local = includeLocal ? searchLocalGenreHits(genre, Math.max(limit * 2, 20), offset) : [];
       const merged = Array.from(
         new Map(
-          [...local, ...results]
+          [...local, ...remote]
             .map((item) => [normalizeTrackIdentity(item.artist, item.title), item]),
         ).values(),
       ).slice(0, limit);
@@ -905,8 +921,11 @@ app.get('/api/genre-hits', async (req, res) => {
   try {
     const local = includeLocal ? searchLocalGenreHits(genre, Math.max(limit * 2, 20), offset) : [];
     const remote = await Promise.race([
-      getTopTracksByGenre(genre, limit, offset),
-      new Promise<GenreHitItem[]>((resolve) => setTimeout(() => resolve([]), 2500)),
+      Promise.allSettled([
+        getTopTracksByGenre(genre, limit, offset),
+        getTopTracksByGenre(genre, limit, offset + limit),
+      ]).then((pages) => pages.flatMap((page) => (page.status === 'fulfilled' ? page.value : [] as GenreHitItem[]))),
+      new Promise<GenreHitItem[]>((resolve) => setTimeout(() => resolve([]), 3000)),
     ]);
     const merged = Array.from(
       new Map(

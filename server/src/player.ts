@@ -11,7 +11,8 @@ import type { StreamHub } from './streamHub.js';
 import { pickRandomFallbackForGenre, parseAutoFallbackGenreId, LIKED_AUTO_GENRE_ID } from './fallbackGenres.js';
 import { fetchArtworkCandidate } from './artwork.js';
 import { listLikedPlaylistTracks } from './services/genreCuratedConfig.js';
-import { getCachedGenreHits } from './genreHitsStore.js';
+import { getTopTracksByGenre, type GenreHitItem } from './services/discovery.js';
+import { getCachedGenreHits, makeGenreHitsCacheKey, setGenreHitsCacheEntry } from './genreHitsStore.js';
 
 export const playerEvents = new EventEmitter();
 
@@ -240,6 +241,7 @@ const DAILY_AUTO_HISTORY_REFRESH_MS = 60_000;
 let dailyAutoPlayedKeys = new Set<string>();
 let dailyAutoPlayedDayKey = '';
 let dailyAutoPlayedLoadedAt = 0;
+let lastLowBufferWarningAt = 0;
 
 function isSetLikeAutoTitle(title: string): boolean {
   return /\b(set|mix|liveset|live set|podcast|radio show|megamix|full mix|dj set|hour mix|hours mix)\b/i.test(title);
@@ -365,8 +367,38 @@ async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack |
       }
     }
 
+    if (mergedHits.length === 0) {
+      // Warm strict cache once when user switches to an auto genre.
+      const warmOffsets = [0, 20, 40];
+      const warmPages = await Promise.allSettled(
+        warmOffsets.map((offset) => getTopTracksByGenre(genreId, 20, offset)),
+      );
+      const warmed = warmPages.flatMap((page) => (page.status === 'fulfilled' ? page.value : [] as GenreHitItem[]));
+      if (warmed.length > 0) {
+        for (const offset of warmOffsets) {
+          const page = warmPages.find((_, index) => warmOffsets[index] === offset);
+          if (!page || page.status !== 'fulfilled') continue;
+          setGenreHitsCacheEntry(makeGenreHitsCacheKey(genreId, 20, offset, true), page.value);
+        }
+        for (const hit of warmed) {
+          const title = hit.title?.trim() || '';
+          const artist = hit.artist?.trim() || '';
+          const thumbnail = hit.thumbnail?.trim() || null;
+          if (!title || !artist) continue;
+          const key = normalizeAutoKey(`${artist} ${title}`);
+          if (!key || seen.has(key)) continue;
+          seen.add(key);
+          mergedHits.push({ title, artist, thumbnail });
+        }
+      }
+    }
+
     if (mergedHits.length < 10) {
-      console.warn(`[auto-playlist] Low buffer for genre "${genreId}": only ${mergedHits.length} strict hits available. Tune curation rules.`);
+      const now = Date.now();
+      if (now - lastLowBufferWarningAt > 30_000) {
+        lastLowBufferWarningAt = now;
+        console.warn(`[auto-playlist] Low buffer for genre "${genreId}": only ${mergedHits.length} strict hits available. Tune curation rules.`);
+      }
     }
     if (mergedHits.length === 0) return null;
     const freshCandidates = mergedHits.filter((hit) =>
@@ -2182,7 +2214,9 @@ async function prepareNextTrack(
         }
       }
 
-      const fallbackFile = pickRandomFallbackForGenre(activeFallbackGenre, lastFallbackFile);
+      const fallbackFile = activeAutoGenre
+        ? null
+        : pickRandomFallbackForGenre(activeFallbackGenre, lastFallbackFile);
       if (fallbackFile) {
         const title = titleFromFilename(fallbackFile);
         const duration = await getAudioDuration(fallbackFile);
@@ -2212,6 +2246,10 @@ async function prepareNextTrack(
           console.log(`[prepare] Next ready (auto genre): ${autoReady.title ?? activeAutoGenre}`);
           broadcastUpcomingTrack();
           void ensureAutoReadyBuffer(sb, cacheDir);
+        } else {
+          // Keep auto mode pure: do not silently fall back to random local genres.
+          pendingQueueUpcoming = null;
+          console.warn(`[prepare] Auto genre "${activeAutoGenre}" has no strict candidates yet`);
         }
       }
     }
