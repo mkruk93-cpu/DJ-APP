@@ -353,7 +353,17 @@ export default function QueueAdd() {
         });
         setSearchQuery(query);
         setSearchOffsetSafe(offset + normalized.length);
-        setSearchHasMore(normalized.length > 0);
+        
+        // Improved logic for hasMore when local files are included
+        if (includeLocal && offset < 30) {
+          // When local files are enabled, always assume more results until offset 30
+          // This ensures we can reach remote results after local bucket (20) + buffer
+          setSearchHasMore(true);
+        } else {
+          // Standard logic: has more if we got results
+          setSearchHasMore(normalized.length > 0);
+        }
+        
         setShowResults(append ? true : visible.length > 0);
       })
       .catch(() => {
@@ -362,6 +372,13 @@ export default function QueueAdd() {
           setResults([]);
           setSearchOffsetSafe(0);
           setSearchHasMore(false);
+        } else {
+          // On error during append, still allow more attempts if we're in local+remote mode
+          if (includeLocal && searchOffsetRef.current < 30) {
+            setSearchHasMore(true);
+          } else {
+            setSearchHasMore(false);
+          }
         }
       })
       .finally(() => {

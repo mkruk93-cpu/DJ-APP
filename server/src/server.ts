@@ -13,6 +13,7 @@ import { seedSettings, getActiveMode, getActiveFallbackGenre, getModeSettings, g
 import { getQueue, addToQueue, removeFromQueue, reorderQueue, fetchVideoInfo, extractYoutubeId, extractSourceId, isSoundcloudUrl, getThumbnailUrl, encodeLocalFileUrl } from './queue.js';
 import { canPerformAction } from './permissions.js';
 import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, playerEvents, setKeepFiles, invalidatePreload, invalidateNextReady, removeQueueItemFromPreload, setActiveFallbackGenre } from './player.js';
+import { youtubeSearch, soundcloudSearch } from './services/search.js';
 import { startBridge } from './bridge.js';
 import { startNowPlayingWatcher } from './nowPlaying.js';
 import { StreamHub } from './streamHub.js';
@@ -943,7 +944,9 @@ app.get('/search', async (req, res) => {
 
       const remoteBudget = Math.max(0, limit - localSlice.length);
       const remoteOffset = Math.max(0, offset - LOCAL_BUCKET_MAX);
-      const remoteRequested = Math.min(120, remoteOffset + Math.max(remoteBudget, limit));
+      // Ensure we always try to get some remote results when local budget is exhausted
+      const minRemoteRequest = localSlice.length < limit ? Math.max(remoteBudget, 5) : remoteBudget;
+      const remoteRequested = Math.min(120, remoteOffset + minRemoteRequest);
       const remotePool = source === 'soundcloud'
         ? await soundcloudSearch(q, remoteRequested)
         : await youtubeSearch(q, remoteRequested);
@@ -2370,3 +2373,6 @@ main().catch((err) => {
   console.error('[server] Fatal error:', err);
   process.exit(1);
 });
+
+// Export search functions for use by player.ts
+export { youtubeSearch, soundcloudSearch } from './services/search.js';

@@ -273,71 +273,56 @@ interface AutoSearchCandidate {
 }
 
 async function resolveShortAutoCandidate(query: string): Promise<AutoSearchCandidate | null> {
-  const searchWithPrefix = (prefix: 'ytsearch' | 'scsearch'): Promise<AutoSearchCandidate | null> => new Promise((resolve) => {
-    const proc = spawn('python', [
-      '-m', 'yt_dlp',
-      `${prefix}8:${query}`,
-      '--flat-playlist',
-      '-j',
-      '--no-warnings',
-    ], { timeout: 10_000 });
-
-    let output = '';
-    proc.stdout?.on('data', (chunk: Buffer) => {
-      output += chunk.toString();
-    });
-    proc.stderr?.on('data', () => {});
-
-    proc.on('close', (code) => {
-      if (code !== 0) {
-        resolve(null);
-        return;
-      }
-      const rows = output
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean);
-      for (const row of rows) {
-        try {
-          const item = JSON.parse(row) as Record<string, unknown>;
-          const title = String(item.title ?? '').trim();
-          if (!title || isSetLikeAutoTitle(title)) continue;
-          const rawDuration = Number(item.duration ?? NaN);
-          const duration = Number.isFinite(rawDuration) && rawDuration > 0
-            ? Math.round(rawDuration)
-            : null;
-          if (duration === null) continue;
-          if (duration < 120 || duration > AUTO_MAX_DURATION_SECONDS) continue;
-          const id = String(item.id ?? '').trim();
-          const fallbackUrl = String(item.webpage_url ?? item.url ?? '').trim();
-          const url = prefix === 'ytsearch' && id
-            ? `https://www.youtube.com/watch?v=${id}`
-            : fallbackUrl;
-          if (!url) continue;
-          const thumbnail = Array.isArray(item.thumbnails) && item.thumbnails.length > 0
-            ? String((item.thumbnails[item.thumbnails.length - 1] as { url?: string })?.url ?? '').trim() || null
-            : null;
-          resolve({
-            url,
-            title,
-            duration,
-            thumbnail,
-            source: prefix === 'ytsearch' ? 'youtube' : 'soundcloud',
-          });
-          return;
-        } catch {
-          // ignore malformed line
-        }
-      }
-      resolve(null);
-    });
-
-    proc.on('error', () => resolve(null));
-  });
-
-  const yt = await searchWithPrefix('ytsearch');
-  if (yt) return yt;
-  return searchWithPrefix('scsearch');
+  // Use the same fast API-based search as genre hits instead of yt-dlp processes
+  try {
+    // Import search functions from the search service
+    const { youtubeSearch, soundcloudSearch } = await import('./services/search.js');
+    
+    // Try YouTube first with aggressive timeout
+    const ytResults = await Promise.race([
+      youtubeSearch(query, 5),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 1500))
+    ]).catch(() => []);
+    
+    // Find first suitable YouTube result
+    for (const result of ytResults) {
+      if (!result.title || isSetLikeAutoTitle(result.title)) continue;
+      if (!result.duration || result.duration < 120 || result.duration > AUTO_MAX_DURATION_SECONDS) continue;
+      
+      return {
+        url: result.url,
+        title: result.title,
+        duration: result.duration,
+        thumbnail: result.thumbnail,
+        source: 'youtube' as const,
+      };
+    }
+    
+    // Try SoundCloud as fallback with aggressive timeout
+    const scResults = await Promise.race([
+      soundcloudSearch(query, 5),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 1500))
+    ]).catch(() => []);
+    
+    // Find first suitable SoundCloud result
+    for (const result of scResults) {
+      if (!result.title || isSetLikeAutoTitle(result.title)) continue;
+      if (!result.duration || result.duration < 120 || result.duration > AUTO_MAX_DURATION_SECONDS) continue;
+      
+      return {
+        url: result.url,
+        title: result.title,
+        duration: result.duration,
+        thumbnail: result.thumbnail,
+        source: 'soundcloud' as const,
+      };
+    }
+    
+    return null;
+  } catch (error) {
+    console.warn('[auto-download] Fast search failed, no fallback available:', (error as Error).message);
+    return null;
+  }
 }
 
 const AUTO_RECENT_WINDOW = 60;
