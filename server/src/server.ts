@@ -1046,20 +1046,21 @@ app.get('/api/genre-hits', async (req, res) => {
     
     // Do ultra-fast searches with aggressive timeouts
     const searchPromises = selectedArtists.map(async (artist, index) => {
-      const searchQuery = `${artist} ${genre}`;
-      const searchLimit = Math.ceil(limit / selectedArtists.length) + 2; // Extra buffer for filtering
+      // Search only artist name for better, more relevant matches
+      const searchQuery = artist;
+      const searchLimit = Math.ceil(limit / selectedArtists.length) + 3; // Extra buffer for filtering
       
       try {
         // Alternate between YouTube and SoundCloud for variety
         const useYoutube = (offset + index) % 2 === 0;
         
-        // Race each individual search with 800ms timeout for better results
+        // Race each individual search with longer timeout to prevent crashes
         const results = await Promise.race([
           useYoutube 
             ? youtubeSearch(searchQuery, searchLimit)
             : soundcloudSearch(searchQuery, searchLimit),
           new Promise<never>((_, reject) => 
-            setTimeout(() => reject(new Error('Individual search timeout')), 800)
+            setTimeout(() => reject(new Error('Individual search timeout')), 2000)
           )
         ]);
           
@@ -1127,11 +1128,11 @@ app.get('/api/genre-hits', async (req, res) => {
       }
     });
     
-    // Wait for all searches with 2s total timeout for better results
+    // Wait for all searches with longer total timeout to prevent crashes
     const searchResults = await Promise.race([
       Promise.allSettled(searchPromises),
       new Promise<never>((_, reject) => 
-        setTimeout(() => reject(new Error('Total search timeout')), 2000)
+        setTimeout(() => reject(new Error('Total search timeout')), 4000)
       )
     ]);
     
@@ -1164,7 +1165,7 @@ app.get('/api/genre-hits', async (req, res) => {
       if (additionalArtists.length > 0) {
         try {
           const additionalPromises = additionalArtists.map(async (artist, index) => {
-            const searchQuery = `${artist} ${genre}`;
+            const searchQuery = artist; // Search only artist name
             const useYoutube = (offset + selectedArtists.length + index) % 2 === 0;
             
             try {

@@ -479,15 +479,16 @@ async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack |
       if (!isAutoGenreStillActive(canonicalGenreId)) return [];
       
       try {
-        // Try both YouTube and SoundCloud with short timeouts
+        // Create better search queries - just search for the artist name
+        // The genre filtering will happen through the whitelisted artist pool
         const [ytResults, scResults] = await Promise.allSettled([
           Promise.race([
-            youtubeSearch(`${artist} ${canonicalGenreId.replace(/_/g, ' ')}`, 3),
-            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 1000))
+            youtubeSearch(artist, 5), // Search only artist name for better matches
+            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 1500))
           ]),
           Promise.race([
-            soundcloudSearch(`${artist} ${canonicalGenreId.replace(/_/g, ' ')}`, 3),
-            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 1000))
+            soundcloudSearch(artist, 5), // Search only artist name for better matches  
+            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 1500))
           ])
         ]);
         

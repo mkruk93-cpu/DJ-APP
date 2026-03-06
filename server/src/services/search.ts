@@ -21,15 +21,32 @@ async function getSoundCloudClientId(): Promise<string | null> {
 
   try {
     const res = await fetch('https://soundcloud.com/', {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      headers: { 
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+      },
     });
     const html = await res.text();
-    const match = html.match(/client_id["\s]*[:=]["\s]*([a-zA-Z0-9]{32})/);
-    if (match?.[1]) {
-      scClientId = match[1];
-      console.log(`[soundcloud] Got client_id: ${scClientId.slice(0, 8)}...`);
-      return scClientId;
+    
+    // Try multiple patterns for client_id extraction
+    const patterns = [
+      /client_id["\s]*[:=]["\s]*([a-zA-Z0-9]{32})/,
+      /"client_id":"([a-zA-Z0-9]{32})"/,
+      /client_id=([a-zA-Z0-9]{32})/,
+      /clientId["\s]*[:=]["\s]*"([a-zA-Z0-9]{32})"/,
+    ];
+    
+    for (const pattern of patterns) {
+      const match = html.match(pattern);
+      if (match?.[1]) {
+        scClientId = match[1];
+        console.log(`[soundcloud] Got client_id: ${scClientId.slice(0, 8)}... (pattern: ${pattern.source})`);
+        return scClientId;
+      }
     }
+    
+    console.warn('[soundcloud] No client_id found in HTML response');
   } catch (err) {
     console.warn('[soundcloud] Failed to get client_id:', (err as Error).message);
   }
