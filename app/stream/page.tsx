@@ -763,7 +763,7 @@ export default function StreamPage() {
 
       <main className="flex min-h-0 flex-1 flex-col gap-1.5 p-1.5 sm:gap-4 sm:p-4 landscape:flex-row lg:flex-row">
         {/* Player */}
-        <div className="min-h-0 shrink-0 max-h-[38dvh] overflow-hidden landscape:min-w-0 landscape:flex-1 landscape:max-h-none landscape:min-h-0 landscape:overflow-hidden lg:min-w-0 lg:flex-1 lg:max-h-none lg:min-h-0 lg:overflow-hidden">
+        <div className="min-h-0 shrink-0 max-h-[38dvh] overflow-hidden landscape:min-w-0 landscape:flex-1 landscape:max-h-none landscape:min-h-0 landscape:overflow-hidden lg:min-w-0 lg:flex-1 lg:max-h-none lg:min-h-0 lg:overflow-visible">
           {shouldPollCommunityWidgets && <ShoutoutBanner />}
           {mode === "twitch" && twitchLive && (
             <div className="space-y-2">
@@ -856,7 +856,7 @@ export default function StreamPage() {
           {radioConnected && radioMode !== "dj" && !showRadioOfflineState && (
             <div className="mt-1.5 space-y-1.5">
               <div className="flex min-w-0 flex-wrap items-center gap-1.5 pb-0.5">
-                <div className="min-w-0 flex-[1.2]">
+                <div className="relative z-[130] min-w-0 flex-[1.2] overflow-visible">
                   <FallbackGenreSelector />
                 </div>
                 <div className="min-w-0 flex-1">
@@ -944,14 +944,14 @@ export default function StreamPage() {
             </div>
           )}
           {showRadioPanel && (
-            <div className={`min-h-0 min-w-0 flex-1 overflow-y-auto flex-col gap-2 ${activeTab === "radio" ? "flex" : "hidden"} lg:hidden`}>
+            <div className={`min-h-0 min-w-0 flex-1 overflow-hidden flex-col gap-2 ${activeTab === "radio" ? "flex" : "hidden"} lg:hidden`}>
               <RadioPanelErrorBoundary>
                 <QueueAdd />
               </RadioPanelErrorBoundary>
             </div>
           )}
           {showQueuePanel && (
-            <div className={`min-h-0 min-w-0 flex-1 overflow-y-auto flex-col gap-2 ${activeTab === "queue" ? "flex" : "hidden"} lg:hidden`}>
+            <div className={`min-h-0 min-w-0 flex-1 overflow-hidden flex-col gap-2 ${activeTab === "queue" ? "flex" : "hidden"} lg:hidden`}>
               <RadioPanelErrorBoundary>
                 <Queue />
               </RadioPanelErrorBoundary>
