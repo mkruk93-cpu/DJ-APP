@@ -40,6 +40,7 @@ const genreHitsCache = new Map<string, { results: any[], timestamp: number }>();
 const GENRE_HITS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 import { reloadFallbackGenres, listFallbackGenres, getDefaultFallbackGenreId, isKnownFallbackGenre, toAutoFallbackGenreId, parseAutoFallbackGenreId, LIKED_AUTO_GENRE_ID } from './fallbackGenres.js';
 import { addPriorityArtistForGenre, addBlockedArtistForGenre, addPriorityTrackForGenre, addBlockedTrackForGenre, addLikedPlaylistTrack } from './services/genreCuratedConfig.js';
+import genreManagementRouter from './routes/genreManagement.js';
 import {
   hydrateGenreHitsCacheFromDisk,
   clearGenreHitsCache,
@@ -102,6 +103,9 @@ app.use((_req, res, next) => {
   next();
 });
 app.use(express.json());
+
+// Genre management routes (admin only)
+app.use('/api', genreManagementRouter);
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

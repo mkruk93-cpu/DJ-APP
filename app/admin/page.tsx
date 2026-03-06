@@ -14,6 +14,7 @@ import ListenerCount from "@/components/admin/ListenerCount";
 import StreamStatus from "@/components/admin/StreamStatus";
 import PlayedHistory from "@/components/admin/PlayedHistory";
 import DurationVotePanel from "@/components/DurationVote";
+import GenreManager from "@/components/admin/GenreManager";
 import type { Track, QueueItem, Mode, ModeSettings as ModeSettingsType, VoteState, DurationVote } from "@/lib/types";
 
 const ADMIN_PASSWORD = process.env.NEXT_PUBLIC_ADMIN_PASSWORD;
@@ -406,6 +407,7 @@ export default function AdminPage() {
             <DurationVotePanel />
             <QueueAdd />
             <QueueManager />
+            <GenreManager />
             <PlayedHistory />
           </>
         )}
