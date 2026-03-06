@@ -27,19 +27,38 @@ export default function GenreManager() {
 
   const serverUrl = useRadioStore((s) => s.serverUrl) ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
 
+  // Add error boundary-like behavior
+  useEffect(() => {
+    const handleError = (event: ErrorEvent) => {
+      console.error('[genre-manager] Runtime error:', event.error);
+      setError(`Runtime error: ${event.error?.message || 'Unknown error'}`);
+      setLoading(false);
+    };
+
+    window.addEventListener('error', handleError);
+    return () => window.removeEventListener('error', handleError);
+  }, []);
+
   const fetchGenres = useCallback(async () => {
-    if (!serverUrl) return;
+    if (!serverUrl) {
+      setLoading(false);
+      setError('Server URL not configured');
+      return;
+    }
     
     try {
       setLoading(true);
-      const response = await fetch(`${serverUrl}/api/genres`);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
-      setGenres(data);
       setError(null);
+      const response = await fetch(`${serverUrl}/api/genres`);
+      if (!response.ok) {
+        throw new Error(`Server responded with ${response.status}: ${response.statusText}`);
+      }
+      const data = await response.json();
+      setGenres(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error('[genre-manager] Failed to fetch genres:', err);
       setError(`Failed to load genres: ${(err as Error).message}`);
+      setGenres([]);
     } finally {
       setLoading(false);
     }
@@ -65,15 +84,21 @@ export default function GenreManager() {
     if (!serverUrl || !artist.trim()) return;
 
     try {
-      const response = await fetch(`${serverUrl}/api/genres/${genreId}/artists`, {
+      const response = await fetch(`${serverUrl}/api/genres/${encodeURIComponent(genreId)}/artists`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ artist: artist.trim() })
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || `HTTP ${response.status}`);
+        let errorMessage = `HTTP ${response.status}`;
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorMessage;
+        } catch {
+          // Ignore JSON parse errors
+        }
+        throw new Error(errorMessage);
       }
 
       await fetchGenres();

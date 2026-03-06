@@ -407,7 +407,7 @@ export default function AdminPage() {
             <DurationVotePanel />
             <QueueAdd />
             <QueueManager />
-            <GenreManager />
+            {/* <GenreManager /> */}
             <PlayedHistory />
           </>
         )}

@@ -159,6 +159,11 @@ function titleFromFilename(filePath: string): string {
 }
 
 function autoTrackTitle(artist: string, title: string): string {
+  // For generic genre names as title, just use the artist
+  const genericTitles = ['melodic techno', 'hard techno', 'euphoric hardstyle', 'hardstyle', 'trance', 'house', 'techno'];
+  if (!title || title === artist || genericTitles.some(g => title.toLowerCase().includes(g))) {
+    return artist;
+  }
   return `${artist} - ${title}`.trim();
 }
 
@@ -314,7 +319,7 @@ async function resolveShortAutoCandidate(query: string, genreId?: string): Promi
           const blockedTracks = genreHints.blockedTracks.map((track: string) => track.toLowerCase());
           for (const blockedTrack of blockedTracks) {
             if (blockedTrack && (title.includes(blockedTrack) || artistTitle.includes(blockedTrack))) {
-              console.log(`[auto-filter] Blocked by genre rule (${genreId}): ${result.title}`);
+              console.log(`[auto-filter] Blocked by genre rule (${genreId}): ${result.title} (blocked: ${blockedTrack})`);
               return false;
             }
           }
