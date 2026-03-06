@@ -191,6 +191,28 @@ export default function QueueAdd() {
     setHydrated(true);
   }, []);
 
+  // Close search results when clicking outside on mobile
+  useEffect(() => {
+    if (!showResults) return;
+
+    const handleClickOutside = (event: MouseEvent | TouchEvent) => {
+      if (searchListRef.current && !searchListRef.current.contains(event.target as Node)) {
+        const inputElement = wrapperRef.current?.querySelector('input[type="text"]');
+        if (inputElement && !inputElement.contains(event.target as Node)) {
+          setShowResults(false);
+        }
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('touchstart', handleClickOutside);
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
+    };
+  }, [showResults]);
+
   const serverUrl = useRadioStore((s) => s.serverUrl) ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
   const isAdmin = hydrated && isRadioAdmin();
   const canAdd = canPerformAction(mode, "add_to_queue", isAdmin);
@@ -1296,12 +1318,11 @@ export default function QueueAdd() {
                   onScroll={handleSearchListScroll}
                   onTouchEnd={handleSearchListTouch}
                   onTouchMove={handleSearchListTouchMove}
-                  className="absolute left-0 right-0 top-full z-[95] mt-1 overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50"
+                  className="fixed inset-x-2 top-[30vh] z-[95] max-h-[60vh] overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50 sm:absolute sm:inset-x-0 sm:top-full sm:mt-1 sm:max-h-[70vh]"
                   style={{ 
                     WebkitOverflowScrolling: 'touch',
                     transform: 'translateZ(0)', // Force hardware acceleration
                     willChange: 'scroll-position', // Optimize for scrolling
-                    maxHeight: 'min(60vh, calc(100vh - 200px))', // Better mobile height calculation
                     touchAction: 'pan-y' // Allow vertical scrolling only
                   }}
                 >
