@@ -737,9 +737,12 @@ async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack |
             continue;
           }
           console.log(`[auto-download] Selected ${selected.source} candidate (${genreId}): ${selected.title ?? query} (${selected.duration ?? '?'}s)`);
+          // For better reliability, use search query instead of direct URL
+          // This avoids issues with region-blocked or unavailable direct URLs
+          const searchQuery = `ytsearch1:${selected.title || choice.title}`;
           const selectedPseudo: QueueItem = {
             ...pseudo,
-            youtube_url: selected.url,
+            youtube_url: searchQuery,
             title: selected.title ?? pseudo.title,
           };
           const resolvedTitle = buildAutoDisplayTitle(selected.title, choice.artist, choice.title);
@@ -845,9 +848,11 @@ async function prepareLikedAutoFallbackTrack(): Promise<ReadyTrack | null> {
       return null;
     }
     console.log(`[auto-download] Selected ${selected.source} candidate (liked): ${selected.title ?? query} (${selected.duration ?? '?'}s)`);
+    // For better reliability, use search query instead of direct URL
+    const searchQuery = `ytsearch1:${selected.title || choice}`;
     const selectedPseudo: QueueItem = {
       ...pseudo,
-      youtube_url: selected.url,
+      youtube_url: searchQuery,
       title: selected.title ?? pseudo.title,
     };
     const parsedChoice = parseDisplayArtistTitle(choice);
@@ -2493,14 +2498,25 @@ function resolveAlternativeYoutubeUrl(item: QueueItem): Promise<string | null> {
       return;
     }
 
+    // Clean up the query for better search results
+    const cleanQuery = query
+      .replace(/\(.*?\)/g, '') // Remove parentheses content
+      .replace(/\[.*?\]/g, '') // Remove bracket content
+      .replace(/official|video|clip|out now|free release/gi, '') // Remove common video keywords
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const searchQuery = cleanQuery || query;
+
     const proc = spawn('python', [
       '-m', 'yt_dlp',
       '--flat-playlist',
       '--print', '%(id)s',
       '--no-warnings',
-      '--playlist-end', '5',
-      `ytsearch5:${query}`,
-    ], { timeout: 15_000 });
+      '--socket-timeout', '15',
+      '--playlist-end', '3', // Reduced from 5 to 3 for faster results
+      `ytsearch3:${searchQuery}`,
+    ], { timeout: 10_000 }); // Reduced timeout from 15s to 10s
 
     let output = '';
     proc.stdout?.on('data', (chunk: Buffer) => {
@@ -2556,17 +2572,21 @@ function downloadAudio(item: QueueItem, cacheDir: string): Promise<string> {
 
         const proc = spawn('python', [
           '-m', 'yt_dlp',
-          '--format', 'bestaudio',
+          '--format', 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio', // Prefer webm/m4a formats
           '--no-playlist',
           '--no-warnings',
           '--no-check-certificate', // Handle SSL issues
           '--extract-flat', 'false',
           '--socket-timeout', '30',
-          '--retries', '3',
+          '--retries', '2', // Reduced retries for faster failure
+          '--fragment-retries', '2',
+          '--abort-on-unavailable-fragment',
+          '--no-continue', // Don't try to resume partial downloads
+          '--prefer-free-formats',
           '-o', outputTemplate,
           url,
         ], {
-          timeout: 60000, // 60 second timeout
+          timeout: 45000, // Reduced timeout to 45 seconds
           stdio: ['ignore', 'pipe', 'pipe']
         });
 
@@ -2633,9 +2653,18 @@ function downloadAudio(item: QueueItem, cacheDir: string): Promise<string> {
       });
     }
 
+    // Check if the URL is already a search query - if so, use it directly
+    if (item.youtube_url.startsWith('ytsearch')) {
+      downloadFrom(item.youtube_url)
+        .then(resolve)
+        .catch((err) => reject(err));
+      return;
+    }
+
     downloadFrom(item.youtube_url)
       .then(resolve)
       .catch(async (primaryErr) => {
+        // For direct YouTube URLs that fail, try alternative search
         const altUrl = await resolveAlternativeYoutubeUrl(item);
         if (!altUrl) {
           reject(primaryErr);
