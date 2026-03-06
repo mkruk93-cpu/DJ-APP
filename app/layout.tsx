@@ -23,7 +23,11 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#030712", // bg-gray-950 color to match page background
+  themeColor: [
+    { media: "(prefers-color-scheme: dark)", color: "#030712" },
+    { media: "(prefers-color-scheme: light)", color: "#030712" },
+    { color: "#030712" }
+  ],
   colorScheme: "dark",
   viewportFit: "cover",
 };
@@ -38,6 +42,19 @@ export default function RootLayout({
       <head>
         <meta name="theme-color" content="#030712" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <meta name="msapplication-navbutton-color" content="#030712" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="mobile-web-app-capable" content="yes" />
+        <style dangerouslySetInnerHTML={{
+          __html: `
+            /* Force notification bar color on all platforms */
+            @supports (padding-top: env(safe-area-inset-top)) {
+              html { background-color: #030712 !important; }
+            }
+            /* Override any purple theme colors */
+            :root { --theme-color: #030712; }
+          `
+        }} />
       </head>
       <body className="min-h-dvh bg-gray-950 text-gray-100 antialiased">
         <PwaRegistrar />

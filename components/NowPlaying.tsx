@@ -166,7 +166,8 @@ export default function NowPlaying({ radioTrack, showFallback = false, preferSup
 
   const showNextTrack = isRadioMode && !!displayNextTrack && (!!displayNextTrack.title || !!displayNextTrack.artist);
 
-  if (!hasData && !isRadioMode) return null;
+  // Always show in radio mode, even when loading
+  if (!hasData && !isRadioMode && !connected) return null;
 
   const duration = syncedRadioTrack?.duration ?? null;
   const progress = !isLoading && duration && duration > 0 ? Math.min(elapsed / duration, 1) : 0;
@@ -209,7 +210,10 @@ export default function NowPlaying({ radioTrack, showFallback = false, preferSup
               <span className="text-gray-500"> — </span>
             )}
             {displayTitle && <span>{displayTitle}</span>}
-            {isRadioMode && !displayTitle && (
+            {isRadioMode && !displayTitle && !connected && (
+              <span className="text-gray-400">Verbinden...</span>
+            )}
+            {isRadioMode && !displayTitle && connected && (
               <span className="text-gray-400">Wacht op nummer...</span>
             )}
           </p>

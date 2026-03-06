@@ -704,26 +704,33 @@ export default function StreamPage() {
             </button>
           </div>
         </div>
-        {showHeaderNextOnly && (
+        {(showHeaderNextOnly || mode === "radio") && (
           <div className="mt-2 rounded-lg border border-gray-700/60 bg-gray-800/60 px-2.5 py-1 sm:px-3 sm:py-1.5">
             <p className="truncate text-[11px] text-gray-300 sm:text-xs">
               <span className="mr-1 uppercase tracking-wider text-gray-500">Volgende:</span>
-              {displayHeaderNextTrack?.artist && <span className="text-violet-400">{displayHeaderNextTrack.artist}</span>}
-              {displayHeaderNextTrack?.artist && displayHeaderNextTrack?.title && <span className="text-gray-500"> — </span>}
-              {displayHeaderNextTrack?.title && <span>{displayHeaderNextTrack.title}</span>}
-              {!displayHeaderNextTrack?.title && <span className="text-gray-500">Nog geen track klaar...</span>}
-              {displayHeaderNextTrack?.isFallback && (
-                <span className="ml-1 text-gray-500">(random)</span>
-              )}
-              {displayHeaderNextTrack?.requestedBy && (
-                <span className="ml-1 text-gray-500">
-                  · door <span className="text-violet-300">{displayHeaderNextTrack.requestedBy}</span>
-                </span>
+              {!radioConnected ? (
+                <span className="text-gray-500">Verbinden...</span>
+              ) : displayHeaderNextTrack?.artist ? (
+                <>
+                  <span className="text-violet-400">{displayHeaderNextTrack.artist}</span>
+                  {displayHeaderNextTrack?.title && <span className="text-gray-500"> — </span>}
+                  {displayHeaderNextTrack?.title && <span>{displayHeaderNextTrack.title}</span>}
+                  {displayHeaderNextTrack?.isFallback && (
+                    <span className="ml-1 text-gray-500">(random)</span>
+                  )}
+                  {displayHeaderNextTrack?.requestedBy && (
+                    <span className="ml-1 text-gray-500">
+                      · door <span className="text-violet-300">{displayHeaderNextTrack.requestedBy}</span>
+                    </span>
+                  )}
+                </>
+              ) : (
+                <span className="text-gray-500">Nog geen track klaar...</span>
               )}
             </p>
           </div>
         )}
-        {mode !== "offline" && mode !== "radio" && !showRadioOfflineState && (
+        {((mode !== "offline" && mode !== "radio" && !showRadioOfflineState) || mode === "twitch") && (
           <div className={mode === "twitch" ? "block" : "hidden landscape:block sm:block"}>
             <NowPlaying
               radioTrack={radioConnected && radioMode !== "dj" ? radioTrack : null}
