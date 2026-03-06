@@ -502,11 +502,26 @@ async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack |
             if (!result.title || !result.duration) return false;
             if (result.duration > 420) return false; // 7 minutes max
             if (result.duration < 120) return false; // 2 minutes min
+            
+            // Ensure the track is actually from the whitelisted artist
+            const artistLower = artist.toLowerCase();
+            const titleLower = (result.title || '').toLowerCase();
+            const channelLower = (result.channel || '').toLowerCase();
+            
+            // Check if the whitelisted artist appears in title or channel
+            const artistInTitle = titleLower.includes(artistLower);
+            const artistInChannel = channelLower.includes(artistLower);
+            
+            if (!artistInTitle && !artistInChannel) {
+              console.log(`[auto-playlist] Filtered out non-matching artist: "${result.title}" by "${result.channel}" (expected: ${artist})`);
+              return false;
+            }
+            
             return true;
           })
           .map(result => ({
             title: result.title,
-            artist: result.channel || artist,
+            artist: artist, // Always use the whitelisted artist, not the channel name
             thumbnail: result.thumbnail
           }));
       } catch (error) {

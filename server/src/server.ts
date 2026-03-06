@@ -1070,12 +1070,27 @@ app.get('/api/genre-hits', async (req, res) => {
               console.log(`[genre-hits] Filtered out long track: ${result.title} (${Math.floor(result.duration / 60)}:${String(result.duration % 60).padStart(2, '0')})`);
               return false;
             }
+            
+            // Ensure the track is actually from the whitelisted artist
+            const artistLower = artist.toLowerCase();
+            const titleLower = (result.title || '').toLowerCase();
+            const channelLower = (result.channel || '').toLowerCase();
+            
+            // Check if the whitelisted artist appears in title or channel
+            const artistInTitle = titleLower.includes(artistLower);
+            const artistInChannel = channelLower.includes(artistLower);
+            
+            if (!artistInTitle && !artistInChannel) {
+              console.log(`[genre-hits] Filtered out non-matching artist: "${result.title}" by "${result.channel}" (expected: ${artist})`);
+              return false;
+            }
+            
             return true;
           })
           .map(result => ({
             id: result.id,
             title: result.title,
-            artist: result.channel || artist,
+            artist: artist, // Always use the whitelisted artist, not the channel name
             thumbnail: result.thumbnail,
             sourceHint: result.url,
             duration: result.duration
