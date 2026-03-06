@@ -2667,7 +2667,7 @@ function downloadAudio(item: QueueItem, cacheDir: string): Promise<string> {
           reject(primaryErr);
           return;
         }
-        console.warn(`[download] Primary source failed for ${item.title ?? item.youtube_id}; trying alternative source`);
+        // Silently try alternative source - this is normal fallback behavior
         try {
           const file = await downloadFrom(altUrl);
           resolve(file);

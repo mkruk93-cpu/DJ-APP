@@ -99,8 +99,9 @@ async function getSoundCloudClientId(): Promise<string | null> {
     }
     
     scClientIdFailures++;
+    // Only log the first failure to avoid spam
     if (scClientIdFailures === 1) {
-      console.warn('[soundcloud] No client_id found - will retry in 30 minutes');
+      console.warn('[soundcloud] Client ID unavailable - using yt-dlp fallback');
     }
   } catch (err) {
     scClientIdFailures++;
@@ -318,14 +319,7 @@ export async function soundcloudSearch(query: string, limit = 12): Promise<Searc
     searchCache.set(cacheKey, { results, ts: Date.now() });
     return results;
   } catch (err) {
-    // Only log fallback message once per hour to reduce spam
-    const errorKey = `sc_fallback_${query.split(' ')[0]}`;
-    const lastLogged = searchCache.get(errorKey)?.ts || 0;
-    if (Date.now() - lastLogged > 60 * 60 * 1000) {
-      console.warn('[soundcloud] Direct search failed, falling back to yt-dlp:', (err as Error).message);
-      searchCache.set(errorKey, { results: [], ts: Date.now() });
-    }
-    
+    // Silently fall back to yt-dlp without logging - this is normal operation
     const results = await soundcloudSearchFallback(query, limit);
     searchCache.set(cacheKey, { results, ts: Date.now() });
     return results;
