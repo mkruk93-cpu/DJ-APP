@@ -760,9 +760,7 @@ export default function StreamPage() {
         className="relative z-50 border-b border-gray-800 bg-gray-900/80 px-2 py-1.5 backdrop-blur-sm sm:px-6 sm:py-3"
         style={{ 
           paddingTop: "max(env(safe-area-inset-top), 0px)",
-          minHeight: "60px", // Ensure header always has minimum height
-          display: "block !important", // Force header to always be visible
-          visibility: "visible !important"
+          minHeight: "60px"
         }}
       >
         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5">

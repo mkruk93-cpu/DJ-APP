@@ -69,11 +69,18 @@ export default function RootLayout({
                 display: block !important;
                 visibility: visible !important;
                 opacity: 1 !important;
+                min-height: 60px !important;
               }
               /* Prevent content jumping in PWA */
               body {
                 position: relative;
               }
+            }
+            /* Force header visibility on all platforms */
+            header {
+              display: block !important;
+              visibility: visible !important;
+              opacity: 1 !important;
             }
           `
         }} />
