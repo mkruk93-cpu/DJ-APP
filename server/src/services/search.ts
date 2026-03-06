@@ -15,44 +15,98 @@ const searchCache = new Map<string, { results: SearchResult[]; ts: number }>();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 let scClientId: string | null = null;
+let scClientIdFailures = 0;
+let scClientIdLastAttempt = 0;
+const SC_RETRY_DELAY = 30 * 60 * 1000; // 30 minutes between retry attempts
 
 async function getSoundCloudClientId(): Promise<string | null> {
   if (scClientId) return scClientId;
+  
+  // Rate limit retry attempts to avoid log spam
+  const now = Date.now();
+  if (scClientIdFailures >= 3 && now - scClientIdLastAttempt < SC_RETRY_DELAY) {
+    return null;
+  }
 
   try {
-    const res = await fetch('https://soundcloud.com/', {
+    scClientIdLastAttempt = now;
+    
+    // Try to extract from app scripts first (more reliable)
+    const mainRes = await fetch('https://soundcloud.com/', {
       headers: { 
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.5',
+        'Cache-Control': 'no-cache',
       },
     });
-    const html = await res.text();
+    const html = await mainRes.text();
     
-    // Try multiple patterns for client_id extraction - more comprehensive
-    const patterns = [
-      /client_id["\s]*[:=]["\s]*([a-zA-Z0-9]{32})/,
-      /"client_id":"([a-zA-Z0-9]{32})"/,
-      /client_id=([a-zA-Z0-9]{32})/,
-      /clientId["\s]*[:=]["\s]*"([a-zA-Z0-9]{32})"/,
-      /"client_id":"([a-zA-Z0-9_-]{32,})"/g,
-      /client_id[=:]\s*['"]([a-zA-Z0-9_-]{32,})['"]/g,
-      /clientId[=:]\s*['"]([a-zA-Z0-9_-]{32,})['"]/g,
-      /app_[a-zA-Z0-9_-]*\.js.*?client_id[=:]\s*['"]([a-zA-Z0-9_-]{32,})['"]/gs,
+    // Extract script URLs
+    const scriptMatches = html.match(/<script[^>]+src="([^"]*app[^"]*\.js[^"]*)"/g);
+    if (scriptMatches) {
+      for (const scriptMatch of scriptMatches.slice(0, 3)) { // Try first 3 app scripts
+        const urlMatch = scriptMatch.match(/src="([^"]+)"/);
+        if (!urlMatch) continue;
+        
+        const scriptUrl = urlMatch[1].startsWith('//') ? `https:${urlMatch[1]}` : 
+                         urlMatch[1].startsWith('/') ? `https://soundcloud.com${urlMatch[1]}` : urlMatch[1];
+        
+        try {
+          const scriptRes = await fetch(scriptUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+            timeout: 5000,
+          });
+          const scriptContent = await scriptRes.text();
+          
+          const patterns = [
+            /client_id["\s]*[:=]["\s]*"([a-zA-Z0-9_-]{32,})"/,
+            /"client_id":"([a-zA-Z0-9_-]{32,})"/,
+            /client_id[=:]\s*['"]([a-zA-Z0-9_-]{32,})['"]/,
+            /clientId[=:]\s*['"]([a-zA-Z0-9_-]{32,})['"]/,
+          ];
+          
+          for (const pattern of patterns) {
+            const match = scriptContent.match(pattern);
+            if (match?.[1]) {
+              scClientId = match[1];
+              scClientIdFailures = 0; // Reset failure count on success
+              console.log(`[soundcloud] Got client_id: ${scClientId.slice(0, 8)}... from ${scriptUrl.split('/').pop()}`);
+              return scClientId;
+            }
+          }
+        } catch (scriptErr) {
+          // Continue to next script
+        }
+      }
+    }
+    
+    // Fallback: try extracting from main HTML
+    const htmlPatterns = [
+      /client_id["\s]*[:=]["\s]*"([a-zA-Z0-9_-]{32,})"/,
+      /"client_id":"([a-zA-Z0-9_-]{32,})"/,
+      /client_id[=:]\s*['"]([a-zA-Z0-9_-]{32,})['"]/,
     ];
     
-    for (const pattern of patterns) {
+    for (const pattern of htmlPatterns) {
       const match = html.match(pattern);
       if (match?.[1]) {
         scClientId = match[1];
-        console.log(`[soundcloud] Got client_id: ${scClientId.slice(0, 8)}... (pattern: ${pattern.source})`);
+        scClientIdFailures = 0;
+        console.log(`[soundcloud] Got client_id: ${scClientId.slice(0, 8)}... from main HTML`);
         return scClientId;
       }
     }
     
-    console.warn('[soundcloud] No client_id found in HTML response');
+    scClientIdFailures++;
+    if (scClientIdFailures === 1) {
+      console.warn('[soundcloud] No client_id found - will retry in 30 minutes');
+    }
   } catch (err) {
-    console.warn('[soundcloud] Failed to get client_id:', (err as Error).message);
+    scClientIdFailures++;
+    if (scClientIdFailures === 1) {
+      console.warn('[soundcloud] Failed to get client_id:', (err as Error).message);
+    }
   }
   return null;
 }
@@ -264,7 +318,14 @@ export async function soundcloudSearch(query: string, limit = 12): Promise<Searc
     searchCache.set(cacheKey, { results, ts: Date.now() });
     return results;
   } catch (err) {
-    console.warn('[soundcloud] Direct search failed, falling back to yt-dlp:', (err as Error).message);
+    // Only log fallback message once per hour to reduce spam
+    const errorKey = `sc_fallback_${query.split(' ')[0]}`;
+    const lastLogged = searchCache.get(errorKey)?.ts || 0;
+    if (Date.now() - lastLogged > 60 * 60 * 1000) {
+      console.warn('[soundcloud] Direct search failed, falling back to yt-dlp:', (err as Error).message);
+      searchCache.set(errorKey, { results: [], ts: Date.now() });
+    }
+    
     const results = await soundcloudSearchFallback(query, limit);
     searchCache.set(cacheKey, { results, ts: Date.now() });
     return results;

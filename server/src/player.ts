@@ -277,18 +277,38 @@ async function resolveShortAutoCandidate(query: string): Promise<AutoSearchCandi
   try {
     // Import search functions from the search service
     const { youtubeSearch, soundcloudSearch } = await import('./services/search.js');
+
+    // Improve query quality by removing generic terms that don't help
+    const cleanedQuery = query
+      .replace(/\b(trance|house|techno|dubstep|hardstyle)\b/gi, '') // Remove genre words that make searches too generic
+      .replace(/\s+/g, ' ')
+      .trim();
     
+    const searchQuery = cleanedQuery || query; // Fall back to original if cleaned is empty
+
     // Try YouTube first with aggressive timeout
     const ytResults = await Promise.race([
-      youtubeSearch(query, 5),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 1500))
+      youtubeSearch(searchQuery, 8), // Increased limit for better selection
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000)) // Slightly longer timeout
     ]).catch(() => []);
-    
-    // Find first suitable YouTube result
-    for (const result of ytResults) {
-      if (!result.title || isSetLikeAutoTitle(result.title)) continue;
-      if (!result.duration || result.duration < 120 || result.duration > AUTO_MAX_DURATION_SECONDS) continue;
-      
+
+    // Find first suitable YouTube result - prefer shorter tracks
+    const sortedResults = ytResults
+      .filter(result => {
+        if (!result.title || isSetLikeAutoTitle(result.title)) return false;
+        if (!result.duration || result.duration < 120 || result.duration > AUTO_MAX_DURATION_SECONDS) return false;
+        
+        // Filter out obvious non-music content
+        const title = result.title.toLowerCase();
+        const badKeywords = ['tutorial', 'how to', 'review', 'interview', 'documentary', 'news', 'podcast', 'lesson', 'course'];
+        if (badKeywords.some(keyword => title.includes(keyword))) return false;
+        
+        return true;
+      })
+      .sort((a, b) => (a.duration || 0) - (b.duration || 0)); // Prefer shorter tracks
+
+    if (sortedResults.length > 0) {
+      const result = sortedResults[0];
       return {
         url: result.url,
         title: result.title,
@@ -297,10 +317,10 @@ async function resolveShortAutoCandidate(query: string): Promise<AutoSearchCandi
         source: 'youtube' as const,
       };
     }
-    
+
     // Try SoundCloud as fallback with aggressive timeout
     const scResults = await Promise.race([
-      soundcloudSearch(query, 5),
+      soundcloudSearch(searchQuery, 5),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 1500))
     ]).catch(() => []);
     
@@ -601,21 +621,61 @@ async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack |
     console.log(`[auto-playlist] Found ${mergedHits.length} whitelisted tracks for ${canonicalGenreId}`);
 
     if (mergedHits.length === 0) {
-      // Ultimate fallback seed: synthesize candidates from priority artists so auto
-      // mode never gets stuck on an empty strict-hit cache.
-      const artistSeeds = getPriorityArtistsForGenre(canonicalGenreId).slice(0, 24);
-      const titleSeed = getMergedGenreTags(canonicalGenreId)[0] ?? canonicalGenreId;
-      for (const artist of artistSeeds) {
-        const cleanArtist = artist.trim();
-        if (!cleanArtist) continue;
-        const key = normalizeAutoKey(`${cleanArtist} ${titleSeed}`);
-        if (!key || seen.has(key)) continue;
-        seen.add(key);
-        mergedHits.push({
-          artist: cleanArtist,
-          title: titleSeed,
-          thumbnail: null,
-        });
+      // Ultimate fallback: search for popular tracks by genre using well-known artists
+      console.log(`[auto-playlist] No direct results found, trying fallback searches for ${canonicalGenreId}`);
+      
+      const fallbackArtists = getPriorityArtistsForGenre(canonicalGenreId).slice(0, 8);
+      const genreTags = getMergedGenreTags(canonicalGenreId);
+      
+      // Try searching for each artist with their most popular tracks
+      for (const artist of fallbackArtists) {
+        if (!isAutoGenreStillActive(canonicalGenreId)) return null;
+        
+        try {
+          // Search for just the artist name to get their popular tracks
+          const [ytResults] = await Promise.allSettled([
+            Promise.race([
+              youtubeSearch(artist, 3),
+              new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
+            ])
+          ]);
+          
+          if (ytResults.status === 'fulfilled' && ytResults.value.length > 0) {
+            for (const result of ytResults.value.slice(0, 2)) { // Take top 2 results per artist
+              if (!result.title || !result.duration) continue;
+              if (result.duration > 900 || result.duration < 120) continue;
+              
+              const key = normalizeAutoKey(`${artist} ${result.title}`);
+              if (!key || seen.has(key)) continue;
+              seen.add(key);
+              
+              mergedHits.push({
+                artist: artist,
+                title: result.title,
+                thumbnail: result.thumbnail,
+              });
+            }
+          }
+        } catch (err) {
+          console.warn(`[auto-playlist] Fallback search failed for ${artist}:`, (err as Error).message);
+        }
+      }
+      
+      // If still no results, create synthetic entries as last resort
+      if (mergedHits.length === 0) {
+        const titleSeed = genreTags[0] ?? canonicalGenreId;
+        for (const artist of fallbackArtists.slice(0, 12)) {
+          const cleanArtist = artist.trim();
+          if (!cleanArtist) continue;
+          const key = normalizeAutoKey(`${cleanArtist} ${titleSeed}`);
+          if (!key || seen.has(key)) continue;
+          seen.add(key);
+          mergedHits.push({
+            artist: cleanArtist,
+            title: titleSeed,
+            thumbnail: null,
+          });
+        }
       }
     }
 
@@ -665,13 +725,15 @@ async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack |
       try {
         for (const withGenreTags of [false, true]) {
           if (!isAutoGenreStillActive(canonicalGenreId)) return null;
-          console.log(`[auto-download] Trying (${genreId}): ${choice.artist} - ${choice.title}${withGenreTags ? ' [tagged]' : ''}`);
           const pseudo = buildAutoFallbackSource(canonicalGenreId, choice.artist, choice.title, mergedGenreTags, withGenreTags);
           const query = pseudo.youtube_url.replace(/^ytsearch1:/, '').trim();
           const selected = await resolveShortAutoCandidate(query);
           if (!isAutoGenreStillActive(canonicalGenreId)) return null;
           if (!selected) {
-            console.warn(`[auto-download] No short candidate (${genreId}) for query: ${query}`);
+            // Only log first attempt failure to reduce spam
+            if (!withGenreTags) {
+              console.warn(`[auto-download] No candidate (${genreId}) for: ${choice.artist} - ${choice.title}`);
+            }
             continue;
           }
           console.log(`[auto-download] Selected ${selected.source} candidate (${genreId}): ${selected.title ?? query} (${selected.duration ?? '?'}s)`);
@@ -1508,7 +1570,14 @@ function ensureEncoder(): ChildProcess {
       encoderStderrTail = encoderStderrTail.slice(-4000);
     }
   });
-  nextEncoder.stdin?.on('error', () => {});
+  nextEncoder.stdin?.on('error', (err) => {
+    // Ignore stale error events from an older encoder process.
+    if (encoder !== nextEncoder) return;
+    if (!isBrokenPipeError(err)) {
+      console.warn(`[encoder] stdin error: ${err.message}`);
+    }
+    // Don't null the encoder here as it might still be usable for reading
+  });
 
   nextEncoder.on('close', (code) => {
     // Ignore stale close events from an older encoder process.
@@ -1518,12 +1587,15 @@ function ensureEncoder(): ChildProcess {
     const suffix = tail ? ` — ${tail}` : '';
     if (winSystemCode === 10053) {
       console.warn(`[encoder] Exited with code ${code} (Windows socket 10053: verbinding met Icecast verbroken)${suffix}`);
+    } else if (code !== 0 && code !== null) {
+      console.warn(`[encoder] Exited with error code ${code}${suffix}`);
     } else {
-      console.log(`[encoder] Exited with code ${code}${suffix}`);
+      console.log(`[encoder] Exited cleanly${suffix}`);
     }
     encoder = null;
     if (isRunning) {
-      setTimeout(() => triggerSelfHeal(`encoder exited (${code})`), 100);
+      // Add a small delay to prevent rapid restart loops
+      setTimeout(() => triggerSelfHeal(`encoder exited (${code})`), 500);
     }
   });
 
@@ -2142,6 +2214,26 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess): Promise<void> {
       return;
     }
 
+    // Validate file exists and is readable before starting decoder
+    if (!fs.existsSync(audioFile)) {
+      reject(new Error(`Audio file not found: ${audioFile}`));
+      return;
+    }
+
+    try {
+      const stats = fs.statSync(audioFile);
+      if (stats.size === 0) {
+        reject(new Error(`Audio file is empty: ${audioFile}`));
+        return;
+      }
+      if (stats.size < 1024) { // Less than 1KB is suspicious
+        console.warn(`[player] Warning: Audio file is very small (${stats.size} bytes): ${audioFile}`);
+      }
+    } catch (err) {
+      reject(new Error(`Cannot access audio file: ${audioFile} - ${(err as Error).message}`));
+      return;
+    }
+
     const decoder = spawn('ffmpeg', [
       '-hide_banner',
       '-re',
@@ -2150,6 +2242,7 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess): Promise<void> {
       '-f', 's16le',
       '-ar', '44100',
       '-ac', '2',
+      '-loglevel', 'error', // Reduce ffmpeg verbosity
       'pipe:1',
     ]);
 
@@ -2453,14 +2546,29 @@ function downloadAudio(item: QueueItem, cacheDir: string): Promise<string> {
 
     function downloadFrom(url: string): Promise<string> {
       return new Promise((resolveDownload, rejectDownload) => {
+        // Ensure cache directory exists
+        try {
+          fs.mkdirSync(cacheDir, { recursive: true });
+        } catch (err) {
+          rejectDownload(new Error(`Failed to create cache directory: ${(err as Error).message}`));
+          return;
+        }
+
         const proc = spawn('python', [
           '-m', 'yt_dlp',
           '--format', 'bestaudio',
           '--no-playlist',
           '--no-warnings',
+          '--no-check-certificate', // Handle SSL issues
+          '--extract-flat', 'false',
+          '--socket-timeout', '30',
+          '--retries', '3',
           '-o', outputTemplate,
           url,
-        ]);
+        ], {
+          timeout: 60000, // 60 second timeout
+          stdio: ['ignore', 'pipe', 'pipe']
+        });
 
         let stderr = '';
         proc.stderr?.on('data', (chunk: Buffer) => {
@@ -2473,20 +2581,54 @@ function downloadAudio(item: QueueItem, cacheDir: string): Promise<string> {
             return;
           }
 
-          const files = fs.readdirSync(cacheDir)
-            .filter((f) => f.startsWith(uniqueTag))
-            .map((f) => path.join(cacheDir, f));
+          // Add a small delay to ensure file system operations complete
+          setTimeout(() => {
+            try {
+              if (!fs.existsSync(cacheDir)) {
+                rejectDownload(new Error('Cache directory disappeared after download'));
+                return;
+              }
 
-          if (files.length === 0) {
-            rejectDownload(new Error('yt-dlp completed but no file found'));
-            return;
-          }
+              const files = fs.readdirSync(cacheDir)
+                .filter((f) => f.startsWith(uniqueTag))
+                .map((f) => path.join(cacheDir, f))
+                .filter((f) => {
+                  try {
+                    return fs.existsSync(f) && fs.statSync(f).size > 0;
+                  } catch {
+                    return false;
+                  }
+                });
 
-          resolveDownload(files[0]);
+              if (files.length === 0) {
+                rejectDownload(new Error('yt-dlp completed but no valid file found'));
+                return;
+              }
+
+              const selectedFile = files[0];
+              
+              // Verify file is readable before resolving
+              fs.access(selectedFile, fs.constants.R_OK, (err) => {
+                if (err) {
+                  rejectDownload(new Error(`Downloaded file not readable: ${selectedFile}`));
+                  return;
+                }
+                resolveDownload(selectedFile);
+              });
+            } catch (err) {
+              rejectDownload(new Error(`Error checking downloaded files: ${(err as Error).message}`));
+            }
+          }, 100); // 100ms delay
         });
 
         proc.on('error', (err) => {
           rejectDownload(new Error(`Failed to start yt-dlp: ${err.message}`));
+        });
+
+        // Handle timeout
+        proc.on('timeout', () => {
+          proc.kill('SIGKILL');
+          rejectDownload(new Error('Download timeout after 60 seconds'));
         });
       });
     }
