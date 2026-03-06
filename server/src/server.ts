@@ -1067,7 +1067,8 @@ app.get('/api/genre-hits', async (req, res) => {
             title: result.title,
             artist: result.channel || artist,
             thumbnail: result.thumbnail,
-            sourceHint: result.url
+            sourceHint: result.url,
+            duration: result.duration
           }));
       } catch (error) {
         console.warn(`[genre-hits] Fast search failed for ${artist}:`, getErrorMessage(error));

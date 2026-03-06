@@ -12,6 +12,7 @@ export interface GenreHit {
   artist: string;
   thumbnail: string;
   sourceHint: string;
+  duration?: number | null;
 }
 
 function getServerUrl(): string | null {
