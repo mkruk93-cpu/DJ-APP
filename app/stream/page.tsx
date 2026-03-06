@@ -84,6 +84,7 @@ export default function StreamPage() {
   const [requestBadge, setRequestBadge] = useState(false);
   const [queueBadge, setQueueBadge] = useState(false);
   const [isHydrated, setIsHydrated] = useState(false);
+  const [showLoadingStates, setShowLoadingStates] = useState(true);
   const activeTabRef = useRef<MobileTab>(activeTab);
   activeTabRef.current = activeTab;
   const previousQueueLengthRef = useRef<number>(0);
@@ -331,8 +332,11 @@ export default function StreamPage() {
 
   useEffect(() => {
     setIsHydrated(true);
+    // Give components time to initialize before hiding loading states
+    const timer = setTimeout(() => setShowLoadingStates(false), 2000);
     const nickname = localStorage.getItem("nickname");
     if (!nickname) router.replace("/");
+    return () => clearTimeout(timer);
   }, [router]);
 
   useEffect(() => {
@@ -693,24 +697,9 @@ export default function StreamPage() {
             🎵 <span className="text-violet-400">{process.env.NEXT_PUBLIC_TWITCH_CHANNEL ?? "Stream"}</span>
           </h1>
           <div className="flex min-w-0 shrink-0 items-center gap-1 sm:gap-3">
-            {isHydrated ? (
-              <>
-                <ModeIndicator />
-                <OnlineUsers />
-              </>
-            ) : (
-              <>
-                {/* Loading placeholders */}
-                <div className="inline-flex items-center gap-1 rounded-full border border-gray-600/50 bg-gray-500/10 px-2.5 py-1 text-xs font-semibold text-gray-500">
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-gray-500" />
-                  Laden...
-                </div>
-                <div className="flex items-center gap-1.5 rounded-lg border border-gray-700 px-2 py-1 text-xs text-gray-400">
-                  <span className="h-2 w-2 animate-pulse rounded-full bg-gray-500" />
-                  <span>Laden...</span>
-                </div>
-              </>
-            )}
+            {/* Always show header components, with fallback during loading */}
+            <ModeIndicator />
+            <OnlineUsers />
             <button
               onClick={() => {
                 if (typeof window !== 'undefined') {
@@ -728,21 +717,21 @@ export default function StreamPage() {
         <div className="mt-2 rounded-lg border border-gray-700/60 bg-gray-800/60 px-2.5 py-1 sm:px-3 sm:py-1.5">
           <p className="truncate text-[11px] text-gray-300 sm:text-xs">
             <span className="mr-1 uppercase tracking-wider text-gray-500">Volgende:</span>
-            {!isHydrated ? (
+            {!isHydrated || showLoadingStates ? (
               <span className="text-gray-500">Laden...</span>
             ) : !radioConnected ? (
               <span className="text-gray-500">Verbinden...</span>
-            ) : displayHeaderNextTrack?.artist ? (
+            ) : displayHeaderNextTrack?.artist || (nextTitle || nextArtist) ? (
               <>
-                <span className="text-violet-400">{displayHeaderNextTrack.artist}</span>
-                {displayHeaderNextTrack?.title && <span className="text-gray-500"> — </span>}
-                {displayHeaderNextTrack?.title && <span>{displayHeaderNextTrack.title}</span>}
-                {displayHeaderNextTrack?.isFallback && (
+                <span className="text-violet-400">{displayHeaderNextTrack?.artist || nextArtist}</span>
+                {(displayHeaderNextTrack?.title || nextTitle) && <span className="text-gray-500"> — </span>}
+                {(displayHeaderNextTrack?.title || nextTitle) && <span>{displayHeaderNextTrack?.title || nextTitle}</span>}
+                {(displayHeaderNextTrack?.isFallback || nextIsFallback) && (
                   <span className="ml-1 text-gray-500">(random)</span>
                 )}
-                {displayHeaderNextTrack?.requestedBy && (
+                {(displayHeaderNextTrack?.requestedBy || nextRequestedBy) && (
                   <span className="ml-1 text-gray-500">
-                    · door <span className="text-violet-300">{displayHeaderNextTrack.requestedBy}</span>
+                    · door <span className="text-violet-300">{displayHeaderNextTrack?.requestedBy || nextRequestedBy}</span>
                   </span>
                 )}
               </>
