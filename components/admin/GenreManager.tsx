@@ -16,6 +16,23 @@ interface Genre {
   blockedArtists: string[];
 }
 
+type UnknownGenre = Partial<Genre> & Record<string, unknown>;
+
+function normalizeGenre(raw: UnknownGenre): Genre {
+  return {
+    id: String(raw.id ?? ""),
+    label: String(raw.label ?? raw.id ?? "Unknown"),
+    priorityArtists: Array.isArray(raw.priorityArtists) ? raw.priorityArtists.map((v) => String(v)) : [],
+    minScore: typeof raw.minScore === "number" ? raw.minScore : 0,
+    priorityLabels: Array.isArray(raw.priorityLabels) ? raw.priorityLabels.map((v) => String(v)) : [],
+    requiredTokens: Array.isArray(raw.requiredTokens) ? raw.requiredTokens.map((v) => String(v)) : [],
+    blockedTokens: Array.isArray(raw.blockedTokens) ? raw.blockedTokens.map((v) => String(v)) : [],
+    priorityTracks: Array.isArray(raw.priorityTracks) ? raw.priorityTracks.map((v) => String(v)) : [],
+    blockedTracks: Array.isArray(raw.blockedTracks) ? raw.blockedTracks.map((v) => String(v)) : [],
+    blockedArtists: Array.isArray(raw.blockedArtists) ? raw.blockedArtists.map((v) => String(v)) : [],
+  };
+}
+
 export default function GenreManager() {
   const [genres, setGenres] = useState<Genre[]>([]);
   const [loading, setLoading] = useState(true);
@@ -26,18 +43,6 @@ export default function GenreManager() {
   const [addingBlockedTrack, setAddingBlockedTrack] = useState<{ genreId: string; track: string } | null>(null);
 
   const serverUrl = useRadioStore((s) => s.serverUrl) ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
-
-  // Add error boundary-like behavior
-  useEffect(() => {
-    const handleError = (event: ErrorEvent) => {
-      console.error('[genre-manager] Runtime error:', event.error);
-      setError(`Runtime error: ${event.error?.message || 'Unknown error'}`);
-      setLoading(false);
-    };
-
-    window.addEventListener('error', handleError);
-    return () => window.removeEventListener('error', handleError);
-  }, []);
 
   const fetchGenres = useCallback(async () => {
     if (!serverUrl) {
@@ -54,7 +59,13 @@ export default function GenreManager() {
         throw new Error(`Server responded with ${response.status}: ${response.statusText}`);
       }
       const data = await response.json();
-      setGenres(Array.isArray(data) ? data : []);
+      if (!Array.isArray(data)) {
+        throw new Error("Invalid API response shape");
+      }
+      const normalized = data
+        .map((item) => normalizeGenre(item as UnknownGenre))
+        .filter((g) => g.id.length > 0);
+      setGenres(normalized);
     } catch (err) {
       console.error('[genre-manager] Failed to fetch genres:', err);
       setError(`Failed to load genres: ${(err as Error).message}`);
