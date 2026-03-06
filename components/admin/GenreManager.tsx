@@ -65,7 +65,12 @@ export default function GenreManager() {
   }, [serverUrl]);
 
   useEffect(() => {
-    fetchGenres();
+    // Add a small delay to ensure the component is fully mounted
+    const timer = setTimeout(() => {
+      fetchGenres();
+    }, 100);
+    
+    return () => clearTimeout(timer);
   }, [fetchGenres]);
 
   const toggleGenre = (genreId: string) => {
@@ -203,7 +208,9 @@ export default function GenreManager() {
         <h2 className="mb-4 text-lg font-bold text-white">Genre Management</h2>
         <div className="flex items-center justify-center py-8">
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-violet-400 border-t-transparent"></div>
-          <span className="ml-3 text-gray-400">Loading genres...</span>
+          <span className="ml-3 text-gray-400">
+            {!serverUrl ? 'Waiting for server connection...' : 'Loading genres...'}
+          </span>
         </div>
       </div>
     );
