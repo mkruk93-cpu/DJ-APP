@@ -730,7 +730,7 @@ export default function StreamPage() {
             </p>
           </div>
         )}
-        {((mode !== "offline" && mode !== "radio" && !showRadioOfflineState) || mode === "twitch") && (
+        {(mode !== "offline" && mode !== "radio" && !showRadioOfflineState) && (
           <div className={mode === "twitch" ? "block" : "hidden landscape:block sm:block"}>
             <NowPlaying
               radioTrack={radioConnected && radioMode !== "dj" ? radioTrack : null}
