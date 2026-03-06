@@ -349,7 +349,7 @@ export function isKnownDiscoveryGenre(genre: string): boolean {
   return isAllowedGenre(genre);
 }
 
-function getGenreHints(genre: string): GenreHints {
+export function getGenreHints(genre: string): GenreHints {
   const requestedNormalized = normalizeGenreName(genre);
   const normalized = resolveMergedGenreId(requestedNormalized);
   const mergedFamily = getMergedGenreFamily(normalized);

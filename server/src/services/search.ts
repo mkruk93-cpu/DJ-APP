@@ -55,7 +55,7 @@ async function getSoundCloudClientId(): Promise<string | null> {
         try {
           const scriptRes = await fetch(scriptUrl, {
             headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-            timeout: 5000,
+            signal: AbortSignal.timeout(5000),
           });
           const scriptContent = await scriptRes.text();
           

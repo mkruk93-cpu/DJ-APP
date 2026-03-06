@@ -644,7 +644,7 @@ function parseDuration(text: string): number | null {
   return null;
 }
 
-async function youtubeSearch(query: string, limit = 12): Promise<SearchResult[]> {
+async function youtubeSearchLocal(query: string, limit = 12): Promise<SearchResult[]> {
   const cacheKey = `yt:${query.toLowerCase().trim()}:${limit}`;
   const cached = searchCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.results;
@@ -879,7 +879,7 @@ function soundcloudSearchFallback(query: string, limit = 12): Promise<SearchResu
   });
 }
 
-async function soundcloudSearch(query: string, limit = 12): Promise<SearchResult[]> {
+async function soundcloudSearchLocal(query: string, limit = 12): Promise<SearchResult[]> {
   const cacheKey = `sc:${query.toLowerCase().trim()}:${limit}`;
   const cached = searchCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.results;
@@ -952,8 +952,8 @@ app.get('/search', async (req, res) => {
       const minRemoteRequest = localSlice.length < limit ? Math.max(remoteBudget, 5) : remoteBudget;
       const remoteRequested = Math.min(120, remoteOffset + minRemoteRequest);
       const remotePool = source === 'soundcloud'
-        ? await soundcloudSearch(q, remoteRequested)
-        : await youtubeSearch(q, remoteRequested);
+        ? await soundcloudSearchLocal(q, remoteRequested)
+        : await youtubeSearchLocal(q, remoteRequested);
       const remoteFiltered = remotePool
         .filter((item) => matchesStrictQuery(`${item.channel} ${item.title}`, q))
         .slice(remoteOffset, remoteOffset + remoteBudget);
@@ -970,8 +970,8 @@ app.get('/search', async (req, res) => {
 
     const requested = Math.min(120, limit + offset);
     const remotePool = source === 'soundcloud'
-      ? await soundcloudSearch(q, requested)
-      : await youtubeSearch(q, requested);
+      ? await soundcloudSearchLocal(q, requested)
+      : await youtubeSearchLocal(q, requested);
     const remoteFiltered = remotePool
       .filter((item) => matchesStrictQuery(`${item.channel} ${item.title}`, q))
       .slice(offset, offset + limit);
@@ -1041,7 +1041,7 @@ app.get('/api/genre-hits', async (req, res) => {
     const artistsPerPage = Math.min(maxArtists, Math.max(5, Math.ceil(targetResults / 2))); // 5-10 artists
     
     // RANDOMIZED: Use different random artists each time for variety
-    const selectedArtists = [];
+    const selectedArtists: string[] = [];
     const availableArtists = [...priorityArtists]; // Copy array
     
     for (let i = 0; i < artistsPerPage && availableArtists.length > 0; i++) {
@@ -1066,9 +1066,9 @@ app.get('/api/genre-hits', async (req, res) => {
         
         // Race each individual search with longer timeout to prevent crashes
         const results = await Promise.race([
-          useYoutube 
-            ? youtubeSearch(searchQuery, searchLimit)
-            : soundcloudSearch(searchQuery, searchLimit),
+          useYoutube
+            ? youtubeSearchLocal(searchQuery, searchLimit)
+            : soundcloudSearchLocal(searchQuery, searchLimit),
           new Promise<never>((_, reject) => 
             setTimeout(() => reject(new Error('Individual search timeout')), 2000)
           )
@@ -1173,7 +1173,7 @@ app.get('/api/genre-hits', async (req, res) => {
     if (uniqueResults.length < limit && selectedArtists.length < Math.min(15, priorityArtists.length)) {
       console.log(`[genre-hits] Only got ${uniqueResults.length}/${limit} results, trying more artists...`);
       
-      const additionalArtists = [];
+      const additionalArtists: string[] = [];
       const remainingArtists = priorityArtists.filter(artist => !selectedArtists.includes(artist));
       const additionalCount = Math.min(8, remainingArtists.length); // Try up to 8 more
       
@@ -1196,9 +1196,9 @@ app.get('/api/genre-hits', async (req, res) => {
             
             try {
               const results = await Promise.race([
-                useYoutube 
-                  ? youtubeSearch(searchQuery, 4)
-                  : soundcloudSearch(searchQuery, 4),
+                useYoutube
+                  ? youtubeSearchLocal(searchQuery, 4)
+                  : soundcloudSearchLocal(searchQuery, 4),
                 new Promise<never>((_, reject) => 
                   setTimeout(() => reject(new Error('Additional search timeout')), 500)
                 )
@@ -1984,7 +1984,7 @@ io.on('connection', (socket) => {
 
       // If not a valid URL, treat as a search query (e.g. from Spotify: "Artist - Title")
       if (!sourceId) {
-        const searchResults = await youtubeSearch(url, 1);
+        const searchResults = await youtubeSearchLocal(url, 1);
         if (searchResults.length === 0) {
           socket.emit('error:toast', { message: `Geen resultaat gevonden voor "${url}"` });
           return;
@@ -2442,5 +2442,4 @@ main().catch((err) => {
   process.exit(1);
 });
 
-// Export search functions for use by player.ts
-export { youtubeSearch, soundcloudSearch } from './services/search.js';
+// Search functions are imported from services/search.js and used by player.ts
