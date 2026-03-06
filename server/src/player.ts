@@ -300,8 +300,22 @@ async function resolveShortAutoCandidate(query: string): Promise<AutoSearchCandi
         
         // Filter out obvious non-music content
         const title = result.title.toLowerCase();
-        const badKeywords = ['tutorial', 'how to', 'review', 'interview', 'documentary', 'news', 'podcast', 'lesson', 'course'];
+        const badKeywords = [
+          'tutorial', 'how to', 'review', 'interview', 'documentary', 'news', 'podcast', 
+          'lesson', 'course', 'expert', 'spreekt over', 'cyberaanval', 'cybersecurity',
+          'iran', 'politics', 'nieuws', 'talk', 'discussion', 'analysis', 'explained'
+        ];
         if (badKeywords.some(keyword => title.includes(keyword))) return false;
+        
+        // Require music-related keywords or artist name in title
+        const musicKeywords = ['official', 'video', 'music', 'audio', 'remix', 'edit', 'mix', 'hardstyle', 'trance', 'house'];
+        const hasMusic = musicKeywords.some(keyword => title.includes(keyword));
+        
+        // Extract artist name from query to check if it's in the title
+        const queryWords = searchQuery.toLowerCase().split(' ');
+        const hasArtistInTitle = queryWords.some(word => word.length > 2 && title.includes(word));
+        
+        if (!hasMusic && !hasArtistInTitle) return false;
         
         return true;
       })
@@ -737,12 +751,10 @@ async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack |
             continue;
           }
           console.log(`[auto-download] Selected ${selected.source} candidate (${genreId}): ${selected.title ?? query} (${selected.duration ?? '?'}s)`);
-          // For better reliability, use search query instead of direct URL
-          // This avoids issues with region-blocked or unavailable direct URLs
-          const searchQuery = `ytsearch1:${selected.title || choice.title}`;
+          // Use the direct URL from the search result for better reliability
           const selectedPseudo: QueueItem = {
             ...pseudo,
-            youtube_url: searchQuery,
+            youtube_url: selected.url,
             title: selected.title ?? pseudo.title,
           };
           const resolvedTitle = buildAutoDisplayTitle(selected.title, choice.artist, choice.title);
@@ -848,11 +860,10 @@ async function prepareLikedAutoFallbackTrack(): Promise<ReadyTrack | null> {
       return null;
     }
     console.log(`[auto-download] Selected ${selected.source} candidate (liked): ${selected.title ?? query} (${selected.duration ?? '?'}s)`);
-    // For better reliability, use search query instead of direct URL
-    const searchQuery = `ytsearch1:${selected.title || choice}`;
+    // Use the direct URL from the search result
     const selectedPseudo: QueueItem = {
       ...pseudo,
-      youtube_url: searchQuery,
+      youtube_url: selected.url,
       title: selected.title ?? pseudo.title,
     };
     const parsedChoice = parseDisplayArtistTitle(choice);
@@ -2572,21 +2583,15 @@ function downloadAudio(item: QueueItem, cacheDir: string): Promise<string> {
 
         const proc = spawn('python', [
           '-m', 'yt_dlp',
-          '--format', 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio', // Prefer webm/m4a formats
+          '--format', 'bestaudio',
           '--no-playlist',
           '--no-warnings',
-          '--no-check-certificate', // Handle SSL issues
-          '--extract-flat', 'false',
-          '--socket-timeout', '30',
-          '--retries', '2', // Reduced retries for faster failure
-          '--fragment-retries', '2',
-          '--abort-on-unavailable-fragment',
-          '--no-continue', // Don't try to resume partial downloads
-          '--prefer-free-formats',
+          '--socket-timeout', '20',
+          '--retries', '1', // Fast failure for primary attempt
           '-o', outputTemplate,
           url,
         ], {
-          timeout: 45000, // Reduced timeout to 45 seconds
+          timeout: 30000, // 30 second timeout for primary attempt
           stdio: ['ignore', 'pipe', 'pipe']
         });
 
@@ -2651,14 +2656,6 @@ function downloadAudio(item: QueueItem, cacheDir: string): Promise<string> {
           rejectDownload(new Error('Download timeout after 60 seconds'));
         });
       });
-    }
-
-    // Check if the URL is already a search query - if so, use it directly
-    if (item.youtube_url.startsWith('ytsearch')) {
-      downloadFrom(item.youtube_url)
-        .then(resolve)
-        .catch((err) => reject(err));
-      return;
     }
 
     downloadFrom(item.youtube_url)
