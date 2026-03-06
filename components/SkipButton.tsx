@@ -63,7 +63,9 @@ export default function SkipButton({ compact = false }: { compact?: boolean }) {
   }
 
   const threshold = modeSettings.democracy_threshold;
+  // Use server-provided required value if available, otherwise calculate locally
   const needed = voteState?.required ?? Math.max(1, Math.ceil(listenerCount * threshold / 100));
+  const currentVotes = voteState?.votes ?? 0;
 
   if (compact) {
     return (
@@ -89,7 +91,7 @@ export default function SkipButton({ compact = false }: { compact?: boolean }) {
             >
               {voted ? "Gestemd" : "Stem skip"}
               <span className="rounded-full bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-300">
-                {voteState?.votes ?? 0}/{needed}
+                {currentVotes}/{needed}
               </span>
             </button>
             {anyoneCanSkip && (
@@ -201,7 +203,7 @@ export default function SkipButton({ compact = false }: { compact?: boolean }) {
             {voted ? "Gestemd!" : "Stem skip"}
             {hasVotes && (
               <span className="ml-1 rounded-full bg-violet-500/20 px-2 py-0.5 text-xs font-semibold text-violet-400">
-                {voteState.votes}/{voteState.required}
+                {currentVotes}/{needed}
               </span>
             )}
           </button>
@@ -237,7 +239,7 @@ export default function SkipButton({ compact = false }: { compact?: boolean }) {
         </div>
         {hasVotes && !skipLocked && (
           <p className="text-xs text-gray-500">
-            {voteState.votes} van {voteState.required} stemmen nodig om te skippen
+            {currentVotes} van {needed} stemmen nodig om te skippen
             {voteState.timer != null && voteState.timer > 0 && (
               <span className="ml-1 text-yellow-400">
                 — nog {voteState.timer}s
