@@ -358,10 +358,13 @@ export default function QueueAdd() {
         if (includeLocal && offset < 30) {
           // When local files are enabled, always assume more results until offset 30
           // This ensures we can reach remote results after local bucket (20) + buffer
+          console.log('[search-debug] Setting hasMore=true (includeLocal, offset < 30)', { offset, includeLocal });
           setSearchHasMore(true);
         } else {
           // Standard logic: has more if we got results
-          setSearchHasMore(normalized.length > 0);
+          const hasMore = normalized.length > 0;
+          console.log('[search-debug] Setting hasMore based on results', { hasMore, resultsLength: normalized.length, offset });
+          setSearchHasMore(hasMore);
         }
         
         setShowResults(append ? true : visible.length > 0);
@@ -516,10 +519,25 @@ export default function QueueAdd() {
 
   function handleSearchListScroll(e: React.UIEvent<HTMLDivElement>) {
     if (source === "spotify" || source === "genres") return;
+    
+    // Debug logging
+    console.log('[scroll-debug]', {
+      source,
+      searching,
+      searchingMore,
+      searchHasMore,
+      searchQuery,
+      includeLocal,
+      searchOffset: searchOffsetRef.current
+    });
+    
     if (searching || searchingMore || !searchHasMore || !searchQuery) return;
     const el = e.currentTarget;
     const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 120;
-    if (nearBottom) search(searchQuery, true);
+    if (nearBottom) {
+      console.log('[scroll-debug] Triggering search with append=true');
+      search(searchQuery, true);
+    }
   }
 
   function handleGenreListScroll(e: React.UIEvent<HTMLDivElement>) {
