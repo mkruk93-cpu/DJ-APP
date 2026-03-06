@@ -1,11 +1,12 @@
 import 'dotenv/config';
-import express from 'express';
+import express, { type Request } from 'express';
 import http from 'node:http';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import fs from 'node:fs';
 import { join as pathJoin, extname, basename, resolve as pathResolve } from 'node:path';
+import multer from 'multer';
 import { Server as IOServer } from 'socket.io';
 import { createClient } from '@supabase/supabase-js';
 import { initCache } from './cleanup.js';
@@ -29,6 +30,14 @@ import {
   type GenreItem,
   type GenreHitItem,
 } from './services/discovery.js';
+import { parseExportifyUpload } from './services/exportifyImport.js';
+import {
+  createUserPlaylist,
+  listUserPlaylists as listStoredUserPlaylists,
+  getUserPlaylistTracks as getStoredUserPlaylistTracks,
+  deleteUserPlaylist as deleteStoredUserPlaylist,
+  getUserPlaylistUsage,
+} from './services/userPlaylistStore.js';
 
 function getErrorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -56,6 +65,11 @@ const PORT = parseInt(process.env.PORT ?? '3001', 10);
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? '';
 const CACHE_DIR = process.env.CACHE_DIR ?? pathJoin(tmpdir(), 'radio_cache');
 const FRONTEND_URL = process.env.FRONTEND_URL ?? 'http://localhost:3000';
+const USER_PLAYLIST_MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+const USER_PLAYLIST_MAX_TRACKS_PER_IMPORT = 3000;
+const USER_PLAYLIST_MAX_PLAYLISTS_PER_IMPORT = 20;
+const USER_PLAYLIST_MAX_STORED_PLAYLISTS_PER_USER = 80;
+const USER_PLAYLIST_MAX_STORED_TRACKS_PER_USER = 20_000;
 
 const DOWNLOAD_PATH = process.env.DOWNLOAD_PATH ?? '';
 const REKORDBOX_OUTPUT_PATH = process.env.REKORDBOX_OUTPUT_PATH ?? '';
@@ -103,6 +117,10 @@ app.use((_req, res, next) => {
   next();
 });
 app.use(express.json());
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: USER_PLAYLIST_MAX_UPLOAD_BYTES },
+});
 
 // Genre management routes (admin only)
 app.use('/api', genreManagementRouter);
@@ -147,6 +165,34 @@ function normalizeNickname(value: unknown): string | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
   return trimmed.slice(0, 40);
+}
+
+function normalizeDeviceId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, 120);
+}
+
+function getIdentityValueFromRequest(req: Request, key: string): string | null {
+  const fromBody = req.body && typeof req.body === 'object'
+    ? (req.body as Record<string, unknown>)[key]
+    : undefined;
+  if (typeof fromBody === 'string' && fromBody.trim()) return fromBody.trim();
+
+  const fromQuery = req.query?.[key];
+  if (typeof fromQuery === 'string' && fromQuery.trim()) return fromQuery.trim();
+  if (Array.isArray(fromQuery) && typeof fromQuery[0] === 'string' && fromQuery[0].trim()) {
+    return fromQuery[0].trim();
+  }
+  return null;
+}
+
+function getUserIdentityFromRequest(req: Request): { nickname: string; deviceId: string } | null {
+  const nickname = normalizeNickname(getIdentityValueFromRequest(req, 'nickname'));
+  const deviceId = normalizeDeviceId(getIdentityValueFromRequest(req, 'device_id'));
+  if (!nickname || !deviceId) return null;
+  return { nickname, deviceId };
 }
 
 function parseArtistTitle(input: string): { artist: string | null; title: string | null } {
@@ -982,6 +1028,138 @@ app.get('/search', async (req, res) => {
   }
 });
 
+app.post('/api/user-playlists/import', upload.single('file'), async (req, res) => {
+  const identity = getUserIdentityFromRequest(req);
+  if (!identity) {
+    return res.status(400).json({ error: 'nickname en device_id zijn verplicht' });
+  }
+  if (!req.file) {
+    return res.status(400).json({ error: 'Bestand ontbreekt (field: file)' });
+  }
+
+  const originalName = req.file.originalname ?? 'import.csv';
+  const extension = extname(originalName).toLowerCase();
+  if (extension !== '.csv' && extension !== '.zip') {
+    return res.status(400).json({ error: 'Alleen .csv of .zip toegestaan' });
+  }
+
+  try {
+    const parsed = parseExportifyUpload(originalName, req.file.buffer, {
+      maxPlaylists: USER_PLAYLIST_MAX_PLAYLISTS_PER_IMPORT,
+      maxTracksPerPlaylist: USER_PLAYLIST_MAX_TRACKS_PER_IMPORT,
+    }).filter((playlist) => playlist.tracks.length > 0);
+
+    if (parsed.length === 0) {
+      return res.status(400).json({ error: 'Geen geldige tracks gevonden in upload' });
+    }
+
+    const totalTracks = parsed.reduce((sum, playlist) => sum + playlist.tracks.length, 0);
+    if (totalTracks > USER_PLAYLIST_MAX_TRACKS_PER_IMPORT) {
+      return res.status(400).json({
+        error: `Te veel tracks in 1 import (max ${USER_PLAYLIST_MAX_TRACKS_PER_IMPORT})`,
+      });
+    }
+
+    const usage = await getUserPlaylistUsage(identity);
+    if (usage.playlists + parsed.length > USER_PLAYLIST_MAX_STORED_PLAYLISTS_PER_USER) {
+      return res.status(400).json({
+        error: `Te veel opgeslagen playlists (max ${USER_PLAYLIST_MAX_STORED_PLAYLISTS_PER_USER})`,
+      });
+    }
+    if (usage.tracks + totalTracks > USER_PLAYLIST_MAX_STORED_TRACKS_PER_USER) {
+      return res.status(400).json({
+        error: `Te veel opgeslagen tracks (max ${USER_PLAYLIST_MAX_STORED_TRACKS_PER_USER})`,
+      });
+    }
+
+    const imported: Array<{ id: string; name: string; trackCount: number }> = [];
+    for (const playlist of parsed) {
+      const playlistName = playlist.name.trim().slice(0, 120) || 'Imported playlist';
+      const tracksRows = playlist.tracks.map((track, index) => ({
+        title: track.title.slice(0, 300),
+        artist: track.artist.slice(0, 300),
+        album: track.album?.slice(0, 300) ?? null,
+        spotify_url: track.spotifyUrl?.slice(0, 600) ?? null,
+        position: index + 1,
+      }));
+
+      const stored = await createUserPlaylist(identity, playlistName, tracksRows, 'exportify');
+
+      imported.push({
+        id: stored.id,
+        name: stored.name,
+        trackCount: stored.trackCount,
+      });
+    }
+
+    res.json({
+      ok: true,
+      imported,
+      totalPlaylists: imported.length,
+      totalTracks,
+    });
+  } catch (err) {
+    console.error('[rest] /api/user-playlists/import error:', err);
+    res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
+app.get('/api/user-playlists', async (req, res) => {
+  const identity = getUserIdentityFromRequest(req);
+  if (!identity) {
+    return res.status(400).json({ error: 'nickname en device_id zijn verplicht' });
+  }
+
+  try {
+    const items = await listStoredUserPlaylists(identity);
+    res.json(items);
+  } catch (err) {
+    console.error('[rest] /api/user-playlists GET error:', err);
+    res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
+app.get('/api/user-playlists/:id/tracks', async (req, res) => {
+  const identity = getUserIdentityFromRequest(req);
+  if (!identity) {
+    return res.status(400).json({ error: 'nickname en device_id zijn verplicht' });
+  }
+
+  const playlistId = String(req.params.id ?? '').trim();
+  if (!playlistId) {
+    return res.status(400).json({ error: 'Playlist id ontbreekt' });
+  }
+
+  try {
+    const tracks = await getStoredUserPlaylistTracks(identity, playlistId);
+    if (!tracks) return res.status(404).json({ error: 'Playlist niet gevonden' });
+    res.json(tracks);
+  } catch (err) {
+    console.error('[rest] /api/user-playlists/:id/tracks error:', err);
+    res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
+app.delete('/api/user-playlists/:id', async (req, res) => {
+  const identity = getUserIdentityFromRequest(req);
+  if (!identity) {
+    return res.status(400).json({ error: 'nickname en device_id zijn verplicht' });
+  }
+
+  const playlistId = String(req.params.id ?? '').trim();
+  if (!playlistId) {
+    return res.status(400).json({ error: 'Playlist id ontbreekt' });
+  }
+
+  try {
+    await deleteStoredUserPlaylist(identity, playlistId);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[rest] /api/user-playlists/:id DELETE error:', err);
+    res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
 app.get('/api/genres', async (req, res) => {
   const q = String(req.query.q ?? '').trim().toLowerCase();
   const cacheKey = q || '__all__';
@@ -1666,13 +1844,46 @@ app.post('/api/tunnel-url', async (req, res) => {
 let voteSkipSet = new Set<string>();
 let voteTimer: ReturnType<typeof setTimeout> | null = null;
 let voteTrackId: string | null = null;
+let voteExpiresAt: number | null = null;
 
 function resetVotes(): void {
   voteSkipSet.clear();
   voteTrackId = null;
+  voteExpiresAt = null;
   if (voteTimer) {
     clearTimeout(voteTimer);
     voteTimer = null;
+  }
+}
+
+function getSkipVoteTimerSeconds(): number {
+  if (!voteExpiresAt) return 0;
+  return Math.max(0, Math.ceil((voteExpiresAt - Date.now()) / 1000));
+}
+
+async function emitSkipVoteState(): Promise<void> {
+  if (voteSkipSet.size <= 0) {
+    io.emit('vote:update', null);
+    return;
+  }
+
+  const settings = await getModeSettings(sb);
+  const threshold = settings.democracy_threshold / 100;
+  const required = Math.max(1, Math.ceil(io.engine.clientsCount * threshold));
+  const timer = getSkipVoteTimerSeconds();
+
+  io.emit('vote:update', {
+    votes: voteSkipSet.size,
+    required,
+    timer,
+  });
+
+  if (voteSkipSet.size >= required && !isSkipLocked()) {
+    console.log('[vote] Threshold reached — skipping');
+    resetVotes();
+    io.emit('vote:update', null);
+    skipCurrentTrack();
+    markSkipTriggered();
   }
 }
 
@@ -1954,6 +2165,7 @@ function startDurationVote(
 io.on('connection', (socket) => {
   console.log(`[socket] Client connected: ${socket.id}`);
   io.emit('stream:status', { online: getCurrentTrack() !== null, listeners: io.engine.clientsCount });
+  void emitSkipVoteState();
   socket.emit('upcoming:update', getUpcomingTrack());
   void emitFallbackGenreUpdate(socket);
   if (activeQueuePushVote) socket.emit('queuePushVote:update', activeQueuePushVote);
@@ -2188,32 +2400,19 @@ io.on('connection', (socket) => {
 
       voteSkipSet.add(socket.id);
       const settings = await getModeSettings(sb);
-      const threshold = settings.democracy_threshold / 100;
-      const required = Math.max(1, Math.ceil(io.engine.clientsCount * threshold));
       const timerSeconds = settings.democracy_timer;
 
       // Start timer on first vote
       if (voteSkipSet.size === 1 && !voteTimer) {
+        voteExpiresAt = Date.now() + (timerSeconds * 1000);
         voteTimer = setTimeout(() => {
           console.log('[vote] Timer expired — votes reset');
           resetVotes();
-          io.emit('vote:update', { votes: 0, required, timer: 0 });
+          io.emit('vote:update', null);
         }, timerSeconds * 1000);
       }
 
-      io.emit('vote:update', {
-        votes: voteSkipSet.size,
-        required,
-        timer: timerSeconds,
-      });
-
-      if (voteSkipSet.size >= required && !isSkipLocked()) {
-        console.log('[vote] Threshold reached — skipping');
-        resetVotes();
-        io.emit('vote:update', null);
-        skipCurrentTrack();
-        markSkipTriggered();
-      }
+      await emitSkipVoteState();
     } catch (err) {
       console.error('[socket] vote:skip error:', err);
     }
@@ -2357,6 +2556,7 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     voteSkipSet.delete(socket.id);
     io.emit('stream:status', { online: getCurrentTrack() !== null, listeners: io.engine.clientsCount });
+    void emitSkipVoteState();
   });
 });
 

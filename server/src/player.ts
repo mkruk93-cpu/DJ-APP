@@ -203,6 +203,50 @@ function stripLeadingArtistFromTitle(title: string, artist: string): string {
   return cleanTitle;
 }
 
+function normalizeArtistMatchText(text: string): string {
+  return text
+    .toLowerCase()
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\w\s&-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractLeadingTitleArtistNormalized(title: string): string | null {
+  const raw = title.trim();
+  if (!raw) return null;
+  for (const sep of DISPLAY_TITLE_SEPARATORS) {
+    const idx = raw.indexOf(sep);
+    if (idx <= 0 || idx >= raw.length - sep.length) continue;
+    const part = raw.slice(0, idx).trim();
+    const normalized = normalizeArtistMatchText(part);
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
+function hasArtistCreditInTitleNormalized(titleNorm: string, artistNorm: string): boolean {
+  if (!titleNorm || !artistNorm) return false;
+  const escapedArtist = artistNorm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const looseRemixCredit = new RegExp(`${escapedArtist}(?:\\s+[a-z0-9&]+){0,6}\\s+(remix|edit|bootleg|rework)`, 'i');
+  if (looseRemixCredit.test(titleNorm)) return true;
+  const patterns = [
+    `${artistNorm} remix`,
+    `${artistNorm} edit`,
+    `${artistNorm} bootleg`,
+    `${artistNorm} rework`,
+    `feat ${artistNorm}`,
+    `ft ${artistNorm}`,
+    `featuring ${artistNorm}`,
+    `vs ${artistNorm}`,
+    `x ${artistNorm}`,
+    `${artistNorm} x`,
+  ];
+  return patterns.some((pattern) => titleNorm.includes(pattern));
+}
+
 function buildAutoDisplayTitle(
   detectedTitle: string | null | undefined,
   fallbackArtist: string | null | undefined,
@@ -215,6 +259,15 @@ function buildAutoDisplayTitle(
   if (!artist) return detected || baseTitle || 'Unknown title';
   const candidate = stripLeadingArtistFromTitle(detected || baseTitle, artist) || baseTitle || detected;
   return autoTrackTitle(artist, candidate || 'Unknown title');
+}
+
+function getNormalizedDisplayArtist(value: string | null | undefined): string | null {
+  const text = (value ?? '').trim();
+  if (!text) return null;
+  const parsed = parseDisplayArtistTitle(text);
+  if (!parsed.artist) return null;
+  const normalized = normalizeArtistMatchText(parsed.artist);
+  return normalized || null;
 }
 
 function sanitizeAutoId(input: string): string {
@@ -296,6 +349,10 @@ async function resolveShortAutoCandidate(query: string, genreId?: string): Promi
 
     // Keep the original query for better artist matching
     const searchQuery = query;
+    const parsedQuery = parseDisplayArtistTitle(searchQuery);
+    const expectedArtistNorm = parsedQuery.artist
+      ? normalizeArtistMatchText(parsedQuery.artist)
+      : '';
 
     // Try YouTube first with aggressive timeout
     const ytResults = await Promise.race([
@@ -353,7 +410,8 @@ async function resolveShortAutoCandidate(query: string, genreId?: string): Promi
           'lesson', 'course', 'expert', 'spreekt over', 'cyberaanval', 'cybersecurity',
           'iran', 'politics', 'nieuws', 'talk', 'discussion', 'analysis', 'explained',
           'features you might not know', 'cool features', 'tips', 'tricks', 'guide',
-          'acoustic live', 'cover', 'live at', 'southampton', 'concert', 'performance'
+          'acoustic live', 'cover', 'live at', 'southampton', 'concert', 'performance',
+          'trailer', 'teaser', 'sample', 'scene', 'movie clip', 'official trailer'
         ];
         if (badKeywords.some(keyword => title.includes(keyword))) return false;
 
@@ -367,19 +425,36 @@ async function resolveShortAutoCandidate(query: string, genreId?: string): Promi
         
         // Must have music production indicators
         const musicIndicators = [
-          'official', 'video', 'videoclip', 'audio', 'remix', 'edit', 'mix', 
+          'audio', 'remix', 'edit', 'mix',
           'rip', 'hq', '4k', 'visualizer', 'music', 'track', 'anthem'
         ];
         const hasIndicator = musicIndicators.some(keyword => title.includes(keyword));
+        const hasArtistTitleFormat = hasDisplayArtistSeparator(result.title || '');
         
-        // Must have either genre keyword OR music indicator
-        if (!hasGenre && !hasIndicator) return false;
+        // Must have either genre keyword, music indicator or normal artist-title format.
+        if (!hasGenre && !hasIndicator && !hasArtistTitleFormat) return false;
         
         // Extract artist name from query and ensure it's in title or channel
         const queryWords = searchQuery.toLowerCase().split(/[\s\-]+/).filter(word => word.length > 2);
         const hasArtistMatch = queryWords.some(word => 
           title.includes(word) || channel.includes(word)
         );
+
+        if (expectedArtistNorm) {
+          const titleNorm = normalizeArtistMatchText(result.title || '');
+          const channelNorm = normalizeArtistMatchText(result.channel || '');
+          const leadingArtistNorm = extractLeadingTitleArtistNormalized(result.title || '');
+          const leadingArtistMatches = !!leadingArtistNorm && (
+            leadingArtistNorm.includes(expectedArtistNorm) || expectedArtistNorm.includes(leadingArtistNorm)
+          );
+          const creditedInTitle = hasArtistCreditInTitleNormalized(titleNorm, expectedArtistNorm);
+          const artistAnywhereMatch = titleNorm.includes(expectedArtistNorm) || channelNorm.includes(expectedArtistNorm);
+
+          // Uploader can differ, but if title has "Artist - Title" and leading artist mismatches,
+          // only allow explicit remix/feat credit for expected artist.
+          if (leadingArtistNorm && !leadingArtistMatches && !creditedInTitle) return false;
+          if (!leadingArtistNorm && !artistAnywhereMatch && !creditedInTitle) return false;
+        }
         
         // For euphoric hardstyle, be extra strict about artist matching
         if (searchQuery.toLowerCase().includes('euphoric') && !hasArtistMatch) return false;
@@ -616,19 +691,15 @@ async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack |
             if (result.duration > 900) return false; // 15 minutes max (allow longer tracks)
             if (result.duration < 120) return false; // 2 minutes min
             
-            // Ensure the track is actually from the whitelisted artist
-            const normalizeText = (text: string) => text
-              .toLowerCase()
-              .trim()
-              .normalize('NFD') // Decompose accented characters
-              .replace(/[\u0300-\u036f]/g, '') // Remove diacritics
-              .replace(/[^\w\s&-]/g, ' ') // Keep only word chars, spaces, & and -
-              .replace(/\s+/g, ' ')
-              .trim();
-            
-            const artistNorm = normalizeText(artist);
-            const titleNorm = normalizeText(result.title || '');
-            const channelNorm = normalizeText(result.channel || '');
+            // Ensure track has credible artist linkage without requiring uploader name equality.
+            const artistNorm = normalizeArtistMatchText(artist);
+            const titleNorm = normalizeArtistMatchText(result.title || '');
+            const channelNorm = normalizeArtistMatchText(result.channel || '');
+            const leadingArtistNorm = extractLeadingTitleArtistNormalized(result.title || '');
+            const leadingArtistMatches = !!leadingArtistNorm && (
+              leadingArtistNorm.includes(artistNorm) || artistNorm.includes(leadingArtistNorm)
+            );
+            const creditedInTitle = hasArtistCreditInTitleNormalized(titleNorm, artistNorm);
             
             // Use word boundary matching to prevent partial matches
             const createArtistRegex = (name: string) => {
@@ -643,6 +714,17 @@ async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack |
             
             // Also check for simple contains match for better recall
             const simpleMatch = titleNorm.includes(artistNorm) || channelNorm.includes(artistNorm);
+
+            // Reject obvious non-music / promo material that often sneaks through.
+            const nonMusicKeywords = ['trailer', 'teaser', 'sample', 'scene', 'official trailer'];
+            if (nonMusicKeywords.some((keyword) => titleNorm.includes(keyword))) return false;
+
+            // If title is "Artist - Track", leading artist must match expected artist,
+            // unless expected artist is explicitly credited as remix/feat.
+            if (leadingArtistNorm && !leadingArtistMatches && !creditedInTitle) {
+              console.log(`[auto-playlist] Filtered out mismatched leading artist: "${result.title}" by "${result.channel}" (expected: ${artist})`);
+              return false;
+            }
             
             // Additional check: if artist name is very short (<=3 chars), be extra strict
             if (artistNorm.length <= 3) {
@@ -659,11 +741,11 @@ async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack |
                 pattern.test(titleNorm) || pattern.test(channelNorm)
               );
               
-              if (!strictMatch && !artistInTitle && !artistInChannel) {
+              if (!strictMatch && !artistInTitle && !artistInChannel && !creditedInTitle) {
                 console.log(`[auto-playlist] Filtered out non-matching short artist: "${result.title}" by "${result.channel}" (expected: ${artist})`);
                 return false;
               }
-            } else if (!artistInTitle && !artistInChannel && !simpleMatch) {
+            } else if (!artistInTitle && !artistInChannel && !simpleMatch && !creditedInTitle) {
               console.log(`[auto-playlist] Filtered out non-matching artist: "${result.title}" by "${result.channel}" (expected: ${artist})`);
               return false;
             }
@@ -1544,9 +1626,31 @@ function isInBuffer(itemId: string): boolean {
   return preloadBuffer.some((p) => p.item.id === itemId);
 }
 
-function takeAutoReadyFromBuffer(): ReadyTrack | null {
+function takeAutoReadyFromBuffer(previousTitle?: string | null): ReadyTrack | null {
   if (autoReadyBuffer.length === 0) return null;
-  const next = autoReadyBuffer.shift() ?? null;
+  const previousArtist = getNormalizedDisplayArtist(previousTitle);
+  let next: ReadyTrack | null = null;
+
+  if (previousArtist) {
+    const preferredIdx = autoReadyBuffer.findIndex((entry) => {
+      const artist = getNormalizedDisplayArtist(entry.title);
+      return !!artist && artist !== previousArtist;
+    });
+    if (preferredIdx > 0) {
+      const [picked] = autoReadyBuffer.splice(preferredIdx, 1);
+      next = picked ?? null;
+      if (next) {
+        const nextArtist = getNormalizedDisplayArtist(next.title);
+        console.log(`[auto-playlist] Avoided back-to-back artist: ${previousArtist} -> ${nextArtist ?? 'unknown'}`);
+      }
+    } else if (preferredIdx === 0) {
+      next = autoReadyBuffer.shift() ?? null;
+    }
+  }
+
+  if (!next) {
+    next = autoReadyBuffer.shift() ?? null;
+  }
   broadcastUpcomingTrack();
   return next;
 }
@@ -2003,7 +2107,7 @@ async function playNext(
     if (getAutoReadyCount() < AUTO_READY_START_MIN) {
       await waitForAutoReadyMinimum(sb, cacheDir, AUTO_READY_START_MIN, AUTO_READY_WAIT_TIMEOUT_MS);
     }
-    let ready = takeAutoReadyFromBuffer();
+    let ready = takeAutoReadyFromBuffer(currentTrack?.title ?? null);
     if (!ready) {
       const preparePromise = activeAutoGenre === LIKED_AUTO_GENRE_ID
         ? prepareLikedAutoFallbackTrack()
@@ -2017,6 +2121,20 @@ async function playNext(
         ]);
       } else {
         ready = await preparePromise;
+      }
+
+      // Prefer a different artist than the currently playing track when possible.
+      if (ready) {
+        const currentArtist = getNormalizedDisplayArtist(currentTrack?.title ?? null);
+        const readyArtist = getNormalizedDisplayArtist(ready.title);
+        if (currentArtist && readyArtist && currentArtist === readyArtist && autoReadyBuffer.length > 0) {
+          const alternative = takeAutoReadyFromBuffer(currentTrack?.title ?? null);
+          if (alternative) {
+            autoReadyBuffer.push(ready);
+            ready = alternative;
+            broadcastUpcomingTrack();
+          }
+        }
       }
     }
     if (!isAutoGenreStillActive(activeAutoGenre)) return false;

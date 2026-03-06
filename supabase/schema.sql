@@ -147,3 +147,29 @@ CREATE INDEX IF NOT EXISTS idx_shoutouts_active_expires ON shoutouts(active, exp
 ALTER PUBLICATION supabase_realtime ADD TABLE live_polls;
 ALTER PUBLICATION supabase_realtime ADD TABLE live_poll_votes;
 ALTER PUBLICATION supabase_realtime ADD TABLE shoutouts;
+
+-- Personal user playlists imported from Exportify (CSV/ZIP)
+CREATE TABLE IF NOT EXISTS user_playlists (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  nickname    text NOT NULL,
+  device_id   text NOT NULL,
+  name        text NOT NULL,
+  source      text NOT NULL DEFAULT 'exportify',
+  created_at  timestamptz DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS user_playlist_tracks (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  playlist_id  uuid NOT NULL REFERENCES user_playlists(id) ON DELETE CASCADE,
+  title        text NOT NULL,
+  artist       text,
+  album        text,
+  spotify_url  text,
+  position     integer NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_playlists_owner
+  ON user_playlists(nickname, device_id);
+
+CREATE INDEX IF NOT EXISTS idx_user_playlist_tracks_position
+  ON user_playlist_tracks(playlist_id, position);

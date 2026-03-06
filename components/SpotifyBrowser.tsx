@@ -12,6 +12,14 @@ import {
   type SpotifyPaginatedResponse,
   type SpotifyUser,
 } from "@/lib/spotify";
+import {
+  deleteUserPlaylist,
+  getUserPlaylistTracks,
+  importUserPlaylistFile,
+  listUserPlaylists,
+  type UserPlaylist,
+  type UserPlaylistTrack,
+} from "@/lib/userPlaylistsApi";
 
 interface SpotifyBrowserProps {
   onAddTrack: (track: { id?: string; query: string; artist?: string | null; title?: string | null }) => void;
@@ -25,7 +33,7 @@ function formatDuration(ms: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-type View = "playlists" | "tracks";
+type View = "playlists" | "tracks" | "importedTracks";
 type TrackSource = "liked" | "playlist" | null;
 
 export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowserProps) {
@@ -44,6 +52,16 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
   const [playlistsNext, setPlaylistsNext] = useState<string | null>(null);
   const [tracksNext, setTracksNext] = useState<string | null>(null);
   const [trackSource, setTrackSource] = useState<TrackSource>(null);
+  const [importing, setImporting] = useState(false);
+  const [importStatus, setImportStatus] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [savedPlaylists, setSavedPlaylists] = useState<UserPlaylist[]>([]);
+  const [savedPlaylistsLoading, setSavedPlaylistsLoading] = useState(false);
+  const [savedTracks, setSavedTracks] = useState<UserPlaylistTrack[]>([]);
+  const [savedTracksLoading, setSavedTracksLoading] = useState(false);
+  const [savedTracksError, setSavedTracksError] = useState<string | null>(null);
+  const [selectedSavedPlaylist, setSelectedSavedPlaylist] = useState<UserPlaylist | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
 
@@ -59,6 +77,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
     if (!checkConnection()) return;
     loadUser();
     void loadPlaylists(false);
+    void loadSavedPlaylists();
   }, [checkConnection]);
 
   useEffect(() => {
@@ -68,6 +87,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
         setAuthStatus(null);
         loadUser();
         void loadPlaylists(false);
+        void loadSavedPlaylists();
       }
     }
     window.addEventListener("storage", onStorage);
@@ -81,6 +101,70 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
       else setConnected(false);
     } catch {
       setConnected(false);
+    }
+  }
+
+  async function loadSavedPlaylists() {
+    setSavedPlaylistsLoading(true);
+    try {
+      const items = await listUserPlaylists();
+      setSavedPlaylists(items);
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : "Kon opgeslagen playlists niet laden.");
+    } finally {
+      setSavedPlaylistsLoading(false);
+    }
+  }
+
+  async function openSavedPlaylist(playlist: UserPlaylist) {
+    setSelectedSavedPlaylist(playlist);
+    setView("importedTracks");
+    setFilter("");
+    setSavedTracks([]);
+    setSavedTracksError(null);
+    setSavedTracksLoading(true);
+    try {
+      const tracks = await getUserPlaylistTracks(playlist.id);
+      setSavedTracks(tracks);
+    } catch (err) {
+      setSavedTracksError(err instanceof Error ? err.message : "Kon tracks niet laden.");
+    } finally {
+      setSavedTracksLoading(false);
+    }
+  }
+
+  async function removeSavedPlaylist(playlist: UserPlaylist) {
+    setImportError(null);
+    try {
+      await deleteUserPlaylist(playlist.id);
+      setSavedPlaylists((prev) => prev.filter((p) => p.id !== playlist.id));
+      if (selectedSavedPlaylist?.id === playlist.id) {
+        setSelectedSavedPlaylist(null);
+        setSavedTracks([]);
+        setView("playlists");
+      }
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : "Verwijderen mislukt.");
+    }
+  }
+
+  async function handleImportExportify() {
+    if (!importFile) {
+      setImportError("Kies eerst een .csv of .zip bestand.");
+      return;
+    }
+    setImporting(true);
+    setImportError(null);
+    setImportStatus(null);
+    try {
+      const result = await importUserPlaylistFile(importFile);
+      setImportStatus(`Import klaar: ${result.totalPlaylists} playlist(s), ${result.totalTracks} tracks.`);
+      setImportFile(null);
+      await loadSavedPlaylists();
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : "Import mislukt.");
+    } finally {
+      setImporting(false);
     }
   }
 
@@ -225,6 +309,19 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
     } catch {}
   }
 
+  function handleAddSavedTrack(track: UserPlaylistTrack) {
+    const artist = (track.artist ?? "").trim();
+    const title = (track.title ?? "").trim();
+    const query = artist ? `${artist} - ${title}` : title;
+    setAddedTrackId(track.id);
+    onAddTrack({
+      query,
+      artist: artist || null,
+      title: title || null,
+    });
+    setTimeout(() => setAddedTrackId(null), 3000);
+  }
+
   function handleDisconnect() {
     disconnectSpotify();
     setConnected(false);
@@ -234,6 +331,9 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
     setPlaylistsNext(null);
     setTracksNext(null);
     setTrackSource(null);
+    setSavedPlaylists([]);
+    setSavedTracks([]);
+    setSelectedSavedPlaylist(null);
     setView("playlists");
   }
 
@@ -278,6 +378,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
       setAuthStatus("Spotify sessie vernieuwd.");
       if (view === "playlists") {
         void loadPlaylists(false);
+        void loadSavedPlaylists();
         return;
       }
       if (trackSource === "liked") {
@@ -340,11 +441,21 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
     );
   });
 
+  const filteredSavedTracks = savedTracks.filter((track) => {
+    const q = filter.toLowerCase();
+    if (!q) return true;
+    return (
+      track.title.toLowerCase().includes(q) ||
+      (track.artist ?? "").toLowerCase().includes(q) ||
+      (track.album ?? "").toLowerCase().includes(q)
+    );
+  });
+
   return (
     <div className="flex max-h-[40vh] flex-col gap-1.5 overflow-hidden">
       {/* Header + navigation */}
       <div className="flex shrink-0 items-center justify-between">
-        {view === "tracks" ? (
+        {view !== "playlists" ? (
           <button
             type="button"
             onClick={() => {
@@ -352,15 +463,18 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
               setTracks([]);
               setTracksNext(null);
               setTrackSource(null);
+              setSavedTracks([]);
+              setSelectedSavedPlaylist(null);
               setFilter("");
               setTrackError(null);
+              setSavedTracksError(null);
             }}
             className="flex items-center gap-1 text-xs text-violet-400 transition hover:text-violet-300"
           >
             <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
             </svg>
-            {selectedPlaylist?.name ?? "Terug"}
+            {view === "importedTracks" ? (selectedSavedPlaylist?.name ?? "Terug") : (selectedPlaylist?.name ?? "Terug")}
           </button>
         ) : (
           <div className="flex items-center gap-1.5 text-[11px] text-gray-400">
@@ -382,7 +496,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
         type="text"
         value={filter}
         onChange={(e) => setFilter(e.target.value)}
-        placeholder={view === "playlists" ? "Filter playlists..." : "Filter nummers..."}
+        placeholder={view === "playlists" ? "Filter playlists..." : "Filter tracks..."}
         className="w-full shrink-0 rounded-md border border-gray-700 bg-gray-800 px-2.5 py-1 text-xs text-white placeholder-gray-500 outline-none transition focus:border-[#1DB954]"
       />
       {authStatus && (
@@ -390,7 +504,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
       )}
 
       {/* Loading */}
-      {loading && (
+      {(loading || savedTracksLoading) && (
         <div className="flex shrink-0 items-center justify-center py-3">
           <span className="block h-4 w-4 animate-spin rounded-full border-2 border-[#1DB954] border-t-transparent" />
         </div>
@@ -399,6 +513,66 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
       {/* Playlist list */}
       {view === "playlists" && !loading && (
         <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto">
+          <div className="mb-2 rounded-md border border-gray-700/70 bg-gray-900/60 p-2">
+            <p className="text-[11px] font-semibold text-gray-200">Import Exportify</p>
+            <p className="mt-0.5 text-[10px] text-gray-500">Upload .csv of .zip met playlists uit Exportify.</p>
+            <input
+              type="file"
+              accept=".csv,.zip"
+              onChange={(e) => {
+                const file = e.target.files?.[0] ?? null;
+                setImportFile(file);
+                setImportError(null);
+              }}
+              className="mt-2 w-full text-[10px] text-gray-400 file:mr-2 file:rounded file:border-0 file:bg-gray-700 file:px-2 file:py-1 file:text-[10px] file:font-medium file:text-white"
+            />
+            <button
+              type="button"
+              onClick={() => { void handleImportExportify(); }}
+              disabled={!importFile || importing}
+              className="mt-2 rounded bg-violet-600 px-2 py-1 text-[10px] font-semibold text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {importing ? "Importeren..." : "Importeer bestand"}
+            </button>
+            {importStatus && <p className="mt-1 text-[10px] text-green-300">{importStatus}</p>}
+            {importError && <p className="mt-1 text-[10px] text-red-300">{importError}</p>}
+          </div>
+
+          <div className="mb-2 rounded-md border border-gray-700/70 bg-gray-900/50 p-2">
+            <div className="mb-1 flex items-center justify-between">
+              <p className="text-[11px] font-semibold text-gray-200">Persoonlijke playlists</p>
+              <button
+                type="button"
+                onClick={() => { void loadSavedPlaylists(); }}
+                disabled={savedPlaylistsLoading}
+                className="text-[10px] text-violet-300 transition hover:text-violet-200 disabled:opacity-40"
+              >
+                {savedPlaylistsLoading ? "Laden..." : "Ververs"}
+              </button>
+            </div>
+            {savedPlaylists.length === 0 && !savedPlaylistsLoading && (
+              <p className="text-[10px] text-gray-500">Nog geen geïmporteerde playlists.</p>
+            )}
+            {savedPlaylists.map((playlist) => (
+              <div key={playlist.id} className="mt-1 flex items-center justify-between rounded bg-gray-800/70 px-2 py-1">
+                <button
+                  type="button"
+                  onClick={() => { void openSavedPlaylist(playlist); }}
+                  className="truncate text-left text-[11px] text-white transition hover:text-violet-300"
+                >
+                  {playlist.name}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { void removeSavedPlaylist(playlist); }}
+                  className="ml-2 text-[10px] text-red-300 transition hover:text-red-200"
+                >
+                  Verwijder
+                </button>
+              </div>
+            ))}
+          </div>
+
           {/* Liked Songs */}
           <button
             type="button"
@@ -478,6 +652,21 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
         </div>
       )}
 
+      {savedTracksError && view === "importedTracks" && !savedTracksLoading && (
+        <div className="shrink-0 rounded-md border border-yellow-500/30 bg-yellow-500/10 p-2">
+          <p className="text-[11px] text-yellow-400">{savedTracksError}</p>
+          <button
+            type="button"
+            onClick={() => {
+              if (selectedSavedPlaylist) void openSavedPlaylist(selectedSavedPlaylist);
+            }}
+            className="mt-1 text-[11px] text-violet-400 transition hover:text-violet-300"
+          >
+            Opnieuw proberen
+          </button>
+        </div>
+      )}
+
       {/* Track list */}
       {view === "tracks" && !loading && (
         <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto">
@@ -541,6 +730,46 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
             </p>
           )}
           <div ref={loadMoreRef} className="h-1 w-full" />
+        </div>
+      )}
+
+      {view === "importedTracks" && !savedTracksLoading && (
+        <div className="min-h-0 flex-1 space-y-px overflow-y-auto">
+          {filteredSavedTracks.map((track) => {
+            const isAdded = addedTrackId === track.id;
+            return (
+              <button
+                type="button"
+                key={track.id}
+                onClick={() => handleAddSavedTrack(track)}
+                disabled={submitting || isAdded}
+                className={`flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition ${
+                  isAdded ? "bg-green-500/10" : "hover:bg-gray-800/80"
+                } disabled:opacity-60`}
+              >
+                <div className="h-10 w-10 shrink-0 rounded bg-gray-800" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-medium text-white">{track.title}</p>
+                  <p className="truncate text-[10px] text-gray-400">{track.artist ?? "Unknown"}</p>
+                </div>
+                {isAdded ? (
+                  <span className="rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
+                    Toegevoegd
+                  </span>
+                ) : (
+                  <svg className="h-3.5 w-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                  </svg>
+                )}
+              </button>
+            );
+          })}
+
+          {filteredSavedTracks.length === 0 && !savedTracksError && (
+            <p className="py-2 text-center text-[11px] text-gray-500">
+              Geen tracks gevonden
+            </p>
+          )}
         </div>
       )}
     </div>

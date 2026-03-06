@@ -40,7 +40,11 @@ let cachedConfigMtime = 0;
 let cachedConfigRules = new Map<string, CuratedGenreRule>();
 
 function normalize(value: string): string {
-  return value.trim().toLowerCase();
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ');
 }
 
 function dedupe(values: string[] | undefined): string[] {
