@@ -27,6 +27,15 @@ interface Genre {
   blockedArtists: string[];
 }
 
+function normalizeGenreId(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\s_-]/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/ /g, '_');
+}
+
 // Helper function to read genre config
 function readGenreConfig(): GenreConfig {
   try {
@@ -49,8 +58,8 @@ function writeGenreConfig(config: GenreConfig): void {
   }
 }
 
-// GET /api/genres - Get all genres and their artists
-router.get('/genres', (req, res) => {
+// GET /api/genre-management/genres - Get all genres and their artists
+router.get('/genre-management/genres', (_req, res) => {
   try {
     const config = readGenreConfig();
     res.json(config.genres);
@@ -59,8 +68,54 @@ router.get('/genres', (req, res) => {
   }
 });
 
-// GET /api/genres/:id - Get specific genre
-router.get('/genres/:id', (req, res) => {
+// POST /api/genre-management/genres - Create a new genre
+router.post('/genre-management/genres', (req, res) => {
+  try {
+    const { id, label } = req.body ?? {};
+    const rawId = typeof id === 'string' ? id : '';
+    const rawLabel = typeof label === 'string' ? label : '';
+
+    const normalizedId = normalizeGenreId(rawId || rawLabel);
+    const normalizedLabel = rawLabel.trim() || normalizedId.replace(/_/g, ' ');
+
+    if (!normalizedId) {
+      return res.status(400).json({ error: 'Genre id or label is required' });
+    }
+
+    const config = readGenreConfig();
+    if (!Array.isArray(config.genres)) config.genres = [];
+
+    const alreadyExists = config.genres.some((g) => g.id.toLowerCase() === normalizedId);
+    if (alreadyExists) {
+      return res.status(400).json({ error: 'Genre already exists' });
+    }
+
+    const newGenre: Genre = {
+      id: normalizedId,
+      label: normalizedLabel,
+      priorityArtists: [],
+      minScore: 3,
+      priorityLabels: [],
+      requiredTokens: [],
+      blockedTokens: [],
+      priorityTracks: [],
+      blockedTracks: [],
+      blockedArtists: [],
+    };
+
+    config.genres.push(newGenre);
+    config.genres.sort((a, b) => a.label.localeCompare(b.label));
+    writeGenreConfig(config);
+
+    console.log(`[genre-management] Created genre "${normalizedId}" (${normalizedLabel})`);
+    return res.json({ success: true, genre: newGenre });
+  } catch (err) {
+    return res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// GET /api/genre-management/genres/:id - Get specific genre
+router.get('/genre-management/genres/:id', (req, res) => {
   try {
     const config = readGenreConfig();
     const genre = config.genres.find(g => g.id === req.params.id);
@@ -73,8 +128,8 @@ router.get('/genres/:id', (req, res) => {
   }
 });
 
-// POST /api/genres/:id/artists - Add artist to genre
-router.post('/genres/:id/artists', (req, res) => {
+// POST /api/genre-management/genres/:id/artists - Add artist to genre
+router.post('/genre-management/genres/:id/artists', (req, res) => {
   try {
     const { artist } = req.body;
     if (!artist || typeof artist !== 'string') {
@@ -103,8 +158,8 @@ router.post('/genres/:id/artists', (req, res) => {
   }
 });
 
-// DELETE /api/genres/:id/artists/:artist - Remove artist from genre
-router.delete('/genres/:id/artists/:artist', (req, res) => {
+// DELETE /api/genre-management/genres/:id/artists/:artist - Remove artist from genre
+router.delete('/genre-management/genres/:id/artists/:artist', (req, res) => {
   try {
     const config = readGenreConfig();
     const genre = config.genres.find(g => g.id === req.params.id);
@@ -129,8 +184,8 @@ router.delete('/genres/:id/artists/:artist', (req, res) => {
   }
 });
 
-// PUT /api/genres/:id/artists/:oldArtist - Edit artist name
-router.put('/genres/:id/artists/:oldArtist', (req, res) => {
+// PUT /api/genre-management/genres/:id/artists/:oldArtist - Edit artist name
+router.put('/genre-management/genres/:id/artists/:oldArtist', (req, res) => {
   try {
     const { newArtist } = req.body;
     if (!newArtist || typeof newArtist !== 'string') {
@@ -167,8 +222,8 @@ router.put('/genres/:id/artists/:oldArtist', (req, res) => {
   }
 });
 
-// POST /api/genres/:id/blocked-tracks - Add blocked track
-router.post('/genres/:id/blocked-tracks', (req, res) => {
+// POST /api/genre-management/genres/:id/blocked-tracks - Add blocked track
+router.post('/genre-management/genres/:id/blocked-tracks', (req, res) => {
   try {
     const { track } = req.body;
     if (!track || typeof track !== 'string') {
@@ -197,8 +252,8 @@ router.post('/genres/:id/blocked-tracks', (req, res) => {
   }
 });
 
-// DELETE /api/genres/:id/blocked-tracks/:track - Remove blocked track
-router.delete('/genres/:id/blocked-tracks/:track', (req, res) => {
+// DELETE /api/genre-management/genres/:id/blocked-tracks/:track - Remove blocked track
+router.delete('/genre-management/genres/:id/blocked-tracks/:track', (req, res) => {
   try {
     const config = readGenreConfig();
     const genre = config.genres.find(g => g.id === req.params.id);

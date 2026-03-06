@@ -119,12 +119,12 @@ export function setActiveFallbackGenre(genreId: string | null): void {
     pendingAutoUpcoming = null;
     if (autoReadyBuffer.length > 0) {
       for (const entry of autoReadyBuffer) {
-        if (entry.cleanupAfterUse && !keepFiles) cleanupFile(entry.audioFile);
+        if (entry.cleanupAfterUse) cleanupFileIfSafe(entry.audioFile, 'setActiveFallbackGenre:changed:autoReadyBuffer');
       }
       autoReadyBuffer = [];
     }
     if (nextReady?.isFallback) {
-      if (nextReady.cleanupAfterUse && !keepFiles) cleanupFile(nextReady.audioFile);
+      if (nextReady.cleanupAfterUse) cleanupFileIfSafe(nextReady.audioFile, 'setActiveFallbackGenre:changed:nextReady');
       nextReady = null;
     }
     lastFallbackFile = null;
@@ -140,12 +140,12 @@ export function setActiveFallbackGenre(genreId: string | null): void {
     pendingAutoUpcoming = null;
     if (autoReadyBuffer.length > 0) {
       for (const entry of autoReadyBuffer) {
-        if (entry.cleanupAfterUse && !keepFiles) cleanupFile(entry.audioFile);
+        if (entry.cleanupAfterUse) cleanupFileIfSafe(entry.audioFile, 'setActiveFallbackGenre:inactive:autoReadyBuffer');
       }
       autoReadyBuffer = [];
     }
     if (nextReady?.isAutoFallback) {
-      if (nextReady.cleanupAfterUse && !keepFiles) cleanupFile(nextReady.audioFile);
+      if (nextReady.cleanupAfterUse) cleanupFileIfSafe(nextReady.audioFile, 'setActiveFallbackGenre:inactive:nextReady');
       nextReady = null;
     }
     broadcastUpcomingTrack();
@@ -1180,7 +1180,8 @@ async function getFallbackArtworkDataUrl(filePath: string): Promise<string | nul
 
 const MAX_PRELOAD = 5;
 const PRELOAD_REFRESH_MS = 5000;
-const AUTO_READY_MIN = 5;
+const AUTO_READY_START_MIN = 1; // start streaming as soon as first auto track is ready
+const AUTO_READY_MIN = 5; // keep warming buffer up to target
 const AUTO_READY_MAX = 5;
 const AUTO_PRELOAD_COOLDOWN_MS = 7000;
 const AUTO_IMMEDIATE_PREPARE_TIMEOUT_MS = 1400;
@@ -1217,6 +1218,7 @@ let nextReady: ReadyTrack | null = null;
 let preparingNext = false;
 let autoBufferFilling = false;
 let lastAutoPreloadAttemptAt = 0;
+let activePlaybackFile: string | null = null;
 let currentQueueItemId: string | null = null;
 let lastUpcomingKey: string | null = null;
 let lastFallbackFile: string | null = null;
@@ -1225,6 +1227,26 @@ let pendingAutoUpcoming: UpcomingTrack | null = null;
 let autoReadyBuffer: ReadyTrack[] = [];
 const prepareFailCounts = new Map<string, number>();
 const PREPARE_FAIL_MAX = 3;
+
+function isProtectedPlaybackFile(filePath: string): boolean {
+  if (!filePath) return false;
+  if (activePlaybackFile === filePath) return true;
+  if (nextReady?.audioFile === filePath) return true;
+  if (autoReadyBuffer.some((entry) => entry.audioFile === filePath)) return true;
+  if (preloadBuffer.some((entry) => entry.audioFile === filePath)) return true;
+  if (pendingSwap?.ready.audioFile === filePath) return true;
+  if (completedSwap?.ready.audioFile === filePath) return true;
+  return false;
+}
+
+function cleanupFileIfSafe(filePath: string, reason: string): void {
+  if (!filePath || keepFiles) return;
+  if (isProtectedPlaybackFile(filePath)) {
+    console.warn(`[cleanup] Skipped protected file (${reason}): ${filePath}`);
+    return;
+  }
+  cleanupFile(filePath);
+}
 
 export function getCurrentTrack(): Track | null {
   return currentTrack;
@@ -1346,8 +1368,8 @@ function triggerSelfHeal(reason: string): void {
   skipWhenReady = false;
   setSkipLock(false);
 
-  if (nextReady?.cleanupAfterUse && !keepFiles) {
-    cleanupFile(nextReady.audioFile);
+  if (nextReady?.cleanupAfterUse) {
+    cleanupFileIfSafe(nextReady.audioFile, 'triggerSelfHeal:nextReady');
   }
   nextReady = null;
   pendingQueueUpcoming = null;
@@ -1461,18 +1483,18 @@ export function setKeepFiles(keep: boolean): void {
 }
 
 export function invalidatePreload(): void {
-  if (nextReady && nextReady.cleanupAfterUse && !keepFiles) {
-    cleanupFile(nextReady.audioFile);
+  if (nextReady && nextReady.cleanupAfterUse) {
+    cleanupFileIfSafe(nextReady.audioFile, 'invalidatePreload:nextReady');
   }
   nextReady = null;
   broadcastUpcomingTrack();
   if (preloadBuffer.length === 0) return;
   for (const p of preloadBuffer) {
-    if (!keepFiles) cleanupFile(p.audioFile);
+    cleanupFileIfSafe(p.audioFile, 'invalidatePreload:preloadBuffer');
   }
   preloadBuffer = [];
   for (const entry of autoReadyBuffer) {
-    if (entry.cleanupAfterUse && !keepFiles) cleanupFile(entry.audioFile);
+    if (entry.cleanupAfterUse) cleanupFileIfSafe(entry.audioFile, 'invalidatePreload:autoReadyBuffer');
   }
   autoReadyBuffer = [];
   console.log('[preload] Buffer invalidated');
@@ -1481,8 +1503,8 @@ export function invalidatePreload(): void {
 
 export function invalidateNextReady(): void {
   if (!nextReady) return;
-  if (nextReady.cleanupAfterUse && !keepFiles) {
-    cleanupFile(nextReady.audioFile);
+  if (nextReady.cleanupAfterUse) {
+    cleanupFileIfSafe(nextReady.audioFile, 'invalidateNextReady');
   }
   nextReady = null;
   broadcastUpcomingTrack();
@@ -1492,14 +1514,14 @@ export function removeQueueItemFromPreload(itemId: string): void {
   if (!itemId) return;
 
   if (nextReady?.queueItemId === itemId) {
-    if (nextReady.cleanupAfterUse && !keepFiles) cleanupFile(nextReady.audioFile);
+    if (nextReady.cleanupAfterUse) cleanupFileIfSafe(nextReady.audioFile, 'removeQueueItemFromPreload:nextReady');
     nextReady = null;
   }
 
   const removed = preloadBuffer.filter((p) => p.item.id === itemId);
   if (removed.length > 0) {
     for (const entry of removed) {
-      if (!keepFiles) cleanupFile(entry.audioFile);
+      cleanupFileIfSafe(entry.audioFile, 'removeQueueItemFromPreload:preloadBuffer');
     }
     preloadBuffer = preloadBuffer.filter((p) => p.item.id !== itemId);
   }
@@ -1582,7 +1604,7 @@ async function markUnplayableQueueItem(
 
   // If the queued item was already prepared as nextReady, invalidate it.
   if (nextReady?.queueItemId === item.id) {
-    if (nextReady.cleanupAfterUse && !keepFiles) cleanupFile(nextReady.audioFile);
+    if (nextReady.cleanupAfterUse) cleanupFileIfSafe(nextReady.audioFile, 'markUnplayableQueueItem:nextReady');
     nextReady = null;
   }
 
@@ -1717,7 +1739,7 @@ export async function startPlayCycle(
   playerEvents.on('queue:add', () => {
     // Invalidate fallback nextReady so queued track gets priority
     if (nextReady?.isFallback) {
-      if (nextReady.cleanupAfterUse && !keepFiles) cleanupFile(nextReady.audioFile);
+      if (nextReady.cleanupAfterUse) cleanupFileIfSafe(nextReady.audioFile, 'queue:add:invalidateFallbackNextReady');
       console.log('[prepare] Invalidated fallback — queue item added');
       nextReady = null;
     }
@@ -1789,7 +1811,7 @@ export function stopPlayCycle(): void {
   }
   if (autoReadyBuffer.length > 0) {
     for (const entry of autoReadyBuffer) {
-      if (entry.cleanupAfterUse && !keepFiles) cleanupFile(entry.audioFile);
+      if (entry.cleanupAfterUse) cleanupFileIfSafe(entry.audioFile, 'stopPlayCycle:autoReadyBuffer');
     }
     autoReadyBuffer = [];
   }
@@ -1884,13 +1906,13 @@ async function ensureAutoReadyBuffer(sb: SupabaseClient, cacheDir: string): Prom
       if (!ready) break;
       const stillActiveAuto = parseAutoFallbackGenreId(activeFallbackGenre);
       if (stillActiveAuto !== activeAutoGenre) {
-        if (ready.cleanupAfterUse && !keepFiles) cleanupFile(ready.audioFile);
+        if (ready.cleanupAfterUse) cleanupFileIfSafe(ready.audioFile, 'ensureAutoReadyBuffer:genreChanged');
         break;
       }
       const readyKey = normalizeAutoKey(ready.title ?? '');
       const reservedKeys = collectReservedAutoKeys();
       if (readyKey && reservedKeys.has(readyKey)) {
-        if (ready.cleanupAfterUse && !keepFiles) cleanupFile(ready.audioFile);
+        if (ready.cleanupAfterUse) cleanupFileIfSafe(ready.audioFile, 'ensureAutoReadyBuffer:reservedKey');
         continue;
       }
       autoReadyBuffer.push(ready);
@@ -1978,8 +2000,8 @@ async function playNext(
 
   async function pickImmediateAutoFallback(timeoutMs = AUTO_IMMEDIATE_PREPARE_TIMEOUT_MS): Promise<boolean> {
     if (!activeAutoGenre) return false;
-    if (getAutoReadyCount() < AUTO_READY_MIN) {
-      await waitForAutoReadyMinimum(sb, cacheDir, AUTO_READY_MIN, AUTO_READY_WAIT_TIMEOUT_MS);
+    if (getAutoReadyCount() < AUTO_READY_START_MIN) {
+      await waitForAutoReadyMinimum(sb, cacheDir, AUTO_READY_START_MIN, AUTO_READY_WAIT_TIMEOUT_MS);
     }
     let ready = takeAutoReadyFromBuffer();
     if (!ready) {
@@ -2026,7 +2048,7 @@ async function playNext(
     if (!freshQueue.some((q) => q.id === nextReady?.queueItemId)) {
       const stale = nextReady;
       nextReady = null;
-      if (stale.cleanupAfterUse && !keepFiles) cleanupFile(stale.audioFile);
+      if (stale.cleanupAfterUse) cleanupFileIfSafe(stale.audioFile, 'playNext:staleNextReadyMissingQueueItem');
       console.warn(`[prepare] Dropped stale nextReady removed from queue: ${stale.title ?? stale.youtubeId}`);
       broadcastUpcomingTrack();
     }
@@ -2054,7 +2076,7 @@ async function playNext(
     if (nextReady && nextReady.queueItemId === currentTrack?.id) {
       const stale = nextReady;
       nextReady = null;
-      if (stale.cleanupAfterUse && !keepFiles) cleanupFile(stale.audioFile);
+      if (stale.cleanupAfterUse) cleanupFileIfSafe(stale.audioFile, 'playNext:staleNextReadyEqualsCurrent');
       console.warn(`[prepare] Dropped stale nextReady equal to current track: ${stale.title ?? stale.youtubeId}`);
       broadcastUpcomingTrack();
     }
@@ -2137,7 +2159,7 @@ async function playNext(
     // If we are starting a real queue item, an older fallback preview can linger in nextReady.
     // Drop only fallback nextReady entries to keep "next track" in sync with the active queue.
     if (trackQueueId && nextReady?.isFallback) {
-      if (nextReady.cleanupAfterUse && !keepFiles) cleanupFile(nextReady.audioFile);
+      if (nextReady.cleanupAfterUse) cleanupFileIfSafe(nextReady.audioFile, 'playNext:dropFallbackNextReadyWhenQueueTrackStarts');
       nextReady = null;
       broadcastUpcomingTrack();
     }
@@ -2187,6 +2209,7 @@ async function playNext(
     prepareNextTrack(sb, cacheDir, trackQueueId);
     void ensureAutoReadyBuffer(sb, cacheDir);
 
+    activePlaybackFile = audioFile;
     await decodeToEncoder(audioFile, enc);
 
     // ── Handle seamless swap chain ──
@@ -2232,6 +2255,7 @@ async function playNext(
       if (isFallback) {
         lastFallbackFile = audioFile;
       }
+      activePlaybackFile = audioFile;
       setSkipLock(false);
       console.log(`[player] Seamless skip → ${trackTitle ?? trackYoutubeId} (${durStr})`);
       currentQueueItemId = trackQueueId;
@@ -2274,6 +2298,7 @@ async function playNext(
   } finally {
     currentDecoder = null;
     currentQueueItemId = null;
+    activePlaybackFile = null;
 
     if (audioFile && trackCleanupAfterUse && !keepFiles) {
       cleanupFile(audioFile);

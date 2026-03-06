@@ -41,6 +41,8 @@ export default function GenreManager() {
   const [editingArtist, setEditingArtist] = useState<{ genreId: string; oldArtist: string; newArtist: string } | null>(null);
   const [addingArtist, setAddingArtist] = useState<{ genreId: string; artist: string } | null>(null);
   const [addingBlockedTrack, setAddingBlockedTrack] = useState<{ genreId: string; track: string } | null>(null);
+  const [newGenreId, setNewGenreId] = useState("");
+  const [newGenreLabel, setNewGenreLabel] = useState("");
 
   const serverUrl = useRadioStore((s) => s.serverUrl) ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
 
@@ -54,7 +56,7 @@ export default function GenreManager() {
     try {
       setLoading(true);
       setError(null);
-      const response = await fetch(`${serverUrl}/api/genres`);
+      const response = await fetch(`${serverUrl}/api/genre-management/genres`);
       if (!response.ok) {
         throw new Error(`Server responded with ${response.status}: ${response.statusText}`);
       }
@@ -100,7 +102,7 @@ export default function GenreManager() {
     if (!serverUrl || !artist.trim()) return;
 
     try {
-      const response = await fetch(`${serverUrl}/api/genres/${encodeURIComponent(genreId)}/artists`, {
+      const response = await fetch(`${serverUrl}/api/genre-management/genres/${encodeURIComponent(genreId)}/artists`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ artist: artist.trim() })
@@ -130,7 +132,7 @@ export default function GenreManager() {
     if (!confirm(`Are you sure you want to remove "${artist}" from ${genreId}?`)) return;
 
     try {
-      const response = await fetch(`${serverUrl}/api/genres/${genreId}/artists/${encodeURIComponent(artist)}`, {
+      const response = await fetch(`${serverUrl}/api/genre-management/genres/${genreId}/artists/${encodeURIComponent(artist)}`, {
         method: 'DELETE'
       });
 
@@ -150,7 +152,7 @@ export default function GenreManager() {
     if (!serverUrl || !newArtist.trim()) return;
 
     try {
-      const response = await fetch(`${serverUrl}/api/genres/${genreId}/artists/${encodeURIComponent(oldArtist)}`, {
+      const response = await fetch(`${serverUrl}/api/genre-management/genres/${genreId}/artists/${encodeURIComponent(oldArtist)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ newArtist: newArtist.trim() })
@@ -173,7 +175,7 @@ export default function GenreManager() {
     if (!serverUrl || !track.trim()) return;
 
     try {
-      const response = await fetch(`${serverUrl}/api/genres/${genreId}/blocked-tracks`, {
+      const response = await fetch(`${serverUrl}/api/genre-management/genres/${genreId}/blocked-tracks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ track: track.trim() })
@@ -197,7 +199,7 @@ export default function GenreManager() {
     if (!confirm(`Are you sure you want to remove blocked track "${track}" from ${genreId}?`)) return;
 
     try {
-      const response = await fetch(`${serverUrl}/api/genres/${genreId}/blocked-tracks/${encodeURIComponent(track)}`, {
+      const response = await fetch(`${serverUrl}/api/genre-management/genres/${genreId}/blocked-tracks/${encodeURIComponent(track)}`, {
         method: 'DELETE'
       });
 
@@ -210,6 +212,34 @@ export default function GenreManager() {
     } catch (err) {
       console.error('[genre-manager] Failed to remove blocked track:', err);
       alert(`Failed to remove blocked track: ${(err as Error).message}`);
+    }
+  };
+
+  const createGenre = async () => {
+    if (!serverUrl) return;
+    if (!newGenreId.trim() && !newGenreLabel.trim()) {
+      alert("Vul een genre naam of id in.");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${serverUrl}/api/genre-management/genres`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: newGenreId.trim(),
+          label: newGenreLabel.trim(),
+        }),
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+        throw new Error(errorData.error || `HTTP ${response.status}`);
+      }
+      setNewGenreId("");
+      setNewGenreLabel("");
+      await fetchGenres();
+    } catch (err) {
+      alert(`Genre aanmaken mislukt: ${(err as Error).message}`);
     }
   };
 
@@ -254,6 +284,32 @@ export default function GenreManager() {
         >
           Refresh
         </button>
+      </div>
+
+      <div className="mb-4 rounded-lg border border-gray-700 bg-gray-800 p-3">
+        <p className="mb-2 text-sm font-semibold text-white">Nieuw genre</p>
+        <div className="grid gap-2 sm:grid-cols-3">
+          <input
+            type="text"
+            value={newGenreLabel}
+            onChange={(e) => setNewGenreLabel(e.target.value)}
+            placeholder="Label (bijv. Melodic House)"
+            className="rounded border border-gray-600 bg-gray-700 px-2 py-1.5 text-sm text-white placeholder-gray-400 outline-none focus:border-violet-500"
+          />
+          <input
+            type="text"
+            value={newGenreId}
+            onChange={(e) => setNewGenreId(e.target.value)}
+            placeholder="Id (optioneel, bijv. melodic_house)"
+            className="rounded border border-gray-600 bg-gray-700 px-2 py-1.5 text-sm text-white placeholder-gray-400 outline-none focus:border-violet-500"
+          />
+          <button
+            onClick={createGenre}
+            className="rounded bg-violet-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-violet-500"
+          >
+            Genre toevoegen
+          </button>
+        </div>
       </div>
 
       <div className="space-y-2">

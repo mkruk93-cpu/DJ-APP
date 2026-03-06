@@ -765,7 +765,9 @@
       ],
       "minScore": 3,
       "blockedArtists": [],
-      "priorityTracks": [],
+      "priorityTracks": [
+        "after the lies"
+      ],
       "blockedTracks": [
         "dj farly - hopeful voltage",
         "'your move' - yes cover - solstice acoustic live at the 1865, southampton #yesofficial",
@@ -2140,6 +2142,7 @@
     "mark dekoda - rave harder techno bass",
     "stan sb - anyone out there (maduk remix)",
     "hybrid minds - lost (pola & bryson remix)",
-    "yosuf, cyber gunz, lil texas - krach nation army"
+    "yosuf, cyber gunz, lil texas - krach nation army",
+    "d-mind - after the lies"
   ]
 }
