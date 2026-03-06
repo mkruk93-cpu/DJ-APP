@@ -150,6 +150,7 @@ interface GenreHints {
   blockedArtists?: string[];
   priorityTracks?: string[];
   blockedTracks?: string[];
+  blockedTokens?: string[];
   priorityLabels?: string[];
   minScore: number;
 }
@@ -578,6 +579,7 @@ function getGenreHints(genre: string): GenreHints {
       blockedArtists: [],
       priorityTracks: base.priorityTracks ?? [],
       blockedTracks: [],
+      blockedTokens: [],
       priorityLabels: base.priorityLabels ?? [],
     };
   }
@@ -609,6 +611,7 @@ function getGenreHints(genre: string): GenreHints {
     blockedArtists: mergedCuratedBlockedArtists,
     priorityTracks: dedupeNormalized([...(base.priorityTracks ?? []), ...mergedCuratedPriorityTracks]),
     blockedTracks: mergedCuratedBlockedTracks,
+    blockedTokens: mergedCuratedBlockedTokens,
     priorityLabels: dedupeNormalized([...(base.priorityLabels ?? []), ...mergedCuratedPriorityLabels]),
     minScore: mergedMinScore,
   };
@@ -667,23 +670,36 @@ function hasRequiredEvidence(item: GenreHitItem, hints: GenreHints): boolean {
 function filterHitsByGenre(items: GenreHitItem[], hints: GenreHints, limit: number): GenreHitItem[] {
   const blocked = new Set((hints.blockedTracks ?? []).map((value) => value.toLowerCase()));
   const blockedArtists = (hints.blockedArtists ?? []).map((value) => value.toLowerCase());
+  const blockedTokens = (hints.blockedTokens ?? []).map((value) => value.toLowerCase());
   const scored = dedupeHits(items)
     .filter((item) => {
       if (isLikelyGenreNameOnlyHit(item, hints)) return false;
       if (isGenreKeywordNoiseHit(item, hints)) return false;
       const artist = item.artist.toLowerCase();
+      const title = item.title.toLowerCase();
+      const artistTitle = `${item.artist} - ${item.title}`.toLowerCase();
+      
+      // Check blocked artists
       if (blockedArtists.some((blockedArtist) => blockedArtist && artist.includes(blockedArtist))) {
         return false;
       }
-      if (blocked.size === 0) return true;
-      const title = item.title.toLowerCase();
-      const artistTitle = `${item.artist} - ${item.title}`.toLowerCase();
-      for (const blockedTrack of blocked) {
-        if (!blockedTrack) continue;
-        if (title.includes(blockedTrack) || artistTitle.includes(blockedTrack)) {
-          return false;
+      
+      // Check blocked tokens in title and artist
+      if (blockedTokens.some((token) => token && (title.includes(token) || artist.includes(token) || artistTitle.includes(token)))) {
+        console.log(`[filter] Blocked by token: ${item.artist} - ${item.title}`);
+        return false;
+      }
+      
+      // Check blocked tracks
+      if (blocked.size > 0) {
+        for (const blockedTrack of blocked) {
+          if (!blockedTrack) continue;
+          if (title.includes(blockedTrack) || artistTitle.includes(blockedTrack)) {
+            return false;
+          }
         }
       }
+      
       return true;
     })
     .map((item) => ({
