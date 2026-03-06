@@ -463,14 +463,65 @@ async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack |
     const canonicalGenreId = resolveMergedGenreId(genreId);
     const mergedGenreTags = getMergedGenreTags(canonicalGenreId);
     await refreshDailyAutoPlayedKeys();
-    const offsets = [0, 20, 40, 60, 80, 120, 160, 200, 260, 320];
+    
+    // Use the same fast search system as genre hits with whitelisted artists
+    const { youtubeSearch, soundcloudSearch } = await import('./services/search.js');
+    const priorityArtists = getPriorityArtistsForGenre(canonicalGenreId);
+    
     const mergedHits: Array<{ title: string; artist: string; thumbnail: string | null }> = [];
     const seen = new Set<string>();
-
-    for (const offset of offsets) {
-      if (!isAutoGenreStillActive(canonicalGenreId)) return null;
-      const hits = getCachedGenreHits(canonicalGenreId, 20, offset, true);
-      for (const hit of hits) {
+    
+    console.log(`[auto-playlist] Searching for ${canonicalGenreId} tracks from ${priorityArtists.length} whitelisted artists`);
+    
+    // Search for tracks from whitelisted artists (same as genre hits system)
+    const artistsToSearch = priorityArtists.slice(0, 6); // Limit to prevent too many API calls
+    const searchPromises = artistsToSearch.map(async (artist) => {
+      if (!isAutoGenreStillActive(canonicalGenreId)) return [];
+      
+      try {
+        // Try both YouTube and SoundCloud with short timeouts
+        const [ytResults, scResults] = await Promise.allSettled([
+          Promise.race([
+            youtubeSearch(`${artist} ${canonicalGenreId.replace(/_/g, ' ')}`, 3),
+            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 1000))
+          ]),
+          Promise.race([
+            soundcloudSearch(`${artist} ${canonicalGenreId.replace(/_/g, ' ')}`, 3),
+            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 1000))
+          ])
+        ]);
+        
+        const results = [
+          ...(ytResults.status === 'fulfilled' ? ytResults.value : []),
+          ...(scResults.status === 'fulfilled' ? scResults.value : [])
+        ];
+        
+        return results
+          .filter(result => {
+            // Apply same filtering as genre hits
+            if (!result.title || !result.duration) return false;
+            if (result.duration > 420) return false; // 7 minutes max
+            if (result.duration < 120) return false; // 2 minutes min
+            return true;
+          })
+          .map(result => ({
+            title: result.title,
+            artist: result.channel || artist,
+            thumbnail: result.thumbnail
+          }));
+      } catch (error) {
+        console.warn(`[auto-playlist] Search failed for artist ${artist}:`, (error as Error).message);
+        return [];
+      }
+    });
+    
+    const searchResults = await Promise.allSettled(searchPromises);
+    
+    // Collect all results
+    for (const result of searchResults) {
+      if (result.status !== 'fulfilled') continue;
+      for (const hit of result.value) {
+        if (!isAutoGenreStillActive(canonicalGenreId)) return null;
         const title = hit.title?.trim() || '';
         const artist = hit.artist?.trim() || '';
         const thumbnail = hit.thumbnail?.trim() || null;
@@ -481,32 +532,8 @@ async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack |
         mergedHits.push({ title, artist, thumbnail });
       }
     }
-
-    if (mergedHits.length === 0) {
-      // Warm strict cache once when user switches to an auto genre.
-      const warmOffsets = [0, 20, 40];
-      const warmPages = await Promise.allSettled(
-        warmOffsets.map((offset) => getTopTracksByGenre(canonicalGenreId, 20, offset)),
-      );
-      const warmed = warmPages.flatMap((page) => (page.status === 'fulfilled' ? page.value : [] as GenreHitItem[]));
-      if (warmed.length > 0) {
-        for (const offset of warmOffsets) {
-          const page = warmPages.find((_, index) => warmOffsets[index] === offset);
-          if (!page || page.status !== 'fulfilled') continue;
-          setGenreHitsCacheEntry(makeGenreHitsCacheKey(canonicalGenreId, 20, offset, true), page.value);
-        }
-        for (const hit of warmed) {
-          const title = hit.title?.trim() || '';
-          const artist = hit.artist?.trim() || '';
-          const thumbnail = hit.thumbnail?.trim() || null;
-          if (!title || !artist) continue;
-          const key = normalizeAutoKey(`${artist} ${title}`);
-          if (!key || seen.has(key)) continue;
-          seen.add(key);
-          mergedHits.push({ title, artist, thumbnail });
-        }
-      }
-    }
+    
+    console.log(`[auto-playlist] Found ${mergedHits.length} whitelisted tracks for ${canonicalGenreId}`);
 
     if (mergedHits.length === 0) {
       // Ultimate fallback seed: synthesize candidates from priority artists so auto
