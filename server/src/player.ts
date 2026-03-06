@@ -278,13 +278,8 @@ async function resolveShortAutoCandidate(query: string): Promise<AutoSearchCandi
     // Import search functions from the search service
     const { youtubeSearch, soundcloudSearch } = await import('./services/search.js');
 
-    // Improve query quality by removing generic terms that don't help
-    const cleanedQuery = query
-      .replace(/\b(trance|house|techno|dubstep|hardstyle)\b/gi, '') // Remove genre words that make searches too generic
-      .replace(/\s+/g, ' ')
-      .trim();
-    
-    const searchQuery = cleanedQuery || query; // Fall back to original if cleaned is empty
+    // Keep the original query for better artist matching
+    const searchQuery = query;
 
     // Try YouTube first with aggressive timeout
     const ytResults = await Promise.race([
@@ -300,22 +295,44 @@ async function resolveShortAutoCandidate(query: string): Promise<AutoSearchCandi
         
         // Filter out obvious non-music content
         const title = result.title.toLowerCase();
+        const channel = (result.channel || '').toLowerCase();
+        
+        // Strict bad keywords filtering
         const badKeywords = [
           'tutorial', 'how to', 'review', 'interview', 'documentary', 'news', 'podcast', 
           'lesson', 'course', 'expert', 'spreekt over', 'cyberaanval', 'cybersecurity',
-          'iran', 'politics', 'nieuws', 'talk', 'discussion', 'analysis', 'explained'
+          'iran', 'politics', 'nieuws', 'talk', 'discussion', 'analysis', 'explained',
+          'features you might not know', 'cool features', 'tips', 'tricks', 'guide',
+          'acoustic live', 'cover', 'live at', 'southampton', 'concert', 'performance'
         ];
         if (badKeywords.some(keyword => title.includes(keyword))) return false;
         
-        // Require music-related keywords or artist name in title
-        const musicKeywords = ['official', 'video', 'music', 'audio', 'remix', 'edit', 'mix', 'hardstyle', 'trance', 'house'];
-        const hasMusic = musicKeywords.some(keyword => title.includes(keyword));
+        // Filter out software/plugin content
+        const softwareKeywords = ['sylenth1', 'vst', 'plugin', 'ableton', 'fl studio', 'logic pro'];
+        if (softwareKeywords.some(keyword => title.includes(keyword))) return false;
         
-        // Extract artist name from query to check if it's in the title
-        const queryWords = searchQuery.toLowerCase().split(' ');
-        const hasArtistInTitle = queryWords.some(word => word.length > 2 && title.includes(word));
+        // Must have hardstyle/electronic music indicators
+        const requiredGenreKeywords = ['hardstyle', 'euphoric', 'trance', 'techno', 'electronic', 'edm'];
+        const hasGenre = requiredGenreKeywords.some(keyword => title.includes(keyword));
         
-        if (!hasMusic && !hasArtistInTitle) return false;
+        // Must have music production indicators
+        const musicIndicators = [
+          'official', 'video', 'videoclip', 'audio', 'remix', 'edit', 'mix', 
+          'rip', 'hq', '4k', 'visualizer', 'music', 'track', 'anthem'
+        ];
+        const hasIndicator = musicIndicators.some(keyword => title.includes(keyword));
+        
+        // Must have either genre keyword OR music indicator
+        if (!hasGenre && !hasIndicator) return false;
+        
+        // Extract artist name from query and ensure it's in title or channel
+        const queryWords = searchQuery.toLowerCase().split(/[\s\-]+/).filter(word => word.length > 2);
+        const hasArtistMatch = queryWords.some(word => 
+          title.includes(word) || channel.includes(word)
+        );
+        
+        // For euphoric hardstyle, be extra strict about artist matching
+        if (searchQuery.toLowerCase().includes('euphoric') && !hasArtistMatch) return false;
         
         return true;
       })
