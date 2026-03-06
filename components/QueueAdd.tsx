@@ -137,6 +137,7 @@ export default function QueueAdd() {
   const [input, setInput] = useState("");
   const [feedback, setFeedback] = useState<{ msg: string; ok: boolean } | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
   const [results, setResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchingMore, setSearchingMore] = useState(false);
@@ -568,6 +569,59 @@ export default function QueueAdd() {
     // Let the touch move event bubble normally for smooth scrolling
     e.stopPropagation();
   }, []);
+
+  // Calculate dropdown position to prevent it from going off-screen
+  const calculateDropdownPosition = useCallback(() => {
+    if (typeof window === 'undefined' || !wrapperRef.current) return;
+
+    const inputContainer = wrapperRef.current.querySelector('input[type="text"]')?.parentElement;
+    if (!inputContainer) return;
+
+    const rect = inputContainer.getBoundingClientRect();
+    const viewportHeight = window.innerHeight;
+    const spaceBelow = viewportHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    
+    // Check if we have enough space below (need at least 200px for meaningful dropdown)
+    if (spaceBelow >= 200) {
+      // Position normally below input
+      setDropdownStyle({
+        maxHeight: `${Math.min(spaceBelow - 20, viewportHeight * 0.6)}px`
+      });
+    } else if (spaceAbove >= 200) {
+      // Position above input if more space there
+      setDropdownStyle({
+        bottom: '100%',
+        top: 'auto',
+        marginBottom: '4px',
+        marginTop: '0',
+        maxHeight: `${Math.min(spaceAbove - 20, viewportHeight * 0.6)}px`
+      });
+    } else {
+      // Use fixed positioning in center if neither has enough space
+      setDropdownStyle({
+        position: 'fixed',
+        left: '8px',
+        right: '8px',
+        top: '50%',
+        transform: 'translateY(-50%)',
+        maxHeight: `${viewportHeight * 0.6}px`
+      });
+    }
+  }, []);
+
+  // Update dropdown position when results are shown
+  useEffect(() => {
+    if (showResults && results.length > 0) {
+      calculateDropdownPosition();
+      
+      // Recalculate on window resize
+      const handleResize = () => calculateDropdownPosition();
+      window.addEventListener('resize', handleResize);
+      
+      return () => window.removeEventListener('resize', handleResize);
+    }
+  }, [showResults, results.length, calculateDropdownPosition]);
 
   function handleGenreListScroll(e: React.UIEvent<HTMLDivElement>) {
     if (source !== "genres" || !activeGenre) return;
@@ -1318,12 +1372,13 @@ export default function QueueAdd() {
                   onScroll={handleSearchListScroll}
                   onTouchEnd={handleSearchListTouch}
                   onTouchMove={handleSearchListTouchMove}
-                  className="fixed inset-x-2 top-[30vh] z-[95] max-h-[60vh] overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50 sm:absolute sm:inset-x-0 sm:top-full sm:mt-1 sm:max-h-[70vh]"
+                  className="absolute left-0 right-0 top-full z-[95] mt-1 overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50"
                   style={{ 
                     WebkitOverflowScrolling: 'touch',
                     transform: 'translateZ(0)', // Force hardware acceleration
                     willChange: 'scroll-position', // Optimize for scrolling
-                    touchAction: 'pan-y' // Allow vertical scrolling only
+                    touchAction: 'pan-y', // Allow vertical scrolling only
+                    ...dropdownStyle // Apply calculated positioning
                   }}
                 >
                   {results.map((r) => (
