@@ -1130,8 +1130,8 @@ async function getFallbackArtworkDataUrl(filePath: string): Promise<string | nul
 
 const MAX_PRELOAD = 5;
 const PRELOAD_REFRESH_MS = 5000;
-const AUTO_READY_MIN = 2;
-const AUTO_READY_MAX = 3;
+const AUTO_READY_MIN = 5;
+const AUTO_READY_MAX = 5;
 const AUTO_PRELOAD_COOLDOWN_MS = 7000;
 const AUTO_IMMEDIATE_PREPARE_TIMEOUT_MS = 1400;
 const AUTO_READY_WAIT_TIMEOUT_MS = 14_000;
@@ -1844,7 +1844,7 @@ async function ensureAutoReadyBuffer(sb: SupabaseClient, cacheDir: string): Prom
         continue;
       }
       autoReadyBuffer.push(ready);
-      console.log(`[auto-preload] Buffered auto track (${getAutoReadyCount()}/${AUTO_READY_MIN}): ${ready.title ?? activeAutoGenre}`);
+      console.log(`[auto-preload] Buffered auto track (${getAutoReadyCount()}/${AUTO_READY_MAX}): ${ready.title ?? activeAutoGenre}`);
       broadcastUpcomingTrack();
     }
   } catch (err) {
