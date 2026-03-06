@@ -184,7 +184,7 @@ export default function QueueAdd() {
   const searchOffsetRef = useRef(0);
   const genreOffsetRef = useRef(0);
   const latestSearchRunRef = useRef(0);
-  const GENRE_PAGE_SIZE = 20;
+  const GENRE_PAGE_SIZE = 10;
   const SEARCH_PAGE_SIZE = 12;
 
   useEffect(() => {
@@ -206,6 +206,18 @@ export default function QueueAdd() {
   function filterSetResults(items: SearchResult[]): SearchResult[] {
     if (includeSets) return items;
     return items.filter((item) => item.duration === null || item.duration <= 900);
+  }
+
+  function filterLongTracks(items: GenreHitRow[]): GenreHitRow[] {
+    // Filter out tracks longer than 7 minutes (420 seconds) for genre hits
+    return items.filter((item) => {
+      // If duration is available and longer than 7 minutes, filter it out
+      if (item.duration && item.duration > 420) {
+        console.log(`[genre-hits] Frontend filtered long track: ${item.title} (${Math.floor(item.duration / 60)}:${String(item.duration % 60).padStart(2, '0')})`);
+        return false;
+      }
+      return true;
+    });
   }
 
   function setSearchOffsetSafe(next: number) {
@@ -396,47 +408,10 @@ export default function QueueAdd() {
   const loadGenreHits = useCallback((genre: string, append = false) => {
     if (!serverUrl) return;
     if (genreLoadInFlightRef.current) return;
+    
     const offset = append ? genreOffsetRef.current : 0;
-    const genreMembers = getGenreGroupMembers(genre);
-    const cacheKey = `${genreMembers.join("|")}::${offset}::${GENRE_PAGE_SIZE}::local=${includeLocal ? "1" : "0"}`;
-    const cached = genreHitsCacheRef.current.get(cacheKey);
-    if (cached) {
-      const hiddenGenreNames = new Set(genreMembers.map((item) => normalizeLoose(item)));
-      hiddenGenreNames.add(normalizeLoose(genre));
-      const mapped = cached
-        .filter((item) => !hiddenGenreNames.has(normalizeLoose(item.title)))
-        .map((item) => ({
-        ...item,
-        query: `${item.artist} - ${item.title}`,
-        }));
-      let addedUniqueCount = mapped.length;
-      setGenreHits((prev) => {
-        if (!append) return mapped;
-        const merged = [...prev, ...mapped];
-        const deduped = Array.from(
-          new Map(merged.map((track) => [`${track.artist}-${track.title}`.toLowerCase(), track])).values(),
-        );
-        addedUniqueCount = Math.max(0, deduped.length - prev.length);
-        return deduped;
-      });
-      const nextOffset = offset + GENRE_PAGE_SIZE;
-      setGenreOffsetSafe(nextOffset);
-      if (!append) {
-        genreNoProgressPagesRef.current = 0;
-      } else if (addedUniqueCount > 0) {
-        genreNoProgressPagesRef.current = 0;
-      } else {
-        genreNoProgressPagesRef.current += 1;
-      }
-      const allowRetryOnStall = append && cached.length > 0 && genreNoProgressPagesRef.current < 3;
-      setGenreHasMore(
-        cached.length >= GENRE_PAGE_SIZE * Math.max(1, genreMembers.length)
-          || (append ? addedUniqueCount > 0 : cached.length > 0)
-          || allowRetryOnStall,
-      );
-      setActiveGenre(genre);
-      return;
-    }
+    console.log(`[genre-hits] Loading ${genre}, offset: ${offset}, append: ${append}`);
+    
     genreLoadInFlightRef.current = true;
     if (append) {
       setGenreHitsLoadingMore(true);
@@ -448,37 +423,34 @@ export default function QueueAdd() {
       genreNoProgressPagesRef.current = 0;
     }
     setActiveGenre(genre);
-    Promise.resolve()
-      .then(async () => {
-        const pages = await Promise.allSettled(
-          genreMembers.map((member) => getGenreHits(member, GENRE_PAGE_SIZE, offset, false)),
-        );
-        return pages.flatMap((page) => (page.status === "fulfilled" ? page.value : []));
-      })
+    
+    // Direct API call to new lightweight endpoint
+    getGenreHits(genre, GENRE_PAGE_SIZE, offset, false)
       .then((items) => {
-        genreHitsCacheRef.current.set(cacheKey, items);
-        const hiddenGenreNames = new Set(genreMembers.map((item) => normalizeLoose(item)));
-        hiddenGenreNames.add(normalizeLoose(genre));
-        const normalized = items.filter(
-          (item): item is GenreHit =>
-            !!item?.id && !!item?.title && !!item?.artist,
-        ).filter((item) => !hiddenGenreNames.has(normalizeLoose(item.title)));
-        const mapped = normalized.map((item) => ({
+        console.log(`[genre-hits] Received ${items.length} items for ${genre}`);
+        
+        const mapped = items.map((item) => ({
           ...item,
           query: `${item.artist} - ${item.title}`,
         }));
-        let addedUniqueCount = mapped.length;
+        
+        // Filter out tracks longer than 7 minutes
+        const filtered = filterLongTracks(mapped);
+        
+        let addedUniqueCount = filtered.length;
         setGenreHits((prev) => {
-          if (!append) return mapped;
-          const merged = [...prev, ...mapped];
+          if (!append) return filtered;
+          const merged = [...prev, ...filtered];
           const deduped = Array.from(
             new Map(merged.map((track) => [`${track.artist}-${track.title}`.toLowerCase(), track])).values(),
           );
           addedUniqueCount = Math.max(0, deduped.length - prev.length);
           return deduped;
         });
+        
         const nextOffset = offset + GENRE_PAGE_SIZE;
         setGenreOffsetSafe(nextOffset);
+        
         if (!append) {
           genreNoProgressPagesRef.current = 0;
         } else if (addedUniqueCount > 0) {
@@ -486,14 +458,12 @@ export default function QueueAdd() {
         } else {
           genreNoProgressPagesRef.current += 1;
         }
-        const allowRetryOnStall = append && normalized.length > 0 && genreNoProgressPagesRef.current < 3;
-        setGenreHasMore(
-          normalized.length >= GENRE_PAGE_SIZE * Math.max(1, genreMembers.length)
-            || (append ? addedUniqueCount > 0 : normalized.length > 0)
-            || allowRetryOnStall,
-        );
+        
+        // Has more if we got the full page size
+        setGenreHasMore(items.length >= GENRE_PAGE_SIZE);
       })
-      .catch(() => {
+      .catch((error) => {
+        console.error(`[genre-hits] Error loading ${genre}:`, error);
         if (!append) {
           setGenreHits([]);
         }
@@ -560,6 +530,9 @@ export default function QueueAdd() {
     genreNoProgressPagesRef.current = 0;
     loadGenreHits(activeGenre, false);
   }, [includeLocal]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Lightweight: No auto-retry to reduce server load
+  // The server now always returns something, so no need for aggressive retrying
 
   useEffect(() => {
     function updateMobileState() {
@@ -1133,10 +1106,10 @@ export default function QueueAdd() {
                 className="min-h-[14rem] max-h-[70dvh] overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70"
               >
               {genreHitsLoading ? (
-                <p className="px-3 py-3 text-xs text-gray-400">Hitlijst laden...</p>
+                <p className="px-3 py-3 text-xs text-gray-400">Laden...</p>
               ) : genreHits.length === 0 ? (
                 <p className="px-3 py-3 text-xs text-gray-400">
-                  Kies een genre om relevante tracks te tonen.
+                  {activeGenre ? "Geen tracks gevonden voor dit genre." : "Kies een genre om tracks te tonen."}
                 </p>
               ) : (
                 genreHits.map((item) => (

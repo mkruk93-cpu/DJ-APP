@@ -22,7 +22,6 @@ const GENRE_GROUPS: GenreGroupDefinition[] = [
       "frenchcore",
       "mainstream hardcore",
       "terror",
-      "terrorcore",
       "uptempo",
       "gabber",
       "happy hardcore",
@@ -42,22 +41,22 @@ const GENRE_GROUPS: GenreGroupDefinition[] = [
   {
     id: "house",
     label: "House",
-    children: ["deep house", "tech house", "future house", "progressive house", "electro house", "bass house"],
+    children: ["deep house", "tech house", "future house", "progressive house", "electro house", "bass house", "big room", "hard dance"],
   },
   {
     id: "drum and bass",
     label: "Drum & Bass",
-    children: ["liquid drum and bass", "neurofunk"],
+    children: ["liquid drum and bass"],
   },
   {
     id: "trance",
     label: "Trance",
-    children: ["psy trance", "psytrance"],
+    children: ["psy trance"],
   },
   {
     id: "dubstep",
     label: "Dubstep",
-    children: ["brostep"],
+    children: [],
   },
   {
     id: "rock",
@@ -100,6 +99,7 @@ function getDefaultGenreLabel(id: string): string {
   if (norm === "edm") return "EDM";
   if (norm === "uk garage") return "UK Garage";
   if (norm === "drum and bass") return "Drum & Bass";
+  if (norm === "liquid drum and bass") return "Liquid Drum & Bass / Neurofunk";
   return toTitleCase(norm);
 }
 

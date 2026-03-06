@@ -11,7 +11,7 @@ import type { StreamHub } from './streamHub.js';
 import { pickRandomFallbackForGenre, parseAutoFallbackGenreId, LIKED_AUTO_GENRE_ID } from './fallbackGenres.js';
 import { fetchArtworkCandidate } from './artwork.js';
 import { listLikedPlaylistTracks } from './services/genreCuratedConfig.js';
-import { getTopTracksByGenre, getMergedGenreTags, resolveMergedGenreId, type GenreHitItem } from './services/discovery.js';
+import { getTopTracksByGenre, getMergedGenreTags, getPriorityArtistsForGenre, resolveMergedGenreId, type GenreHitItem } from './services/discovery.js';
 import { getCachedGenreHits, makeGenreHitsCacheKey, setGenreHitsCacheEntry } from './genreHitsStore.js';
 
 export const playerEvents = new EventEmitter();
@@ -97,6 +97,12 @@ const STREAM_BITRATE_RAW = (process.env.STREAM_BITRATE ?? '256k').trim().toLower
 const STREAM_USE_SOURCE_MODE = STREAM_BITRATE_RAW === 'source' || STREAM_BITRATE_RAW === 'true';
 const STREAM_BITRATE = STREAM_USE_SOURCE_MODE ? '256k' : STREAM_BITRATE_RAW;
 let activeFallbackGenre: string | null = null;
+
+function isAutoGenreStillActive(expectedGenreId: string): boolean {
+  const active = parseAutoFallbackGenreId(activeFallbackGenre);
+  if (!active) return false;
+  return resolveMergedGenreId(active) === resolveMergedGenreId(expectedGenreId);
+}
 
 function getEncoderRateArgs(): string[] {
   // "source"/"true": use high-quality VBR instead of fixed CBR cap.
@@ -258,8 +264,84 @@ function buildAutoFallbackSourceForQuery(sourceId: string, search: string): Queu
   };
 }
 
+interface AutoSearchCandidate {
+  url: string;
+  title: string | null;
+  duration: number | null;
+  thumbnail: string | null;
+  source: 'youtube' | 'soundcloud';
+}
+
+async function resolveShortAutoCandidate(query: string): Promise<AutoSearchCandidate | null> {
+  const searchWithPrefix = (prefix: 'ytsearch' | 'scsearch'): Promise<AutoSearchCandidate | null> => new Promise((resolve) => {
+    const proc = spawn('python', [
+      '-m', 'yt_dlp',
+      `${prefix}8:${query}`,
+      '--flat-playlist',
+      '-j',
+      '--no-warnings',
+    ], { timeout: 10_000 });
+
+    let output = '';
+    proc.stdout?.on('data', (chunk: Buffer) => {
+      output += chunk.toString();
+    });
+    proc.stderr?.on('data', () => {});
+
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        resolve(null);
+        return;
+      }
+      const rows = output
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
+      for (const row of rows) {
+        try {
+          const item = JSON.parse(row) as Record<string, unknown>;
+          const title = String(item.title ?? '').trim();
+          if (!title || isSetLikeAutoTitle(title)) continue;
+          const rawDuration = Number(item.duration ?? NaN);
+          const duration = Number.isFinite(rawDuration) && rawDuration > 0
+            ? Math.round(rawDuration)
+            : null;
+          if (duration === null) continue;
+          if (duration < 120 || duration > AUTO_MAX_DURATION_SECONDS) continue;
+          const id = String(item.id ?? '').trim();
+          const fallbackUrl = String(item.webpage_url ?? item.url ?? '').trim();
+          const url = prefix === 'ytsearch' && id
+            ? `https://www.youtube.com/watch?v=${id}`
+            : fallbackUrl;
+          if (!url) continue;
+          const thumbnail = Array.isArray(item.thumbnails) && item.thumbnails.length > 0
+            ? String((item.thumbnails[item.thumbnails.length - 1] as { url?: string })?.url ?? '').trim() || null
+            : null;
+          resolve({
+            url,
+            title,
+            duration,
+            thumbnail,
+            source: prefix === 'ytsearch' ? 'youtube' : 'soundcloud',
+          });
+          return;
+        } catch {
+          // ignore malformed line
+        }
+      }
+      resolve(null);
+    });
+
+    proc.on('error', () => resolve(null));
+  });
+
+  const yt = await searchWithPrefix('ytsearch');
+  if (yt) return yt;
+  return searchWithPrefix('scsearch');
+}
+
 const AUTO_RECENT_WINDOW = 60;
-const AUTO_MAX_DURATION_SECONDS = 10 * 60;
+const AUTO_MAX_DURATION_SECONDS = 7 * 60;
 const recentAutoTrackKeys: string[] = [];
 const inFlightAutoTrackKeys = new Set<string>();
 const DAILY_AUTO_HISTORY_REFRESH_MS = 60_000;
@@ -392,6 +474,7 @@ function shuffleInPlace<T>(items: T[]): T[] {
 
 async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack | null> {
   try {
+    if (!isAutoGenreStillActive(genreId)) return null;
     const canonicalGenreId = resolveMergedGenreId(genreId);
     const mergedGenreTags = getMergedGenreTags(canonicalGenreId);
     await refreshDailyAutoPlayedKeys();
@@ -400,6 +483,7 @@ async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack |
     const seen = new Set<string>();
 
     for (const offset of offsets) {
+      if (!isAutoGenreStillActive(canonicalGenreId)) return null;
       const hits = getCachedGenreHits(canonicalGenreId, 20, offset, true);
       for (const hit of hits) {
         const title = hit.title?.trim() || '';
@@ -439,11 +523,30 @@ async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack |
       }
     }
 
+    if (mergedHits.length === 0) {
+      // Ultimate fallback seed: synthesize candidates from priority artists so auto
+      // mode never gets stuck on an empty strict-hit cache.
+      const artistSeeds = getPriorityArtistsForGenre(canonicalGenreId).slice(0, 24);
+      const titleSeed = getMergedGenreTags(canonicalGenreId)[0] ?? canonicalGenreId;
+      for (const artist of artistSeeds) {
+        const cleanArtist = artist.trim();
+        if (!cleanArtist) continue;
+        const key = normalizeAutoKey(`${cleanArtist} ${titleSeed}`);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        mergedHits.push({
+          artist: cleanArtist,
+          title: titleSeed,
+          thumbnail: null,
+        });
+      }
+    }
+
     if (mergedHits.length < 10) {
       const now = Date.now();
       if (now - lastLowBufferWarningAt > 30_000) {
         lastLowBufferWarningAt = now;
-        console.warn(`[auto-playlist] Low buffer for genre "${genreId}": only ${mergedHits.length} strict hits available. Tune curation rules.`);
+        console.warn(`[auto-playlist] Low buffer for genre "${genreId}": only ${mergedHits.length} candidates available.`);
       }
     }
     if (mergedHits.length === 0) return null;
@@ -473,8 +576,10 @@ async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack |
       console.warn(`[auto-playlist] Exhausted 24h candidate pool for genre "${genreId}"`);
       return null;
     }
-    const choices = shuffleInPlace([...candidates]).slice(0, Math.min(8, candidates.length));
+    // Keep auto probing lightweight so UI/API calls stay responsive.
+    const choices = shuffleInPlace([...candidates]).slice(0, Math.min(3, candidates.length));
     for (const choice of choices) {
+      if (!isAutoGenreStillActive(canonicalGenreId)) return null;
       const choiceKey = normalizeAutoKey(`${choice.artist} ${choice.title}`);
       if (!choiceKey || inFlightAutoTrackKeys.has(choiceKey)) {
         continue;
@@ -482,38 +587,69 @@ async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack |
       inFlightAutoTrackKeys.add(choiceKey);
       try {
         for (const withGenreTags of [false, true]) {
+          if (!isAutoGenreStillActive(canonicalGenreId)) return null;
+          console.log(`[auto-download] Trying (${genreId}): ${choice.artist} - ${choice.title}${withGenreTags ? ' [tagged]' : ''}`);
           const pseudo = buildAutoFallbackSource(canonicalGenreId, choice.artist, choice.title, mergedGenreTags, withGenreTags);
-          const info = await fetchVideoInfo(pseudo.youtube_url).catch(() => ({ title: null, duration: null, thumbnail: null }));
-          const resolvedTitle = buildAutoDisplayTitle(info.title, choice.artist, choice.title);
-          const hintedDuration = typeof info.duration === 'number' && Number.isFinite(info.duration) ? Math.round(info.duration) : null;
-          if (!isAllowedAutoTrack(resolvedTitle, hintedDuration)) {
+          const query = pseudo.youtube_url.replace(/^ytsearch1:/, '').trim();
+          const selected = await resolveShortAutoCandidate(query);
+          if (!isAutoGenreStillActive(canonicalGenreId)) return null;
+          if (!selected) {
+            console.warn(`[auto-download] No short candidate (${genreId}) for query: ${query}`);
             continue;
           }
+          console.log(`[auto-download] Selected ${selected.source} candidate (${genreId}): ${selected.title ?? query} (${selected.duration ?? '?'}s)`);
+          const selectedPseudo: QueueItem = {
+            ...pseudo,
+            youtube_url: selected.url,
+            title: selected.title ?? pseudo.title,
+          };
+          const resolvedTitle = buildAutoDisplayTitle(selected.title, choice.artist, choice.title);
+          const hintedDuration = selected.duration;
+          if (!isAllowedAutoTrack(resolvedTitle, hintedDuration)) {
+            console.warn(`[auto-download] Rejected by metadata (${genreId}): ${resolvedTitle} (${hintedDuration ?? '?'}s)`);
+            continue;
+          }
+          if (!isAutoGenreStillActive(canonicalGenreId)) return null;
           pendingAutoUpcoming = {
             youtube_id: 'auto',
             title: resolvedTitle,
-            thumbnail: choice.thumbnail ?? info.thumbnail ?? null,
+            thumbnail: choice.thumbnail ?? selected.thumbnail ?? null,
             duration: hintedDuration,
             added_by: null,
             isFallback: true,
           };
           broadcastUpcomingTrack();
           try {
-            const audioFile = await downloadAudio(pseudo, _cacheDir);
+            const audioFile = await downloadAudio(selectedPseudo, _cacheDir);
+            if (!isAutoGenreStillActive(canonicalGenreId)) {
+              if (!keepFiles) cleanupFile(audioFile);
+              pendingAutoUpcoming = null;
+              broadcastUpcomingTrack();
+              return null;
+            }
             const fileDuration = await getAudioDuration(audioFile);
-            const finalDuration = hintedDuration ?? fileDuration ?? AUTO_MAX_DURATION_SECONDS;
+            if (fileDuration === null) {
+              if (!keepFiles) cleanupFile(audioFile);
+              pendingAutoUpcoming = null;
+              broadcastUpcomingTrack();
+              console.warn(`[auto-download] Rejected (unknown duration) (${genreId}): ${resolvedTitle}`);
+              continue;
+            }
+            const finalDuration = hintedDuration ?? fileDuration;
             if (!isAllowedAutoTrack(resolvedTitle, finalDuration)) {
               if (!keepFiles) cleanupFile(audioFile);
               pendingAutoUpcoming = null;
               broadcastUpcomingTrack();
+              console.warn(`[auto-download] Rejected by duration (${genreId}): ${resolvedTitle} (${finalDuration}s)`);
               continue;
             }
             rememberAutoTrack(choice.artist, choice.title);
             pendingAutoUpcoming = null;
+            console.log(`[auto-download] Ready (${genreId}): ${resolvedTitle} (${finalDuration}s)`);
             return {
               audioFile,
               title: resolvedTitle,
-              thumbnail: choice.thumbnail ?? info.thumbnail ?? null,
+              thumbnail: choice.thumbnail ?? selected.thumbnail ?? null,
               youtubeId: 'local',
               duration: finalDuration,
               addedBy: null,
@@ -544,6 +680,7 @@ async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack |
 
 async function prepareLikedAutoFallbackTrack(): Promise<ReadyTrack | null> {
   try {
+    if (parseAutoFallbackGenreId(activeFallbackGenre) !== LIKED_AUTO_GENRE_ID) return null;
     await refreshDailyAutoPlayedKeys();
     const likedTracks = listLikedPlaylistTracks();
     if (likedTracks.length === 0) return null;
@@ -559,38 +696,66 @@ async function prepareLikedAutoFallbackTrack(): Promise<ReadyTrack | null> {
     const choice = fresh[Math.floor(Math.random() * fresh.length)];
     if (!choice) return null;
 
+    console.log(`[auto-download] Trying (liked): ${choice}`);
     const pseudo = buildAutoFallbackSourceForQuery(LIKED_AUTO_GENRE_ID, choice);
-    const info = await fetchVideoInfo(pseudo.youtube_url).catch(() => ({ title: null, duration: null, thumbnail: null }));
+    const query = pseudo.youtube_url.replace(/^ytsearch1:/, '').trim();
+    const selected = await resolveShortAutoCandidate(query);
+    if (parseAutoFallbackGenreId(activeFallbackGenre) !== LIKED_AUTO_GENRE_ID) return null;
+    if (!selected) {
+      console.warn(`[auto-download] No short candidate (liked) for query: ${query}`);
+      return null;
+    }
+    console.log(`[auto-download] Selected ${selected.source} candidate (liked): ${selected.title ?? query} (${selected.duration ?? '?'}s)`);
+    const selectedPseudo: QueueItem = {
+      ...pseudo,
+      youtube_url: selected.url,
+      title: selected.title ?? pseudo.title,
+    };
     const parsedChoice = parseDisplayArtistTitle(choice);
-    const resolvedTitle = buildAutoDisplayTitle(info.title, parsedChoice.artist, parsedChoice.title);
-    const hintedDuration = typeof info.duration === 'number' && Number.isFinite(info.duration) ? Math.round(info.duration) : null;
+    const resolvedTitle = buildAutoDisplayTitle(selected.title, parsedChoice.artist, parsedChoice.title);
+    const hintedDuration = selected.duration;
     if (!isAllowedAutoTrack(resolvedTitle, hintedDuration)) {
       return null;
     }
     pendingAutoUpcoming = {
       youtube_id: 'auto',
       title: resolvedTitle,
-      thumbnail: info.thumbnail ?? null,
+      thumbnail: selected.thumbnail ?? null,
       duration: hintedDuration,
       added_by: null,
       isFallback: true,
     };
     broadcastUpcomingTrack();
-    const audioFile = await downloadAudio(pseudo, _cacheDir);
-    const fileDuration = await getAudioDuration(audioFile);
-    const finalDuration = hintedDuration ?? fileDuration ?? AUTO_MAX_DURATION_SECONDS;
-    if (!isAllowedAutoTrack(resolvedTitle, finalDuration)) {
+    const audioFile = await downloadAudio(selectedPseudo, _cacheDir);
+    if (parseAutoFallbackGenreId(activeFallbackGenre) !== LIKED_AUTO_GENRE_ID) {
       if (!keepFiles) cleanupFile(audioFile);
       pendingAutoUpcoming = null;
       broadcastUpcomingTrack();
       return null;
     }
+    const fileDuration = await getAudioDuration(audioFile);
+    if (fileDuration === null) {
+      if (!keepFiles) cleanupFile(audioFile);
+      pendingAutoUpcoming = null;
+      broadcastUpcomingTrack();
+      console.warn(`[auto-download] Rejected (unknown duration) (liked): ${resolvedTitle}`);
+      return null;
+    }
+    const finalDuration = hintedDuration ?? fileDuration;
+    if (!isAllowedAutoTrack(resolvedTitle, finalDuration)) {
+      if (!keepFiles) cleanupFile(audioFile);
+      pendingAutoUpcoming = null;
+      broadcastUpcomingTrack();
+      console.warn(`[auto-download] Rejected by duration (liked): ${resolvedTitle} (${finalDuration}s)`);
+      return null;
+    }
     rememberAutoTrackKey(choice);
     pendingAutoUpcoming = null;
+    console.log(`[auto-download] Ready (liked): ${resolvedTitle} (${finalDuration}s)`);
     return {
       audioFile,
       title: resolvedTitle,
-      thumbnail: info.thumbnail ?? null,
+      thumbnail: selected.thumbnail ?? null,
       youtubeId: 'local',
       duration: finalDuration,
       addedBy: null,
@@ -604,6 +769,15 @@ async function prepareLikedAutoFallbackTrack(): Promise<ReadyTrack | null> {
     broadcastUpcomingTrack();
     console.warn(`[player] Liked auto fallback prepare failed: ${(err as Error).message}`);
     return null;
+  }
+}
+
+async function waitForAutoReadyMinimum(sb: SupabaseClient, cacheDir: string, minCount: number, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (isRunning && Date.now() < deadline && getAutoReadyCount() < minCount) {
+    await ensureAutoReadyBuffer(sb, cacheDir);
+    if (getAutoReadyCount() >= minCount) break;
+    await sleep(AUTO_READY_WAIT_STEP_MS);
   }
 }
 
@@ -787,6 +961,9 @@ const PRELOAD_REFRESH_MS = 5000;
 const AUTO_READY_MIN = 2;
 const AUTO_READY_MAX = 3;
 const AUTO_PRELOAD_COOLDOWN_MS = 7000;
+const AUTO_IMMEDIATE_PREPARE_TIMEOUT_MS = 1400;
+const AUTO_READY_WAIT_TIMEOUT_MS = 14_000;
+const AUTO_READY_WAIT_STEP_MS = 350;
 
 interface PreloadedTrack {
   item: QueueItem;
@@ -1533,8 +1710,8 @@ async function playNext(
     }
   };
 
-  async function pickImmediateFallback(quickMeta = true): Promise<boolean> {
-    if (activeAutoGenre) return false;
+  async function pickImmediateFallback(quickMeta = true, allowWhenAuto = false): Promise<boolean> {
+    if (activeAutoGenre && !allowWhenAuto) return false;
     let selectedFile: string | null = null;
     let exclude = lastFallbackFile;
     for (let attempt = 0; attempt < 6; attempt++) {
@@ -1560,19 +1737,40 @@ async function playNext(
     trackIsAutoFallback = false;
     trackCleanupAfterUse = false;
     source = quickMeta ? 'random/gap-guard' : 'random';
+    if (activeAutoGenre && allowWhenAuto) {
+      console.warn(`[player] Emergency local fallback while auto "${activeAutoGenre}" is buffering`);
+    }
     currentQueueItemId = null;
     return true;
   }
 
-  async function pickImmediateAutoFallback(): Promise<boolean> {
+  async function pickImmediateAutoFallback(timeoutMs = AUTO_IMMEDIATE_PREPARE_TIMEOUT_MS): Promise<boolean> {
     if (!activeAutoGenre) return false;
+    if (getAutoReadyCount() < AUTO_READY_MIN) {
+      await waitForAutoReadyMinimum(sb, cacheDir, AUTO_READY_MIN, AUTO_READY_WAIT_TIMEOUT_MS);
+    }
     let ready = takeAutoReadyFromBuffer();
     if (!ready) {
-      ready = activeAutoGenre === LIKED_AUTO_GENRE_ID
-        ? await prepareLikedAutoFallbackTrack()
-        : await prepareAutoFallbackByGenre(activeAutoGenre);
+      const preparePromise = activeAutoGenre === LIKED_AUTO_GENRE_ID
+        ? prepareLikedAutoFallbackTrack()
+        : prepareAutoFallbackByGenre(activeAutoGenre);
+      if (timeoutMs > 0) {
+        ready = await Promise.race([
+          preparePromise,
+          new Promise<ReadyTrack | null>((resolve) => {
+            setTimeout(() => resolve(null), timeoutMs);
+          }),
+        ]);
+      } else {
+        ready = await preparePromise;
+      }
     }
-    if (!ready) return false;
+    if (!isAutoGenreStillActive(activeAutoGenre)) return false;
+    if (!ready) {
+      // Keep warming auto candidates in background so a next cycle can promote them.
+      void ensureAutoReadyBuffer(sb, cacheDir);
+      return false;
+    }
     audioFile = ready.audioFile;
     trackTitle = ready.title;
     trackThumbnail = ready.thumbnail;
@@ -1666,7 +1864,7 @@ async function playNext(
         console.log(`[player] Gap guard: queue item not ready, playing random first (${item.title ?? item.youtube_id})`);
         void prepareNextTrack(sb, cacheDir, currentTrack?.id ?? null);
         const fallbackPicked = activeAutoGenre
-          ? (await pickImmediateAutoFallback()) || (await pickImmediateFallback(true))
+          ? (await pickImmediateAutoFallback()) || (await pickImmediateFallback(true, true))
           : (await pickImmediateFallback(true)) || (await pickImmediateAutoFallback());
         if (!fallbackPicked) {
           currentTrack = null;
@@ -1679,7 +1877,7 @@ async function playNext(
       }
     } else {
       const fallbackPicked = activeAutoGenre
-        ? (await pickImmediateAutoFallback()) || (await pickImmediateFallback(queue.length > 0))
+        ? (await pickImmediateAutoFallback()) || (await pickImmediateFallback(queue.length > 0, true))
         : (await pickImmediateFallback(queue.length > 0)) || (await pickImmediateAutoFallback());
       if (!fallbackPicked) {
         currentTrack = null;
@@ -2390,7 +2588,6 @@ async function prepareNextTrack(
           broadcastUpcomingTrack();
           void ensureAutoReadyBuffer(sb, cacheDir);
         } else {
-          // Keep auto mode pure: do not silently fall back to random local genres.
           pendingQueueUpcoming = null;
           console.warn(`[prepare] Auto genre "${activeAutoGenre}" has no strict candidates yet`);
         }

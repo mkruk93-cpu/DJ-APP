@@ -31,11 +31,15 @@ const STICKERS = [
   { label: "Headphones", url: "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f3a7.png" },
 ];
 
-function sanitize(html: string): string {
-  return html.replace(/[<>&"']/g, (c) => {
-    const map: Record<string, string> = { "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&#39;" };
-    return map[c] ?? c;
-  });
+function decodeLegacyEntities(text: string): string {
+  // Older chat rows were stored as HTML entities (e.g. &#39;). React already
+  // escapes output safely, so decode these for correct visual rendering.
+  return text
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
 }
 
 function timeStr(iso: string) {
@@ -73,7 +77,7 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
         />
       );
     }
-    return <span>{raw}</span>;
+    return <span>{decodeLegacyEntities(raw)}</span>;
   }
 
   useEffect(() => {
@@ -134,7 +138,7 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
     lastMsgRef.current = { text, time: now };
 
     if (!content) setInput("");
-    await getSupabase().from("chat_messages").insert({ nickname, content: sanitize(text) });
+    await getSupabase().from("chat_messages").insert({ nickname, content: text });
   }, [input, cooldown, nickname]);
 
   function addEmoji(emoji: string) {

@@ -21,12 +21,22 @@ import {
   searchGenres,
   getTopTracksByGenre,
   getPriorityArtistQuickHitsByGenre,
+  getPriorityArtistsForGenre,
   resolveMergedGenreId,
   getMergedGenreTags,
   normalizeTrackIdentity,
   type GenreItem,
   type GenreHitItem,
 } from './services/discovery.js';
+
+function getErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err ?? 'unknown');
+}
+
+// Simple cache for genre hits to avoid repeated searches
+const genreHitsCache = new Map<string, { results: any[], timestamp: number }>();
+const GENRE_HITS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 import { reloadFallbackGenres, listFallbackGenres, getDefaultFallbackGenreId, isKnownFallbackGenre, toAutoFallbackGenreId, parseAutoFallbackGenreId, LIKED_AUTO_GENRE_ID } from './fallbackGenres.js';
 import { addPriorityArtistForGenre, addBlockedArtistForGenre, addPriorityTrackForGenre, addBlockedTrackForGenre, addLikedPlaylistTrack } from './services/genreCuratedConfig.js';
 import {
@@ -50,6 +60,7 @@ const REKORDBOX_OUTPUT_PATH = process.env.REKORDBOX_OUTPUT_PATH ?? '';
 const KEEP_FILES = process.env.KEEP_FILES === 'true';
 
 const useIcecast = !!process.env.ICECAST_HOST;
+const internalPlayerUseIcecast = String(process.env.INTERNAL_PLAYER_USE_ICECAST ?? '').toLowerCase() === 'true';
 
 const ICECAST = useIcecast
   ? {
@@ -60,7 +71,7 @@ const ICECAST = useIcecast
     }
   : null;
 
-const streamHub = useIcecast ? null : new StreamHub();
+const streamHub = new StreamHub();
 
 if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
   console.error('Missing SUPABASE_URL or SUPABASE_SERVICE_KEY');
@@ -109,11 +120,13 @@ function applyPlaybackForMode(mode: Mode): void {
     console.log('[mode] DJ active — internal player paused (Icecast source takes over)');
     return;
   }
-  startPlayCycle(sb, io, CACHE_DIR, ICECAST, streamHub);
+  const encoderTarget = internalPlayerUseIcecast ? ICECAST : null;
+  startPlayCycle(sb, io, CACHE_DIR, encoderTarget, streamHub);
 }
 
 const startTime = Date.now();
 let lastStateLogKey: string | null = null;
+let lastGoodServerState: ServerState | null = null;
 const MODE_SYNC_INTERVAL_MS = 5_000;
 const MODE_SYNC_CONFIRM_POLLS = 2;
 const MODE_SYNC_COOLDOWN_MS = 10_000;
@@ -218,6 +231,70 @@ async function getServerState(): Promise<ServerState> {
     fallbackGenres,
     activeFallbackGenre,
     activeFallbackGenreBy: normalizeNickname(activeFallbackGenreBy),
+    listenerCount: io.engine.clientsCount,
+    streamOnline: getCurrentTrack() !== null,
+    voteState: null,
+    durationVote: activeDurationVote,
+    queuePushVote: activeQueuePushVote
+      ? {
+          id: activeQueuePushVote.id,
+          item_id: activeQueuePushVote.item_id,
+          title: activeQueuePushVote.title,
+          thumbnail: activeQueuePushVote.thumbnail,
+          added_by: activeQueuePushVote.added_by,
+          proposed_by: activeQueuePushVote.proposed_by,
+          required: activeQueuePushVote.required,
+          yes: activeQueuePushVote.yes,
+          no: activeQueuePushVote.no,
+          expires_at: activeQueuePushVote.expires_at,
+        }
+      : null,
+    queuePushLocked,
+    skipLocked: isSkipLocked(),
+  };
+}
+
+function buildDegradedServerState(): ServerState {
+  if (lastGoodServerState) {
+    return {
+      ...lastGoodServerState,
+      currentTrack: getCurrentTrack(),
+      upcomingTrack: getUpcomingTrack(),
+      listenerCount: io.engine.clientsCount,
+      streamOnline: getCurrentTrack() !== null,
+      queuePushLocked,
+      skipLocked: isSkipLocked(),
+      durationVote: activeDurationVote,
+      queuePushVote: activeQueuePushVote
+        ? {
+            id: activeQueuePushVote.id,
+            item_id: activeQueuePushVote.item_id,
+            title: activeQueuePushVote.title,
+            thumbnail: activeQueuePushVote.thumbnail,
+            added_by: activeQueuePushVote.added_by,
+            proposed_by: activeQueuePushVote.proposed_by,
+            required: activeQueuePushVote.required,
+            yes: activeQueuePushVote.yes,
+            no: activeQueuePushVote.no,
+            expires_at: activeQueuePushVote.expires_at,
+          }
+        : null,
+    };
+  }
+  return {
+    currentTrack: getCurrentTrack(),
+    upcomingTrack: getUpcomingTrack(),
+    queue: [],
+    mode: 'radio',
+    modeSettings: {
+      democracy_threshold: 60,
+      democracy_timer: 15,
+      jukebox_max_per_user: 2,
+      party_skip_cooldown: 5,
+    },
+    fallbackGenres: [],
+    activeFallbackGenre: null,
+    activeFallbackGenreBy: null,
     listenerCount: io.engine.clientsCount,
     streamOnline: getCurrentTrack() !== null,
     voteState: null,
@@ -533,30 +610,25 @@ function searchLocalGenreHits(genre: string, limit: number, offset: number): Gen
 }
 
 function refreshGenreHitsCache(cacheKey: string, genre: string, limit: number, offset: number, includeLocal: boolean): void {
+  // LIGHTWEIGHT: Skip heavy refresh during UI interactions to prevent stream interruption
+  console.log(`[genre-hits] LIGHTWEIGHT skipping heavy refresh for ${genre} to protect stream stability`);
+  
+  // Only do very light local operations
   if (activeRefreshes.has(cacheKey)) return;
   activeRefreshes.add(cacheKey);
-  void Promise.allSettled([
-    getPriorityArtistQuickHitsByGenre(genre, Math.max(limit, 12)),
-    getTopTracksByGenre(genre, limit, offset),
-    getTopTracksByGenre(genre, limit, offset + limit),
-  ])
-    .then((pages) => {
-      const remote = pages.flatMap((page) => (page.status === 'fulfilled' ? page.value : []));
-      const local = includeLocal ? searchLocalGenreHits(genre, Math.max(limit * 2, 20), offset) : [];
-      const merged = Array.from(
-        new Map(
-          [...local, ...remote]
-            .map((item) => [normalizeTrackIdentity(item.artist, item.title), item]),
-        ).values(),
-      ).slice(0, limit);
-      setGenreHitsCacheEntry(cacheKey, merged);
-    })
-    .catch((err) => {
-      console.warn('[rest] /api/genre-hits refresh failed:', (err as Error).message);
-    })
-    .finally(() => {
-      activeRefreshes.delete(cacheKey);
-    });
+  
+  // Only use local data - no external API calls
+  try {
+    const local = searchLocalGenreHits(genre, Math.max(limit * 2, 20), offset);
+    if (local.length > 0) {
+      console.log(`[genre-hits] LIGHTWEIGHT cached ${local.length} local results for ${genre}`);
+      setGenreHitsCacheEntry(cacheKey, local.slice(0, limit));
+    }
+  } catch (err) {
+    console.warn('[genre-hits] LIGHTWEIGHT local search failed:', (err as Error).message);
+  } finally {
+    activeRefreshes.delete(cacheKey);
+  }
 }
 
 function parseDuration(text: string): number | null {
@@ -824,6 +896,7 @@ async function soundcloudSearch(query: string, limit = 12): Promise<SearchResult
 app.get('/state', async (_req, res) => {
   try {
     const state = await getServerState();
+    lastGoodServerState = state;
     const stateLogKey = `${state.currentTrack?.title ?? 'none'}|${state.queue.length}|${state.mode}`;
     if (stateLogKey !== lastStateLogKey) {
       lastStateLogKey = stateLogKey;
@@ -832,7 +905,9 @@ app.get('/state', async (_req, res) => {
     res.json(state);
   } catch (err) {
     console.error('[rest] /state error:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    // Degraded fallback: never hard-fail /state for transient DB/network errors.
+    const degraded = buildDegradedServerState();
+    res.json({ ...degraded, degraded: true });
   }
 });
 
@@ -921,85 +996,199 @@ app.get('/api/genres', async (req, res) => {
 
 app.get('/api/genre-hits', async (req, res) => {
   const requestedGenre = String(req.query.genre ?? '').trim();
+  console.log(`[genre-hits] LIGHTWEIGHT search request for: ${requestedGenre}`);
+  
   if (requestedGenre.length < 2) {
     res.status(400).json({ error: 'Missing or invalid genre' });
     return;
   }
+  
   const genre = resolveMergedGenreId(requestedGenre);
-
-  const parsedLimit = parseInt(String(req.query.limit ?? '20'), 10);
-  const parsedOffset = parseInt(String(req.query.offset ?? '0'), 10);
-  // Local search is intentionally disabled for genre hits to protect stream stability.
-  const includeLocal = false;
-  const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(parsedLimit, 50)) : 20;
-  const offset = Number.isFinite(parsedOffset) ? Math.max(0, parsedOffset) : 0;
-  const cacheKey = makeGenreHitsCacheKey(genre, limit, offset, includeLocal);
-  const nextOffset = offset + limit;
-  const nextCacheKey = makeGenreHitsCacheKey(genre, limit, nextOffset, includeLocal);
-  const cached = getGenreHitsCacheEntry(cacheKey);
-  const ttl = cached && cached.results.length === 0 ? EMPTY_GENRE_CACHE_TTL : DISCOVERY_CACHE_TTL;
-  const isStale = !cached || Date.now() - cached.ts >= ttl;
-
-  if (isStale) {
-    refreshGenreHitsCache(cacheKey, genre, limit, offset, includeLocal);
-  }
-
-  if (cached && cached.results.length >= Math.max(8, Math.ceil(limit * 0.6))) {
-    const nextCached = getGenreHitsCacheEntry(nextCacheKey);
-    if (!nextCached || Date.now() - nextCached.ts >= DISCOVERY_CACHE_TTL) {
-      refreshGenreHitsCache(nextCacheKey, genre, limit, nextOffset, includeLocal);
-    }
-  } else if (!hasGenreHitsCacheEntry(nextCacheKey)) {
-    refreshGenreHitsCache(nextCacheKey, genre, limit, nextOffset, includeLocal);
-  }
-
-  if (cached) {
-    res.json(cached.results);
-    return;
-  }
-
-  // Cold cache bootstrap: return an initial page immediately when possible.
+  const limit = Math.min(parseInt(String(req.query.limit ?? '10'), 10) || 10, 20);
+  const offset = Math.max(parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
+  
   try {
-    const local = includeLocal ? searchLocalGenreHits(genre, Math.max(limit * 2, 20), offset) : [];
-    const quickPriority = await Promise.race([
-      getPriorityArtistQuickHitsByGenre(genre, Math.max(limit, 12)),
-      new Promise<GenreHitItem[]>((resolve) => setTimeout(() => resolve([]), 1200)),
-    ]);
-    if (quickPriority.length > 0 || local.length > 0) {
-      const immediate = Array.from(
-        new Map(
-          [...quickPriority, ...local]
-            .map((item) => [normalizeTrackIdentity(item.artist, item.title), item]),
-        ).values(),
-      ).slice(0, limit);
-      if (immediate.length > 0) {
-        setGenreHitsCacheEntry(cacheKey, immediate);
-        // Continue enriching in background.
-        refreshGenreHitsCache(cacheKey, genre, limit, offset, includeLocal);
-        res.json(immediate);
-        return;
+    // Check cache first
+    const cacheKey = `${genre}:${limit}:${offset}`;
+    const cached = genreHitsCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < GENRE_HITS_CACHE_TTL) {
+      console.log(`[genre-hits] CACHE HIT for ${genre}, returning ${cached.results.length} results instantly`);
+      res.json(cached.results);
+      return;
+    }
+    
+    // Get whitelisted artists for this genre
+    const priorityArtists = getPriorityArtistsForGenre(genre);
+    console.log(`[genre-hits] Found ${priorityArtists.length} priority artists for ${genre}`);
+    
+    if (priorityArtists.length === 0) {
+      console.log(`[genre-hits] No priority artists for ${genre}, returning empty`);
+      res.json([]);
+      return;
+    }
+    
+    // ULTRA-FAST: Only 1 artist for maximum speed
+    const artistsPerPage = 1; // Always just 1 artist for speed
+    const startArtistIndex = offset % priorityArtists.length;
+    const selectedArtists = [priorityArtists[startArtistIndex]];
+    
+    console.log(`[genre-hits] Searching for artists: ${selectedArtists.join(', ')}`);
+    
+    // Do ultra-fast searches with aggressive timeouts
+    const searchPromises = selectedArtists.map(async (artist, index) => {
+      const searchQuery = `${artist} ${genre}`;
+      const searchLimit = limit; // Get all results from single artist
+      
+      try {
+        // Alternate between YouTube and SoundCloud for variety
+        const useYoutube = (offset + index) % 2 === 0;
+        
+        // Race each individual search with 600ms timeout
+        const results = await Promise.race([
+          useYoutube 
+            ? youtubeSearch(searchQuery, searchLimit)
+            : soundcloudSearch(searchQuery, searchLimit),
+          new Promise<never>((_, reject) => 
+            setTimeout(() => reject(new Error('Individual search timeout')), 600)
+          )
+        ]);
+          
+        return results
+          .filter(result => {
+            // Filter out tracks longer than 7 minutes (420 seconds)
+            if (result.duration && result.duration > 420) {
+              console.log(`[genre-hits] Filtered out long track: ${result.title} (${Math.floor(result.duration / 60)}:${String(result.duration % 60).padStart(2, '0')})`);
+              return false;
+            }
+            return true;
+          })
+          .map(result => ({
+            id: result.id,
+            title: result.title,
+            artist: result.channel || artist,
+            thumbnail: result.thumbnail,
+            sourceHint: result.url
+          }));
+      } catch (error) {
+        console.warn(`[genre-hits] Fast search failed for ${artist}:`, getErrorMessage(error));
+        return [];
       }
-    }
-    const remote = await Promise.race([
-      Promise.allSettled([
-        getPriorityArtistQuickHitsByGenre(genre, Math.max(limit, 12)),
-        getTopTracksByGenre(genre, limit, offset),
-        getTopTracksByGenre(genre, limit, offset + limit),
-      ]).then((pages) => pages.flatMap((page) => (page.status === 'fulfilled' ? page.value : [] as GenreHitItem[]))),
-      new Promise<GenreHitItem[]>((resolve) => setTimeout(() => resolve([]), 3000)),
+    });
+    
+    // Wait for all searches with aggressive 1s total timeout
+    const searchResults = await Promise.race([
+      Promise.allSettled(searchPromises),
+      new Promise<never>((_, reject) => 
+        setTimeout(() => reject(new Error('Total search timeout')), 1000)
+      )
     ]);
-    const merged = Array.from(
-      new Map(
-        [...local, ...remote]
-          .map((item) => [normalizeTrackIdentity(item.artist, item.title), item]),
-      ).values(),
+    
+    // Collect results
+    const allResults = searchResults.flatMap(result => 
+      result.status === 'fulfilled' ? result.value : []
+    );
+    
+    // Remove duplicates and limit results
+    const uniqueResults = Array.from(
+      new Map(allResults.map(item => [item.id, item])).values()
     ).slice(0, limit);
-    if (merged.length > 0) {
-      setGenreHitsCacheEntry(cacheKey, merged);
-    }
-    res.json(merged);
-  } catch {
+    
+    // Cache the results
+    genreHitsCache.set(cacheKey, {
+      results: uniqueResults,
+      timestamp: Date.now()
+    });
+    
+    console.log(`[genre-hits] Returning ${uniqueResults.length} search results for ${genre} (cached for 5min)`);
+    res.json(uniqueResults);
+    
+  } catch (error) {
+    console.error(`[genre-hits] Error searching ${genre}:`, getErrorMessage(error));
     res.json([]);
+  }
+});
+
+app.get('/api/genre-health', async (req, res) => {
+  const requestedGenre = String(req.query.genre ?? '').trim();
+  const doProbe = String(req.query.probe ?? '0') === '1';
+  const probeLimitRaw = parseInt(String(req.query.probeLimit ?? '12'), 10);
+  const probeLimit = Number.isFinite(probeLimitRaw) ? Math.max(4, Math.min(probeLimitRaw, 30)) : 12;
+
+  const withTimeout = async <T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<T>((resolve) => {
+          timer = setTimeout(() => resolve(fallback), ms);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+
+  try {
+    const allGenres = await searchGenres('');
+    const scope = requestedGenre
+      ? allGenres.filter((genre) => resolveMergedGenreId(genre.id) === resolveMergedGenreId(requestedGenre))
+      : allGenres;
+
+    const probeGenreSet = new Set(
+      doProbe
+        ? (requestedGenre
+            ? [resolveMergedGenreId(requestedGenre)]
+            : scope.slice(0, 8).map((item) => resolveMergedGenreId(item.id)))
+        : [],
+    );
+
+    const healthRows = await Promise.all(scope.map(async (genre) => {
+      const canonical = resolveMergedGenreId(genre.id);
+      const seedArtists = getPriorityArtistsForGenre(canonical);
+      const cacheKey0 = makeGenreHitsCacheKey(canonical, 20, 0, false);
+      const cacheKey20 = makeGenreHitsCacheKey(canonical, 20, 20, false);
+      const cache0 = getGenreHitsCacheEntry(cacheKey0);
+      const cache20 = getGenreHitsCacheEntry(cacheKey20);
+      const cachedCount = (cache0?.results.length ?? 0) + (cache20?.results.length ?? 0);
+      const cacheAgeMs = cache0 ? (Date.now() - cache0.ts) : null;
+
+      const shouldProbeThisGenre = probeGenreSet.has(canonical);
+      const probedStrictCount = shouldProbeThisGenre
+        ? await withTimeout(
+            getTopTracksByGenre(canonical, probeLimit, 0).then((items) => items.length).catch(() => 0),
+            2500,
+            0,
+          )
+        : null;
+
+      const health = seedArtists.length >= 3
+        ? (cachedCount >= 8 || (probedStrictCount ?? 0) >= 5 ? 'ok' : 'degraded')
+        : 'needs_seeds';
+
+      return {
+        genre: canonical,
+        label: genre.name,
+        mergedTags: getMergedGenreTags(canonical),
+        seedArtistsCount: seedArtists.length,
+        seedArtistsPreview: seedArtists.slice(0, 8),
+        cachedStrictCount: cachedCount,
+        cacheAgeMs,
+        probedStrictCount,
+        health,
+      };
+    }));
+
+    res.json({
+      ok: true,
+      generatedAt: new Date().toISOString(),
+      probe: doProbe,
+      probeScope: requestedGenre ? 'single' : (doProbe ? 'top8' : 'none'),
+      count: healthRows.length,
+      genres: healthRows,
+    });
+  } catch (err) {
+    console.error('[rest] /api/genre-health error:', err);
+    res.status(500).json({ ok: false, error: 'Genre health lookup failed' });
   }
 });
 
@@ -1143,6 +1332,30 @@ app.post('/api/genre-curation/dislike-current', async (req, res) => {
 
 app.get('/listen', (req, res) => {
   const origin = req.headers.origin ?? '*';
+  const internalTrackActive = getCurrentTrack() !== null;
+
+  // Internal autoplay stream should not depend on Icecast socket stability.
+  if (internalTrackActive && streamHub) {
+    res.writeHead(200, {
+      'Content-Type': 'audio/mpeg',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': origin,
+      'Access-Control-Allow-Methods': 'GET',
+    });
+
+    const backlog = streamHub.getBacklog();
+    if (backlog) res.write(backlog);
+
+    const unsub = streamHub.subscribe((chunk) => {
+      if (!res.destroyed) {
+        try { res.write(chunk); } catch { unsub(); }
+      }
+    });
+
+    req.on('close', unsub);
+    return;
+  }
 
   if (ICECAST) {
     const icecastStreamUrl = `http://${ICECAST.host}:${ICECAST.port}${ICECAST.mount}`;

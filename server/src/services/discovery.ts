@@ -154,6 +154,72 @@ interface GenreHints {
   minScore: number;
 }
 
+const DEFAULT_PRIORITY_ARTISTS_BY_GENRE: Record<string, string[]> = {
+  hardcore: ['angerfist', 'mad dog', 'miss k8'],
+  uptempo: ['dimitri k', 'major conspiracy', 'barber'],
+  gabber: ['paul elstak', 'neophyte', 'promo'],
+  'industrial hardcore': ['ophidian', 'the outside agency', 'detest'],
+  krach: ['noiseflow', 'dr donk', 'kior'],
+  terror: ['noisekick', 'negative a', 'akira'],
+  terrorcore: ['tripped', 'srb', 'tieum'],
+  'mainstream hardcore': ['angerfist', 'evil activities', 'outblast'],
+  'happy hardcore': ['paul elstak', 'hixxy', 'darren styles'],
+  hardstyle: ['headhunterz', 'sub zero project', 'brennan heart'],
+  'euphoric hardstyle': ['wildstylez', 'atmozfears', 'adrenalize'],
+  rawstyle: ['warface', 'rejecta', 'd-sturb'],
+  frenchcore: ['dr peacock', 'sefa', 'billx'],
+  techno: ['charlotte de witte', 'amelie lens', 'adam beyer'],
+  'hard techno': ['nico moreno', 'trym', 'alignment'],
+  trance: ['armin van buuren', 'ferry corsten', 'above & beyond'],
+  'psy trance': ['astrix', 'vini vici', 'infected mushroom'],
+  psytrance: ['astrix', 'vini vici', 'blastoyz'],
+  house: ['fisher', 'chris lake', 'dom dolla'],
+  'deep house': ['nora en pure', 'lane 8', 'ben bohmer'],
+  'future house': ['don diablo', 'oliver heldens', 'mesto'],
+  'tech house': ['john summit', 'mau p', 'cloonee'],
+  'progressive house': ['eric prydz', 'nicky romero', 'alesso'],
+  'electro house': ['deadmau5', 'zedd', 'knife party'],
+  'drum and bass': ['sub focus', 'dimension', 'netsky'],
+  'liquid drum and bass': ['hybrid minds', 'maduk', 'fred v'],
+  neurofunk: ['noisia', 'black sun empire', 'phace'],
+  'bass house': ['joyryde', 'habstrakt', 'jauz'],
+  'big room': ['hardwell', 'martin garrix', 'w&w'],
+  'melodic techno': ['tale of us', 'artbat', 'anyma'],
+  'hard dance': ['coone', 'da tweekaz', 'frontliner'],
+  dubstep: ['skrillex', 'zomboy', 'virtual riot'],
+  brostep: ['skrillex', 'doctor p', 'knife party'],
+  'uk garage': ['sammy virji', 'mj cole', 'conducta'],
+  rock: ['foo fighters', 'red hot chili peppers', 'muse'],
+  alternative: ['arctic monkeys', 'the killers', 'radiohead'],
+  'alternative rock': ['foo fighters', 'paramore', 'kings of leon'],
+  'indie rock': ['the strokes', 'tame impala', 'phoenix'],
+  metal: ['metallica', 'slipknot', 'iron maiden'],
+  'heavy metal': ['iron maiden', 'judas priest', 'black sabbath'],
+  metalcore: ['bring me the horizon', 'architects', 'parkway drive'],
+  'death metal': ['cannibal corpse', 'death', 'morbid angel'],
+  punk: ['ramones', 'the clash', 'bad religion'],
+  'pop punk': ['blink-182', 'sum 41', 'all time low'],
+  edm: ['martin garrix', 'david guetta', 'avicii'],
+  dance: ['calvin harris', 'meduza', 'topic'],
+  hiphop: ['drake', 'kendrick lamar', 'travis scott'],
+  'nederlandse hiphop': ['boef', 'frenna', 'ronnie flex'],
+  nederlands: ['snelle', 'suzan & freek', 'maan'],
+  'top 40': ['dua lipa', 'the weeknd', 'taylor swift'],
+  pop: ['dua lipa', 'ariana grande', 'ed sheeran'],
+};
+
+function getDefaultPriorityArtists(genre: string, mergedTags: string[]): string[] {
+  const normalized = resolveMergedGenreId(genre);
+  const mapped = DEFAULT_PRIORITY_ARTISTS_BY_GENRE[normalized] ?? [];
+  if (mapped.length > 0) return dedupeNormalized(mapped);
+  const tagSeeds = mergedTags
+    .map((tag) => normalizeGenreName(tag))
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((tag) => `${tag} music`);
+  return dedupeNormalized(tagSeeds);
+}
+
 function normalizeGenreName(name: string): string {
   return name
     .trim()
@@ -200,6 +266,11 @@ const MERGED_GENRE_CLUSTERS: MergedGenreCluster[] = [
       'neurofunk',
       'neuro dnb',
     ],
+  },
+  {
+    canonical: 'dubstep',
+    aliases: ['brostep'],
+    tags: ['dubstep', 'brostep', 'riddim', 'bass music'],
   },
 ];
 
@@ -278,7 +349,8 @@ export function isKnownDiscoveryGenre(genre: string): boolean {
 }
 
 function getGenreHints(genre: string): GenreHints {
-  const normalized = resolveMergedGenreId(genre);
+  const requestedNormalized = normalizeGenreName(genre);
+  const normalized = resolveMergedGenreId(requestedNormalized);
   const mergedFamily = getMergedGenreFamily(normalized);
   const mergedTags = getMergedGenreTags(normalized);
   const baseGenreTokens = mergedTags
@@ -461,14 +533,38 @@ function getGenreHints(genre: string): GenreHints {
     },
   };
 
-  const base = hints[normalized] ?? {
-    spotifyQueries: [`genre:"${genre}" ${genre}`, genre],
-    lastFmTags: [genre],
-    deezerQueries: [genre],
-    relevanceTokens: dedupeNormalized(defaultRelevanceTokens),
-    avoidTokens: [],
-    minScore: 1,
-  };
+  const baseCandidates = Array.from(
+    new Set([requestedNormalized, normalized, ...mergedFamily]),
+  )
+    .map((id) => hints[id])
+    .filter((item): item is GenreHints => !!item);
+
+  const base = baseCandidates.length > 0
+    ? {
+      spotifyQueries: dedupeNormalized(baseCandidates.flatMap((item) => item.spotifyQueries)),
+      lastFmTags: dedupeNormalized(baseCandidates.flatMap((item) => item.lastFmTags)),
+      deezerQueries: dedupeNormalized(baseCandidates.flatMap((item) => item.deezerQueries)),
+      relevanceTokens: dedupeNormalized([
+        ...defaultRelevanceTokens,
+        ...baseCandidates.flatMap((item) => item.relevanceTokens),
+      ]),
+      avoidTokens: dedupeNormalized(baseCandidates.flatMap((item) => item.avoidTokens)),
+      requiredTokens: dedupeNormalized(baseCandidates.flatMap((item) => item.requiredTokens ?? [])),
+      priorityArtists: dedupeNormalized(baseCandidates.flatMap((item) => item.priorityArtists ?? [])),
+      blockedArtists: dedupeNormalized(baseCandidates.flatMap((item) => item.blockedArtists ?? [])),
+      priorityTracks: dedupeNormalized(baseCandidates.flatMap((item) => item.priorityTracks ?? [])),
+      blockedTracks: dedupeNormalized(baseCandidates.flatMap((item) => item.blockedTracks ?? [])),
+      priorityLabels: dedupeNormalized(baseCandidates.flatMap((item) => item.priorityLabels ?? [])),
+      minScore: baseCandidates.reduce((acc, item) => Math.max(acc, item.minScore), 1),
+    } satisfies GenreHints
+    : {
+      spotifyQueries: [`genre:"${genre}" ${genre}`, genre],
+      lastFmTags: [genre],
+      deezerQueries: [genre],
+      relevanceTokens: dedupeNormalized(defaultRelevanceTokens),
+      avoidTokens: [],
+      minScore: 1,
+    };
 
   const curatedRules = mergedFamily
     .map((id) => getCuratedGenreRule(id))
@@ -505,13 +601,24 @@ function getGenreHints(genre: string): GenreHints {
     relevanceTokens: dedupeNormalized([...base.relevanceTokens, ...mergedCuratedRequired, ...mergedTags]),
     avoidTokens: dedupeNormalized([...base.avoidTokens, ...mergedCuratedBlockedTokens]),
     requiredTokens: dedupeNormalized([...(base.requiredTokens ?? []), ...mergedCuratedRequired]),
-    priorityArtists: dedupeNormalized([...(base.priorityArtists ?? []), ...mergedCuratedPriorityArtists]),
+    priorityArtists: dedupeNormalized([
+      ...(base.priorityArtists ?? []),
+      ...mergedCuratedPriorityArtists,
+      ...getDefaultPriorityArtists(normalized, mergedTags),
+    ]),
     blockedArtists: mergedCuratedBlockedArtists,
     priorityTracks: dedupeNormalized([...(base.priorityTracks ?? []), ...mergedCuratedPriorityTracks]),
     blockedTracks: mergedCuratedBlockedTracks,
     priorityLabels: dedupeNormalized([...(base.priorityLabels ?? []), ...mergedCuratedPriorityLabels]),
     minScore: mergedMinScore,
   };
+}
+
+export function getPriorityArtistsForGenre(genre: string): string[] {
+  const hints = getGenreHints(genre);
+  const seeded = hints.priorityArtists ?? [];
+  if (seeded.length > 0) return seeded;
+  return getDefaultPriorityArtists(genre, getMergedGenreTags(genre));
 }
 
 function scoreGenreRelevance(item: GenreHitItem, hints: GenreHints): number {
@@ -1185,4 +1292,20 @@ export async function getTopTracksByGenre(genre: string, limit = 20, offset = 0)
   }
 
   return filterHitsByGenre(collected, hints, safeLimit);
+}
+
+export async function getPriorityArtistQuickHitsByGenre(genre: string, limit = 20): Promise<GenreHitItem[]> {
+  const normalizedGenre = resolveMergedGenreId(genre.trim());
+  if (!normalizedGenre) return [];
+  if (!isAllowedGenre(normalizedGenre)) return [];
+
+  const hints = getGenreHints(normalizedGenre);
+  const safeLimit = Math.max(1, Math.min(limit, 30));
+  const quickOptions = { artistSampleSize: 12, perPlatformLimit: 4, maxRuntimeMs: 1800 };
+
+  return withTimeout(
+    fetchPriorityArtistPlatformHits(normalizedGenre, hints, safeLimit, 0, quickOptions),
+    1900,
+    [] as GenreHitItem[],
+  );
 }
