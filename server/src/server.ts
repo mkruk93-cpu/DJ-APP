@@ -1072,15 +1072,41 @@ app.get('/api/genre-hits', async (req, res) => {
             }
             
             // Ensure the track is actually from the whitelisted artist
-            const artistLower = artist.toLowerCase();
+            const artistLower = artist.toLowerCase().trim();
             const titleLower = (result.title || '').toLowerCase();
             const channelLower = (result.channel || '').toLowerCase();
             
-            // Check if the whitelisted artist appears in title or channel
-            const artistInTitle = titleLower.includes(artistLower);
-            const artistInChannel = channelLower.includes(artistLower);
+            // Use word boundary matching to prevent partial matches
+            const createArtistRegex = (name: string) => {
+              // Escape special regex characters and create word boundary pattern
+              const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              return new RegExp(`\\b${escaped}\\b`, 'i');
+            };
             
-            if (!artistInTitle && !artistInChannel) {
+            const artistRegex = createArtistRegex(artistLower);
+            const artistInTitle = artistRegex.test(titleLower);
+            const artistInChannel = artistRegex.test(channelLower);
+            
+            // Additional check: if artist name is very short (<=3 chars), be extra strict
+            if (artistLower.length <= 3) {
+              // For short names, require exact match at start of title or channel, or after " - "
+              const strictPatterns = [
+                new RegExp(`^${artistLower}\\s`, 'i'),           // "dj something"
+                new RegExp(`\\s-\\s${artistLower}\\s`, 'i'),     // "title - dj something"
+                new RegExp(`^${artistLower}\\s*-`, 'i'),         // "dj - something"
+                new RegExp(`\\(${artistLower}\\)`, 'i'),         // "(dj)"
+                new RegExp(`\\[${artistLower}\\]`, 'i'),         // "[dj]"
+              ];
+              
+              const strictMatch = strictPatterns.some(pattern => 
+                pattern.test(titleLower) || pattern.test(channelLower)
+              );
+              
+              if (!strictMatch && !artistInTitle && !artistInChannel) {
+                console.log(`[genre-hits] Filtered out non-matching short artist: "${result.title}" by "${result.channel}" (expected: ${artist})`);
+                return false;
+              }
+            } else if (!artistInTitle && !artistInChannel) {
               console.log(`[genre-hits] Filtered out non-matching artist: "${result.title}" by "${result.channel}" (expected: ${artist})`);
               return false;
             }
