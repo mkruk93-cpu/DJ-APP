@@ -519,40 +519,33 @@ export default function QueueAdd() {
 
   function handleSearchListScroll(e: React.UIEvent<HTMLDivElement>) {
     if (source === "spotify" || source === "genres") return;
-    
-    // Debug logging
-    console.log('[scroll-debug]', {
-      source,
-      searching,
-      searchingMore,
-      searchHasMore,
-      searchQuery,
-      includeLocal,
-      searchOffset: searchOffsetRef.current
-    });
-    
     if (searching || searchingMore || !searchHasMore || !searchQuery) return;
+    
     const el = e.currentTarget;
     const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 120;
     if (nearBottom) {
-      console.log('[scroll-debug] Triggering search with append=true');
       search(searchQuery, true);
     }
   }
 
-  // Add touch-based scroll detection for mobile
-  function handleSearchListTouch(e: React.TouchEvent<HTMLDivElement>) {
+  // Improved touch-based scroll detection for mobile
+  const handleSearchListTouch = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
     if (source === "spotify" || source === "genres") return;
     if (searching || searchingMore || !searchHasMore || !searchQuery) return;
-    
+
     const el = e.currentTarget;
-    // Use a smaller threshold for mobile
-    const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 60;
+    // Use a more generous threshold for mobile touch scrolling
+    const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 100;
     if (nearBottom) {
-      console.log('[touch-debug] Triggering search with append=true');
       search(searchQuery, true);
     }
-  }
+  }, [source, searching, searchingMore, searchHasMore, searchQuery, search]);
+
+  // Additional touch move handler for better mobile scroll detection
+  const handleSearchListTouchMove = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
+    // Let the touch move event bubble normally for smooth scrolling
+    e.stopPropagation();
+  }, []);
 
   function handleGenreListScroll(e: React.UIEvent<HTMLDivElement>) {
     if (source !== "genres" || !activeGenre) return;
@@ -1302,8 +1295,15 @@ export default function QueueAdd() {
                   ref={searchListRef}
                   onScroll={handleSearchListScroll}
                   onTouchEnd={handleSearchListTouch}
-                  className="absolute left-0 right-0 top-full z-[95] mt-1 max-h-[70dvh] overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50"
-                  style={{ WebkitOverflowScrolling: 'touch' }}
+                  onTouchMove={handleSearchListTouchMove}
+                  className="absolute left-0 right-0 top-full z-[95] mt-1 overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50"
+                  style={{ 
+                    WebkitOverflowScrolling: 'touch',
+                    transform: 'translateZ(0)', // Force hardware acceleration
+                    willChange: 'scroll-position', // Optimize for scrolling
+                    maxHeight: 'min(60vh, calc(100vh - 200px))', // Better mobile height calculation
+                    touchAction: 'pan-y' // Allow vertical scrolling only
+                  }}
                 >
                   {results.map((r) => (
                     <button
