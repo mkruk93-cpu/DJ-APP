@@ -90,14 +90,14 @@ const httpServer = createServer(app);
 const io = new IOServer(httpServer, {
   cors: {
     origin: (_origin, callback) => callback(null, true),
-    methods: ['GET', 'POST'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   },
 });
 
 app.use((_req, res, next) => {
   const origin = _req.headers.origin ?? '*';
   res.header('Access-Control-Allow-Origin', origin);
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type');
   if (_req.method === 'OPTIONS') { res.sendStatus(204); return; }
   next();

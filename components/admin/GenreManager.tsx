@@ -43,6 +43,9 @@ export default function GenreManager() {
   const [addingBlockedTrack, setAddingBlockedTrack] = useState<{ genreId: string; track: string } | null>(null);
   const [newGenreId, setNewGenreId] = useState("");
   const [newGenreLabel, setNewGenreLabel] = useState("");
+  const [importJson, setImportJson] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   const serverUrl = useRadioStore((s) => s.serverUrl) ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
 
@@ -243,6 +246,70 @@ export default function GenreManager() {
     }
   };
 
+  const exportGenres = async () => {
+    if (!serverUrl) return;
+    try {
+      setExporting(true);
+      const response = await fetch(`${serverUrl}/api/genre-management/genres/export`);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const payload = await response.json();
+      const json = JSON.stringify(payload, null, 2);
+      setImportJson(json);
+
+      try {
+        await navigator.clipboard.writeText(json);
+      } catch {
+        // Clipboard can fail in non-secure contexts; download still works.
+      }
+
+      const blob = new Blob([json], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      a.href = url;
+      a.download = `genre-curation-export-${stamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(`Export mislukt: ${(err as Error).message}`);
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const importGenres = async () => {
+    if (!serverUrl) return;
+    if (!importJson.trim()) {
+      alert("Plak eerst JSON in het importveld.");
+      return;
+    }
+    if (!confirm("Dit overschrijft alle huidige genres en artiesten. Weet je het zeker?")) return;
+
+    try {
+      setImporting(true);
+      const parsed = JSON.parse(importJson) as unknown;
+      const response = await fetch(`${serverUrl}/api/genre-management/genres/import`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(parsed),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error((result as { error?: string }).error || `HTTP ${response.status}`);
+      }
+      await fetchGenres();
+      alert(`Import voltooid: ${(result as { count?: number }).count ?? "onbekend"} genre(s) verwerkt.`);
+    } catch (err) {
+      alert(`Import mislukt: ${(err as Error).message}`);
+    } finally {
+      setImporting(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
@@ -284,6 +351,41 @@ export default function GenreManager() {
         >
           Refresh
         </button>
+      </div>
+
+      <div className="mb-4 rounded-lg border border-blue-800/70 bg-blue-950/30 p-3">
+        <p className="mb-2 text-sm font-semibold text-white">LLM Import / Export</p>
+        <p className="mb-3 text-xs text-blue-200">
+          Exporteer JSON, laat een LLM artiesten/genres aanpassen en importeer de aangepaste JSON weer terug.
+        </p>
+        <div className="mb-2 flex flex-wrap gap-2">
+          <button
+            onClick={exportGenres}
+            disabled={exporting}
+            className="rounded bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {exporting ? "Exporteren..." : "Export JSON"}
+          </button>
+          <button
+            onClick={() => setImportJson(JSON.stringify({ version: 1, genres }, null, 2))}
+            className="rounded border border-gray-600 px-3 py-1.5 text-sm text-gray-200 transition hover:border-gray-500 hover:text-white"
+          >
+            Gebruik huidige data
+          </button>
+          <button
+            onClick={importGenres}
+            disabled={importing}
+            className="rounded bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {importing ? "Importeren..." : "Import JSON"}
+          </button>
+        </div>
+        <textarea
+          value={importJson}
+          onChange={(e) => setImportJson(e.target.value)}
+          placeholder='Plak hier JSON (array of { "genres": [...] })'
+          className="h-36 w-full rounded border border-gray-600 bg-gray-800 px-2 py-2 font-mono text-xs text-white placeholder-gray-400 outline-none focus:border-blue-500"
+        />
       </div>
 
       <div className="mb-4 rounded-lg border border-gray-700 bg-gray-800 p-3">

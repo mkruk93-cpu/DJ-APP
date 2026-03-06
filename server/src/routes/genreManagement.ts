@@ -36,6 +36,38 @@ function normalizeGenreId(value: string): string {
     .replace(/ /g, '_');
 }
 
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => String(item).trim().toLowerCase())
+    .filter((item) => item.length > 0);
+}
+
+function normalizeGenreImport(raw: unknown, index: number): Genre {
+  const source = (raw && typeof raw === 'object') ? (raw as Record<string, unknown>) : {};
+  const idSource = String(source.id ?? source.label ?? '').trim();
+  const normalizedId = normalizeGenreId(idSource);
+  if (!normalizedId) {
+    throw new Error(`Invalid genre id at index ${index}`);
+  }
+
+  const labelRaw = String(source.label ?? normalizedId.replace(/_/g, ' ')).trim();
+  const label = labelRaw.length > 0 ? labelRaw : normalizedId.replace(/_/g, ' ');
+
+  return {
+    id: normalizedId,
+    label,
+    priorityArtists: asStringArray(source.priorityArtists),
+    minScore: typeof source.minScore === 'number' && Number.isFinite(source.minScore) ? source.minScore : 3,
+    priorityLabels: asStringArray(source.priorityLabels),
+    requiredTokens: asStringArray(source.requiredTokens),
+    blockedTokens: asStringArray(source.blockedTokens),
+    priorityTracks: asStringArray(source.priorityTracks),
+    blockedTracks: asStringArray(source.blockedTracks),
+    blockedArtists: asStringArray(source.blockedArtists),
+  };
+}
+
 // Helper function to read genre config
 function readGenreConfig(): GenreConfig {
   try {
@@ -65,6 +97,56 @@ router.get('/genre-management/genres', (_req, res) => {
     res.json(config.genres);
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// GET /api/genre-management/genres/export - Export full config for LLM workflows
+router.get('/genre-management/genres/export', (_req, res) => {
+  try {
+    const config = readGenreConfig();
+    res.json({
+      version: config.version ?? 1,
+      exportedAt: new Date().toISOString(),
+      genres: config.genres ?? [],
+    });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// POST /api/genre-management/genres/import - Replace full genre list
+router.post('/genre-management/genres/import', (req, res) => {
+  try {
+    const payload = req.body ?? {};
+    const rawGenres = Array.isArray(payload) ? payload : payload.genres;
+    if (!Array.isArray(rawGenres)) {
+      return res.status(400).json({ error: 'Expected an array or { genres: [...] } payload' });
+    }
+    if (rawGenres.length === 0) {
+      return res.status(400).json({ error: 'At least one genre is required' });
+    }
+
+    const normalized = rawGenres.map((item, index) => normalizeGenreImport(item, index));
+    const idSet = new Set<string>();
+    for (const genre of normalized) {
+      if (idSet.has(genre.id)) {
+        return res.status(400).json({ error: `Duplicate genre id "${genre.id}" in import payload` });
+      }
+      idSet.add(genre.id);
+    }
+
+    normalized.sort((a, b) => a.label.localeCompare(b.label));
+    const config = readGenreConfig();
+    config.genres = normalized;
+    if (typeof config.version !== 'number' || !Number.isFinite(config.version)) {
+      config.version = 1;
+    }
+    writeGenreConfig(config);
+
+    console.log(`[genre-management] Imported ${normalized.length} genre(s)`);
+    return res.json({ success: true, count: normalized.length, genres: normalized });
+  } catch (err) {
+    return res.status(500).json({ error: (err as Error).message });
   }
 });
 

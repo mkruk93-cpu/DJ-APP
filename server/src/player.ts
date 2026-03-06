@@ -997,7 +997,7 @@ async function prepareLikedAutoFallbackTrack(): Promise<ReadyTrack | null> {
 async function waitForAutoReadyMinimum(sb: SupabaseClient, cacheDir: string, minCount: number, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (isRunning && Date.now() < deadline && getAutoReadyCount() < minCount) {
-    await ensureAutoReadyBuffer(sb, cacheDir);
+    await ensureAutoReadyBuffer(sb, cacheDir, minCount);
     if (getAutoReadyCount() >= minCount) break;
     await sleep(AUTO_READY_WAIT_STEP_MS);
   }
@@ -1887,7 +1887,7 @@ async function fillPreloadBuffer(sb: SupabaseClient, cacheDir: string, currentId
   }
 }
 
-async function ensureAutoReadyBuffer(sb: SupabaseClient, cacheDir: string): Promise<void> {
+async function ensureAutoReadyBuffer(sb: SupabaseClient, cacheDir: string, targetCount = AUTO_READY_MIN): Promise<void> {
   void sb;
   void cacheDir;
   const activeAutoGenre = parseAutoFallbackGenreId(activeFallbackGenre);
@@ -1899,7 +1899,7 @@ async function ensureAutoReadyBuffer(sb: SupabaseClient, cacheDir: string): Prom
   autoBufferFilling = true;
 
   try {
-    while (isRunning && getAutoReadyCount() < AUTO_READY_MIN && autoReadyBuffer.length < AUTO_READY_MAX) {
+    while (isRunning && getAutoReadyCount() < targetCount && autoReadyBuffer.length < AUTO_READY_MAX) {
       const ready = activeAutoGenre === LIKED_AUTO_GENRE_ID
         ? await prepareLikedAutoFallbackTrack()
         : await prepareAutoFallbackByGenre(activeAutoGenre);
