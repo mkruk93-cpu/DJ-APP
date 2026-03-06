@@ -114,7 +114,18 @@ export default function StreamPage() {
     artist: string | null;
     requestedBy: string | null;
     isFallback: boolean;
-  } | null>(null);
+  } | null>(() => {
+    // Try to restore from localStorage for PWA persistence
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('lastHeaderTrack');
+        return saved ? JSON.parse(saved) : null;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  });
   const [tunnelRecoveryUntil, setTunnelRecoveryUntil] = useState<number | null>(null);
   const [tunnelRecoverySecondsLeft, setTunnelRecoverySecondsLeft] = useState(0);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -338,6 +349,50 @@ export default function StreamPage() {
     if (!nickname) router.replace("/");
     return () => clearTimeout(timer);
   }, [router]);
+
+  // PWA lifecycle event handlers for installed app
+  useEffect(() => {
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'visible') {
+        console.log('[PWA] App became visible, forcing re-render');
+        // Force re-render when PWA becomes visible
+        setIsHydrated(false);
+        setTimeout(() => {
+          setIsHydrated(true);
+          setShowLoadingStates(true);
+          setTimeout(() => setShowLoadingStates(false), 2000);
+        }, 100);
+      }
+    }
+
+    function handleAppStateChange() {
+      console.log('[PWA] App state change detected');
+      // Force components to re-initialize
+      setShowLoadingStates(true);
+      setTimeout(() => setShowLoadingStates(false), 2000);
+    }
+
+    // Listen for PWA visibility changes
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    // Listen for PWA app state changes
+    window.addEventListener('focus', handleAppStateChange);
+    window.addEventListener('pageshow', handleAppStateChange);
+    
+    // Listen for PWA-specific events
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', handleAppStateChange);
+    }
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleAppStateChange);
+      window.removeEventListener('pageshow', handleAppStateChange);
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.removeEventListener('message', handleAppStateChange);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const prevHtmlOverflow = document.documentElement.style.overflow;
@@ -667,14 +722,27 @@ export default function StreamPage() {
 
     if (visibleTrackChanged || !syncedCurrentTrack) {
       if (nextTitle || nextArtist) {
-        setDisplayHeaderNextTrack({
+        const trackInfo = {
           title: nextTitle ?? null,
           artist: nextArtist ?? null,
           requestedBy: nextRequestedBy,
           isFallback: nextIsFallback,
-        });
+        };
+        setDisplayHeaderNextTrack(trackInfo);
+        
+        // Save to localStorage for PWA persistence
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem('lastHeaderTrack', JSON.stringify(trackInfo));
+          } catch (e) {
+            console.warn('Failed to save header track to localStorage:', e);
+          }
+        }
       } else {
         setDisplayHeaderNextTrack(null);
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('lastHeaderTrack');
+        }
       }
     }
 
@@ -690,7 +758,12 @@ export default function StreamPage() {
       {/* Header */}
       <header
         className="relative z-50 border-b border-gray-800 bg-gray-900/80 px-2 py-1.5 backdrop-blur-sm sm:px-6 sm:py-3"
-        style={{ paddingTop: "max(env(safe-area-inset-top), 0px)" }}
+        style={{ 
+          paddingTop: "max(env(safe-area-inset-top), 0px)",
+          minHeight: "60px", // Ensure header always has minimum height
+          display: "block !important", // Force header to always be visible
+          visibility: "visible !important"
+        }}
       >
         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5">
           <h1 className="min-w-0 truncate text-sm font-bold tracking-tight text-white sm:text-lg">

@@ -62,6 +62,19 @@ export default function RootLayout({
             body {
               touch-action: pan-x pan-y;
             }
+            /* PWA specific fixes */
+            @media (display-mode: standalone) {
+              /* Force header visibility in PWA mode */
+              header {
+                display: block !important;
+                visibility: visible !important;
+                opacity: 1 !important;
+              }
+              /* Prevent content jumping in PWA */
+              body {
+                position: relative;
+              }
+            }
           `
         }} />
       </head>
