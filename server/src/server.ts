@@ -1011,10 +1011,11 @@ app.get('/api/genre-hits', async (req, res) => {
   const offset = Math.max(parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
   
   try {
-    // Check cache first
+    // Check cache first (shorter TTL for more variety)
     const cacheKey = `${genre}:${limit}:${offset}`;
     const cached = genreHitsCache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < GENRE_HITS_CACHE_TTL) {
+    const shortCacheTTL = 60000; // 1 minute instead of 5 minutes for more variety
+    if (cached && Date.now() - cached.timestamp < shortCacheTTL) {
       console.log(`[genre-hits] CACHE HIT for ${genre}, returning ${cached.results.length} results instantly`);
       res.json(cached.results);
       return;
@@ -1030,16 +1031,19 @@ app.get('/api/genre-hits', async (req, res) => {
       return;
     }
     
-    // BALANCED: Use enough artists to get desired number of results
+    // BALANCED: Use more artists to get desired number of results
     const targetResults = limit;
-    const maxArtists = Math.min(4, priorityArtists.length); // Max 4 artists for balance between speed and results
-    const artistsPerPage = Math.min(maxArtists, Math.max(2, Math.ceil(targetResults / 4))); // 2-4 artists
-    const startArtistIndex = Math.floor(offset / 3) % priorityArtists.length;
-    const selectedArtists = [];
+    const maxArtists = Math.min(10, priorityArtists.length); // Max 10 artists for better results
+    const artistsPerPage = Math.min(maxArtists, Math.max(5, Math.ceil(targetResults / 2))); // 5-10 artists
     
-    for (let i = 0; i < artistsPerPage; i++) {
-      const artistIndex = (startArtistIndex + i) % priorityArtists.length;
-      selectedArtists.push(priorityArtists[artistIndex]);
+    // RANDOMIZED: Use different random artists each time for variety
+    const selectedArtists = [];
+    const availableArtists = [...priorityArtists]; // Copy array
+    
+    for (let i = 0; i < artistsPerPage && availableArtists.length > 0; i++) {
+      const randomIndex = Math.floor(Math.random() * availableArtists.length);
+      selectedArtists.push(availableArtists[randomIndex]);
+      availableArtists.splice(randomIndex, 1); // Remove to avoid duplicates
     }
     
     console.log(`[genre-hits] Searching for artists: ${selectedArtists.join(', ')}`);
@@ -1047,8 +1051,10 @@ app.get('/api/genre-hits', async (req, res) => {
     // Do ultra-fast searches with aggressive timeouts
     const searchPromises = selectedArtists.map(async (artist, index) => {
       // Search only artist name for better, more relevant matches
-      const searchQuery = artist;
-      const searchLimit = Math.ceil(limit / selectedArtists.length) + 3; // Extra buffer for filtering
+      // For some genres, add genre context to improve results
+      const needsGenreContext = ['deep house', 'tech house', 'progressive house', 'melodic techno'].includes(genre.toLowerCase());
+      const searchQuery = needsGenreContext ? `${artist} ${genre}` : artist;
+      const searchLimit = Math.ceil(limit / selectedArtists.length) + 5; // Extra buffer for filtering
       
       try {
         // Alternate between YouTube and SoundCloud for variety
@@ -1066,16 +1072,26 @@ app.get('/api/genre-hits', async (req, res) => {
           
         return results
           .filter(result => {
-            // Filter out tracks longer than 7 minutes (420 seconds)
-            if (result.duration && result.duration > 420) {
-              console.log(`[genre-hits] Filtered out long track: ${result.title} (${Math.floor(result.duration / 60)}:${String(result.duration % 60).padStart(2, '0')})`);
+            // Filter out extremely long tracks, but be more lenient for certain genres
+            const maxDuration = (genre.includes('house') || genre.includes('techno') || genre.includes('trance')) ? 1200 : 900; // 20 min for house/techno, 15 min for others
+            if (result.duration && result.duration > maxDuration) {
+              console.log(`[genre-hits] Filtered out very long track: ${result.title} (${Math.floor(result.duration / 60)}:${String(result.duration % 60).padStart(2, '0')})`);
               return false;
             }
             
             // Ensure the track is actually from the whitelisted artist
-            const artistLower = artist.toLowerCase().trim();
-            const titleLower = (result.title || '').toLowerCase();
-            const channelLower = (result.channel || '').toLowerCase();
+            const normalizeText = (text: string) => text
+              .toLowerCase()
+              .trim()
+              .normalize('NFD') // Decompose accented characters
+              .replace(/[\u0300-\u036f]/g, '') // Remove diacritics
+              .replace(/[^\w\s&-]/g, ' ') // Keep only word chars, spaces, & and -
+              .replace(/\s+/g, ' ')
+              .trim();
+            
+            const artistNorm = normalizeText(artist);
+            const titleNorm = normalizeText(result.title || '');
+            const channelNorm = normalizeText(result.channel || '');
             
             // Use word boundary matching to prevent partial matches
             const createArtistRegex = (name: string) => {
@@ -1084,30 +1100,33 @@ app.get('/api/genre-hits', async (req, res) => {
               return new RegExp(`\\b${escaped}\\b`, 'i');
             };
             
-            const artistRegex = createArtistRegex(artistLower);
-            const artistInTitle = artistRegex.test(titleLower);
-            const artistInChannel = artistRegex.test(channelLower);
+            const artistRegex = createArtistRegex(artistNorm);
+            const artistInTitle = artistRegex.test(titleNorm);
+            const artistInChannel = artistRegex.test(channelNorm);
+            
+            // Also check for simple contains match for better recall
+            const simpleMatch = titleNorm.includes(artistNorm) || channelNorm.includes(artistNorm);
             
             // Additional check: if artist name is very short (<=3 chars), be extra strict
-            if (artistLower.length <= 3) {
+            if (artistNorm.length <= 3) {
               // For short names, require exact match at start of title or channel, or after " - "
               const strictPatterns = [
-                new RegExp(`^${artistLower}\\s`, 'i'),           // "dj something"
-                new RegExp(`\\s-\\s${artistLower}\\s`, 'i'),     // "title - dj something"
-                new RegExp(`^${artistLower}\\s*-`, 'i'),         // "dj - something"
-                new RegExp(`\\(${artistLower}\\)`, 'i'),         // "(dj)"
-                new RegExp(`\\[${artistLower}\\]`, 'i'),         // "[dj]"
+                new RegExp(`^${artistNorm}\\s`, 'i'),           // "dj something"
+                new RegExp(`\\s-\\s${artistNorm}\\s`, 'i'),     // "title - dj something"
+                new RegExp(`^${artistNorm}\\s*-`, 'i'),         // "dj - something"
+                new RegExp(`\\(${artistNorm}\\)`, 'i'),         // "(dj)"
+                new RegExp(`\\[${artistNorm}\\]`, 'i'),         // "[dj]"
               ];
               
               const strictMatch = strictPatterns.some(pattern => 
-                pattern.test(titleLower) || pattern.test(channelLower)
+                pattern.test(titleNorm) || pattern.test(channelNorm)
               );
               
               if (!strictMatch && !artistInTitle && !artistInChannel) {
                 console.log(`[genre-hits] Filtered out non-matching short artist: "${result.title}" by "${result.channel}" (expected: ${artist})`);
                 return false;
               }
-            } else if (!artistInTitle && !artistInChannel) {
+            } else if (!artistInTitle && !artistInChannel && !simpleMatch) {
               console.log(`[genre-hits] Filtered out non-matching artist: "${result.title}" by "${result.channel}" (expected: ${artist})`);
               return false;
             }
@@ -1146,20 +1165,23 @@ app.get('/api/genre-hits', async (req, res) => {
       new Map(allResults.map(item => [item.id, item])).values()
     );
     
-    // If we don't have enough results, try a few more artists quickly
-    if (uniqueResults.length < limit && selectedArtists.length < Math.min(6, priorityArtists.length)) {
+    // If we don't have enough results, try more artists quickly
+    if (uniqueResults.length < limit && selectedArtists.length < Math.min(15, priorityArtists.length)) {
       console.log(`[genre-hits] Only got ${uniqueResults.length}/${limit} results, trying more artists...`);
       
       const additionalArtists = [];
-      const nextStartIndex = (startArtistIndex + selectedArtists.length) % priorityArtists.length;
-      const additionalCount = Math.min(2, priorityArtists.length - selectedArtists.length);
+      const remainingArtists = priorityArtists.filter(artist => !selectedArtists.includes(artist));
+      const additionalCount = Math.min(8, remainingArtists.length); // Try up to 8 more
+      
+      // Randomly select additional artists
+      const shuffledRemaining = [...remainingArtists];
+      for (let i = shuffledRemaining.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffledRemaining[i], shuffledRemaining[j]] = [shuffledRemaining[j], shuffledRemaining[i]];
+      }
       
       for (let i = 0; i < additionalCount; i++) {
-        const artistIndex = (nextStartIndex + i) % priorityArtists.length;
-        const artist = priorityArtists[artistIndex];
-        if (!selectedArtists.includes(artist)) {
-          additionalArtists.push(artist);
-        }
+        additionalArtists.push(shuffledRemaining[i]);
       }
       
       if (additionalArtists.length > 0) {
@@ -1226,7 +1248,7 @@ app.get('/api/genre-hits', async (req, res) => {
       timestamp: Date.now()
     });
     
-    console.log(`[genre-hits] Returning ${finalResults.length}/${limit} search results for ${genre} (cached for 5min)`);
+    console.log(`[genre-hits] Returning ${finalResults.length}/${limit} search results for ${genre} (cached for 1min)`);
     res.json(finalResults);
     
   } catch (error) {

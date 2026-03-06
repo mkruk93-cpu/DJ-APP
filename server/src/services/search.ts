@@ -29,12 +29,16 @@ async function getSoundCloudClientId(): Promise<string | null> {
     });
     const html = await res.text();
     
-    // Try multiple patterns for client_id extraction
+    // Try multiple patterns for client_id extraction - more comprehensive
     const patterns = [
       /client_id["\s]*[:=]["\s]*([a-zA-Z0-9]{32})/,
       /"client_id":"([a-zA-Z0-9]{32})"/,
       /client_id=([a-zA-Z0-9]{32})/,
       /clientId["\s]*[:=]["\s]*"([a-zA-Z0-9]{32})"/,
+      /"client_id":"([a-zA-Z0-9_-]{32,})"/g,
+      /client_id[=:]\s*['"]([a-zA-Z0-9_-]{32,})['"]/g,
+      /clientId[=:]\s*['"]([a-zA-Z0-9_-]{32,})['"]/g,
+      /app_[a-zA-Z0-9_-]*\.js.*?client_id[=:]\s*['"]([a-zA-Z0-9_-]{32,})['"]/gs,
     ];
     
     for (const pattern of patterns) {

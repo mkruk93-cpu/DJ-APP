@@ -691,7 +691,7 @@ export default function StreamPage() {
             🎵 <span className="text-violet-400">{process.env.NEXT_PUBLIC_TWITCH_CHANNEL ?? "Stream"}</span>
           </h1>
           <div className="flex min-w-0 shrink-0 items-center gap-1 sm:gap-3">
-            {radioConnected && <ModeIndicator />}
+            <ModeIndicator />
             <OnlineUsers />
             <button
               onClick={() => {

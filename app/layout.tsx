@@ -23,7 +23,9 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#7c3aed",
+  themeColor: "#030712", // bg-gray-950 color to match page background
+  colorScheme: "dark",
+  viewportFit: "cover",
 };
 
 export default function RootLayout({
@@ -33,6 +35,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="nl" className="dark">
+      <head>
+        <meta name="theme-color" content="#030712" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+      </head>
       <body className="min-h-dvh bg-gray-950 text-gray-100 antialiased">
         <PwaRegistrar />
         <PwaRefreshButton />

@@ -474,7 +474,18 @@ async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack |
     console.log(`[auto-playlist] Searching for ${canonicalGenreId} tracks from ${priorityArtists.length} whitelisted artists`);
     
     // Search for tracks from whitelisted artists (same as genre hits system)
-    const artistsToSearch = priorityArtists.slice(0, 6); // Limit to prevent too many API calls
+    // RANDOMIZED: Use different random artists each time for variety
+    const maxArtistsToSearch = Math.min(6, priorityArtists.length);
+    const artistsToSearch = [];
+    const availableArtists = [...priorityArtists]; // Copy array
+    
+    for (let i = 0; i < maxArtistsToSearch && availableArtists.length > 0; i++) {
+      const randomIndex = Math.floor(Math.random() * availableArtists.length);
+      artistsToSearch.push(availableArtists[randomIndex]);
+      availableArtists.splice(randomIndex, 1); // Remove to avoid duplicates
+    }
+    
+    console.log(`[auto-playlist] Selected artists: ${artistsToSearch.join(', ')}`);
     const searchPromises = artistsToSearch.map(async (artist) => {
       if (!isAutoGenreStillActive(canonicalGenreId)) return [];
       
@@ -501,13 +512,22 @@ async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack |
           .filter(result => {
             // Apply same filtering as genre hits
             if (!result.title || !result.duration) return false;
-            if (result.duration > 420) return false; // 7 minutes max
+            if (result.duration > 900) return false; // 15 minutes max (allow longer tracks)
             if (result.duration < 120) return false; // 2 minutes min
             
             // Ensure the track is actually from the whitelisted artist
-            const artistLower = artist.toLowerCase().trim();
-            const titleLower = (result.title || '').toLowerCase();
-            const channelLower = (result.channel || '').toLowerCase();
+            const normalizeText = (text: string) => text
+              .toLowerCase()
+              .trim()
+              .normalize('NFD') // Decompose accented characters
+              .replace(/[\u0300-\u036f]/g, '') // Remove diacritics
+              .replace(/[^\w\s&-]/g, ' ') // Keep only word chars, spaces, & and -
+              .replace(/\s+/g, ' ')
+              .trim();
+            
+            const artistNorm = normalizeText(artist);
+            const titleNorm = normalizeText(result.title || '');
+            const channelNorm = normalizeText(result.channel || '');
             
             // Use word boundary matching to prevent partial matches
             const createArtistRegex = (name: string) => {
@@ -516,30 +536,33 @@ async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack |
               return new RegExp(`\\b${escaped}\\b`, 'i');
             };
             
-            const artistRegex = createArtistRegex(artistLower);
-            const artistInTitle = artistRegex.test(titleLower);
-            const artistInChannel = artistRegex.test(channelLower);
+            const artistRegex = createArtistRegex(artistNorm);
+            const artistInTitle = artistRegex.test(titleNorm);
+            const artistInChannel = artistRegex.test(channelNorm);
+            
+            // Also check for simple contains match for better recall
+            const simpleMatch = titleNorm.includes(artistNorm) || channelNorm.includes(artistNorm);
             
             // Additional check: if artist name is very short (<=3 chars), be extra strict
-            if (artistLower.length <= 3) {
+            if (artistNorm.length <= 3) {
               // For short names, require exact match at start of title or channel, or after " - "
               const strictPatterns = [
-                new RegExp(`^${artistLower}\\s`, 'i'),           // "dj something"
-                new RegExp(`\\s-\\s${artistLower}\\s`, 'i'),     // "title - dj something"
-                new RegExp(`^${artistLower}\\s*-`, 'i'),         // "dj - something"
-                new RegExp(`\\(${artistLower}\\)`, 'i'),         // "(dj)"
-                new RegExp(`\\[${artistLower}\\]`, 'i'),         // "[dj]"
+                new RegExp(`^${artistNorm}\\s`, 'i'),           // "dj something"
+                new RegExp(`\\s-\\s${artistNorm}\\s`, 'i'),     // "title - dj something"
+                new RegExp(`^${artistNorm}\\s*-`, 'i'),         // "dj - something"
+                new RegExp(`\\(${artistNorm}\\)`, 'i'),         // "(dj)"
+                new RegExp(`\\[${artistNorm}\\]`, 'i'),         // "[dj]"
               ];
               
               const strictMatch = strictPatterns.some(pattern => 
-                pattern.test(titleLower) || pattern.test(channelLower)
+                pattern.test(titleNorm) || pattern.test(channelNorm)
               );
               
               if (!strictMatch && !artistInTitle && !artistInChannel) {
                 console.log(`[auto-playlist] Filtered out non-matching short artist: "${result.title}" by "${result.channel}" (expected: ${artist})`);
                 return false;
               }
-            } else if (!artistInTitle && !artistInChannel) {
+            } else if (!artistInTitle && !artistInChannel && !simpleMatch) {
               console.log(`[auto-playlist] Filtered out non-matching artist: "${result.title}" by "${result.channel}" (expected: ${artist})`);
               return false;
             }

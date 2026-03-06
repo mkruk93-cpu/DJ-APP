@@ -67,7 +67,15 @@ export default function ModeIndicator() {
     return () => document.removeEventListener("mousedown", handleClick);
   }, [open]);
 
-  if (!connected) return null;
+  // Show loading state instead of hiding completely when not connected
+  if (!connected) {
+    return (
+      <div className="inline-flex items-center gap-1 rounded-full border border-gray-600/50 bg-gray-500/10 px-2.5 py-1 text-xs font-semibold text-gray-500">
+        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-gray-500" />
+        Verbinden...
+      </div>
+    );
+  }
 
   const color = MODE_COLORS[mode] ?? MODE_COLORS.radio;
   const label = MODE_LABELS[mode] ?? mode;
