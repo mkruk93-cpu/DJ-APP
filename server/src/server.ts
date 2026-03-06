@@ -1027,29 +1027,36 @@ app.get('/api/genre-hits', async (req, res) => {
       return;
     }
     
-    // ULTRA-FAST: Only 1 artist for maximum speed
-    const artistsPerPage = 1; // Always just 1 artist for speed
-    const startArtistIndex = offset % priorityArtists.length;
-    const selectedArtists = [priorityArtists[startArtistIndex]];
+    // BALANCED: Use enough artists to get desired number of results
+    const targetResults = limit;
+    const maxArtists = Math.min(4, priorityArtists.length); // Max 4 artists for balance between speed and results
+    const artistsPerPage = Math.min(maxArtists, Math.max(2, Math.ceil(targetResults / 4))); // 2-4 artists
+    const startArtistIndex = Math.floor(offset / 3) % priorityArtists.length;
+    const selectedArtists = [];
+    
+    for (let i = 0; i < artistsPerPage; i++) {
+      const artistIndex = (startArtistIndex + i) % priorityArtists.length;
+      selectedArtists.push(priorityArtists[artistIndex]);
+    }
     
     console.log(`[genre-hits] Searching for artists: ${selectedArtists.join(', ')}`);
     
     // Do ultra-fast searches with aggressive timeouts
     const searchPromises = selectedArtists.map(async (artist, index) => {
       const searchQuery = `${artist} ${genre}`;
-      const searchLimit = limit; // Get all results from single artist
+      const searchLimit = Math.ceil(limit / selectedArtists.length) + 2; // Extra buffer for filtering
       
       try {
         // Alternate between YouTube and SoundCloud for variety
         const useYoutube = (offset + index) % 2 === 0;
         
-        // Race each individual search with 600ms timeout
+        // Race each individual search with 800ms timeout for better results
         const results = await Promise.race([
           useYoutube 
             ? youtubeSearch(searchQuery, searchLimit)
             : soundcloudSearch(searchQuery, searchLimit),
           new Promise<never>((_, reject) => 
-            setTimeout(() => reject(new Error('Individual search timeout')), 600)
+            setTimeout(() => reject(new Error('Individual search timeout')), 800)
           )
         ]);
           
@@ -1076,11 +1083,11 @@ app.get('/api/genre-hits', async (req, res) => {
       }
     });
     
-    // Wait for all searches with aggressive 1s total timeout
+    // Wait for all searches with 2s total timeout for better results
     const searchResults = await Promise.race([
       Promise.allSettled(searchPromises),
       new Promise<never>((_, reject) => 
-        setTimeout(() => reject(new Error('Total search timeout')), 1000)
+        setTimeout(() => reject(new Error('Total search timeout')), 2000)
       )
     ]);
     
@@ -1089,19 +1096,93 @@ app.get('/api/genre-hits', async (req, res) => {
       result.status === 'fulfilled' ? result.value : []
     );
     
-    // Remove duplicates and limit results
-    const uniqueResults = Array.from(
+    // Remove duplicates
+    let uniqueResults = Array.from(
       new Map(allResults.map(item => [item.id, item])).values()
-    ).slice(0, limit);
+    );
+    
+    // If we don't have enough results, try a few more artists quickly
+    if (uniqueResults.length < limit && selectedArtists.length < Math.min(6, priorityArtists.length)) {
+      console.log(`[genre-hits] Only got ${uniqueResults.length}/${limit} results, trying more artists...`);
+      
+      const additionalArtists = [];
+      const nextStartIndex = (startArtistIndex + selectedArtists.length) % priorityArtists.length;
+      const additionalCount = Math.min(2, priorityArtists.length - selectedArtists.length);
+      
+      for (let i = 0; i < additionalCount; i++) {
+        const artistIndex = (nextStartIndex + i) % priorityArtists.length;
+        const artist = priorityArtists[artistIndex];
+        if (!selectedArtists.includes(artist)) {
+          additionalArtists.push(artist);
+        }
+      }
+      
+      if (additionalArtists.length > 0) {
+        try {
+          const additionalPromises = additionalArtists.map(async (artist, index) => {
+            const searchQuery = `${artist} ${genre}`;
+            const useYoutube = (offset + selectedArtists.length + index) % 2 === 0;
+            
+            try {
+              const results = await Promise.race([
+                useYoutube 
+                  ? youtubeSearch(searchQuery, 4)
+                  : soundcloudSearch(searchQuery, 4),
+                new Promise<never>((_, reject) => 
+                  setTimeout(() => reject(new Error('Additional search timeout')), 500)
+                )
+              ]);
+              
+              return results
+                .filter(result => !result.duration || result.duration <= 420)
+                .map(result => ({
+                  id: result.id,
+                  title: result.title,
+                  artist: result.channel || artist,
+                  thumbnail: result.thumbnail,
+                  sourceHint: result.url,
+                  duration: result.duration
+                }));
+            } catch (error) {
+              return [];
+            }
+          });
+          
+          const additionalResults = await Promise.race([
+            Promise.allSettled(additionalPromises),
+            new Promise<never>((_, reject) => 
+              setTimeout(() => reject(new Error('Additional search timeout')), 800)
+            )
+          ]);
+          
+          const moreResults = additionalResults.flatMap(result => 
+            result.status === 'fulfilled' ? result.value : []
+          );
+          
+          // Merge with existing results
+          const allCombined = [...uniqueResults, ...moreResults];
+          uniqueResults = Array.from(
+            new Map(allCombined.map(item => [item.id, item])).values()
+          );
+          
+          console.log(`[genre-hits] Got ${moreResults.length} additional results, total: ${uniqueResults.length}`);
+        } catch (error) {
+          console.warn(`[genre-hits] Additional search failed:`, getErrorMessage(error));
+        }
+      }
+    }
+    
+    // Final limit
+    const finalResults = uniqueResults.slice(0, limit);
     
     // Cache the results
     genreHitsCache.set(cacheKey, {
-      results: uniqueResults,
+      results: finalResults,
       timestamp: Date.now()
     });
     
-    console.log(`[genre-hits] Returning ${uniqueResults.length} search results for ${genre} (cached for 5min)`);
-    res.json(uniqueResults);
+    console.log(`[genre-hits] Returning ${finalResults.length}/${limit} search results for ${genre} (cached for 5min)`);
+    res.json(finalResults);
     
   } catch (error) {
     console.error(`[genre-hits] Error searching ${genre}:`, getErrorMessage(error));
