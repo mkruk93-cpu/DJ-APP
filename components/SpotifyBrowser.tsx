@@ -15,6 +15,7 @@ import {
 import {
   deleteUserPlaylist,
   getUserPlaylistTracks,
+  getSpotifyOembed,
   importUserPlaylistFile,
   listUserPlaylists,
   type UserPlaylist,
@@ -62,8 +63,10 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
   const [savedTracksLoading, setSavedTracksLoading] = useState(false);
   const [savedTracksError, setSavedTracksError] = useState<string | null>(null);
   const [selectedSavedPlaylist, setSelectedSavedPlaylist] = useState<UserPlaylist | null>(null);
+  const [savedTrackThumbs, setSavedTrackThumbs] = useState<Record<string, string>>({});
   const listRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  const thumbnailLoadingRef = useRef<Set<string>>(new Set());
 
   const configured = isSpotifyConfigured();
 
@@ -74,10 +77,10 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
   }, []);
 
   useEffect(() => {
+    void loadSavedPlaylists();
     if (!checkConnection()) return;
     loadUser();
     void loadPlaylists(false);
-    void loadSavedPlaylists();
   }, [checkConnection]);
 
   useEffect(() => {
@@ -145,6 +148,23 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
       }
     } catch (err) {
       setImportError(err instanceof Error ? err.message : "Verwijderen mislukt.");
+    }
+  }
+
+  async function resolveSavedTrackThumbnail(spotifyUrl: string): Promise<void> {
+    if (savedTrackThumbs[spotifyUrl]) return;
+    if (thumbnailLoadingRef.current.has(spotifyUrl)) return;
+    thumbnailLoadingRef.current.add(spotifyUrl);
+    try {
+      const meta = await getSpotifyOembed(spotifyUrl);
+      const thumb = (meta.thumbnail_url ?? "").trim();
+      if (thumb) {
+        setSavedTrackThumbs((prev) => ({ ...prev, [spotifyUrl]: thumb }));
+      }
+    } catch {
+      // Thumbnails are optional; ignore metadata fetch failures.
+    } finally {
+      thumbnailLoadingRef.current.delete(spotifyUrl);
     }
   }
 
@@ -331,15 +351,13 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
     setPlaylistsNext(null);
     setTracksNext(null);
     setTrackSource(null);
-    setSavedPlaylists([]);
-    setSavedTracks([]);
-    setSelectedSavedPlaylist(null);
     setView("playlists");
   }
 
   async function loadMore() {
     if (loading || loadingMore) return;
     if (view === "playlists") {
+      if (!spotifyEnabled) return;
       if (!playlistsNext) return;
       await loadPlaylists(true);
       return;
@@ -398,35 +416,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
     };
   }, [checkConnection, view, trackSource, selectedPlaylist]);
 
-  if (!configured) {
-    return (
-      <div className="py-6 text-center text-sm text-gray-500">
-        Spotify is niet geconfigureerd.
-      </div>
-    );
-  }
-
-  if (!connected) {
-    return (
-      <div className="flex flex-col items-center gap-3 py-6">
-        <p className="text-sm text-gray-400">
-          Koppel je Spotify om nummers uit je playlists toe te voegen
-        </p>
-        <button
-          type="button"
-          onClick={loginWithSpotify}
-          className="flex items-center gap-2 rounded-full bg-[#1DB954] px-5 py-2.5 text-sm font-semibold text-black transition hover:bg-[#1ed760] active:scale-[0.97]"
-        >
-          <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z" />
-          </svg>
-          Koppel Spotify
-        </button>
-      </div>
-    );
-  }
-
-  // ── Connected state ──
+  const spotifyEnabled = configured && connected;
 
   const filteredPlaylists = playlists.filter((p) =>
     p?.name?.toLowerCase().includes(filter.toLowerCase()),
@@ -450,6 +440,22 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
       (track.album ?? "").toLowerCase().includes(q)
     );
   });
+
+  useEffect(() => {
+    if (view !== "importedTracks") return;
+    const uniqueUrls = Array.from(
+      new Set(
+        filteredSavedTracks
+          .map((track) => (track.spotify_url ?? "").trim())
+          .filter((url) => url.startsWith("https://open.spotify.com/track/")),
+      ),
+    );
+    const missing = uniqueUrls.filter((url) => !savedTrackThumbs[url]).slice(0, 8);
+    if (missing.length === 0) return;
+    for (const url of missing) {
+      void resolveSavedTrackThumbnail(url);
+    }
+  }, [view, filteredSavedTracks, savedTrackThumbs]);
 
   return (
     <div className="flex max-h-[40vh] flex-col gap-1.5 overflow-hidden">
@@ -478,17 +484,19 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
           </button>
         ) : (
           <div className="flex items-center gap-1.5 text-[11px] text-gray-400">
-            <span className="h-1.5 w-1.5 rounded-full bg-[#1DB954]" />
-            {user?.display_name ?? "Spotify"}
+            <span className={`h-1.5 w-1.5 rounded-full ${spotifyEnabled ? "bg-[#1DB954]" : "bg-violet-400"}`} />
+            {spotifyEnabled ? (user?.display_name ?? "Spotify") : "Exportify"}
           </div>
         )}
-        <button
-          type="button"
-          onClick={handleDisconnect}
-          className="text-[11px] text-gray-500 transition hover:text-red-400"
-        >
-          Ontkoppel
-        </button>
+        {spotifyEnabled && (
+          <button
+            type="button"
+            onClick={handleDisconnect}
+            className="text-[11px] text-gray-500 transition hover:text-red-400"
+          >
+            Ontkoppel
+          </button>
+        )}
       </div>
 
       {/* Filter */}
@@ -573,63 +581,84 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
             ))}
           </div>
 
-          {/* Liked Songs */}
-          <button
-            type="button"
-            onClick={() => { void openLikedSongs(); }}
-            className="flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left transition hover:bg-gray-800/80"
-          >
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-gradient-to-br from-[#450AF5] to-[#C4EFD9]">
-              <svg className="h-4 w-4 text-white" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
-              </svg>
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-xs font-medium text-white">Liked Songs</p>
-            </div>
-          </button>
-
-          {filteredPlaylists.map((pl) => {
-            const plImg = pl.images?.[0]?.url;
-            return (
-              <button
-                type="button"
-                key={pl.id}
-                onClick={() => { void openPlaylist(pl); }}
-                className="flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left transition hover:bg-gray-800/80"
-              >
-                {plImg ? (
-                  <img
-                    src={plImg}
-                    alt=""
-                    className="h-8 w-8 shrink-0 rounded object-cover"
-                  />
-                ) : (
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-gray-800">
-                    <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V4.5A2.25 2.25 0 0016.5 2.25h-1.875a2.25 2.25 0 00-2.25 2.25v13.5m0 0a2.25 2.25 0 01-2.25 2.25H8.25a2.25 2.25 0 01-2.25-2.25V6.75" />
-                    </svg>
-                  </div>
-                )}
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-xs font-medium text-white">{pl.name}</p>
-                  <p className="text-[10px] text-gray-500">
-                    {pl.tracks?.total ?? 0} nummers
-                  </p>
-                </div>
-              </button>
-            );
-          })}
-
-          {filteredPlaylists.length === 0 && !loading && (
-            <p className="py-2 text-center text-[11px] text-gray-500">
-              Geen playlists gevonden
+          {!configured && (
+            <p className="mb-2 text-[10px] text-gray-500">
+              Spotify is niet geconfigureerd. Exportify import werkt wel.
             </p>
           )}
-          {loadingMore && (
-            <p className="py-2 text-center text-[11px] text-gray-500">
-              Meer playlists laden...
-            </p>
+          {configured && !connected && (
+            <div className="mb-2 rounded-md border border-green-700/40 bg-green-950/20 p-2">
+              <p className="text-[10px] text-gray-300">Spotify koppelen is optioneel voor browse/liked songs.</p>
+              <button
+                type="button"
+                onClick={() => { void loginWithSpotify(); }}
+                className="mt-2 rounded bg-[#1DB954] px-2 py-1 text-[10px] font-semibold text-black transition hover:bg-[#1ed760]"
+              >
+                Koppel Spotify
+              </button>
+            </div>
+          )}
+
+          {spotifyEnabled && (
+            <>
+              <button
+                type="button"
+                onClick={() => { void openLikedSongs(); }}
+                className="flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left transition hover:bg-gray-800/80"
+              >
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-gradient-to-br from-[#450AF5] to-[#C4EFD9]">
+                  <svg className="h-4 w-4 text-white" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+                  </svg>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-medium text-white">Liked Songs</p>
+                </div>
+              </button>
+
+              {filteredPlaylists.map((pl) => {
+                const plImg = pl.images?.[0]?.url;
+                return (
+                  <button
+                    type="button"
+                    key={pl.id}
+                    onClick={() => { void openPlaylist(pl); }}
+                    className="flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left transition hover:bg-gray-800/80"
+                  >
+                    {plImg ? (
+                      <img
+                        src={plImg}
+                        alt=""
+                        className="h-8 w-8 shrink-0 rounded object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-gray-800">
+                        <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V4.5A2.25 2.25 0 0016.5 2.25h-1.875a2.25 2.25 0 00-2.25 2.25v13.5m0 0a2.25 2.25 0 01-2.25 2.25H8.25a2.25 2.25 0 01-2.25-2.25V6.75" />
+                        </svg>
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-medium text-white">{pl.name}</p>
+                      <p className="text-[10px] text-gray-500">
+                        {pl.tracks?.total ?? 0} nummers
+                      </p>
+                    </div>
+                  </button>
+                );
+              })}
+
+              {filteredPlaylists.length === 0 && !loading && (
+                <p className="py-2 text-center text-[11px] text-gray-500">
+                  Geen Spotify playlists gevonden
+                </p>
+              )}
+              {loadingMore && (
+                <p className="py-2 text-center text-[11px] text-gray-500">
+                  Meer playlists laden...
+                </p>
+              )}
+            </>
           )}
           <div ref={loadMoreRef} className="h-1 w-full" />
         </div>
@@ -668,7 +697,13 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
       )}
 
       {/* Track list */}
-      {view === "tracks" && !loading && (
+      {view === "tracks" && !spotifyEnabled && (
+        <div className="rounded-md border border-yellow-500/30 bg-yellow-500/10 p-2">
+          <p className="text-[11px] text-yellow-300">Spotify is niet verbonden. Ga terug naar playlists of koppel opnieuw.</p>
+        </div>
+      )}
+
+      {view === "tracks" && spotifyEnabled && !loading && (
         <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto">
           {filteredTracks.map((track) => {
             const artists = track.artists?.map((a) => a?.name).filter(Boolean).join(", ") || "";
@@ -737,6 +772,8 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
         <div className="min-h-0 flex-1 space-y-px overflow-y-auto">
           {filteredSavedTracks.map((track) => {
             const isAdded = addedTrackId === track.id;
+            const spotifyUrl = (track.spotify_url ?? "").trim();
+            const thumb = spotifyUrl ? savedTrackThumbs[spotifyUrl] : "";
             return (
               <button
                 type="button"
@@ -747,7 +784,19 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
                   isAdded ? "bg-green-500/10" : "hover:bg-gray-800/80"
                 } disabled:opacity-60`}
               >
-                <div className="h-10 w-10 shrink-0 rounded bg-gray-800" />
+                {thumb ? (
+                  <img
+                    src={thumb}
+                    alt=""
+                    className="h-10 w-10 shrink-0 rounded object-cover"
+                  />
+                ) : (
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-gray-800">
+                    <svg className="h-4 w-4 text-gray-500" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.7 0 12 0zm5.5 17.3c-.2.4-.7.5-1 .2-2.8-1.7-6.3-2.1-10.5-1.1-.4.1-.8-.2-.9-.6-.1-.4.2-.8.5-.9 4.6-1 8.6-.6 11.7 1.3.3.2.4.7.2 1.1zm1.4-3.3c-.3.4-.8.5-1.3.3-3.2-2-8.1-2.6-11.9-1.4-.5.2-1-.1-1.2-.6-.1-.5.2-1 .7-1.1 4.3-1.3 9.8-.6 13.6 1.7.5.3.6.8.3 1.1z" />
+                    </svg>
+                  </div>
+                )}
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-xs font-medium text-white">{track.title}</p>
                   <p className="truncate text-[10px] text-gray-400">{track.artist ?? "Unknown"}</p>

@@ -81,3 +81,16 @@ export async function deleteUserPlaylist(playlistId: string): Promise<void> {
   });
   await parseOrThrow<{ ok: boolean }>(res);
 }
+
+export interface SpotifyOembedResult {
+  thumbnail_url: string | null;
+  title: string | null;
+  author_name: string | null;
+}
+
+export async function getSpotifyOembed(spotifyUrl: string): Promise<SpotifyOembedResult> {
+  const params = new URLSearchParams();
+  params.set('url', spotifyUrl);
+  const res = await fetch(`${getServerUrl()}/api/spotify/oembed?${params.toString()}`);
+  return parseOrThrow<SpotifyOembedResult>(res);
+}

@@ -70,6 +70,7 @@ const USER_PLAYLIST_MAX_TRACKS_PER_IMPORT = 3000;
 const USER_PLAYLIST_MAX_PLAYLISTS_PER_IMPORT = 20;
 const USER_PLAYLIST_MAX_STORED_PLAYLISTS_PER_USER = 80;
 const USER_PLAYLIST_MAX_STORED_TRACKS_PER_USER = 20_000;
+const SPOTIFY_OEMBED_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 const DOWNLOAD_PATH = process.env.DOWNLOAD_PATH ?? '';
 const REKORDBOX_OUTPUT_PATH = process.env.REKORDBOX_OUTPUT_PATH ?? '';
@@ -88,6 +89,7 @@ const ICECAST = useIcecast
   : null;
 
 const streamHub = new StreamHub();
+const spotifyOembedCache = new Map<string, { thumbnail_url: string | null; title: string | null; author_name: string | null; ts: number }>();
 
 if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
   console.error('Missing SUPABASE_URL or SUPABASE_SERVICE_KEY');
@@ -193,6 +195,18 @@ function getUserIdentityFromRequest(req: Request): { nickname: string; deviceId:
   const deviceId = normalizeDeviceId(getIdentityValueFromRequest(req, 'device_id'));
   if (!nickname || !deviceId) return null;
   return { nickname, deviceId };
+}
+
+function normalizeSpotifyTrackUrl(raw: string): string | null {
+  try {
+    const parsed = new URL(raw.trim());
+    if (parsed.protocol !== 'https:') return null;
+    if (parsed.hostname !== 'open.spotify.com') return null;
+    if (!parsed.pathname.startsWith('/track/')) return null;
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return null;
+  }
 }
 
 function parseArtistTitle(input: string): { artist: string | null; title: string | null } {
@@ -1157,6 +1171,47 @@ app.delete('/api/user-playlists/:id', async (req, res) => {
   } catch (err) {
     console.error('[rest] /api/user-playlists/:id DELETE error:', err);
     res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
+app.get('/api/spotify/oembed', async (req, res) => {
+  const rawUrl = String(req.query.url ?? '').trim();
+  const spotifyUrl = normalizeSpotifyTrackUrl(rawUrl);
+  if (!spotifyUrl) {
+    return res.status(400).json({ error: 'Ongeldige Spotify track URL' });
+  }
+
+  const cached = spotifyOembedCache.get(spotifyUrl);
+  if (cached && Date.now() - cached.ts < SPOTIFY_OEMBED_CACHE_TTL_MS) {
+    return res.json({
+      thumbnail_url: cached.thumbnail_url,
+      title: cached.title,
+      author_name: cached.author_name,
+    });
+  }
+
+  try {
+    const endpoint = `https://open.spotify.com/oembed?url=${encodeURIComponent(spotifyUrl)}`;
+    const response = await fetch(endpoint, { signal: AbortSignal.timeout(4000) });
+    if (!response.ok) {
+      return res.status(404).json({ error: 'Spotify metadata niet gevonden' });
+    }
+    const payload = await response.json() as Record<string, unknown>;
+    const result = {
+      thumbnail_url: typeof payload.thumbnail_url === 'string' ? payload.thumbnail_url : null,
+      title: typeof payload.title === 'string' ? payload.title : null,
+      author_name: typeof payload.author_name === 'string' ? payload.author_name : null,
+      ts: Date.now(),
+    };
+    spotifyOembedCache.set(spotifyUrl, result);
+    res.json({
+      thumbnail_url: result.thumbnail_url,
+      title: result.title,
+      author_name: result.author_name,
+    });
+  } catch (err) {
+    console.warn('[rest] /api/spotify/oembed error:', getErrorMessage(err));
+    res.status(502).json({ error: 'Spotify metadata tijdelijk niet beschikbaar' });
   }
 });
 
