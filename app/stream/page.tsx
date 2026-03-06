@@ -83,6 +83,7 @@ export default function StreamPage() {
   const [chatBadge, setChatBadge] = useState(false);
   const [requestBadge, setRequestBadge] = useState(false);
   const [queueBadge, setQueueBadge] = useState(false);
+  const [isHydrated, setIsHydrated] = useState(false);
   const activeTabRef = useRef<MobileTab>(activeTab);
   activeTabRef.current = activeTab;
   const previousQueueLengthRef = useRef<number>(0);
@@ -329,6 +330,7 @@ export default function StreamPage() {
   }, [tunnelRecoveryUntil]);
 
   useEffect(() => {
+    setIsHydrated(true);
     const nickname = localStorage.getItem("nickname");
     if (!nickname) router.replace("/");
   }, [router]);
@@ -691,12 +693,30 @@ export default function StreamPage() {
             🎵 <span className="text-violet-400">{process.env.NEXT_PUBLIC_TWITCH_CHANNEL ?? "Stream"}</span>
           </h1>
           <div className="flex min-w-0 shrink-0 items-center gap-1 sm:gap-3">
-            <ModeIndicator />
-            <OnlineUsers />
+            {isHydrated ? (
+              <>
+                <ModeIndicator />
+                <OnlineUsers />
+              </>
+            ) : (
+              <>
+                {/* Loading placeholders */}
+                <div className="inline-flex items-center gap-1 rounded-full border border-gray-600/50 bg-gray-500/10 px-2.5 py-1 text-xs font-semibold text-gray-500">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-gray-500" />
+                  Laden...
+                </div>
+                <div className="flex items-center gap-1.5 rounded-lg border border-gray-700 px-2 py-1 text-xs text-gray-400">
+                  <span className="h-2 w-2 animate-pulse rounded-full bg-gray-500" />
+                  <span>Laden...</span>
+                </div>
+              </>
+            )}
             <button
               onClick={() => {
-                localStorage.removeItem("nickname");
-                router.push("/");
+                if (typeof window !== 'undefined') {
+                  localStorage.removeItem("nickname");
+                  router.push("/");
+                }
               }}
               className="whitespace-nowrap rounded-lg border border-gray-700 px-2 py-1 text-xs text-gray-400 transition hover:border-gray-600 hover:text-white sm:px-3 sm:text-sm"
             >
@@ -704,32 +724,33 @@ export default function StreamPage() {
             </button>
           </div>
         </div>
-        {(showHeaderNextOnly || mode === "radio") && (
-          <div className="mt-2 rounded-lg border border-gray-700/60 bg-gray-800/60 px-2.5 py-1 sm:px-3 sm:py-1.5">
-            <p className="truncate text-[11px] text-gray-300 sm:text-xs">
-              <span className="mr-1 uppercase tracking-wider text-gray-500">Volgende:</span>
-              {!radioConnected ? (
-                <span className="text-gray-500">Verbinden...</span>
-              ) : displayHeaderNextTrack?.artist ? (
-                <>
-                  <span className="text-violet-400">{displayHeaderNextTrack.artist}</span>
-                  {displayHeaderNextTrack?.title && <span className="text-gray-500"> — </span>}
-                  {displayHeaderNextTrack?.title && <span>{displayHeaderNextTrack.title}</span>}
-                  {displayHeaderNextTrack?.isFallback && (
-                    <span className="ml-1 text-gray-500">(random)</span>
-                  )}
-                  {displayHeaderNextTrack?.requestedBy && (
-                    <span className="ml-1 text-gray-500">
-                      · door <span className="text-violet-300">{displayHeaderNextTrack.requestedBy}</span>
-                    </span>
-                  )}
-                </>
-              ) : (
-                <span className="text-gray-500">Nog geen track klaar...</span>
-              )}
-            </p>
-          </div>
-        )}
+        {/* Always show next track section, even during loading */}
+        <div className="mt-2 rounded-lg border border-gray-700/60 bg-gray-800/60 px-2.5 py-1 sm:px-3 sm:py-1.5">
+          <p className="truncate text-[11px] text-gray-300 sm:text-xs">
+            <span className="mr-1 uppercase tracking-wider text-gray-500">Volgende:</span>
+            {!isHydrated ? (
+              <span className="text-gray-500">Laden...</span>
+            ) : !radioConnected ? (
+              <span className="text-gray-500">Verbinden...</span>
+            ) : displayHeaderNextTrack?.artist ? (
+              <>
+                <span className="text-violet-400">{displayHeaderNextTrack.artist}</span>
+                {displayHeaderNextTrack?.title && <span className="text-gray-500"> — </span>}
+                {displayHeaderNextTrack?.title && <span>{displayHeaderNextTrack.title}</span>}
+                {displayHeaderNextTrack?.isFallback && (
+                  <span className="ml-1 text-gray-500">(random)</span>
+                )}
+                {displayHeaderNextTrack?.requestedBy && (
+                  <span className="ml-1 text-gray-500">
+                    · door <span className="text-violet-300">{displayHeaderNextTrack.requestedBy}</span>
+                  </span>
+                )}
+              </>
+            ) : (
+              <span className="text-gray-500">Nog geen track klaar...</span>
+            )}
+          </p>
+        </div>
         {(mode !== "offline" && mode !== "radio" && !showRadioOfflineState) && (
           <div className={mode === "twitch" ? "block" : "hidden landscape:block sm:block"}>
             <NowPlaying

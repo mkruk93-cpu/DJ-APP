@@ -540,6 +540,20 @@ export default function QueueAdd() {
     }
   }
 
+  // Add touch-based scroll detection for mobile
+  function handleSearchListTouch(e: React.TouchEvent<HTMLDivElement>) {
+    if (source === "spotify" || source === "genres") return;
+    if (searching || searchingMore || !searchHasMore || !searchQuery) return;
+    
+    const el = e.currentTarget;
+    // Use a smaller threshold for mobile
+    const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 60;
+    if (nearBottom) {
+      console.log('[touch-debug] Triggering search with append=true');
+      search(searchQuery, true);
+    }
+  }
+
   function handleGenreListScroll(e: React.UIEvent<HTMLDivElement>) {
     if (source !== "genres" || !activeGenre) return;
     if (genreHitsLoading || genreHitsLoadingMore || !genreHasMore) return;
@@ -1287,7 +1301,9 @@ export default function QueueAdd() {
                 <div
                   ref={searchListRef}
                   onScroll={handleSearchListScroll}
+                  onTouchEnd={handleSearchListTouch}
                   className="absolute left-0 right-0 top-full z-[95] mt-1 max-h-[70dvh] overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50"
+                  style={{ WebkitOverflowScrolling: 'touch' }}
                 >
                   {results.map((r) => (
                     <button

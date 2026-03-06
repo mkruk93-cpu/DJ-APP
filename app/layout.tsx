@@ -53,10 +53,19 @@ export default function RootLayout({
             }
             /* Override any purple theme colors */
             :root { --theme-color: #030712; }
+            /* Disable pull-to-refresh on mobile */
+            html, body {
+              overscroll-behavior: none !important;
+              -webkit-overflow-scrolling: touch;
+            }
+            /* Prevent refresh gestures */
+            body {
+              touch-action: pan-x pan-y;
+            }
           `
         }} />
       </head>
-      <body className="min-h-dvh bg-gray-950 text-gray-100 antialiased">
+      <body className="min-h-dvh bg-gray-950 text-gray-100 antialiased" style={{ overscrollBehavior: 'none' }}>
         <PwaRegistrar />
         <PwaRefreshButton />
         {children}
