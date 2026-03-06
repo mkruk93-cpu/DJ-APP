@@ -628,7 +628,7 @@ function refreshGenreHitsCache(cacheKey: string, genre: string, limit: number, o
   } catch (err) {
     console.warn('[genre-hits] LIGHTWEIGHT local search failed:', (err as Error).message);
   } finally {
-    activeRefreshes.delete(cacheKey);
+      activeRefreshes.delete(cacheKey);
   }
 }
 

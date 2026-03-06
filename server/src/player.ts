@@ -272,11 +272,22 @@ interface AutoSearchCandidate {
   source: 'youtube' | 'soundcloud';
 }
 
-async function resolveShortAutoCandidate(query: string): Promise<AutoSearchCandidate | null> {
+async function resolveShortAutoCandidate(query: string, genreId?: string): Promise<AutoSearchCandidate | null> {
   // Use the same fast API-based search as genre hits instead of yt-dlp processes
   try {
     // Import search functions from the search service
     const { youtubeSearch, soundcloudSearch } = await import('./services/search.js');
+    
+    // Get genre-specific filtering rules if genreId is provided
+    let genreHints: any = null;
+    if (genreId) {
+      try {
+        const { getGenreHints } = await import('./services/discovery.js');
+        genreHints = getGenreHints(genreId);
+      } catch (err) {
+        console.warn(`[auto-filter] Failed to get genre hints for ${genreId}:`, (err as Error).message);
+      }
+    }
 
     // Keep the original query for better artist matching
     const searchQuery = query;
@@ -296,17 +307,51 @@ async function resolveShortAutoCandidate(query: string): Promise<AutoSearchCandi
         // Filter out obvious non-music content
         const title = result.title.toLowerCase();
         const channel = (result.channel || '').toLowerCase();
-        
+        const artistTitle = `${channel} - ${result.title}`.toLowerCase();
+
+        // Apply genre-specific blocked tracks filtering
+        if (genreHints?.blockedTracks) {
+          const blockedTracks = genreHints.blockedTracks.map((track: string) => track.toLowerCase());
+          for (const blockedTrack of blockedTracks) {
+            if (blockedTrack && (title.includes(blockedTrack) || artistTitle.includes(blockedTrack))) {
+              console.log(`[auto-filter] Blocked by genre rule (${genreId}): ${result.title}`);
+              return false;
+            }
+          }
+        }
+
+        // Apply genre-specific blocked tokens filtering
+        if (genreHints?.blockedTokens) {
+          const blockedTokens = genreHints.blockedTokens.map((token: string) => token.toLowerCase());
+          for (const token of blockedTokens) {
+            if (token && (title.includes(token) || channel.includes(token) || artistTitle.includes(token))) {
+              console.log(`[auto-filter] Blocked by genre token (${genreId}): ${result.title} (token: ${token})`);
+              return false;
+            }
+          }
+        }
+
+        // Apply genre-specific blocked artists filtering
+        if (genreHints?.blockedArtists) {
+          const blockedArtists = genreHints.blockedArtists.map((artist: string) => artist.toLowerCase());
+          for (const blockedArtist of blockedArtists) {
+            if (blockedArtist && channel.includes(blockedArtist)) {
+              console.log(`[auto-filter] Blocked by genre artist rule (${genreId}): ${result.title} (artist: ${blockedArtist})`);
+              return false;
+            }
+          }
+        }
+
         // Strict bad keywords filtering
         const badKeywords = [
-          'tutorial', 'how to', 'review', 'interview', 'documentary', 'news', 'podcast', 
+          'tutorial', 'how to', 'review', 'interview', 'documentary', 'news', 'podcast',
           'lesson', 'course', 'expert', 'spreekt over', 'cyberaanval', 'cybersecurity',
           'iran', 'politics', 'nieuws', 'talk', 'discussion', 'analysis', 'explained',
           'features you might not know', 'cool features', 'tips', 'tricks', 'guide',
           'acoustic live', 'cover', 'live at', 'southampton', 'concert', 'performance'
         ];
         if (badKeywords.some(keyword => title.includes(keyword))) return false;
-        
+
         // Filter out software/plugin content
         const softwareKeywords = ['sylenth1', 'vst', 'plugin', 'ableton', 'fl studio', 'logic pro'];
         if (softwareKeywords.some(keyword => title.includes(keyword))) return false;
@@ -758,7 +803,7 @@ async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack |
           if (!isAutoGenreStillActive(canonicalGenreId)) return null;
           const pseudo = buildAutoFallbackSource(canonicalGenreId, choice.artist, choice.title, mergedGenreTags, withGenreTags);
           const query = pseudo.youtube_url.replace(/^ytsearch1:/, '').trim();
-          const selected = await resolveShortAutoCandidate(query);
+          const selected = await resolveShortAutoCandidate(query, genreId);
           if (!isAutoGenreStillActive(canonicalGenreId)) return null;
           if (!selected) {
             // Only log first attempt failure to reduce spam
@@ -870,7 +915,7 @@ async function prepareLikedAutoFallbackTrack(): Promise<ReadyTrack | null> {
     console.log(`[auto-download] Trying (liked): ${choice}`);
     const pseudo = buildAutoFallbackSourceForQuery(LIKED_AUTO_GENRE_ID, choice);
     const query = pseudo.youtube_url.replace(/^ytsearch1:/, '').trim();
-    const selected = await resolveShortAutoCandidate(query);
+    const selected = await resolveShortAutoCandidate(query); // No genreId for liked tracks
     if (parseAutoFallbackGenreId(activeFallbackGenre) !== LIKED_AUTO_GENRE_ID) return null;
     if (!selected) {
       console.warn(`[auto-download] No short candidate (liked) for query: ${query}`);
