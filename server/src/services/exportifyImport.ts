@@ -29,15 +29,67 @@ function normalizeHeader(value: string): string {
     .toLowerCase()
     .replace(/^"+|"+$/g, '')
     .replace(/[()]/g, ' ')
+    .replace(/[^a-z0-9\u00c0-\u024f]+/g, ' ')
     .replace(/\s+/g, ' ');
 }
 
-function firstValue(record: Record<string, unknown>, keys: string[]): string {
-  for (const key of keys) {
-    const target = normalizeHeader(key);
-    const found = Object.entries(record).find(([raw]) => normalizeHeader(raw) === target)?.[1];
-    if (typeof found === 'string' && found.trim()) return found.trim();
+function decodeCsvText(buffer: Buffer): string {
+  if (buffer.length >= 2) {
+    const b0 = buffer[0];
+    const b1 = buffer[1];
+    // UTF-16 LE BOM
+    if (b0 === 0xff && b1 === 0xfe) return buffer.slice(2).toString('utf16le');
+    // UTF-16 BE BOM
+    if (b0 === 0xfe && b1 === 0xff) {
+      const swapped = Buffer.allocUnsafe(buffer.length - 2);
+      for (let i = 2; i < buffer.length - 1; i += 2) {
+        swapped[i - 2] = buffer[i + 1] ?? 0;
+        swapped[i - 1] = buffer[i] ?? 0;
+      }
+      return swapped.toString('utf16le');
+    }
   }
+
+  const utf8 = buffer.toString('utf8');
+  const sample = utf8.slice(0, 1024);
+  const nullCount = (sample.match(/\u0000/g) ?? []).length;
+  if (nullCount > 10) {
+    // Common Excel export fallback.
+    return buffer.toString('utf16le');
+  }
+  return utf8;
+}
+
+function getNormalizedRecord(record: Record<string, unknown>): Map<string, string> {
+  const mapped = new Map<string, string>();
+  for (const [rawKey, rawValue] of Object.entries(record)) {
+    if (typeof rawValue !== 'string') continue;
+    const value = rawValue.trim();
+    if (!value) continue;
+    const key = normalizeHeader(rawKey);
+    if (key && !mapped.has(key)) {
+      mapped.set(key, value);
+    }
+  }
+  return mapped;
+}
+
+function firstValue(normalizedRecord: Map<string, string>, keys: string[]): string {
+  const normalizedKeys = keys.map((key) => normalizeHeader(key));
+
+  for (const key of normalizedKeys) {
+    const exact = normalizedRecord.get(key);
+    if (exact) return exact;
+  }
+
+  for (const [header, value] of normalizedRecord.entries()) {
+    for (const key of normalizedKeys) {
+      if (header.includes(key) || key.includes(header)) {
+        return value;
+      }
+    }
+  }
+
   return '';
 }
 
@@ -70,7 +122,9 @@ function detectCsvDelimiter(text: string): ',' | ';' | '\t' {
 }
 
 function parseCsvBuffer(fileName: string, buffer: Buffer, maxTracks: number): ExportifyPlaylistImport {
-  const text = buffer.toString('utf8');
+  const text = decodeCsvText(buffer)
+    .replace(/\u0000/g, '')
+    .replace(/\r\n/g, '\n');
   const delimiter = detectCsvDelimiter(text);
   const records = parse(text, {
     columns: true,
@@ -116,16 +170,17 @@ function parseCsvBuffer(fileName: string, buffer: Buffer, maxTracks: number): Ex
   ];
 
   for (const record of records) {
-    const title = firstValue(record, titleKeys);
-    const artist = firstValue(record, artistKeys);
+    const normalizedRecord = getNormalizedRecord(record);
+    const title = firstValue(normalizedRecord, titleKeys);
+    const artist = firstValue(normalizedRecord, artistKeys);
     if (!title || !artist) continue;
 
     const dedupeKey = `${artist.toLowerCase()}|${title.toLowerCase()}`;
     if (dedupe.has(dedupeKey)) continue;
     dedupe.add(dedupeKey);
 
-    const albumRaw = firstValue(record, albumKeys);
-    const spotifyRaw = firstValue(record, spotifyKeys);
+    const albumRaw = firstValue(normalizedRecord, albumKeys);
+    const spotifyRaw = firstValue(normalizedRecord, spotifyKeys);
 
     tracks.push({
       title,

@@ -743,7 +743,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
             <p className="mt-0.5 text-[10px] text-gray-500">Upload .csv of .zip met playlists uit Exportify.</p>
             <input
               type="file"
-              accept=".csv,.zip"
+              accept=".csv,.zip,text/csv,application/csv,application/vnd.ms-excel,application/zip,application/x-zip-compressed"
               onChange={(e) => {
                 const file = e.target.files?.[0] ?? null;
                 setImportFile(file);

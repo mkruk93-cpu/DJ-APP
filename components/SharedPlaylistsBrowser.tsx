@@ -296,7 +296,7 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
             <input
               type="file"
               multiple
-              accept=".csv"
+              accept=".csv,text/csv,application/csv,application/vnd.ms-excel"
               onChange={(e) => {
                 const files = Array.from(e.target.files ?? []).filter((file) => file.name.toLowerCase().endsWith(".csv"));
                 setImportFiles(files);
