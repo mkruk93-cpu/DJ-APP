@@ -16,6 +16,7 @@ import PlayedHistory from "@/components/admin/PlayedHistory";
 import DurationVotePanel from "@/components/DurationVote";
 import GenreManager from "@/components/admin/GenreManager";
 import GenreManagerErrorBoundary from "@/components/admin/GenreManagerErrorBoundary";
+import SharedPlaylistManager from "@/components/admin/SharedPlaylistManager";
 import type { Track, QueueItem, Mode, ModeSettings as ModeSettingsType, VoteState, DurationVote } from "@/lib/types";
 
 const ADMIN_PASSWORD = process.env.NEXT_PUBLIC_ADMIN_PASSWORD;
@@ -411,6 +412,7 @@ export default function AdminPage() {
             <GenreManagerErrorBoundary>
               <GenreManager />
             </GenreManagerErrorBoundary>
+            <SharedPlaylistManager />
             <PlayedHistory />
           </>
         )}

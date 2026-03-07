@@ -86,6 +86,7 @@ export interface RadioState {
   fallbackGenres: FallbackGenre[];
   activeFallbackGenre: string | null;
   activeFallbackGenreBy: string | null;
+  activeFallbackSharedMode: 'random' | 'ordered';
   mode: Mode;
   modeSettings: ModeSettings;
   listenerCount: number;

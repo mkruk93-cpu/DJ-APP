@@ -469,6 +469,7 @@ export default function StreamPage() {
             fallbackGenres: state.fallbackGenres ?? [],
             activeFallbackGenre: state.activeFallbackGenre ?? null,
             activeFallbackGenreBy: state.activeFallbackGenreBy ?? null,
+            activeFallbackSharedMode: state.activeFallbackSharedMode ?? "random",
             mode: state.mode ?? "radio",
             modeSettings: state.modeSettings ?? store.getState().modeSettings,
             listenerCount: state.listenerCount ?? 0,
@@ -546,10 +547,11 @@ export default function StreamPage() {
       store.getState().setUpcomingTrack(upcoming);
     });
 
-    socket.on("fallback:genre:update", (data: { activeGenreId: string | null; selectedBy?: string | null; genres: Array<{ id: string; label: string; trackCount: number }> }) => {
+    socket.on("fallback:genre:update", (data: { activeGenreId: string | null; selectedBy?: string | null; sharedPlaybackMode?: "random" | "ordered"; genres: Array<{ id: string; label: string; trackCount: number }> }) => {
       store.getState().setFallbackGenres(data.genres ?? []);
       store.getState().setActiveFallbackGenre(data.activeGenreId ?? null);
       store.getState().setActiveFallbackGenreBy(data.selectedBy ?? null);
+      store.getState().setActiveFallbackSharedMode(data.sharedPlaybackMode ?? "random");
     });
 
     socket.on("mode:change", (data: { mode: Mode; settings: ModeSettings }) => {

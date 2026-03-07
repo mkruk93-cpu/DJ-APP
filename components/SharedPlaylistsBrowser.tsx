@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getSharedPlaylistTracksPage,
   getSpotifyOembed,
-  importUserPlaylistFile,
+  importSharedPlaylistFiles,
   listSharedPlaylists,
   type SharedPlaylist,
   type UserPlaylistTrack,
@@ -25,7 +25,9 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
-  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importFiles, setImportFiles] = useState<File[]>([]);
+  const [importName, setImportName] = useState("");
+  const [showHelp, setShowHelp] = useState(false);
   const [addedTrackId, setAddedTrackId] = useState<string | null>(null);
   const [sharedPlaylists, setSharedPlaylists] = useState<SharedPlaylist[]>([]);
   const [sharedUsage, setSharedUsage] = useState<{ playlists: number; tracks: number } | null>(null);
@@ -36,6 +38,8 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
   const [loadingMoreTracks, setLoadingMoreTracks] = useState(false);
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
   const thumbLoadingRef = useRef<Set<string>>(new Set());
+  const thumbQueueRef = useRef<string[]>([]);
+  const thumbWorkersRef = useRef(0);
   const listRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
 
@@ -99,7 +103,7 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
     await loadTracksPage(playlist.id, false);
   }
 
-  async function resolveThumb(url: string): Promise<void> {
+  const resolveThumb = useCallback(async (url: string): Promise<void> => {
     if (thumbs[url]) return;
     if (thumbLoadingRef.current.has(url)) return;
     thumbLoadingRef.current.add(url);
@@ -114,7 +118,20 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
     } finally {
       thumbLoadingRef.current.delete(url);
     }
-  }
+  }, [thumbs]);
+
+  const pumpThumbQueue = useCallback(() => {
+    const MAX_WORKERS = 6;
+    while (thumbWorkersRef.current < MAX_WORKERS && thumbQueueRef.current.length > 0) {
+      const nextUrl = thumbQueueRef.current.shift();
+      if (!nextUrl) continue;
+      thumbWorkersRef.current += 1;
+      void resolveThumb(nextUrl).finally(() => {
+        thumbWorkersRef.current = Math.max(0, thumbWorkersRef.current - 1);
+        pumpThumbQueue();
+      });
+    }
+  }, [resolveThumb]);
 
   useEffect(() => {
     if (view !== "tracks") return;
@@ -125,10 +142,14 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
           .filter((url) => url.startsWith("https://open.spotify.com/track/")),
       ),
     );
-    for (const url of urls.slice(0, 10)) {
-      void resolveThumb(url);
+    for (const url of urls) {
+      if (thumbs[url]) continue;
+      if (thumbLoadingRef.current.has(url)) continue;
+      if (thumbQueueRef.current.includes(url)) continue;
+      thumbQueueRef.current.push(url);
     }
-  }, [view, tracks]);
+    pumpThumbQueue();
+  }, [view, tracks, thumbs, pumpThumbQueue]);
 
   useEffect(() => {
     if (view !== "tracks" || !selectedPlaylist) return;
@@ -150,20 +171,23 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
   }, [view, selectedPlaylist, tracksHasMore, loading, loadingMoreTracks, loadTracksPage]);
 
   async function handleImport() {
-    if (!importFile) {
-      setError("Kies eerst een .csv of .zip bestand.");
+    if (importFiles.length === 0) {
+      setError("Kies eerst minimaal 1 .csv bestand.");
+      return;
+    }
+    const safeName = importName.trim();
+    if (!safeName) {
+      setError("Geef eerst een playlistnaam op.");
       return;
     }
     setImporting(true);
     setError(null);
     setStatus(null);
     try {
-      const result = await importUserPlaylistFile(importFile);
-      setStatus(
-        `Import klaar: ${result.totalPlaylists} playlist(s), ${result.totalTracks} tracks`
-        + `${result.shared ? ` · gedeeld: ${result.shared.importedPlaylists}` : ""}.`,
-      );
-      setImportFile(null);
+      const result = await importSharedPlaylistFiles(importFiles, safeName);
+      setStatus(`Import klaar: ${result.playlist.name} (${result.playlist.trackCount} unieke tracks).`);
+      setImportFiles([]);
+      setImportName("");
       await loadSharedPlaylists();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Import mislukt.");
@@ -222,7 +246,26 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
             Playlists (publiek)
           </div>
         )}
+        {view === "playlists" && (
+          <button
+            type="button"
+            onClick={() => setShowHelp((prev) => !prev)}
+            className="rounded-full border border-gray-700 bg-gray-800 px-2 py-0.5 text-[11px] font-semibold text-gray-300 transition hover:border-blue-500 hover:text-white"
+            title="Uitleg playlists"
+          >
+            ?
+          </button>
+        )}
       </div>
+      {showHelp && view === "playlists" && (
+        <div className="shrink-0 rounded-md border border-blue-800/60 bg-blue-950/25 p-2 text-[11px] text-blue-100">
+          <p className="font-semibold">Wat doet dit?</p>
+          <p className="mt-0.5 text-blue-100/90">
+            Hier kies je publieke playlists om snel tracks toe te voegen. Upload 1 of meerdere Exportify CSV's,
+            geef 1 playlistnaam op, en dubbele tracks worden automatisch verwijderd.
+          </p>
+        </div>
+      )}
 
       <input
         type="text"
@@ -240,23 +283,34 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
 
       {view === "playlists" && !loading && (
         <div className="min-h-0 flex-1 space-y-px overflow-y-auto">
-          <div className="mb-2 rounded-md border border-gray-700/70 bg-gray-900/60 p-2">
+          <div className="mb-2 rounded-lg border border-gray-700/70 bg-gradient-to-br from-gray-900 to-gray-900/70 p-2.5">
             <p className="text-[11px] font-semibold text-gray-200">Nieuwe playlist toevoegen</p>
-            <p className="mt-0.5 text-[10px] text-gray-500">Upload Exportify .csv/.zip. Wordt automatisch gedeeld.</p>
+            <p className="mt-0.5 text-[10px] text-gray-500">Upload meerdere Exportify CSV's. We voegen samen en dedupliceren.</p>
+            <input
+              type="text"
+              value={importName}
+              onChange={(e) => setImportName(e.target.value)}
+              placeholder="Playlist naam (verplicht)"
+              className="mt-2 w-full rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[11px] text-white placeholder-gray-500 outline-none focus:border-violet-500"
+            />
             <input
               type="file"
-              accept=".csv,.zip"
+              multiple
+              accept=".csv"
               onChange={(e) => {
-                const file = e.target.files?.[0] ?? null;
-                setImportFile(file);
+                const files = Array.from(e.target.files ?? []).filter((file) => file.name.toLowerCase().endsWith(".csv"));
+                setImportFiles(files);
                 setError(null);
               }}
               className="mt-2 w-full text-[10px] text-gray-400 file:mr-2 file:rounded file:border-0 file:bg-gray-700 file:px-2 file:py-1 file:text-[10px] file:font-medium file:text-white"
             />
+            {importFiles.length > 0 && (
+              <p className="mt-1 text-[10px] text-gray-400">{importFiles.length} CSV bestand(en) geselecteerd</p>
+            )}
             <button
               type="button"
               onClick={() => { void handleImport(); }}
-              disabled={!importFile || importing}
+              disabled={importFiles.length === 0 || !importName.trim() || importing}
               className="mt-2 rounded bg-violet-600 px-2 py-1 text-[10px] font-semibold text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {importing ? "Importeren..." : "Importeer bestand"}
@@ -286,10 +340,17 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                 key={playlist.id}
                 type="button"
                 onClick={() => { void openPlaylist(playlist); }}
-                className="mt-1 flex w-full items-center justify-between rounded bg-gray-800/70 px-2 py-1 text-left transition hover:bg-gray-800"
+                className="mt-1 flex w-full items-center gap-2 rounded-lg border border-gray-800 bg-gray-900/70 px-2.5 py-1.5 text-left transition hover:border-blue-700/60 hover:bg-gray-800/80"
               >
-                <span className="truncate text-[11px] text-white">{playlist.name}</span>
-                <span className="ml-2 shrink-0 text-[10px] text-gray-400">{playlist.track_count}</span>
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-blue-500/15">
+                  <svg className="h-4 w-4 text-blue-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                    <path d="M8 6h12M8 12h12M8 18h12M3 6h.01M3 12h.01M3 18h.01" />
+                  </svg>
+                </div>
+                <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-white">{playlist.name}</span>
+                <span className="ml-2 shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-300">
+                  {playlist.track_count}
+                </span>
               </button>
             ))}
           </div>

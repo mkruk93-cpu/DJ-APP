@@ -13,7 +13,7 @@ import { initCache } from './cleanup.js';
 import { seedSettings, getActiveMode, getActiveFallbackGenre, getModeSettings, getSetting, setSetting } from './settings.js';
 import { getQueue, addToQueue, removeFromQueue, reorderQueue, fetchVideoInfo, extractYoutubeId, extractSourceId, isSoundcloudUrl, getThumbnailUrl, encodeLocalFileUrl } from './queue.js';
 import { canPerformAction } from './permissions.js';
-import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, playerEvents, setKeepFiles, invalidatePreload, invalidateNextReady, removeQueueItemFromPreload, setActiveFallbackGenre } from './player.js';
+import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, playerEvents, setKeepFiles, invalidatePreload, invalidateNextReady, removeQueueItemFromPreload, setActiveFallbackGenre, setSharedAutoPlaybackMode } from './player.js';
 import { youtubeSearch, soundcloudSearch } from './services/search.js';
 import { startBridge } from './bridge.js';
 import { startNowPlayingWatcher } from './nowPlaying.js';
@@ -45,8 +45,11 @@ import {
   getSharedPlaylistTracks,
   getSharedPlaylistTracksPage,
   getSharedStoreUsage,
+  updateSharedPlaylistName,
+  deleteSharedPlaylist,
   hasSharedPlaylist,
   parseSharedFallbackPlaylistId,
+  parseSharedFallbackPlayMode,
   toSharedFallbackPlaylistId,
   type SharedStoreLimits,
 } from './services/sharedPlaylistStore.js';
@@ -218,6 +221,14 @@ function getUserIdentityFromRequest(req: Request): { nickname: string; deviceId:
 function getAdminTokenFromRequest(req: Request): string | null {
   const token = getIdentityValueFromRequest(req, 'token');
   return token ? token.trim() : null;
+}
+
+function getSharedPlaylistNameFromRequest(req: Request): string | null {
+  const fromBody = getIdentityValueFromRequest(req, 'playlist_name')
+    ?? getIdentityValueFromRequest(req, 'name');
+  if (!fromBody) return null;
+  const trimmed = fromBody.trim().slice(0, 140);
+  return trimmed || null;
 }
 
 function getSharedStoreLimits(): SharedStoreLimits {
@@ -400,6 +411,21 @@ async function resolveActiveFallbackGenre(persistFix = false): Promise<string | 
   return resolved;
 }
 
+function normalizeSharedPlaybackMode(value: unknown): 'random' | 'ordered' {
+  if (typeof value !== 'string') return 'random';
+  const normalized = value.trim().toLowerCase();
+  return normalized === 'ordered' ? 'ordered' : 'random';
+}
+
+async function resolveSharedPlaybackMode(persistFix = false): Promise<'random' | 'ordered'> {
+  const raw = await getSetting<string | null>(sb, 'fallback_shared_playback_mode');
+  const mode = normalizeSharedPlaybackMode(raw);
+  if (persistFix && raw !== mode) {
+    await setSetting(sb, 'fallback_shared_playback_mode', mode);
+  }
+  return mode;
+}
+
 async function isKnownFallbackSelection(genreId: string | null): Promise<boolean> {
   if (!genreId) return false;
   if (isKnownFallbackGenre(genreId)) return true;
@@ -409,15 +435,18 @@ async function isKnownFallbackSelection(genreId: string | null): Promise<boolean
 }
 
 async function emitFallbackGenreUpdate(target?: { emit: (event: string, payload: unknown) => void }): Promise<void> {
-  const [activeGenreId, selectedBy] = await Promise.all([
+  const [activeGenreId, selectedBy, sharedMode] = await Promise.all([
     resolveActiveFallbackGenre(),
     getSetting<string | null>(sb, 'fallback_active_genre_by'),
+    resolveSharedPlaybackMode(),
   ]);
+  setSharedAutoPlaybackMode(sharedMode);
   setActiveFallbackGenre(activeGenreId);
   const genres = await getCombinedFallbackGenres();
   const payload = {
     activeGenreId,
     selectedBy: normalizeNickname(selectedBy),
+    sharedPlaybackMode: sharedMode,
     genres,
   };
   if (target) target.emit('fallback:genre:update', payload);
@@ -457,13 +486,14 @@ async function getCombinedFallbackGenres(): Promise<FallbackGenre[]> {
 }
 
 async function getServerState(): Promise<ServerState> {
-  const [mode, modeSettings, queue, activeFallbackGenre, activeFallbackGenreBy, fallbackGenres] = await Promise.all([
+  const [mode, modeSettings, queue, activeFallbackGenre, activeFallbackGenreBy, fallbackGenres, activeFallbackSharedMode] = await Promise.all([
     getActiveMode(sb),
     getModeSettings(sb),
     getQueue(sb),
     resolveActiveFallbackGenre(),
     getSetting<string | null>(sb, 'fallback_active_genre_by'),
     getCombinedFallbackGenres(),
+    resolveSharedPlaybackMode(),
   ]);
 
   return {
@@ -475,6 +505,7 @@ async function getServerState(): Promise<ServerState> {
     fallbackGenres,
     activeFallbackGenre,
     activeFallbackGenreBy: normalizeNickname(activeFallbackGenreBy),
+    activeFallbackSharedMode,
     listenerCount: io.engine.clientsCount,
     streamOnline: getCurrentTrack() !== null,
     voteState: null,
@@ -539,6 +570,7 @@ function buildDegradedServerState(): ServerState {
     fallbackGenres: [],
     activeFallbackGenre: null,
     activeFallbackGenreBy: null,
+    activeFallbackSharedMode: 'random',
     listenerCount: io.engine.clientsCount,
     streamOnline: getCurrentTrack() !== null,
     voteState: null,
@@ -1401,6 +1433,84 @@ app.get('/api/shared-playlists', async (req, res) => {
   }
 });
 
+app.post('/api/shared-playlists/import', upload.any(), async (req, res) => {
+  const uploaded = Array.isArray(req.files) ? req.files : [];
+  if (uploaded.length === 0) {
+    return res.status(400).json({ error: 'Bestand ontbreekt (field: file/files)' });
+  }
+  const onlyCsv = uploaded.every((file) => extname(file.originalname ?? '').toLowerCase() === '.csv');
+  if (!onlyCsv) {
+    return res.status(400).json({ error: 'Alleen .csv bestanden zijn toegestaan voor gedeelde import' });
+  }
+  const requestedName = getSharedPlaylistNameFromRequest(req);
+  if (!requestedName) {
+    return res.status(400).json({ error: 'playlist_name is verplicht' });
+  }
+  const identity = getUserIdentityFromRequest(req);
+  try {
+    const mergedTracks: Array<{
+      title: string;
+      artist: string;
+      album: string | null;
+      spotifyUrl: string | null;
+    }> = [];
+    const seenKeys = new Set<string>();
+    const normalizeDedupe = (value: string): string => value.toLowerCase().replace(/\s+/g, ' ').trim();
+
+    for (const file of uploaded) {
+      const parsed = parseExportifyUpload(file.originalname ?? 'import.csv', file.buffer, {
+        maxPlaylists: 1,
+        maxTracksPerPlaylist: USER_PLAYLIST_MAX_TRACKS_PER_IMPORT,
+      }).filter((playlist) => playlist.tracks.length > 0);
+      for (const playlist of parsed) {
+        for (const track of playlist.tracks) {
+          const dedupeKey = `${normalizeDedupe(track.artist)}|${normalizeDedupe(track.title)}`;
+          if (seenKeys.has(dedupeKey)) continue;
+          seenKeys.add(dedupeKey);
+          mergedTracks.push({
+            title: track.title,
+            artist: track.artist,
+            album: track.album,
+            spotifyUrl: track.spotifyUrl,
+          });
+        }
+      }
+    }
+
+    if (mergedTracks.length === 0) {
+      return res.status(400).json({ error: 'Geen geldige tracks gevonden in CSV' });
+    }
+    const trackInputs = mergedTracks.map((track, index) => ({
+      title: track.title.slice(0, 300),
+      artist: track.artist.slice(0, 300),
+      album: track.album?.slice(0, 300) ?? null,
+      spotify_url: track.spotifyUrl?.slice(0, 600) ?? null,
+      position: index + 1,
+    }));
+    const result = await ingestSharedPlaylist(trackInputs, {
+      name: requestedName,
+      source: 'exportify-shared-upload',
+      addedBy: identity?.nickname ?? null,
+    }, getSharedStoreLimits());
+    if (!result.imported || !result.playlistId) {
+      return res.status(400).json({ error: result.reason ?? 'Import mislukt' });
+    }
+    const usage = await getSharedStoreUsage();
+    return res.json({
+      ok: true,
+      playlist: {
+        id: result.playlistId,
+        name: result.name,
+        trackCount: result.trackCount,
+      },
+      usage,
+    });
+  } catch (err) {
+    console.error('[rest] /api/shared-playlists/import error:', err);
+    return res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
 app.get('/api/shared-playlists/:id/tracks', async (req, res) => {
   const playlistId = String(req.params.id ?? '').trim();
   if (!playlistId) {
@@ -1432,6 +1542,49 @@ app.get('/api/shared-playlists/:id/tracks', async (req, res) => {
   } catch (err) {
     console.error('[rest] /api/shared-playlists/:id/tracks error:', err);
     res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
+app.put('/api/shared-playlists/:id', async (req, res) => {
+  const token = getAdminTokenFromRequest(req);
+  if (!isAdmin(token ?? undefined)) {
+    return res.status(403).json({ error: 'Unauthorized' });
+  }
+  const playlistId = String(req.params.id ?? '').trim();
+  if (!playlistId) {
+    return res.status(400).json({ error: 'Playlist id ontbreekt' });
+  }
+  const nextName = getSharedPlaylistNameFromRequest(req);
+  if (!nextName) {
+    return res.status(400).json({ error: 'playlist_name is verplicht' });
+  }
+  try {
+    const updated = await updateSharedPlaylistName(playlistId, nextName);
+    if (!updated) return res.status(404).json({ error: 'Playlist niet gevonden' });
+    return res.json({ ok: true, playlist: updated });
+  } catch (err) {
+    console.error('[rest] /api/shared-playlists/:id PUT error:', err);
+    return res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
+app.delete('/api/shared-playlists/:id', async (req, res) => {
+  const token = getAdminTokenFromRequest(req);
+  if (!isAdmin(token ?? undefined)) {
+    return res.status(403).json({ error: 'Unauthorized' });
+  }
+  const playlistId = String(req.params.id ?? '').trim();
+  if (!playlistId) {
+    return res.status(400).json({ error: 'Playlist id ontbreekt' });
+  }
+  try {
+    const deleted = await deleteSharedPlaylist(playlistId);
+    if (!deleted) return res.status(404).json({ error: 'Playlist niet gevonden' });
+    const usage = await getSharedStoreUsage();
+    return res.json({ ok: true, usage });
+  } catch (err) {
+    console.error('[rest] /api/shared-playlists/:id DELETE error:', err);
+    return res.status(500).json({ error: getErrorMessage(err) });
   }
 });
 
@@ -2107,6 +2260,14 @@ app.post('/api/settings', async (req, res) => {
       setActiveFallbackGenre(nextGenre);
       await emitFallbackGenreUpdate();
       console.log(`[rest] Setting updated: ${key}=${nextGenre ?? 'none'}`);
+      return res.json({ ok: true });
+    }
+    if (key === 'fallback_shared_playback_mode') {
+      const nextMode = normalizeSharedPlaybackMode(value);
+      await setSetting(sb, key, nextMode);
+      setSharedAutoPlaybackMode(nextMode);
+      await emitFallbackGenreUpdate();
+      console.log(`[rest] Setting updated: ${key}=${nextMode}`);
       return res.json({ ok: true });
     }
 
@@ -2800,6 +2961,14 @@ io.on('connection', (socket) => {
         console.log(`[settings] Updated: ${data.key}=${nextGenre ?? 'none'}`);
         return;
       }
+      if (data.key === 'fallback_shared_playback_mode') {
+        const nextMode = normalizeSharedPlaybackMode(data.value);
+        await setSetting(sb, data.key, nextMode);
+        setSharedAutoPlaybackMode(nextMode);
+        await emitFallbackGenreUpdate();
+        console.log(`[settings] Updated: ${data.key}=${nextMode}`);
+        return;
+      }
 
       await setSetting(sb, data.key, data.value);
       const modeSettings = await getModeSettings(sb);
@@ -2868,22 +3037,45 @@ io.on('connection', (socket) => {
   });
 
   // ── fallback:genre:set (global, all listeners) ──
-  socket.on('fallback:genre:set', async (data: { genreId: string; selectedBy?: string }) => {
+  socket.on('fallback:genre:set', async (data: { genreId: string; selectedBy?: string; sharedPlaybackMode?: string }) => {
     const requested = normalizeFallbackGenreId(data.genreId);
     if (!requested || !(await isKnownFallbackSelection(requested))) {
       socket.emit('error:toast', { message: 'Dit genre is niet beschikbaar' });
       return;
     }
     const selectedBy = normalizeNickname(data.selectedBy) ?? 'onbekend';
+    const requestedSharedMode = normalizeSharedPlaybackMode(data.sharedPlaybackMode);
     try {
       await setSetting(sb, 'fallback_active_genre', requested);
       await setSetting(sb, 'fallback_active_genre_by', selectedBy);
+      const sharedId = parseSharedFallbackPlaylistId(requested);
+      if (sharedId) {
+        await setSetting(sb, 'fallback_shared_playback_mode', requestedSharedMode);
+        setSharedAutoPlaybackMode(requestedSharedMode);
+      }
       setActiveFallbackGenre(requested);
       await emitFallbackGenreUpdate();
       console.log(`[fallback] Active genre changed: ${requested} by ${selectedBy}`);
     } catch (err) {
       console.error('[socket] fallback:genre:set error:', err);
       socket.emit('error:toast', { message: 'Kon genre niet opslaan' });
+    }
+  });
+
+  socket.on('fallback:shared:mode:set', async (data: { mode: string; selectedBy?: string }) => {
+    const nextMode = normalizeSharedPlaybackMode(data.mode);
+    const selectedBy = normalizeNickname(data.selectedBy) ?? null;
+    try {
+      await setSetting(sb, 'fallback_shared_playback_mode', nextMode);
+      if (selectedBy) {
+        await setSetting(sb, 'fallback_active_genre_by', selectedBy);
+      }
+      setSharedAutoPlaybackMode(nextMode);
+      await emitFallbackGenreUpdate();
+      console.log(`[fallback] Shared playback mode changed: ${nextMode}`);
+    } catch (err) {
+      console.error('[socket] fallback:shared:mode:set error:', err);
+      socket.emit('error:toast', { message: 'Kon playlist afspeelmodus niet opslaan' });
     }
   });
 
@@ -2909,6 +3101,8 @@ async function main(): Promise<void> {
   console.log('[server] Settings seeded');
   reloadFallbackGenres();
   const startupFallbackGenre = await resolveActiveFallbackGenre(true);
+  const startupSharedMode = await resolveSharedPlaybackMode(true);
+  setSharedAutoPlaybackMode(startupSharedMode);
   setActiveFallbackGenre(startupFallbackGenre);
   console.log(`[fallback] Active genre: ${startupFallbackGenre ?? 'none'}`);
 

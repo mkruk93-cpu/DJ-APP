@@ -62,6 +62,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [importFile, setImportFile] = useState<File | null>(null);
+  const [showHelp, setShowHelp] = useState(false);
   const [savedPlaylists, setSavedPlaylists] = useState<UserPlaylist[]>([]);
   const [savedPlaylistsLoading, setSavedPlaylistsLoading] = useState(false);
   const [savedTracks, setSavedTracks] = useState<UserPlaylistTrack[]>([]);
@@ -85,6 +86,8 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
   const listRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const thumbnailLoadingRef = useRef<Set<string>>(new Set());
+  const thumbnailQueueRef = useRef<string[]>([]);
+  const thumbnailWorkersRef = useRef(0);
 
   const configured = isSpotifyConfigured();
   const showPlaylistSections = mode !== "spotifyOnly";
@@ -264,7 +267,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
     }
   }
 
-  async function resolveSavedTrackThumbnail(spotifyUrl: string): Promise<void> {
+  const resolveSavedTrackThumbnail = useCallback(async (spotifyUrl: string): Promise<void> => {
     if (savedTrackThumbs[spotifyUrl]) return;
     if (thumbnailLoadingRef.current.has(spotifyUrl)) return;
     thumbnailLoadingRef.current.add(spotifyUrl);
@@ -279,7 +282,20 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
     } finally {
       thumbnailLoadingRef.current.delete(spotifyUrl);
     }
-  }
+  }, [savedTrackThumbs]);
+
+  const pumpThumbnailQueue = useCallback(() => {
+    const MAX_WORKERS = 6;
+    while (thumbnailWorkersRef.current < MAX_WORKERS && thumbnailQueueRef.current.length > 0) {
+      const nextUrl = thumbnailQueueRef.current.shift();
+      if (!nextUrl) continue;
+      thumbnailWorkersRef.current += 1;
+      void resolveSavedTrackThumbnail(nextUrl).finally(() => {
+        thumbnailWorkersRef.current = Math.max(0, thumbnailWorkersRef.current - 1);
+        pumpThumbnailQueue();
+      });
+    }
+  }, [resolveSavedTrackThumbnail]);
 
   async function handleImportExportify() {
     if (!importFile) {
@@ -616,12 +632,14 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
           .filter((url) => url.startsWith("https://open.spotify.com/track/")),
       ),
     );
-    const missing = uniqueUrls.filter((url) => !savedTrackThumbs[url]).slice(0, 8);
-    if (missing.length === 0) return;
-    for (const url of missing) {
-      void resolveSavedTrackThumbnail(url);
+    for (const url of uniqueUrls) {
+      if (savedTrackThumbs[url]) continue;
+      if (thumbnailLoadingRef.current.has(url)) continue;
+      if (thumbnailQueueRef.current.includes(url)) continue;
+      thumbnailQueueRef.current.push(url);
     }
-  }, [view, filteredSavedTracks, filteredSharedTracks, savedTrackThumbs]);
+    pumpThumbnailQueue();
+  }, [view, filteredSavedTracks, filteredSharedTracks, savedTrackThumbs, pumpThumbnailQueue]);
 
   return (
     <div className="flex max-h-[40vh] flex-col gap-1.5 overflow-hidden">
@@ -665,16 +683,37 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
             {headerLabel}
           </div>
         )}
-        {spotifyEnabled && (
-          <button
-            type="button"
-            onClick={handleDisconnect}
-            className="text-[11px] text-gray-500 transition hover:text-red-400"
-          >
-            Ontkoppel
-          </button>
-        )}
+        <div className="flex items-center gap-1">
+          {view === "playlists" && (
+            <button
+              type="button"
+              onClick={() => setShowHelp((prev) => !prev)}
+              className="rounded-full border border-gray-700 bg-gray-800 px-2 py-0.5 text-[11px] font-semibold text-gray-300 transition hover:border-violet-500 hover:text-white"
+              title="Uitleg playlists"
+            >
+              ?
+            </button>
+          )}
+          {spotifyEnabled && (
+            <button
+              type="button"
+              onClick={handleDisconnect}
+              className="text-[11px] text-gray-500 transition hover:text-red-400"
+            >
+              Ontkoppel
+            </button>
+          )}
+        </div>
       </div>
+      {showHelp && view === "playlists" && (
+        <div className="shrink-0 rounded-md border border-violet-800/60 bg-violet-950/20 p-2 text-[11px] text-violet-100">
+          <p className="font-semibold">Wat doet dit?</p>
+          <p className="mt-0.5 text-violet-100/90">
+            Kies hier een Spotify playlist of een geïmporteerde playlist en voeg direct tracks toe aan de queue.
+            Met Exportify importeer je CSV/ZIP bestanden; persoonlijke playlists blijven van jou.
+          </p>
+        </div>
+      )}
 
       {/* Filter */}
       <input
@@ -742,11 +781,11 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
               <p className="text-[10px] text-gray-500">Nog geen geïmporteerde playlists.</p>
             )}
             {savedPlaylists.map((playlist) => (
-              <div key={playlist.id} className="mt-1 flex items-center justify-between rounded bg-gray-800/70 px-2 py-1">
+              <div key={playlist.id} className="mt-1 flex items-center justify-between rounded-lg border border-gray-800 bg-gray-900/70 px-2.5 py-1.5">
                 <button
                   type="button"
                   onClick={() => { void openSavedPlaylist(playlist); }}
-                  className="truncate text-left text-[11px] text-white transition hover:text-violet-300"
+                  className="min-w-0 flex-1 truncate text-left text-[11px] font-semibold text-white transition hover:text-violet-300"
                 >
                   {playlist.name}
                 </button>
@@ -784,11 +823,11 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
               <p className="text-[10px] text-gray-400">Nog geen gedeelde playlists beschikbaar.</p>
             )}
             {sharedPlaylists.slice(0, 80).map((playlist) => (
-              <div key={playlist.id} className="mt-1 flex items-center justify-between rounded bg-gray-800/70 px-2 py-1">
+              <div key={playlist.id} className="mt-1 flex items-center justify-between rounded-lg border border-gray-800 bg-gray-900/70 px-2.5 py-1.5">
                 <button
                   type="button"
                   onClick={() => { void openSharedPlaylist(playlist); }}
-                  className="truncate text-left text-[11px] text-white transition hover:text-blue-300"
+                  className="min-w-0 flex-1 truncate text-left text-[11px] font-semibold text-white transition hover:text-blue-300"
                 >
                   {playlist.name}
                 </button>
@@ -842,7 +881,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                     type="button"
                     key={pl.id}
                     onClick={() => { void openPlaylist(pl); }}
-                    className="flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left transition hover:bg-gray-800/80"
+                    className="flex w-full items-center gap-2 rounded-lg border border-gray-800 bg-gray-900/70 px-2 py-1.5 text-left transition hover:border-[#1DB954]/60 hover:bg-gray-800/80"
                   >
                     {plImg ? (
                       <img

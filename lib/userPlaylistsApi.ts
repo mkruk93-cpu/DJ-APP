@@ -139,6 +139,12 @@ export interface SharedPlaylistsResponse {
   paging: { limit: number; offset: number };
 }
 
+export interface SharedPlaylistImportResult {
+  ok: boolean;
+  playlist: { id: string; name: string; trackCount: number };
+  usage: { playlists: number; tracks: number };
+}
+
 export async function listSharedPlaylists(limit = 100, offset = 0): Promise<SharedPlaylistsResponse> {
   const params = new URLSearchParams();
   params.set('limit', String(limit));
@@ -164,4 +170,55 @@ export async function getSharedPlaylistTracksPage(
   const safeId = encodeURIComponent(playlistId);
   const res = await fetch(`${getServerUrl()}/api/shared-playlists/${safeId}/tracks?${params.toString()}`);
   return parseOrThrow<PlaylistTrackPage>(res);
+}
+
+export async function importSharedPlaylistFiles(
+  files: File[],
+  playlistName: string,
+): Promise<SharedPlaylistImportResult> {
+  if (!files.length) {
+    throw new Error("Geen bestanden geselecteerd");
+  }
+  const { nickname, deviceId } = getUserIdentity(true);
+  const form = new FormData();
+  for (const file of files) {
+    form.append("files", file);
+  }
+  form.append("playlist_name", playlistName);
+  form.append("nickname", nickname);
+  form.append("device_id", deviceId);
+  const res = await fetch(`${getServerUrl()}/api/shared-playlists/import`, {
+    method: "POST",
+    body: form,
+  });
+  return parseOrThrow<SharedPlaylistImportResult>(res);
+}
+
+export async function updateSharedPlaylistAdmin(
+  playlistId: string,
+  playlistName: string,
+  token: string,
+): Promise<SharedPlaylist> {
+  const safeId = encodeURIComponent(playlistId);
+  const res = await fetch(`${getServerUrl()}/api/shared-playlists/${safeId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, playlist_name: playlistName }),
+  });
+  const payload = await parseOrThrow<{ ok: boolean; playlist: SharedPlaylist }>(res);
+  return payload.playlist;
+}
+
+export async function deleteSharedPlaylistAdmin(
+  playlistId: string,
+  token: string,
+): Promise<{ playlists: number; tracks: number }> {
+  const safeId = encodeURIComponent(playlistId);
+  const res = await fetch(`${getServerUrl()}/api/shared-playlists/${safeId}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+  const payload = await parseOrThrow<{ ok: boolean; usage: { playlists: number; tracks: number } }>(res);
+  return payload.usage;
 }

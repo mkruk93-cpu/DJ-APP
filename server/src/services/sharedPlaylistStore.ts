@@ -35,6 +35,7 @@ interface SharedStoreShape {
 }
 
 const SHARED_FALLBACK_PREFIX = 'shared:';
+export type SharedFallbackPlayMode = 'random' | 'ordered';
 
 export interface SharedPlaylistSummary {
   id: string;
@@ -90,16 +91,34 @@ const STORE_FILE = process.env.SHARED_PLAYLIST_STORE_FILE
 
 let writeQueue: Promise<void> = Promise.resolve();
 
-export function toSharedFallbackPlaylistId(playlistId: string): string {
-  return `${SHARED_FALLBACK_PREFIX}${playlistId.trim()}`;
+export function toSharedFallbackPlaylistId(
+  playlistId: string,
+  mode: SharedFallbackPlayMode = 'random',
+): string {
+  const id = playlistId.trim();
+  if (!id) return `${SHARED_FALLBACK_PREFIX}`;
+  if (mode === 'ordered') return `${SHARED_FALLBACK_PREFIX}${id}:ordered`;
+  return `${SHARED_FALLBACK_PREFIX}${id}`;
 }
 
 export function parseSharedFallbackPlaylistId(value: string | null | undefined): string | null {
   if (!value) return null;
   const trimmed = value.trim();
   if (!trimmed.startsWith(SHARED_FALLBACK_PREFIX)) return null;
-  const id = trimmed.slice(SHARED_FALLBACK_PREFIX.length).trim();
-  return id || null;
+  const raw = trimmed.slice(SHARED_FALLBACK_PREFIX.length).trim();
+  if (!raw) return null;
+  const [id] = raw.split(':');
+  const normalized = (id ?? '').trim();
+  return normalized || null;
+}
+
+export function parseSharedFallbackPlayMode(value: string | null | undefined): SharedFallbackPlayMode {
+  if (!value) return 'random';
+  const trimmed = value.trim();
+  if (!trimmed.startsWith(SHARED_FALLBACK_PREFIX)) return 'random';
+  const raw = trimmed.slice(SHARED_FALLBACK_PREFIX.length).trim().toLowerCase();
+  if (raw.endsWith(':ordered')) return 'ordered';
+  return 'random';
 }
 
 function emptyStore(): SharedStoreShape {
@@ -337,6 +356,37 @@ export async function getSharedPlaylistTracksPage(
 export async function hasSharedPlaylist(playlistId: string): Promise<boolean> {
   const store = readStore();
   return store.playlists.some((entry) => entry.id === playlistId);
+}
+
+export async function updateSharedPlaylistName(
+  playlistId: string,
+  name: string,
+): Promise<SharedPlaylistSummary | null> {
+  const trimmedName = name.trim().slice(0, 140);
+  if (!trimmedName) return null;
+  return withWriteLock((store) => {
+    const playlist = store.playlists.find((entry) => entry.id === playlistId);
+    if (!playlist) return null;
+    playlist.name = trimmedName;
+    return {
+      id: playlist.id,
+      name: playlist.name,
+      source: playlist.source,
+      created_at: playlist.created_at,
+      imported_at: playlist.imported_at,
+      track_count: playlist.track_count,
+      added_by: playlist.added_by,
+    };
+  });
+}
+
+export async function deleteSharedPlaylist(playlistId: string): Promise<boolean> {
+  return withWriteLock((store) => {
+    const index = store.playlists.findIndex((entry) => entry.id === playlistId);
+    if (index < 0) return false;
+    store.playlists.splice(index, 1);
+    return true;
+  });
 }
 
 export async function getSharedStoreUsage(): Promise<{ playlists: number; tracks: number }> {

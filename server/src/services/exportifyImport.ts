@@ -24,12 +24,18 @@ const DEFAULT_MAX_PLAYLISTS = 20;
 const DEFAULT_MAX_TRACKS_PER_PLAYLIST = 1500;
 
 function normalizeHeader(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, ' ');
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/^"+|"+$/g, '')
+    .replace(/[()]/g, ' ')
+    .replace(/\s+/g, ' ');
 }
 
 function firstValue(record: Record<string, unknown>, keys: string[]): string {
   for (const key of keys) {
-    const found = Object.entries(record).find(([raw]) => normalizeHeader(raw) === key)?.[1];
+    const target = normalizeHeader(key);
+    const found = Object.entries(record).find(([raw]) => normalizeHeader(raw) === target)?.[1];
     if (typeof found === 'string' && found.trim()) return found.trim();
   }
   return '';
@@ -50,30 +56,76 @@ function normalizePlaylistName(fileName: string): string {
   return raw || 'Imported playlist';
 }
 
+function detectCsvDelimiter(text: string): ',' | ';' | '\t' {
+  const firstLine = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0) ?? '';
+  const comma = (firstLine.match(/,/g) ?? []).length;
+  const semicolon = (firstLine.match(/;/g) ?? []).length;
+  const tab = (firstLine.match(/\t/g) ?? []).length;
+  if (semicolon > comma && semicolon >= tab) return ';';
+  if (tab > comma && tab > semicolon) return '\t';
+  return ',';
+}
+
 function parseCsvBuffer(fileName: string, buffer: Buffer, maxTracks: number): ExportifyPlaylistImport {
   const text = buffer.toString('utf8');
+  const delimiter = detectCsvDelimiter(text);
   const records = parse(text, {
     columns: true,
     skip_empty_lines: true,
     bom: true,
     relax_column_count: true,
+    relax_quotes: true,
     trim: true,
+    delimiter,
   }) as Record<string, unknown>[];
 
   const dedupe = new Set<string>();
   const tracks: ExportifyTrackRow[] = [];
 
+  const titleKeys = [
+    'track name',
+    'name',
+    'title',
+    'song name',
+    'track title',
+    'nummernaam',
+  ];
+  const artistKeys = [
+    'artist name(s)',
+    'artist',
+    'artists',
+    'artist name',
+    'naam van artiest',
+    'naam van artiest op het album',
+  ];
+  const albumKeys = [
+    'album name',
+    'album',
+    'naam van album',
+  ];
+  const spotifyKeys = [
+    'track uri',
+    'track url',
+    'spotify url',
+    'spotify uri',
+    'uri',
+    'nummer uri',
+  ];
+
   for (const record of records) {
-    const title = firstValue(record, ['track name', 'name', 'title']);
-    const artist = firstValue(record, ['artist name(s)', 'artist', 'artists']);
+    const title = firstValue(record, titleKeys);
+    const artist = firstValue(record, artistKeys);
     if (!title || !artist) continue;
 
     const dedupeKey = `${artist.toLowerCase()}|${title.toLowerCase()}`;
     if (dedupe.has(dedupeKey)) continue;
     dedupe.add(dedupeKey);
 
-    const albumRaw = firstValue(record, ['album name', 'album']);
-    const spotifyRaw = firstValue(record, ['track uri', 'track url', 'spotify url', 'uri']);
+    const albumRaw = firstValue(record, albumKeys);
+    const spotifyRaw = firstValue(record, spotifyKeys);
 
     tracks.push({
       title,

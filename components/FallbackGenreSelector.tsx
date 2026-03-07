@@ -27,6 +27,7 @@ export default function FallbackGenreSelector() {
   const genres = useRadioStore((s) => s.fallbackGenres);
   const activeGenre = useRadioStore((s) => s.activeFallbackGenre);
   const activeGenreBy = useRadioStore((s) => s.activeFallbackGenreBy);
+  const sharedPlaybackMode = useRadioStore((s) => s.activeFallbackSharedMode);
   const menuRef = useRef<HTMLDetailsElement | null>(null);
   const summaryRef = useRef<HTMLElement | null>(null);
   const [isMobile, setIsMobile] = useState(false);
@@ -306,6 +307,39 @@ export default function FallbackGenreSelector() {
           </>
         ) : (
           <>
+            <div className="mb-1 rounded-md border border-gray-800 bg-gray-900/70 p-1">
+              <p className="mb-1 px-1 text-[10px] text-gray-400">Afspeelvolgorde</p>
+              <div className="grid grid-cols-2 gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
+                    getSocket().emit("fallback:shared:mode:set", { mode: "random", selectedBy });
+                  }}
+                  className={`rounded px-2 py-1 text-[11px] font-semibold transition ${
+                    sharedPlaybackMode === "random"
+                      ? "bg-violet-600/30 text-violet-100"
+                      : "text-gray-300 hover:bg-gray-800"
+                  }`}
+                >
+                  Random
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
+                    getSocket().emit("fallback:shared:mode:set", { mode: "ordered", selectedBy });
+                  }}
+                  className={`rounded px-2 py-1 text-[11px] font-semibold transition ${
+                    sharedPlaybackMode === "ordered"
+                      ? "bg-violet-600/30 text-violet-100"
+                      : "text-gray-300 hover:bg-gray-800"
+                  }`}
+                >
+                  Op volgorde
+                </button>
+              </div>
+            </div>
             {sharedPlaylists.map((playlist) => {
               const isActive = playlist.id === activeGenre;
               return (
@@ -314,7 +348,11 @@ export default function FallbackGenreSelector() {
                   type="button"
                   onClick={() => {
                     const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
-                    getSocket().emit("fallback:genre:set", { genreId: playlist.id, selectedBy });
+                    getSocket().emit("fallback:genre:set", {
+                      genreId: playlist.id,
+                      selectedBy,
+                      sharedPlaybackMode,
+                    });
                     if (menuRef.current) menuRef.current.open = false;
                   }}
                   className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${

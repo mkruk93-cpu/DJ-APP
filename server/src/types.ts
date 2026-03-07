@@ -87,6 +87,7 @@ export interface ServerState {
   fallbackGenres: FallbackGenre[];
   activeFallbackGenre: string | null;
   activeFallbackGenreBy: string | null;
+  activeFallbackSharedMode: 'random' | 'ordered';
   listenerCount: number;
   streamOnline: boolean;
   voteState: VoteState | null;

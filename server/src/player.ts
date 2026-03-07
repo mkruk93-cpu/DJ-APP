@@ -98,11 +98,24 @@ const STREAM_BITRATE_RAW = (process.env.STREAM_BITRATE ?? '256k').trim().toLower
 const STREAM_USE_SOURCE_MODE = STREAM_BITRATE_RAW === 'source' || STREAM_BITRATE_RAW === 'true';
 const STREAM_BITRATE = STREAM_USE_SOURCE_MODE ? '256k' : STREAM_BITRATE_RAW;
 let activeFallbackGenre: string | null = null;
+type SharedAutoPlaybackMode = 'random' | 'ordered';
+let activeSharedAutoPlaybackMode: SharedAutoPlaybackMode = 'random';
+const sharedPlaylistOrderCursor = new Map<string, number>();
 
 type ActiveAutoSource =
   | { type: 'genre'; key: string; genreId: string }
   | { type: 'liked'; key: string }
-  | { type: 'shared'; key: string; playlistId: string };
+  | { type: 'shared'; key: string; playlistId: string; playbackMode: SharedAutoPlaybackMode };
+
+function normalizeSharedAutoPlaybackMode(value: unknown): SharedAutoPlaybackMode {
+  if (typeof value !== 'string') return 'random';
+  const normalized = value.trim().toLowerCase();
+  return normalized === 'ordered' ? 'ordered' : 'random';
+}
+
+export function setSharedAutoPlaybackMode(mode: string | null | undefined): void {
+  activeSharedAutoPlaybackMode = normalizeSharedAutoPlaybackMode(mode);
+}
 
 function getActiveAutoSource(): ActiveAutoSource | null {
   const activeAuto = parseAutoFallbackGenreId(activeFallbackGenre);
@@ -116,7 +129,12 @@ function getActiveAutoSource(): ActiveAutoSource | null {
 
   const sharedPlaylistId = parseSharedFallbackPlaylistId(activeFallbackGenre);
   if (sharedPlaylistId) {
-    return { type: 'shared', key: `shared:${sharedPlaylistId}`, playlistId: sharedPlaylistId };
+    return {
+      type: 'shared',
+      key: `shared:${sharedPlaylistId}`,
+      playlistId: sharedPlaylistId,
+      playbackMode: activeSharedAutoPlaybackMode,
+    };
   }
 
   return null;
@@ -1102,7 +1120,10 @@ async function prepareLikedAutoFallbackTrack(): Promise<ReadyTrack | null> {
   }
 }
 
-async function prepareSharedAutoFallbackTrack(playlistId: string): Promise<ReadyTrack | null> {
+async function prepareSharedAutoFallbackTrack(
+  playlistId: string,
+  playbackMode: SharedAutoPlaybackMode = 'random',
+): Promise<ReadyTrack | null> {
   const expectedSourceKey = `shared:${playlistId}`;
   try {
     if (!isAutoSourceStillActive(expectedSourceKey)) return null;
@@ -1131,7 +1152,15 @@ async function prepareSharedAutoFallbackTrack(playlistId: string): Promise<Ready
       && !wasPlayedAutoToday(entry.query),
     );
     const pool = fresh.length > 0 ? fresh : candidates;
-    const choice = pool[Math.floor(Math.random() * pool.length)];
+    let choice: typeof pool[number] | undefined;
+    if (playbackMode === 'ordered') {
+      const cursor = sharedPlaylistOrderCursor.get(playlistId) ?? 0;
+      const index = ((cursor % pool.length) + pool.length) % pool.length;
+      choice = pool[index];
+      sharedPlaylistOrderCursor.set(playlistId, (index + 1) % pool.length);
+    } else {
+      choice = pool[Math.floor(Math.random() * pool.length)];
+    }
     if (!choice) return null;
 
     console.log(`[auto-download] Trying (shared:${playlistId}): ${choice.query}`);
@@ -2144,7 +2173,7 @@ async function ensureAutoReadyBuffer(sb: SupabaseClient, cacheDir: string, targe
       const ready = autoSource.type === 'liked'
         ? await prepareLikedAutoFallbackTrack()
         : autoSource.type === 'shared'
-          ? await prepareSharedAutoFallbackTrack(autoSource.playlistId)
+          ? await prepareSharedAutoFallbackTrack(autoSource.playlistId, autoSource.playbackMode)
           : await prepareAutoFallbackByGenre(autoSource.genreId);
       if (!ready) break;
       if (!isAutoSourceStillActive(autoSource.key)) {
@@ -2250,7 +2279,7 @@ async function playNext(
       const preparePromise = activeAutoSource.type === 'liked'
         ? prepareLikedAutoFallbackTrack()
         : activeAutoSource.type === 'shared'
-          ? prepareSharedAutoFallbackTrack(activeAutoSource.playlistId)
+          ? prepareSharedAutoFallbackTrack(activeAutoSource.playlistId, activeAutoSource.playbackMode)
           : prepareAutoFallbackByGenre(activeAutoSource.genreId);
       if (timeoutMs > 0) {
         ready = await Promise.race([
@@ -2292,7 +2321,9 @@ async function playNext(
     isFallback = true;
     trackIsAutoFallback = true;
     trackCleanupAfterUse = ready.cleanupAfterUse;
-    source = 'auto/random';
+    source = activeAutoSource.type === 'shared' && activeAutoSource.playbackMode === 'ordered'
+      ? 'auto/ordered'
+      : 'auto/random';
     currentQueueItemId = null;
     // Refill asynchronously; do not block current playback on buffer refill.
     void ensureAutoReadyBuffer(sb, cacheDir);
@@ -3140,7 +3171,7 @@ async function prepareNextTrack(
           activeAutoSource.type === 'liked'
             ? await prepareLikedAutoFallbackTrack()
             : activeAutoSource.type === 'shared'
-              ? await prepareSharedAutoFallbackTrack(activeAutoSource.playlistId)
+              ? await prepareSharedAutoFallbackTrack(activeAutoSource.playlistId, activeAutoSource.playbackMode)
               : await prepareAutoFallbackByGenre(activeAutoSource.genreId)
         );
         if (autoReady) {
@@ -3178,7 +3209,7 @@ async function prepareNextTrack(
           activeAutoSource.type === 'liked'
             ? await prepareLikedAutoFallbackTrack()
             : activeAutoSource.type === 'shared'
-              ? await prepareSharedAutoFallbackTrack(activeAutoSource.playlistId)
+              ? await prepareSharedAutoFallbackTrack(activeAutoSource.playlistId, activeAutoSource.playbackMode)
               : await prepareAutoFallbackByGenre(activeAutoSource.genreId)
         );
         if (autoReady) {
