@@ -6,6 +6,7 @@ import {
   getSpotifyOembed,
   importSharedPlaylistFiles,
   listSharedPlaylists,
+  type PlaylistGenreMetaInput,
   type SharedPlaylist,
   type UserPlaylistTrack,
 } from "@/lib/userPlaylistsApi";
@@ -17,6 +18,46 @@ interface SharedPlaylistsBrowserProps {
 
 type View = "playlists" | "tracks";
 const TRACK_PAGE_SIZE = 120;
+const PLAYLIST_GENRE_GROUPS = [
+  "Hard Dance",
+  "Electronic",
+  "House",
+  "Techno",
+  "Trance",
+  "Bass",
+  "Rock/Metal",
+  "Pop",
+  "Hip-Hop",
+  "Other",
+];
+
+function buildPlaylistTreeRows<T extends { id: string; related_parent_playlist_id: string | null }>(
+  items: T[],
+): Array<{ item: T; depth: number }> {
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const children = new Map<string | null, T[]>();
+  const roots: T[] = [];
+  for (const item of items) {
+    const parentId = item.related_parent_playlist_id?.trim() || null;
+    if (parentId && byId.has(parentId) && parentId !== item.id) {
+      const bucket = children.get(parentId) ?? [];
+      bucket.push(item);
+      children.set(parentId, bucket);
+    } else {
+      roots.push(item);
+    }
+  }
+  const output: Array<{ item: T; depth: number }> = [];
+  const walk = (node: T, depth: number, chain: Set<string>) => {
+    output.push({ item: node, depth });
+    if (chain.has(node.id)) return;
+    const nextChain = new Set(chain);
+    nextChain.add(node.id);
+    for (const child of children.get(node.id) ?? []) walk(child, Math.min(depth + 1, 5), nextChain);
+  };
+  for (const root of roots) walk(root, 0, new Set());
+  return output;
+}
 
 export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: SharedPlaylistsBrowserProps) {
   const [view, setView] = useState<View>("playlists");
@@ -28,6 +69,9 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
   const [importFiles, setImportFiles] = useState<File[]>([]);
   const [importName, setImportName] = useState("");
   const [showHelp, setShowHelp] = useState(false);
+  const [importGenreGroup, setImportGenreGroup] = useState("");
+  const [importSubgenre, setImportSubgenre] = useState("");
+  const [importRelatedPlaylistId, setImportRelatedPlaylistId] = useState("");
   const [addedTrackId, setAddedTrackId] = useState<string | null>(null);
   const [sharedPlaylists, setSharedPlaylists] = useState<SharedPlaylist[]>([]);
   const [sharedUsage, setSharedUsage] = useState<{ playlists: number; tracks: number } | null>(null);
@@ -184,10 +228,17 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
     setError(null);
     setStatus(null);
     try {
-      const result = await importSharedPlaylistFiles(importFiles, safeName);
+      const meta: PlaylistGenreMetaInput = {
+        genre_group: importGenreGroup.trim() || null,
+        subgenre: importSubgenre.trim() || null,
+        related_parent_playlist_id: importRelatedPlaylistId.trim() || null,
+      };
+      const result = await importSharedPlaylistFiles(importFiles, safeName, meta);
       setStatus(`Import klaar: ${result.playlist.name} (${result.playlist.trackCount} unieke tracks).`);
       setImportFiles([]);
       setImportName("");
+      setImportSubgenre("");
+      setImportRelatedPlaylistId("");
       await loadSharedPlaylists();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Import mislukt.");
@@ -208,6 +259,7 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
   const filteredPlaylists = sharedPlaylists.filter((playlist) =>
     playlist.name.toLowerCase().includes(filter.toLowerCase()),
   );
+  const playlistTreeRows = buildPlaylistTreeRows(filteredPlaylists);
   const filteredTracks = tracks.filter((track) => {
     const q = filter.toLowerCase();
     if (!q) return true;
@@ -296,22 +348,30 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
             >
               Ververs
             </button>
-            {filteredPlaylists.length === 0 && (
+            {playlistTreeRows.length === 0 && (
               <p className="text-[10px] text-gray-400">Nog geen publieke playlists beschikbaar.</p>
             )}
-            {filteredPlaylists.map((playlist) => (
+            {playlistTreeRows.map(({ item: playlist, depth }) => (
               <button
                 key={playlist.id}
                 type="button"
                 onClick={() => { void openPlaylist(playlist); }}
                 className="mt-1 flex w-full items-center gap-2 rounded-lg border border-gray-800 bg-gray-900/70 px-2.5 py-1.5 text-left transition hover:border-blue-700/60 hover:bg-gray-800/80"
+                style={{ marginLeft: `${depth * 12}px` }}
               >
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-blue-500/15">
                   <svg className="h-4 w-4 text-blue-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                     <path d="M8 6h12M8 12h12M8 18h12M3 6h.01M3 12h.01M3 18h.01" />
                   </svg>
                 </div>
-                <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-white">{playlist.name}</span>
+                <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-white">
+                  {depth > 0 ? "↳ " : ""}{playlist.name}
+                  {(playlist.genre_group || playlist.subgenre) ? (
+                    <span className="ml-1 text-[10px] font-normal text-gray-400">
+                      ({[playlist.genre_group, playlist.subgenre].filter(Boolean).join(" / ")})
+                    </span>
+                  ) : null}
+                </span>
                 <span className="ml-2 shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-300">
                   {playlist.track_count}
                 </span>
@@ -323,6 +383,35 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
               Nieuwe playlist toevoegen
             </summary>
             <p className="mt-1 text-[10px] text-gray-500">Upload meerdere Exportify CSV's. We voegen samen en dedupliceren.</p>
+            <div className="mt-2 grid gap-1.5 sm:grid-cols-3">
+              <select
+                value={importGenreGroup}
+                onChange={(e) => setImportGenreGroup(e.target.value)}
+                className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white"
+              >
+                <option value="">Overkoepelend genre</option>
+                {PLAYLIST_GENRE_GROUPS.map((group) => (
+                  <option key={group} value={group}>{group}</option>
+                ))}
+              </select>
+              <input
+                type="text"
+                value={importSubgenre}
+                onChange={(e) => setImportSubgenre(e.target.value)}
+                placeholder="Subgenre (optioneel)"
+                className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white placeholder-gray-500"
+              />
+              <select
+                value={importRelatedPlaylistId}
+                onChange={(e) => setImportRelatedPlaylistId(e.target.value)}
+                className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white"
+              >
+                <option value="">Verwante parent-playlist</option>
+                {sharedPlaylists.map((playlist) => (
+                  <option key={playlist.id} value={playlist.id}>{playlist.name}</option>
+                ))}
+              </select>
+            </div>
             <input
               type="text"
               value={importName}

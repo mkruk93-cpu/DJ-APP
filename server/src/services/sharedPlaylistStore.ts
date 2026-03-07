@@ -10,6 +10,12 @@ export interface SharedTrackInput {
   position: number;
 }
 
+export interface PlaylistGenreMeta {
+  genre_group: string | null;
+  subgenre: string | null;
+  related_parent_playlist_id: string | null;
+}
+
 interface SharedTrack {
   id: string;
   title: string;
@@ -27,6 +33,9 @@ interface SharedPlaylist {
   imported_at: string;
   track_count: number;
   added_by: string | null;
+  genre_group: string | null;
+  subgenre: string | null;
+  related_parent_playlist_id: string | null;
   tracks: SharedTrack[];
 }
 
@@ -45,6 +54,9 @@ export interface SharedPlaylistSummary {
   imported_at: string;
   track_count: number;
   added_by: string | null;
+  genre_group: string | null;
+  subgenre: string | null;
+  related_parent_playlist_id: string | null;
 }
 
 export interface SharedPlaylistTrack {
@@ -69,6 +81,7 @@ export interface SharedIngestOptions {
   source?: string;
   createdAt?: string;
   addedBy?: string | null;
+  genreMeta?: PlaylistGenreMeta;
 }
 
 export interface SharedIngestResult {
@@ -139,7 +152,9 @@ function readStore(): SharedStoreShape {
     const raw = fs.readFileSync(STORE_FILE, 'utf8');
     if (!raw.trim()) return emptyStore();
     const parsed = JSON.parse(raw) as Partial<SharedStoreShape>;
-    const playlists = Array.isArray(parsed.playlists) ? parsed.playlists : [];
+    const playlists = Array.isArray(parsed.playlists)
+      ? parsed.playlists.map((entry) => normalizeStoredPlaylist(entry as SharedPlaylist))
+      : [];
     return { playlists };
   } catch (err) {
     console.warn('[shared-playlists] Store read failed, using empty store:', (err as Error).message);
@@ -162,6 +177,31 @@ function normalizeText(value: string): string {
     .replace(/[^\w\s-]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function normalizeGenreMeta(input?: PlaylistGenreMeta | null): PlaylistGenreMeta {
+  const genreGroup = (input?.genre_group ?? '').trim().slice(0, 80);
+  const subgenre = (input?.subgenre ?? '').trim().slice(0, 120);
+  const relatedParent = (input?.related_parent_playlist_id ?? '').trim();
+  return {
+    genre_group: genreGroup || null,
+    subgenre: subgenre || null,
+    related_parent_playlist_id: relatedParent || null,
+  };
+}
+
+function normalizeStoredPlaylist(raw: SharedPlaylist): SharedPlaylist {
+  const meta = normalizeGenreMeta({
+    genre_group: (raw as Partial<SharedPlaylist>).genre_group ?? null,
+    subgenre: (raw as Partial<SharedPlaylist>).subgenre ?? null,
+    related_parent_playlist_id: (raw as Partial<SharedPlaylist>).related_parent_playlist_id ?? null,
+  });
+  return {
+    ...raw,
+    genre_group: meta.genre_group,
+    subgenre: meta.subgenre,
+    related_parent_playlist_id: meta.related_parent_playlist_id,
+  };
 }
 
 function makeTrackKey(artist: string | null, title: string): string {
@@ -255,6 +295,7 @@ export async function ingestSharedPlaylist(
     const importedAt = new Date().toISOString();
     const playlistId = randomUUID();
     const safeName = options.name.trim().slice(0, 140) || 'Shared playlist';
+    const meta = normalizeGenreMeta(options.genreMeta);
 
     store.playlists.push({
       id: playlistId,
@@ -264,6 +305,9 @@ export async function ingestSharedPlaylist(
       imported_at: importedAt,
       track_count: normalizedTracks.length,
       added_by: options.addedBy?.trim() || null,
+      genre_group: meta.genre_group,
+      subgenre: meta.subgenre,
+      related_parent_playlist_id: meta.related_parent_playlist_id,
       tracks: normalizedTracks,
     });
 
@@ -305,6 +349,9 @@ export async function listSharedPlaylists(limit = 100, offset = 0): Promise<Shar
       imported_at: playlist.imported_at,
       track_count: playlist.track_count,
       added_by: playlist.added_by,
+      genre_group: playlist.genre_group ?? null,
+      subgenre: playlist.subgenre ?? null,
+      related_parent_playlist_id: playlist.related_parent_playlist_id ?? null,
     }));
 }
 
@@ -376,6 +423,9 @@ export async function updateSharedPlaylistName(
       imported_at: playlist.imported_at,
       track_count: playlist.track_count,
       added_by: playlist.added_by,
+      genre_group: playlist.genre_group ?? null,
+      subgenre: playlist.subgenre ?? null,
+      related_parent_playlist_id: playlist.related_parent_playlist_id ?? null,
     };
   });
 }
@@ -428,6 +478,9 @@ export async function appendTracksToSharedPlaylist(
       imported_at: playlist.imported_at,
       track_count: playlist.track_count,
       added_by: playlist.added_by,
+      genre_group: playlist.genre_group ?? null,
+      subgenre: playlist.subgenre ?? null,
+      related_parent_playlist_id: playlist.related_parent_playlist_id ?? null,
     };
   });
 }
@@ -454,6 +507,9 @@ export async function deleteSharedPlaylistTrack(
       imported_at: playlist.imported_at,
       track_count: playlist.track_count,
       added_by: playlist.added_by,
+      genre_group: playlist.genre_group ?? null,
+      subgenre: playlist.subgenre ?? null,
+      related_parent_playlist_id: playlist.related_parent_playlist_id ?? null,
     };
   });
 }

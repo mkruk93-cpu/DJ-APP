@@ -21,6 +21,7 @@ import {
   listSharedPlaylists,
   listUserPlaylists,
   type SharedPlaylist,
+  type PlaylistGenreMetaInput,
   type UserPlaylist,
   type UserPlaylistTrack,
 } from "@/lib/userPlaylistsApi";
@@ -41,6 +42,47 @@ function formatDuration(ms: number): string {
 type View = "playlists" | "tracks" | "importedTracks" | "sharedTracks";
 type TrackSource = "liked" | "playlist" | null;
 const IMPORTED_TRACK_PAGE_SIZE = 120;
+const PLAYLIST_GENRE_GROUPS = [
+  "Hard Dance",
+  "Electronic",
+  "House",
+  "Techno",
+  "Trance",
+  "Bass",
+  "Rock/Metal",
+  "Pop",
+  "Hip-Hop",
+  "Other",
+];
+
+function buildPlaylistTreeRows<T extends { id: string; related_parent_playlist_id: string | null }>(
+  items: T[],
+): Array<{ item: T; depth: number }> {
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const children = new Map<string | null, T[]>();
+  const roots: T[] = [];
+  for (const item of items) {
+    const parentId = item.related_parent_playlist_id?.trim() || null;
+    if (parentId && byId.has(parentId) && parentId !== item.id) {
+      const bucket = children.get(parentId) ?? [];
+      bucket.push(item);
+      children.set(parentId, bucket);
+    } else {
+      roots.push(item);
+    }
+  }
+  const output: Array<{ item: T; depth: number }> = [];
+  const walk = (node: T, depth: number, chain: Set<string>) => {
+    output.push({ item: node, depth });
+    if (chain.has(node.id)) return;
+    const nextChain = new Set(chain);
+    nextChain.add(node.id);
+    const kids = children.get(node.id) ?? [];
+    for (const child of kids) walk(child, Math.min(depth + 1, 5), nextChain);
+  };
+  for (const root of roots) walk(root, 0, new Set());
+  return output;
+}
 
 export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }: SpotifyBrowserProps) {
   const [connected, setConnected] = useState(false);
@@ -82,6 +124,9 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
   const [sharedTracksHasMore, setSharedTracksHasMore] = useState(false);
   const [selectedSharedPlaylist, setSelectedSharedPlaylist] = useState<SharedPlaylist | null>(null);
   const [sharedUsage, setSharedUsage] = useState<{ playlists: number; tracks: number } | null>(null);
+  const [importGenreGroup, setImportGenreGroup] = useState("");
+  const [importSubgenre, setImportSubgenre] = useState("");
+  const [importRelatedPlaylistId, setImportRelatedPlaylistId] = useState("");
   const [savedTrackThumbs, setSavedTrackThumbs] = useState<Record<string, string>>({});
   const listRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
@@ -306,12 +351,19 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
     setImportError(null);
     setImportStatus(null);
     try {
-      const result = await importUserPlaylistFile(importFile);
+      const meta: PlaylistGenreMetaInput = {
+        genre_group: importGenreGroup.trim() || null,
+        subgenre: importSubgenre.trim() || null,
+        related_parent_playlist_id: importRelatedPlaylistId.trim() || null,
+      };
+      const result = await importUserPlaylistFile(importFile, meta);
       const sharedInfo = result.shared
         ? ` · gedeeld: ${result.shared.importedPlaylists}`
         : "";
       setImportStatus(`Import klaar: ${result.totalPlaylists} playlist(s), ${result.totalTracks} tracks${sharedInfo}.`);
       setImportFile(null);
+      setImportSubgenre("");
+      setImportRelatedPlaylistId("");
       await loadSavedPlaylists();
       await loadSharedPlaylists();
       if (result.shared?.warnings?.length) {
@@ -592,6 +644,14 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
   const filteredPlaylists = playlists.filter((p) =>
     p?.name?.toLowerCase().includes(filter.toLowerCase()),
   );
+  const filteredSavedPlaylists = savedPlaylists.filter((playlist) =>
+    playlist.name.toLowerCase().includes(filter.toLowerCase()),
+  );
+  const filteredSharedPlaylists = sharedPlaylists.filter((playlist) =>
+    playlist.name.toLowerCase().includes(filter.toLowerCase()),
+  );
+  const savedPlaylistTreeRows = buildPlaylistTreeRows(filteredSavedPlaylists);
+  const sharedPlaylistTreeRows = buildPlaylistTreeRows(filteredSharedPlaylists);
 
   const filteredTracks = tracks.filter((t) => {
     if (!t?.name) return false;
@@ -750,17 +810,22 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                 {savedPlaylistsLoading ? "Laden..." : "Ververs"}
               </button>
             </div>
-            {savedPlaylists.length === 0 && !savedPlaylistsLoading && (
+            {savedPlaylistTreeRows.length === 0 && !savedPlaylistsLoading && (
               <p className="text-[10px] text-gray-500">Nog geen geïmporteerde playlists.</p>
             )}
-            {savedPlaylists.map((playlist) => (
-              <div key={playlist.id} className="mt-1 flex items-center justify-between rounded-lg border border-gray-800 bg-gray-900/70 px-2.5 py-1.5">
+            {savedPlaylistTreeRows.map(({ item: playlist, depth }) => (
+              <div key={playlist.id} className="mt-1 flex items-center justify-between rounded-lg border border-gray-800 bg-gray-900/70 px-2.5 py-1.5" style={{ marginLeft: `${depth * 12}px` }}>
                 <button
                   type="button"
                   onClick={() => { void openSavedPlaylist(playlist); }}
                   className="min-w-0 flex-1 truncate text-left text-[11px] font-semibold text-white transition hover:text-violet-300"
                 >
-                  {playlist.name}
+                  {depth > 0 ? "↳ " : ""}{playlist.name}
+                  {(playlist.genre_group || playlist.subgenre) ? (
+                    <span className="ml-1 text-[10px] font-normal text-gray-400">
+                      ({[playlist.genre_group, playlist.subgenre].filter(Boolean).join(" / ")})
+                    </span>
+                  ) : null}
                 </button>
                 <button
                   type="button"
@@ -792,17 +857,22 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                 Pool: {sharedUsage.playlists} playlists · {sharedUsage.tracks} tracks
               </p>
             )}
-            {sharedPlaylists.length === 0 && !sharedPlaylistsLoading && (
+            {sharedPlaylistTreeRows.length === 0 && !sharedPlaylistsLoading && (
               <p className="text-[10px] text-gray-400">Nog geen gedeelde playlists beschikbaar.</p>
             )}
-            {sharedPlaylists.slice(0, 80).map((playlist) => (
-              <div key={playlist.id} className="mt-1 flex items-center justify-between rounded-lg border border-gray-800 bg-gray-900/70 px-2.5 py-1.5">
+            {sharedPlaylistTreeRows.slice(0, 120).map(({ item: playlist, depth }) => (
+              <div key={playlist.id} className="mt-1 flex items-center justify-between rounded-lg border border-gray-800 bg-gray-900/70 px-2.5 py-1.5" style={{ marginLeft: `${depth * 12}px` }}>
                 <button
                   type="button"
                   onClick={() => { void openSharedPlaylist(playlist); }}
                   className="min-w-0 flex-1 truncate text-left text-[11px] font-semibold text-white transition hover:text-blue-300"
                 >
-                  {playlist.name}
+                  {depth > 0 ? "↳ " : ""}{playlist.name}
+                  {(playlist.genre_group || playlist.subgenre) ? (
+                    <span className="ml-1 text-[10px] font-normal text-gray-400">
+                      ({[playlist.genre_group, playlist.subgenre].filter(Boolean).join(" / ")})
+                    </span>
+                  ) : null}
                 </button>
                 <span className="ml-2 shrink-0 text-[10px] text-gray-400">
                   {playlist.track_count} tracks
@@ -897,6 +967,34 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
               Nieuwe playlist toevoegen
             </summary>
             <p className="mt-1 text-[10px] text-gray-500">Upload .csv of .zip met playlists uit Exportify.</p>
+            <div className="mt-2 grid gap-1.5 sm:grid-cols-3">
+              <select
+                value={importGenreGroup}
+                onChange={(e) => setImportGenreGroup(e.target.value)}
+                className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white"
+              >
+                <option value="">Overkoepelend genre</option>
+                {PLAYLIST_GENRE_GROUPS.map((group) => (
+                  <option key={group} value={group}>{group}</option>
+                ))}
+              </select>
+              <input
+                value={importSubgenre}
+                onChange={(e) => setImportSubgenre(e.target.value)}
+                placeholder="Subgenre (optioneel)"
+                className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white placeholder-gray-500"
+              />
+              <select
+                value={importRelatedPlaylistId}
+                onChange={(e) => setImportRelatedPlaylistId(e.target.value)}
+                className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white"
+              >
+                <option value="">Verwante parent-playlist</option>
+                {savedPlaylists.map((playlist) => (
+                  <option key={playlist.id} value={playlist.id}>{playlist.name}</option>
+                ))}
+              </select>
+            </div>
             <input
               type="file"
               accept=".csv,.zip,text/csv,application/csv,application/vnd.ms-excel,application/zip,application/x-zip-compressed"

@@ -6,6 +6,9 @@ export interface UserPlaylist {
   name: string;
   source: string;
   created_at: string;
+  genre_group: string | null;
+  subgenre: string | null;
+  related_parent_playlist_id: string | null;
 }
 
 export interface UserPlaylistTrack {
@@ -61,13 +64,19 @@ function withIdentityParams(): URLSearchParams {
   return params;
 }
 
-export async function importUserPlaylistFile(file: File): Promise<UserPlaylistImportResult> {
+export async function importUserPlaylistFile(
+  file: File,
+  meta?: PlaylistGenreMetaInput,
+): Promise<UserPlaylistImportResult> {
   const { nickname, deviceId } = getUserIdentity(true);
   const url = `${getServerUrl()}/api/user-playlists/import`;
   const form = new FormData();
   form.append('file', file);
   form.append('nickname', nickname);
   form.append('device_id', deviceId);
+  if (meta?.genre_group) form.append('genre_group', meta.genre_group);
+  if (meta?.subgenre) form.append('subgenre', meta.subgenre);
+  if (meta?.related_parent_playlist_id) form.append('related_parent_playlist_id', meta.related_parent_playlist_id);
   const res = await fetch(url, {
     method: 'POST',
     body: form,
@@ -131,6 +140,15 @@ export interface SharedPlaylist {
   imported_at: string;
   track_count: number;
   added_by: string | null;
+  genre_group: string | null;
+  subgenre: string | null;
+  related_parent_playlist_id: string | null;
+}
+
+export interface PlaylistGenreMetaInput {
+  genre_group?: string | null;
+  subgenre?: string | null;
+  related_parent_playlist_id?: string | null;
 }
 
 export interface SharedPlaylistsResponse {
@@ -175,6 +193,7 @@ export async function getSharedPlaylistTracksPage(
 export async function importSharedPlaylistFiles(
   files: File[],
   playlistName: string,
+  meta?: PlaylistGenreMetaInput,
 ): Promise<SharedPlaylistImportResult> {
   if (!files.length) {
     throw new Error("Geen bestanden geselecteerd");
@@ -187,6 +206,9 @@ export async function importSharedPlaylistFiles(
   form.append("playlist_name", playlistName);
   form.append("nickname", nickname);
   form.append("device_id", deviceId);
+  if (meta?.genre_group) form.append('genre_group', meta.genre_group);
+  if (meta?.subgenre) form.append('subgenre', meta.subgenre);
+  if (meta?.related_parent_playlist_id) form.append('related_parent_playlist_id', meta.related_parent_playlist_id);
   const res = await fetch(`${getServerUrl()}/api/shared-playlists/import`, {
     method: "POST",
     body: form,

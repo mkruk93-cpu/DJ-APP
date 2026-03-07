@@ -18,6 +18,9 @@ interface StorePlaylist {
   name: string;
   source: string;
   created_at: string;
+  genre_group: string | null;
+  subgenre: string | null;
+  related_parent_playlist_id: string | null;
   tracks: StoreTrack[];
 }
 
@@ -43,6 +46,15 @@ export interface PlaylistSummary {
   name: string;
   source: string;
   created_at: string;
+  genre_group: string | null;
+  subgenre: string | null;
+  related_parent_playlist_id: string | null;
+}
+
+export interface PlaylistGenreMeta {
+  genre_group: string | null;
+  subgenre: string | null;
+  related_parent_playlist_id: string | null;
 }
 
 export interface PlaylistUsage {
@@ -89,7 +101,9 @@ function readStore(): StoreShape {
     const raw = fs.readFileSync(STORE_FILE, 'utf8');
     if (!raw.trim()) return emptyStore();
     const parsed = JSON.parse(raw) as Partial<StoreShape>;
-    const playlists = Array.isArray(parsed.playlists) ? parsed.playlists : [];
+    const playlists = Array.isArray(parsed.playlists)
+      ? parsed.playlists.map((entry) => normalizeStoredPlaylist(entry as StorePlaylist))
+      : [];
     return { playlists };
   } catch (err) {
     console.warn('[user-playlists] Store read failed, using empty store:', (err as Error).message);
@@ -111,6 +125,31 @@ function matchesOwner(playlist: StorePlaylist, owner: PlaylistOwner): boolean {
 function normalizeTrackPosition(index: number, value: number): number {
   if (Number.isFinite(value) && value > 0) return Math.floor(value);
   return index + 1;
+}
+
+function normalizeGenreMeta(input?: PlaylistGenreMeta | null): PlaylistGenreMeta {
+  const genreGroup = (input?.genre_group ?? '').trim().slice(0, 80);
+  const subgenre = (input?.subgenre ?? '').trim().slice(0, 120);
+  const relatedParent = (input?.related_parent_playlist_id ?? '').trim();
+  return {
+    genre_group: genreGroup || null,
+    subgenre: subgenre || null,
+    related_parent_playlist_id: relatedParent || null,
+  };
+}
+
+function normalizeStoredPlaylist(raw: StorePlaylist): StorePlaylist {
+  const meta = normalizeGenreMeta({
+    genre_group: (raw as Partial<StorePlaylist>).genre_group ?? null,
+    subgenre: (raw as Partial<StorePlaylist>).subgenre ?? null,
+    related_parent_playlist_id: (raw as Partial<StorePlaylist>).related_parent_playlist_id ?? null,
+  });
+  return {
+    ...raw,
+    genre_group: meta.genre_group,
+    subgenre: meta.subgenre,
+    related_parent_playlist_id: meta.related_parent_playlist_id,
+  };
 }
 
 async function withWriteLock<T>(operation: (store: StoreShape) => T): Promise<T> {
@@ -139,6 +178,7 @@ export async function createUserPlaylist(
   name: string,
   tracks: CreatePlaylistInputTrack[],
   source = 'exportify',
+  genreMeta?: PlaylistGenreMeta,
 ): Promise<{ id: string; name: string; trackCount: number }> {
   return withWriteLock((store) => {
     const playlistId = randomUUID();
@@ -152,6 +192,7 @@ export async function createUserPlaylist(
       position: normalizeTrackPosition(index, track.position),
     }));
 
+    const meta = normalizeGenreMeta(genreMeta);
     store.playlists.push({
       id: playlistId,
       nickname: owner.nickname,
@@ -159,6 +200,9 @@ export async function createUserPlaylist(
       name,
       source,
       created_at: createdAt,
+      genre_group: meta.genre_group,
+      subgenre: meta.subgenre,
+      related_parent_playlist_id: meta.related_parent_playlist_id,
       tracks: normalizedTracks,
     });
 
@@ -180,6 +224,9 @@ export async function listUserPlaylists(owner: PlaylistOwner): Promise<PlaylistS
       name: playlist.name,
       source: playlist.source,
       created_at: playlist.created_at,
+      genre_group: playlist.genre_group ?? null,
+      subgenre: playlist.subgenre ?? null,
+      related_parent_playlist_id: playlist.related_parent_playlist_id ?? null,
     }));
 }
 

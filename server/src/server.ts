@@ -38,6 +38,7 @@ import {
   getUserPlaylistTracksPage as getStoredUserPlaylistTracksPage,
   deleteUserPlaylist as deleteStoredUserPlaylist,
   getUserPlaylistUsage,
+  type PlaylistGenreMeta as UserPlaylistGenreMeta,
 } from './services/userPlaylistStore.js';
 import {
   ingestSharedPlaylist,
@@ -54,6 +55,7 @@ import {
   parseSharedFallbackPlayMode,
   toSharedFallbackPlaylistId,
   type SharedStoreLimits,
+  type PlaylistGenreMeta as SharedPlaylistGenreMeta,
 } from './services/sharedPlaylistStore.js';
 
 function getErrorMessage(err: unknown): string {
@@ -233,6 +235,18 @@ function getSharedPlaylistNameFromRequest(req: Request): string | null {
   return trimmed || null;
 }
 
+function getPlaylistGenreMetaFromRequest(req: Request): UserPlaylistGenreMeta & SharedPlaylistGenreMeta {
+  const groupRaw = getIdentityValueFromRequest(req, 'genre_group') ?? getIdentityValueFromRequest(req, 'genreGroup');
+  const subgenreRaw = getIdentityValueFromRequest(req, 'subgenre') ?? getIdentityValueFromRequest(req, 'subGenre');
+  const parentRaw = getIdentityValueFromRequest(req, 'related_parent_playlist_id')
+    ?? getIdentityValueFromRequest(req, 'relatedParentPlaylistId')
+    ?? getIdentityValueFromRequest(req, 'related_playlist_id');
+  const genre_group = (groupRaw ?? '').trim().slice(0, 80) || null;
+  const subgenre = (subgenreRaw ?? '').trim().slice(0, 120) || null;
+  const related_parent_playlist_id = (parentRaw ?? '').trim() || null;
+  return { genre_group, subgenre, related_parent_playlist_id };
+}
+
 function getSharedStoreLimits(): SharedStoreLimits {
   return {
     maxSharedPlaylists: SHARED_PLAYLIST_MAX_PLAYLISTS,
@@ -250,6 +264,7 @@ async function ingestParsedPlaylistsIntoShared(
   parsed: ExportifyPlaylistImport[],
   addedBy: string | null,
   source = 'exportify-shared',
+  genreMeta?: SharedPlaylistGenreMeta,
 ): Promise<{
   imported: Array<{ id: string; name: string; trackCount: number }>;
   warnings: SharedImportWarning[];
@@ -271,6 +286,7 @@ async function ingestParsedPlaylistsIntoShared(
       name: safeName,
       source,
       addedBy,
+      genreMeta,
     }, limits);
     if (result.imported && result.playlistId) {
       imported.push({
@@ -483,6 +499,9 @@ async function getCombinedFallbackGenres(): Promise<FallbackGenre[]> {
     id: toSharedFallbackPlaylistId(playlist.id),
     label: `Playlist · ${playlist.name}`,
     trackCount: playlist.track_count,
+    genre_group: playlist.genre_group ?? null,
+    subgenre: playlist.subgenre ?? null,
+    related_parent_playlist_id: playlist.related_parent_playlist_id ?? null,
   }));
   return [...localGenres, likedGenre, ...autoGenres, ...sharedGenres];
 }
@@ -1271,6 +1290,7 @@ app.post('/api/user-playlists/import', upload.single('file'), async (req, res) =
   }
 
   try {
+    const genreMeta = getPlaylistGenreMetaFromRequest(req);
     const parsed = parseExportifyUpload(originalName, req.file.buffer, {
       maxPlaylists: USER_PLAYLIST_MAX_PLAYLISTS_PER_IMPORT,
       maxTracksPerPlaylist: USER_PLAYLIST_MAX_TRACKS_PER_IMPORT,
@@ -1310,7 +1330,7 @@ app.post('/api/user-playlists/import', upload.single('file'), async (req, res) =
         position: index + 1,
       }));
 
-      const stored = await createUserPlaylist(identity, playlistName, tracksRows, 'exportify');
+      const stored = await createUserPlaylist(identity, playlistName, tracksRows, 'exportify', genreMeta);
 
       imported.push({
         id: stored.id,
@@ -1319,7 +1339,7 @@ app.post('/api/user-playlists/import', upload.single('file'), async (req, res) =
       });
     }
 
-    const sharedIngest = await ingestParsedPlaylistsIntoShared(parsed, identity.nickname, 'exportify-user');
+    const sharedIngest = await ingestParsedPlaylistsIntoShared(parsed, identity.nickname, 'exportify-user', genreMeta);
     const sharedUsage = await getSharedStoreUsage();
 
     res.json({
@@ -1450,6 +1470,7 @@ app.post('/api/shared-playlists/import', upload.any(), async (req, res) => {
   }
   const identity = getUserIdentityFromRequest(req);
   try {
+    const genreMeta = getPlaylistGenreMetaFromRequest(req);
     const mergedTracks: Array<{
       title: string;
       artist: string;
@@ -1493,6 +1514,7 @@ app.post('/api/shared-playlists/import', upload.any(), async (req, res) => {
       name: requestedName,
       source: 'exportify-shared-upload',
       addedBy: identity?.nickname ?? null,
+      genreMeta,
     }, getSharedStoreLimits());
     if (!result.imported || !result.playlistId) {
       return res.status(400).json({ error: result.reason ?? 'Import mislukt' });

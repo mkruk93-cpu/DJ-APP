@@ -1190,7 +1190,6 @@ async function prepareSharedAutoFallbackTrack(
   const expectedSourceKey = `shared:${playlistId}`;
   try {
     if (!isAutoSourceStillActive(expectedSourceKey)) return null;
-    await refreshDailyAutoPlayedKeys();
     const tracks = await getSharedPlaylistTracks(playlistId);
     if (!tracks || tracks.length === 0) return null;
 
@@ -1214,8 +1213,7 @@ async function prepareSharedAutoFallbackTrack(
     if (candidates.length === 0) return null;
 
     const fresh = candidates.filter((entry) =>
-      !recentAutoTrackKeys.includes(normalizeAutoKey(entry.recentKey))
-      && !wasPlayedAutoToday(entry.recentKey),
+      !recentAutoTrackKeys.includes(normalizeAutoKey(entry.recentKey)),
     );
     const pool = fresh.length > 0 ? fresh : candidates;
     let choice: typeof pool[number] | undefined;

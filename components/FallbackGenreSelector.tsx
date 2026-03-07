@@ -13,6 +13,37 @@ import type { GenreOption } from "@/lib/radioApi";
 
 type FallbackListTab = "local" | "auto" | "playlists";
 
+function buildSharedFallbackTreeRows(
+  items: Array<{ id: string; related_parent_playlist_id?: string | null }>,
+): Array<{ id: string; depth: number }> {
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const children = new Map<string | null, Array<{ id: string; related_parent_playlist_id?: string | null }>>();
+  const roots: Array<{ id: string; related_parent_playlist_id?: string | null }> = [];
+  for (const item of items) {
+    const parentRaw = item.related_parent_playlist_id?.trim() || null;
+    const parentId = parentRaw ? `shared:${parentRaw}` : null;
+    if (parentId && byId.has(parentId) && parentId !== item.id) {
+      const bucket = children.get(parentId) ?? [];
+      bucket.push(item);
+      children.set(parentId, bucket);
+    } else {
+      roots.push(item);
+    }
+  }
+  const rows: Array<{ id: string; depth: number }> = [];
+  const walk = (node: { id: string }, depth: number, chain: Set<string>) => {
+    rows.push({ id: node.id, depth });
+    if (chain.has(node.id)) return;
+    const nextChain = new Set(chain);
+    nextChain.add(node.id);
+    for (const child of children.get(node.id) ?? []) {
+      walk(child, Math.min(depth + 1, 5), nextChain);
+    }
+  };
+  for (const root of roots) walk(root, 0, new Set());
+  return rows;
+}
+
 function normalizeAutoGenreId(raw: string): string {
   const value = raw.trim().toLowerCase();
   if (value === "terrorcore") return "terror";
@@ -50,6 +81,7 @@ export default function FallbackGenreSelector() {
     () => sortedGenres.filter((genre) => genre.id.startsWith("shared:")),
     [sortedGenres],
   );
+  const sharedPlaylistRows = useMemo(() => buildSharedFallbackTreeRows(sharedPlaylists), [sharedPlaylists]);
   const autoGenreCanonicalCount = useMemo(() => {
     const unique = new Set<string>();
     for (const genre of autoGenres) {
@@ -340,7 +372,9 @@ export default function FallbackGenreSelector() {
                 </button>
               </div>
             </div>
-            {sharedPlaylists.map((playlist) => {
+            {sharedPlaylistRows.map((row) => {
+              const playlist = sharedPlaylists.find((entry) => entry.id === row.id);
+              if (!playlist) return null;
               const isActive = playlist.id === activeGenre;
               return (
                 <button
@@ -360,8 +394,17 @@ export default function FallbackGenreSelector() {
                       ? "bg-violet-600/25 text-violet-100"
                       : "text-gray-300 hover:bg-gray-800 hover:text-white"
                   }`}
+                  style={{ marginLeft: `${row.depth * 10}px` }}
                 >
-                  <span className="truncate">{playlist.label.replace(/^Playlist ·\s*/i, "")}</span>
+                  <span className="truncate">
+                    {row.depth > 0 ? "↳ " : ""}
+                    {playlist.label.replace(/^Playlist ·\s*/i, "")}
+                    {(playlist.genre_group || playlist.subgenre) ? (
+                      <span className="ml-1 text-[10px] text-gray-500">
+                        ({[playlist.genre_group, playlist.subgenre].filter(Boolean).join(" / ")})
+                      </span>
+                    ) : null}
+                  </span>
                   <span className="ml-2 text-[10px] text-gray-500">{playlist.trackCount}</span>
                 </button>
               );
