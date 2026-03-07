@@ -91,6 +91,21 @@ INSERT INTO radio_settings (key, value) VALUES
   ('democracy_timer',     '15'),
   ('jukebox_max_per_user','5'),
   ('party_skip_cooldown', '10'),
+  ('dj_queue_base_per_user', '3'),
+  ('dj_queue_min_per_user', '1'),
+  ('dj_queue_listener_step', '3'),
+  ('radio_queue_base_per_user', '3'),
+  ('radio_queue_min_per_user', '1'),
+  ('radio_queue_listener_step', '3'),
+  ('democracy_queue_base_per_user', '2'),
+  ('democracy_queue_min_per_user', '1'),
+  ('democracy_queue_listener_step', '3'),
+  ('jukebox_queue_base_per_user', '5'),
+  ('jukebox_queue_min_per_user', '1'),
+  ('jukebox_queue_listener_step', '2'),
+  ('party_queue_base_per_user', '6'),
+  ('party_queue_min_per_user', '1'),
+  ('party_queue_listener_step', '2'),
   ('stream_url',          '""');
 
 -- Played history — log of tracks played by the radio server

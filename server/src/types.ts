@@ -46,6 +46,21 @@ export interface ModeSettings {
   democracy_timer: number;
   jukebox_max_per_user: number;
   party_skip_cooldown: number;
+  dj_queue_base_per_user: number;
+  dj_queue_min_per_user: number;
+  dj_queue_listener_step: number;
+  radio_queue_base_per_user: number;
+  radio_queue_min_per_user: number;
+  radio_queue_listener_step: number;
+  democracy_queue_base_per_user: number;
+  democracy_queue_min_per_user: number;
+  democracy_queue_listener_step: number;
+  jukebox_queue_base_per_user: number;
+  jukebox_queue_min_per_user: number;
+  jukebox_queue_listener_step: number;
+  party_queue_base_per_user: number;
+  party_queue_min_per_user: number;
+  party_queue_listener_step: number;
 }
 
 export interface VoteState {

@@ -18,7 +18,7 @@ import { youtubeSearch, soundcloudSearch } from './services/search.js';
 import { startBridge } from './bridge.js';
 import { startNowPlayingWatcher } from './nowPlaying.js';
 import { StreamHub } from './streamHub.js';
-import type { Mode, ServerState, DurationVote, QueuePushVote, FallbackGenre } from './types.js';
+import type { Mode, ModeSettings, ServerState, DurationVote, QueuePushVote, FallbackGenre } from './types.js';
 import {
   searchGenres,
   getTopTracksByGenre,
@@ -506,6 +506,63 @@ async function getCombinedFallbackGenres(): Promise<FallbackGenre[]> {
   return [...localGenres, likedGenre, ...autoGenres, ...sharedGenres];
 }
 
+function getEffectiveListenerCount(): number {
+  const streamListeners = streamHub.listenerCount;
+  if (streamListeners > 0) return streamListeners;
+  return io.engine.clientsCount;
+}
+
+function clampInt(value: number, min: number, max: number): number {
+  const normalized = Number.isFinite(value) ? Math.round(value) : min;
+  return Math.max(min, Math.min(max, normalized));
+}
+
+function getModeQueueLimitConfig(mode: Mode, settings: ModeSettings): { base: number; min: number; step: number } {
+  if (mode === 'dj') {
+    return {
+      base: settings.dj_queue_base_per_user,
+      min: settings.dj_queue_min_per_user,
+      step: settings.dj_queue_listener_step,
+    };
+  }
+  if (mode === 'radio') {
+    return {
+      base: settings.radio_queue_base_per_user,
+      min: settings.radio_queue_min_per_user,
+      step: settings.radio_queue_listener_step,
+    };
+  }
+  if (mode === 'democracy') {
+    return {
+      base: settings.democracy_queue_base_per_user,
+      min: settings.democracy_queue_min_per_user,
+      step: settings.democracy_queue_listener_step,
+    };
+  }
+  if (mode === 'party') {
+    return {
+      base: settings.party_queue_base_per_user,
+      min: settings.party_queue_min_per_user,
+      step: settings.party_queue_listener_step,
+    };
+  }
+  return {
+    base: settings.jukebox_queue_base_per_user,
+    min: settings.jukebox_queue_min_per_user,
+    step: settings.jukebox_queue_listener_step,
+  };
+}
+
+function getDynamicQueueLimitForMode(mode: Mode, listenerCount: number, settings: ModeSettings): number {
+  const config = getModeQueueLimitConfig(mode, settings);
+  const minLimit = clampInt(config.min, 1, 50);
+  const baseLimit = clampInt(config.base, minLimit, 50);
+  const step = clampInt(config.step, 1, 100);
+  const listeners = Math.max(1, clampInt(listenerCount, 1, 10_000));
+  const reduction = Math.floor(Math.max(0, listeners - 1) / step);
+  return Math.max(minLimit, baseLimit - reduction);
+}
+
 async function getServerState(): Promise<ServerState> {
   const [mode, modeSettings, queue, activeFallbackGenre, activeFallbackGenreBy, fallbackGenres, activeFallbackSharedMode] = await Promise.all([
     getActiveMode(sb),
@@ -527,7 +584,7 @@ async function getServerState(): Promise<ServerState> {
     activeFallbackGenre,
     activeFallbackGenreBy: normalizeNickname(activeFallbackGenreBy),
     activeFallbackSharedMode,
-    listenerCount: io.engine.clientsCount,
+    listenerCount: getEffectiveListenerCount(),
     streamOnline: getCurrentTrack() !== null,
     voteState: null,
     durationVote: activeDurationVote,
@@ -556,7 +613,7 @@ function buildDegradedServerState(): ServerState {
       ...lastGoodServerState,
       currentTrack: getCurrentTrack(),
       upcomingTrack: getUpcomingTrack(),
-      listenerCount: io.engine.clientsCount,
+      listenerCount: getEffectiveListenerCount(),
       streamOnline: getCurrentTrack() !== null,
       queuePushLocked,
       skipLocked: isSkipLocked(),
@@ -587,12 +644,27 @@ function buildDegradedServerState(): ServerState {
       democracy_timer: 15,
       jukebox_max_per_user: 2,
       party_skip_cooldown: 5,
+      dj_queue_base_per_user: 3,
+      dj_queue_min_per_user: 1,
+      dj_queue_listener_step: 3,
+      radio_queue_base_per_user: 3,
+      radio_queue_min_per_user: 1,
+      radio_queue_listener_step: 3,
+      democracy_queue_base_per_user: 2,
+      democracy_queue_min_per_user: 1,
+      democracy_queue_listener_step: 3,
+      jukebox_queue_base_per_user: 5,
+      jukebox_queue_min_per_user: 1,
+      jukebox_queue_listener_step: 2,
+      party_queue_base_per_user: 6,
+      party_queue_min_per_user: 1,
+      party_queue_listener_step: 2,
     },
     fallbackGenres: [],
     activeFallbackGenre: null,
     activeFallbackGenreBy: null,
     activeFallbackSharedMode: 'random',
-    listenerCount: io.engine.clientsCount,
+    listenerCount: getEffectiveListenerCount(),
     streamOnline: getCurrentTrack() !== null,
     voteState: null,
     durationVote: activeDurationVote,
@@ -1212,7 +1284,7 @@ app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
     uptime: Math.floor((Date.now() - startTime) / 1000),
-    listeners: io.engine.clientsCount,
+    listeners: getEffectiveListenerCount(),
   });
 });
 
@@ -2475,7 +2547,7 @@ async function emitSkipVoteState(): Promise<void> {
 
   const settings = await getModeSettings(sb);
   const threshold = settings.democracy_threshold / 100;
-  const required = Math.max(1, Math.ceil(io.engine.clientsCount * threshold));
+  const required = Math.max(1, Math.ceil(getEffectiveListenerCount() * threshold));
   const timer = getSkipVoteTimerSeconds();
 
   io.emit('vote:update', {
@@ -2770,7 +2842,7 @@ function startDurationVote(
 
 io.on('connection', (socket) => {
   console.log(`[socket] Client connected: ${socket.id}`);
-  io.emit('stream:status', { online: getCurrentTrack() !== null, listeners: io.engine.clientsCount });
+  io.emit('stream:status', { online: getCurrentTrack() !== null, listeners: getEffectiveListenerCount() });
   void emitSkipVoteState();
   socket.emit('upcoming:update', getUpcomingTrack());
   void emitFallbackGenreUpdate(socket);
@@ -2793,6 +2865,22 @@ io.on('connection', (socket) => {
       if (!canPerformAction(mode, 'add_to_queue', admin)) {
         socket.emit('error:toast', { message: 'Je mag geen nummers toevoegen in deze modus' });
         return;
+      }
+      const addedBy = (data.added_by ?? '').trim() || 'anonymous';
+      if (!admin) {
+        const [modeSettings, queueSnapshot] = await Promise.all([
+          getModeSettings(sb),
+          getQueue(sb),
+        ]);
+        const listenerCount = getEffectiveListenerCount();
+        const dynamicLimit = getDynamicQueueLimitForMode(mode, listenerCount, modeSettings);
+        const queuedByUser = queueSnapshot.filter((entry) => (entry.added_by ?? '').trim() === addedBy).length;
+        if (queuedByUser >= dynamicLimit) {
+          socket.emit('error:toast', {
+            message: `Je hebt al ${queuedByUser}/${dynamicLimit} nummers in de wachtrij (modus: ${mode}, luisteraars: ${listenerCount}).`,
+          });
+          return;
+        }
       }
 
       let url = data.youtube_url;
@@ -2843,12 +2931,12 @@ io.on('connection', (socket) => {
         discoveredTitle ??
         sourceId;
 
-      const item = await addToQueue(sb, url, data.added_by || 'anonymous', mergedTitle, thumbForQueue);
+      const item = await addToQueue(sb, url, addedBy, mergedTitle, thumbForQueue);
       const queue = await getQueue(sb);
-      io.emit('queue:added', { id: item.id, title: item.title ?? item.youtube_id, added_by: item.added_by ?? data.added_by ?? 'onbekend' });
+      io.emit('queue:added', { id: item.id, title: item.title ?? item.youtube_id, added_by: item.added_by ?? addedBy ?? 'onbekend' });
       io.emit('queue:update', { items: queue });
       playerEvents.emit('queue:add');
-      console.log(`[queue] Added: ${item.youtube_id} by ${data.added_by}`);
+      console.log(`[queue] Added: ${item.youtube_id} by ${addedBy}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Kon nummer niet toevoegen';
       socket.emit('error:toast', { message: msg });
@@ -2878,7 +2966,7 @@ io.on('connection', (socket) => {
     broadcastDurationVote();
 
     // Check if all connected clients have voted
-    const totalClients = io.engine.clientsCount;
+    const totalClients = getEffectiveListenerCount();
     if (activeDurationVote.voters.length >= totalClients) {
       finalizeDurationVote();
     }
@@ -2913,7 +3001,7 @@ io.on('connection', (socket) => {
       }
 
       const settings = await getModeSettings(sb);
-      const required = Math.max(1, Math.ceil(io.engine.clientsCount * (settings.democracy_threshold / 100)));
+      const required = Math.max(1, Math.ceil(getEffectiveListenerCount() * (settings.democracy_threshold / 100)));
       const proposedBy = normalizeNickname(data.added_by) ?? 'onbekend';
       const vote = startQueuePushVote(item, proposedBy, socket.id, required, QUEUE_PUSH_VOTE_TIMEOUT);
       socket.emit('info:toast', { message: 'Push-stemming gestart. Jouw stem telt al als ja.' });
@@ -3192,7 +3280,7 @@ io.on('connection', (socket) => {
   // ── disconnect ──
   socket.on('disconnect', () => {
     voteSkipSet.delete(socket.id);
-    io.emit('stream:status', { online: getCurrentTrack() !== null, listeners: io.engine.clientsCount });
+    io.emit('stream:status', { online: getCurrentTrack() !== null, listeners: getEffectiveListenerCount() });
     void emitSkipVoteState();
   });
 });

@@ -702,7 +702,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
   }, [view, filteredSavedTracks, filteredSharedTracks, savedTrackThumbs, pumpThumbnailQueue]);
 
   return (
-    <div className="flex max-h-[40vh] flex-col gap-1.5 overflow-hidden">
+    <div className="flex h-[68dvh] max-h-[68dvh] flex-col gap-1.5 overflow-hidden sm:h-auto sm:max-h-[40vh]">
       {/* Header + navigation */}
       <div className="flex shrink-0 items-center justify-between">
         {view !== "playlists" ? (
