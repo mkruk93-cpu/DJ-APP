@@ -220,12 +220,20 @@ export async function updateSharedPlaylistAdmin(
   playlistId: string,
   playlistName: string,
   token: string,
+  meta?: PlaylistGenreMetaInput,
 ): Promise<SharedPlaylist> {
   const safeId = encodeURIComponent(playlistId);
+  const body: Record<string, unknown> = { token };
+  if (playlistName.trim()) body.playlist_name = playlistName;
+  if (meta) {
+    body.genre_group = meta.genre_group ?? null;
+    body.subgenre = meta.subgenre ?? null;
+    body.related_parent_playlist_id = meta.related_parent_playlist_id ?? null;
+  }
   const res = await fetch(`${getServerUrl()}/api/shared-playlists/${safeId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token, playlist_name: playlistName }),
+    body: JSON.stringify(body),
   });
   const payload = await parseOrThrow<{ ok: boolean; playlist: SharedPlaylist }>(res);
   return payload.playlist;

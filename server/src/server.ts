@@ -47,6 +47,7 @@ import {
   getSharedPlaylistTracksPage,
   getSharedStoreUsage,
   updateSharedPlaylistName,
+  updateSharedPlaylistGenreMeta,
   deleteSharedPlaylist,
   appendTracksToSharedPlaylist,
   deleteSharedPlaylistTrack,
@@ -561,6 +562,99 @@ function getDynamicQueueLimitForMode(mode: Mode, listenerCount: number, settings
   const listeners = Math.max(1, clampInt(listenerCount, 1, 10_000));
   const reduction = Math.floor(Math.max(0, listeners - 1) / step);
   return Math.max(minLimit, baseLimit - reduction);
+}
+
+interface DeferredQueueItem {
+  id: string;
+  youtube_url: string;
+  title?: string | null;
+  artist?: string | null;
+  thumbnail?: string | null;
+  created_at: number;
+}
+
+const deferredQueueByUser = new Map<string, DeferredQueueItem[]>();
+const socketNicknameById = new Map<string, string>();
+let deferredRoundRobinCursor = 0;
+let lastObservedTrackKey: string | null = null;
+
+function normalizeQueueUser(value: string | null | undefined): string {
+  const trimmed = (value ?? '').trim();
+  return trimmed || 'anonymous';
+}
+
+function makeDeferredQueueItem(
+  data: { youtube_url: string; title?: string | null; artist?: string | null; thumbnail?: string | null },
+): DeferredQueueItem {
+  return {
+    id: `dq_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    youtube_url: String(data.youtube_url ?? ''),
+    title: data.title ?? null,
+    artist: data.artist ?? null,
+    thumbnail: data.thumbnail ?? null,
+    created_at: Date.now(),
+  };
+}
+
+function getDeferredQueueForUser(addedBy: string): DeferredQueueItem[] {
+  return deferredQueueByUser.get(addedBy) ?? [];
+}
+
+function emitDeferredQueueUpdateForUser(addedBy: string): void {
+  const list = getDeferredQueueForUser(addedBy);
+  const payload = {
+    added_by: addedBy,
+    items: list.map((item) => ({ ...item })),
+  };
+  for (const [socketId, nickname] of socketNicknameById.entries()) {
+    if (nickname !== addedBy) continue;
+    io.to(socketId).emit('deferredQueue:update', payload);
+  }
+}
+
+function setSocketNickname(socketId: string, addedBy: string): void {
+  socketNicknameById.set(socketId, addedBy);
+  emitDeferredQueueUpdateForUser(addedBy);
+}
+
+function pushDeferredQueueItem(addedBy: string, item: DeferredQueueItem): number {
+  const list = getDeferredQueueForUser(addedBy);
+  list.push(item);
+  deferredQueueByUser.set(addedBy, list);
+  emitDeferredQueueUpdateForUser(addedBy);
+  return list.length;
+}
+
+function removeDeferredQueueItem(addedBy: string, itemId: string): boolean {
+  const list = getDeferredQueueForUser(addedBy);
+  if (list.length === 0) return false;
+  const next = list.filter((item) => item.id !== itemId);
+  if (next.length === list.length) return false;
+  if (next.length === 0) deferredQueueByUser.delete(addedBy);
+  else deferredQueueByUser.set(addedBy, next);
+  emitDeferredQueueUpdateForUser(addedBy);
+  return true;
+}
+
+function popDeferredQueueItemRoundRobin(): { addedBy: string; item: DeferredQueueItem } | null {
+  const users = Array.from(deferredQueueByUser.keys()).sort();
+  if (users.length === 0) return null;
+  const startIndex = deferredRoundRobinCursor % users.length;
+  for (let i = 0; i < users.length; i += 1) {
+    const idx = (startIndex + i) % users.length;
+    const user = users[idx];
+    const queue = deferredQueueByUser.get(user);
+    if (!queue || queue.length === 0) {
+      deferredQueueByUser.delete(user);
+      continue;
+    }
+    const item = queue.shift()!;
+    if (queue.length === 0) deferredQueueByUser.delete(user);
+    deferredRoundRobinCursor = idx + 1;
+    emitDeferredQueueUpdateForUser(user);
+    return { addedBy: user, item };
+  }
+  return null;
 }
 
 async function getServerState(): Promise<ServerState> {
@@ -1716,12 +1810,31 @@ app.put('/api/shared-playlists/:id', async (req, res) => {
     return res.status(400).json({ error: 'Playlist id ontbreekt' });
   }
   const nextName = getSharedPlaylistNameFromRequest(req);
-  if (!nextName) {
-    return res.status(400).json({ error: 'playlist_name is verplicht' });
-  }
+  const nextMeta = getPlaylistGenreMetaFromRequest(req);
   try {
-    const updated = await updateSharedPlaylistName(playlistId, nextName);
-    if (!updated) return res.status(404).json({ error: 'Playlist niet gevonden' });
+    let updated: Awaited<ReturnType<typeof updateSharedPlaylistName>> = null;
+    if (nextName) {
+      updated = await updateSharedPlaylistName(playlistId, nextName);
+      if (!updated) return res.status(404).json({ error: 'Playlist niet gevonden' });
+    }
+    const wantsMetaUpdate = req.body && typeof req.body === 'object'
+      && (
+        Object.prototype.hasOwnProperty.call(req.body, 'genre_group')
+        || Object.prototype.hasOwnProperty.call(req.body, 'genreGroup')
+        || Object.prototype.hasOwnProperty.call(req.body, 'subgenre')
+        || Object.prototype.hasOwnProperty.call(req.body, 'subGenre')
+        || Object.prototype.hasOwnProperty.call(req.body, 'related_parent_playlist_id')
+        || Object.prototype.hasOwnProperty.call(req.body, 'relatedParentPlaylistId')
+        || Object.prototype.hasOwnProperty.call(req.body, 'related_playlist_id')
+      );
+    if (wantsMetaUpdate) {
+      const metaUpdated = await updateSharedPlaylistGenreMeta(playlistId, nextMeta);
+      if (!metaUpdated) return res.status(404).json({ error: 'Playlist niet gevonden' });
+      updated = metaUpdated;
+    }
+    if (!updated) {
+      return res.status(400).json({ error: 'Geef minstens playlist_name of genre/subgenre mee' });
+    }
     return res.json({ ok: true, playlist: updated });
   } catch (err) {
     console.error('[rest] /api/shared-playlists/:id PUT error:', err);
@@ -2838,6 +2951,89 @@ function startDurationVote(
   }, DURATION_VOTE_TIMEOUT);
 }
 
+interface QueueAddSubmission {
+  youtube_url: string;
+  title?: string | null;
+  artist?: string | null;
+  thumbnail?: string | null;
+}
+
+async function addQueueItemFromSubmission(
+  submission: QueueAddSubmission,
+  addedBy: string,
+): Promise<{ item: Awaited<ReturnType<typeof addToQueue>> | null; error: string | null }> {
+  let url = submission.youtube_url;
+  let sourceId = extractSourceId(url);
+  let discoveredTitle: string | null = null;
+  let discoveredArtist: string | null = null;
+
+  if (!sourceId) {
+    const searchResults = await youtubeSearchLocal(url, 1);
+    if (searchResults.length === 0) {
+      return { item: null, error: `Geen resultaat gevonden voor "${url}"` };
+    }
+    url = searchResults[0].url;
+    sourceId = extractSourceId(url);
+    if (!sourceId) {
+      return { item: null, error: 'Kon geen geldig nummer vinden' };
+    }
+    discoveredTitle = searchResults[0].title ?? null;
+    discoveredArtist = searchResults[0].channel ?? null;
+    console.log(`[queue] Search "${submission.youtube_url}" → ${searchResults[0].title} (${url})`);
+  }
+
+  const ytId = extractYoutubeId(url);
+  const thumbnail = submission.thumbnail ?? (ytId ? getThumbnailUrl(ytId) : null);
+  const isLocalSelection = url.startsWith('local://');
+  const info = isLocalSelection
+    ? { title: null, duration: null, thumbnail: null }
+    : await fetchVideoInfo(url);
+
+  if (info.duration !== null && info.duration > MAX_DURATION) {
+    return {
+      item: null,
+      error: `Dit nummer is te lang (${Math.floor(info.duration / 60)}:${String(Math.round(info.duration % 60)).padStart(2, '0')}). Maximum is 65 minuten.`,
+    };
+  }
+
+  const thumbForQueue = thumbnail ?? info.thumbnail;
+  const submittedTitle = (submission.title ?? '').trim() || null;
+  const submittedArtist = (submission.artist ?? '').trim() || null;
+  const mergedTitle =
+    info.title ??
+    (submittedArtist && submittedTitle ? `${submittedArtist} - ${submittedTitle}` : null) ??
+    submittedTitle ??
+    (discoveredArtist && discoveredTitle ? `${discoveredArtist} - ${discoveredTitle}` : null) ??
+    discoveredTitle ??
+    sourceId;
+
+  const item = await addToQueue(sb, url, addedBy, mergedTitle, thumbForQueue);
+  return { item, error: null };
+}
+
+async function promoteOneDeferredQueueItem(reason: 'track-ended' | 'manual'): Promise<void> {
+  const next = popDeferredQueueItemRoundRobin();
+  if (!next) return;
+
+  const { addedBy, item } = next;
+  try {
+    const { item: created, error } = await addQueueItemFromSubmission(item, addedBy);
+    if (!created) {
+      io.emit('info:toast', { message: `Uitgestelde aanvraag van ${addedBy} kon niet worden toegevoegd: ${error ?? 'onbekende fout'}` });
+      return;
+    }
+    const queue = await getQueue(sb);
+    io.emit('queue:added', { id: created.id, title: created.title ?? created.youtube_id, added_by: created.added_by ?? addedBy });
+    io.emit('queue:update', { items: queue });
+    io.emit('info:toast', { message: `Uit eigen wachtrij toegevoegd: ${created.title ?? created.youtube_id}` });
+    playerEvents.emit('queue:add');
+    console.log(`[queue] Promoted deferred (${reason}): ${created.youtube_id} by ${addedBy}`);
+  } catch (err) {
+    console.error('[queue] Failed to promote deferred item:', err);
+    io.emit('info:toast', { message: `Uitgestelde aanvraag van ${addedBy} kon niet worden toegevoegd.` });
+  }
+}
+
 // ── Socket.io Events ─────────────────────────────────────────────────────────
 
 io.on('connection', (socket) => {
@@ -2866,7 +3062,14 @@ io.on('connection', (socket) => {
         socket.emit('error:toast', { message: 'Je mag geen nummers toevoegen in deze modus' });
         return;
       }
-      const addedBy = (data.added_by ?? '').trim() || 'anonymous';
+      const addedBy = normalizeQueueUser(data.added_by);
+      setSocketNickname(socket.id, addedBy);
+      const submission: QueueAddSubmission = {
+        youtube_url: data.youtube_url,
+        title: data.title ?? null,
+        artist: data.artist ?? null,
+        thumbnail: data.thumbnail ?? null,
+      };
       if (!admin) {
         const [modeSettings, queueSnapshot] = await Promise.all([
           getModeSettings(sb),
@@ -2876,62 +3079,20 @@ io.on('connection', (socket) => {
         const dynamicLimit = getDynamicQueueLimitForMode(mode, listenerCount, modeSettings);
         const queuedByUser = queueSnapshot.filter((entry) => (entry.added_by ?? '').trim() === addedBy).length;
         if (queuedByUser >= dynamicLimit) {
-          socket.emit('error:toast', {
-            message: `Je hebt al ${queuedByUser}/${dynamicLimit} nummers in de wachtrij (modus: ${mode}, luisteraars: ${listenerCount}).`,
+          const deferredItem = makeDeferredQueueItem(submission);
+          const deferredTotal = pushDeferredQueueItem(addedBy, deferredItem);
+          socket.emit('info:toast', {
+            message: `Hoofdwachtrij vol (${queuedByUser}/${dynamicLimit}). Toegevoegd aan je eigen wachtrij (${deferredTotal}).`,
           });
           return;
         }
       }
 
-      let url = data.youtube_url;
-      let sourceId = extractSourceId(url);
-      let discoveredTitle: string | null = null;
-      let discoveredArtist: string | null = null;
-
-      // If not a valid URL, treat as a search query (e.g. from Spotify: "Artist - Title")
-      if (!sourceId) {
-        const searchResults = await youtubeSearchLocal(url, 1);
-        if (searchResults.length === 0) {
-          socket.emit('error:toast', { message: `Geen resultaat gevonden voor "${url}"` });
-          return;
-        }
-        url = searchResults[0].url;
-        sourceId = extractSourceId(url);
-        if (!sourceId) {
-          socket.emit('error:toast', { message: 'Kon geen geldig nummer vinden' });
-          return;
-        }
-        discoveredTitle = searchResults[0].title ?? null;
-        discoveredArtist = searchResults[0].channel ?? null;
-        console.log(`[queue] Search "${data.youtube_url}" → ${searchResults[0].title} (${url})`);
-      }
-
-      const ytId = extractYoutubeId(url);
-      const thumbnail = data.thumbnail ?? (ytId ? getThumbnailUrl(ytId) : null);
-      const isLocalSelection = url.startsWith('local://');
-      const info = isLocalSelection
-        ? { title: null, duration: null, thumbnail: null }
-        : await fetchVideoInfo(url);
-
-      if (info.duration !== null && info.duration > MAX_DURATION) {
-        socket.emit('error:toast', {
-          message: `Dit nummer is te lang (${Math.floor(info.duration / 60)}:${String(Math.round(info.duration % 60)).padStart(2, '0')}). Maximum is 65 minuten.`,
-        });
+      const { item, error } = await addQueueItemFromSubmission(submission, addedBy);
+      if (!item) {
+        socket.emit('error:toast', { message: error ?? 'Kon nummer niet toevoegen' });
         return;
       }
-
-      const thumbForQueue = thumbnail ?? info.thumbnail;
-      const submittedTitle = (data.title ?? '').trim() || null;
-      const submittedArtist = (data.artist ?? '').trim() || null;
-      const mergedTitle =
-        info.title ??
-        (submittedArtist && submittedTitle ? `${submittedArtist} - ${submittedTitle}` : null) ??
-        submittedTitle ??
-        (discoveredArtist && discoveredTitle ? `${discoveredArtist} - ${discoveredTitle}` : null) ??
-        discoveredTitle ??
-        sourceId;
-
-      const item = await addToQueue(sb, url, addedBy, mergedTitle, thumbForQueue);
       const queue = await getQueue(sb);
       io.emit('queue:added', { id: item.id, title: item.title ?? item.youtube_id, added_by: item.added_by ?? addedBy ?? 'onbekend' });
       io.emit('queue:update', { items: queue });
@@ -2941,6 +3102,30 @@ io.on('connection', (socket) => {
       const msg = err instanceof Error ? err.message : 'Kon nummer niet toevoegen';
       socket.emit('error:toast', { message: msg });
     }
+  });
+
+  socket.on('deferredQueue:sync', (data: { added_by?: string }) => {
+    const addedBy = normalizeQueueUser(data?.added_by);
+    setSocketNickname(socket.id, addedBy);
+  });
+
+  socket.on('deferredQueue:remove', (data: { id?: string; added_by?: string; token?: string }) => {
+    const addedBy = normalizeQueueUser(data?.added_by);
+    const itemId = String(data?.id ?? '').trim();
+    if (!itemId) {
+      socket.emit('error:toast', { message: 'Onbekend item in eigen wachtrij' });
+      return;
+    }
+    if (!isAdmin(data?.token) && socketNicknameById.get(socket.id) !== addedBy) {
+      socket.emit('error:toast', { message: 'Je mag alleen je eigen wachtrij aanpassen' });
+      return;
+    }
+    const removed = removeDeferredQueueItem(addedBy, itemId);
+    if (!removed) {
+      socket.emit('error:toast', { message: 'Item niet gevonden in eigen wachtrij' });
+      return;
+    }
+    socket.emit('info:toast', { message: 'Nummer verwijderd uit eigen wachtrij' });
   });
 
   // ── durationVote:cast ──
@@ -3279,6 +3464,7 @@ io.on('connection', (socket) => {
 
   // ── disconnect ──
   socket.on('disconnect', () => {
+    socketNicknameById.delete(socket.id);
     voteSkipSet.delete(socket.id);
     io.emit('stream:status', { online: getCurrentTrack() !== null, listeners: getEffectiveListenerCount() });
     void emitSkipVoteState();
@@ -3320,6 +3506,8 @@ async function main(): Promise<void> {
   const initialMode = await getActiveMode(sb);
   console.log(`[mode] Initial mode: ${initialMode}`);
   applyPlaybackForMode(initialMode);
+  const initialTrack = getCurrentTrack();
+  lastObservedTrackKey = initialTrack ? `${initialTrack.id}|${initialTrack.started_at}` : null;
 
   let lastSyncedMode = initialMode;
   let pendingSyncedMode: Mode | null = null;
@@ -3327,6 +3515,14 @@ async function main(): Promise<void> {
   let lastModeApplyAt = Date.now();
   setInterval(() => {
     maybeReleaseQueuePushLock();
+    const activeTrack = getCurrentTrack();
+    const activeTrackKey = activeTrack ? `${activeTrack.id}|${activeTrack.started_at}` : null;
+    const previousTrackKey = lastObservedTrackKey;
+    const trackAdvanced = previousTrackKey !== null && activeTrackKey !== previousTrackKey;
+    lastObservedTrackKey = activeTrackKey;
+    if (trackAdvanced) {
+      void promoteOneDeferredQueueItem('track-ended');
+    }
     getActiveMode(sb)
       .then(async (mode) => {
         if (mode === lastSyncedMode) {

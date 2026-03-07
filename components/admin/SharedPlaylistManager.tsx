@@ -20,6 +20,9 @@ export default function SharedPlaylistManager() {
   const [status, setStatus] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [nameDraft, setNameDraft] = useState("");
+  const [genreGroupDraft, setGenreGroupDraft] = useState("");
+  const [subgenreDraft, setSubgenreDraft] = useState("");
+  const [relatedParentDraft, setRelatedParentDraft] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [tracks, setTracks] = useState<UserPlaylistTrack[]>([]);
   const [tracksLoading, setTracksLoading] = useState(false);
@@ -45,7 +48,7 @@ export default function SharedPlaylistManager() {
     void loadPlaylists();
   }, []);
 
-  async function handleRename(playlist: SharedPlaylist) {
+  async function handleSavePlaylistSettings(playlist: SharedPlaylist) {
     const token = getRadioToken();
     if (!token) {
       setError("Admin token ontbreekt.");
@@ -53,19 +56,31 @@ export default function SharedPlaylistManager() {
     }
     const safeName = nameDraft.trim();
     if (!safeName) {
-      setError("Nieuwe naam mag niet leeg zijn.");
+      setError("Playlistnaam mag niet leeg zijn.");
       return;
     }
     setError(null);
     setStatus(null);
     try {
-      const updated = await updateSharedPlaylistAdmin(playlist.id, safeName, token);
-      setItems((prev) => prev.map((item) => (item.id === updated.id ? { ...item, name: updated.name } : item)));
+      const updated = await updateSharedPlaylistAdmin(
+        playlist.id,
+        safeName,
+        token,
+        {
+          genre_group: genreGroupDraft.trim() || null,
+          subgenre: subgenreDraft.trim() || null,
+          related_parent_playlist_id: relatedParentDraft.trim() || null,
+        },
+      );
+      setItems((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
       setEditingId(null);
       setNameDraft("");
-      setStatus("Playlistnaam bijgewerkt.");
+      setGenreGroupDraft("");
+      setSubgenreDraft("");
+      setRelatedParentDraft("");
+      setStatus("Playlist-instellingen bijgewerkt.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Naam wijzigen mislukt.");
+      setError(err instanceof Error ? err.message : "Playlist bijwerken mislukt.");
     }
   }
 
@@ -192,34 +207,73 @@ export default function SharedPlaylistManager() {
             <div key={playlist.id} className="rounded border border-gray-800 bg-gray-900/60 p-2">
               {editingId === playlist.id ? (
                 <div className="flex gap-2">
-                  <input
-                    value={nameDraft}
-                    onChange={(e) => setNameDraft(e.target.value)}
-                    className="flex-1 rounded border border-gray-700 bg-gray-800 px-2 py-1 text-xs text-white"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => { void handleRename(playlist); }}
-                    className="rounded bg-violet-600 px-2 py-1 text-xs font-semibold text-white hover:bg-violet-500"
-                  >
-                    Opslaan
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingId(null);
-                      setNameDraft("");
-                    }}
-                    className="rounded border border-gray-700 px-2 py-1 text-xs text-gray-300 hover:text-white"
-                  >
-                    Annuleer
-                  </button>
+                  <div className="grid flex-1 gap-2 sm:grid-cols-2">
+                    <input
+                      value={nameDraft}
+                      onChange={(e) => setNameDraft(e.target.value)}
+                      placeholder="Playlist naam"
+                      className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-xs text-white"
+                    />
+                    <input
+                      value={genreGroupDraft}
+                      onChange={(e) => setGenreGroupDraft(e.target.value)}
+                      placeholder="Overkoepelend genre"
+                      className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-xs text-white"
+                    />
+                    <input
+                      value={subgenreDraft}
+                      onChange={(e) => setSubgenreDraft(e.target.value)}
+                      placeholder="Subgenre"
+                      className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-xs text-white"
+                    />
+                    <select
+                      value={relatedParentDraft}
+                      onChange={(e) => setRelatedParentDraft(e.target.value)}
+                      className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-xs text-white"
+                    >
+                      <option value="">Verwante parent-playlist</option>
+                      {items
+                        .filter((item) => item.id !== playlist.id)
+                        .map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.name}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { void handleSavePlaylistSettings(playlist); }}
+                      className="rounded bg-violet-600 px-2 py-1 text-xs font-semibold text-white hover:bg-violet-500"
+                    >
+                      Opslaan
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingId(null);
+                        setNameDraft("");
+                        setGenreGroupDraft("");
+                        setSubgenreDraft("");
+                        setRelatedParentDraft("");
+                      }}
+                      className="rounded border border-gray-700 px-2 py-1 text-xs text-gray-300 hover:text-white"
+                    >
+                      Annuleer
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
                     <p className="truncate text-xs font-semibold text-white">{playlist.name}</p>
-                    <p className="text-[10px] text-gray-500">{playlist.track_count} tracks</p>
+                    <p className="text-[10px] text-gray-500">
+                      {playlist.track_count} tracks
+                      {(playlist.genre_group || playlist.subgenre)
+                        ? ` · ${[playlist.genre_group, playlist.subgenre].filter(Boolean).join(" / ")}`
+                        : ""}
+                    </p>
                   </div>
                   <div className="flex gap-1">
                     <button
@@ -234,10 +288,13 @@ export default function SharedPlaylistManager() {
                       onClick={() => {
                         setEditingId(playlist.id);
                         setNameDraft(playlist.name);
+                        setGenreGroupDraft(playlist.genre_group ?? "");
+                        setSubgenreDraft(playlist.subgenre ?? "");
+                        setRelatedParentDraft(playlist.related_parent_playlist_id ?? "");
                       }}
                       className="rounded border border-gray-700 px-2 py-1 text-[11px] text-blue-300 transition hover:text-blue-200"
                     >
-                      Rename
+                      Bewerken
                     </button>
                     <button
                       type="button"

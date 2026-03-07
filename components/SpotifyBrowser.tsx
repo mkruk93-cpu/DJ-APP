@@ -44,6 +44,8 @@ type TrackSource = "liked" | "playlist" | null;
 const IMPORTED_TRACK_PAGE_SIZE = 120;
 const PLAYLIST_GENRE_GROUPS = [
   "Hard Dance",
+  "Hardcore",
+  "Hardstyle",
   "Electronic",
   "House",
   "Techno",
@@ -54,6 +56,14 @@ const PLAYLIST_GENRE_GROUPS = [
   "Hip-Hop",
   "Other",
 ];
+
+function keepFieldVisibleOnMobile(target: HTMLElement): void {
+  if (typeof window === "undefined") return;
+  if (window.innerWidth >= 640) return;
+  requestAnimationFrame(() => {
+    target.scrollIntoView({ block: "center", behavior: "smooth" });
+  });
+}
 
 function buildPlaylistTreeRows<T extends { id: string; related_parent_playlist_id: string | null }>(
   items: T[],
@@ -971,6 +981,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
               <select
                 value={importGenreGroup}
                 onChange={(e) => setImportGenreGroup(e.target.value)}
+                onFocus={(e) => keepFieldVisibleOnMobile(e.currentTarget)}
                 className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white"
               >
                 <option value="">Overkoepelend genre</option>
@@ -987,6 +998,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
               <select
                 value={importRelatedPlaylistId}
                 onChange={(e) => setImportRelatedPlaylistId(e.target.value)}
+                onFocus={(e) => keepFieldVisibleOnMobile(e.currentTarget)}
                 className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white"
               >
                 <option value="">Verwante parent-playlist</option>

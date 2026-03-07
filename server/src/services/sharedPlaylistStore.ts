@@ -248,13 +248,6 @@ export async function ingestSharedPlaylist(
   limits: SharedStoreLimits,
 ): Promise<SharedIngestResult> {
   return withWriteLock((store) => {
-    const existingTrackKeys = new Set<string>();
-    for (const playlist of store.playlists) {
-      for (const track of playlist.tracks) {
-        existingTrackKeys.add(makeTrackKey(track.artist, track.title));
-      }
-    }
-
     const maxTracksPerPlaylist = Math.max(1, limits.maxTracksPerSharedPlaylist);
     const uniqueInPlaylist = new Set<string>();
     const normalizedTracks: SharedTrack[] = [];
@@ -267,7 +260,6 @@ export async function ingestSharedPlaylist(
       const key = makeTrackKey(artist, title);
       if (uniqueInPlaylist.has(key)) continue;
       uniqueInPlaylist.add(key);
-      if (existingTrackKeys.has(key)) continue;
 
       normalizedTracks.push({
         id: randomUUID(),
@@ -415,6 +407,32 @@ export async function updateSharedPlaylistName(
     const playlist = store.playlists.find((entry) => entry.id === playlistId);
     if (!playlist) return null;
     playlist.name = trimmedName;
+    return {
+      id: playlist.id,
+      name: playlist.name,
+      source: playlist.source,
+      created_at: playlist.created_at,
+      imported_at: playlist.imported_at,
+      track_count: playlist.track_count,
+      added_by: playlist.added_by,
+      genre_group: playlist.genre_group ?? null,
+      subgenre: playlist.subgenre ?? null,
+      related_parent_playlist_id: playlist.related_parent_playlist_id ?? null,
+    };
+  });
+}
+
+export async function updateSharedPlaylistGenreMeta(
+  playlistId: string,
+  genreMeta: PlaylistGenreMeta,
+): Promise<SharedPlaylistSummary | null> {
+  const nextMeta = normalizeGenreMeta(genreMeta);
+  return withWriteLock((store) => {
+    const playlist = store.playlists.find((entry) => entry.id === playlistId);
+    if (!playlist) return null;
+    playlist.genre_group = nextMeta.genre_group;
+    playlist.subgenre = nextMeta.subgenre;
+    playlist.related_parent_playlist_id = nextMeta.related_parent_playlist_id;
     return {
       id: playlist.id,
       name: playlist.name,
