@@ -281,7 +281,7 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
   });
 
   return (
-    <div className="flex h-[68dvh] max-h-[68dvh] flex-col gap-1.5 overflow-hidden sm:h-auto sm:max-h-[40vh]">
+    <div className="flex h-[62dvh] max-h-[62dvh] min-h-0 flex-col gap-1.5 overflow-hidden pb-[max(env(safe-area-inset-bottom),4px)] sm:h-auto sm:max-h-[40vh] sm:pb-0">
       <div className="flex shrink-0 items-center justify-between">
         {view === "tracks" ? (
           <button
@@ -344,7 +344,7 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
       )}
 
       {view === "playlists" && !loading && (
-        <div className="min-h-0 flex-1 space-y-px overflow-y-auto">
+        <div className="min-h-0 flex-1 space-y-px overflow-y-auto pb-14 sm:pb-2">
           <div className="mb-2 rounded-md border border-blue-700/70 bg-blue-950/20 p-2">
             {sharedUsage && (
               <p className="mb-1 text-[10px] text-blue-300/80">
@@ -456,11 +456,12 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
             {status && <p className="mt-1 text-[10px] text-green-300">{status}</p>}
             {error && <p className="mt-1 text-[10px] text-red-300">{error}</p>}
           </details>
+          <div className="h-10 w-full sm:h-2" />
         </div>
       )}
 
       {view === "tracks" && !loading && (
-        <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto">
+        <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto pb-14 sm:pb-2">
           {filteredTracks.map((track) => {
             const isAdded = addedTrackId === track.id;
             const spotifyUrl = (track.spotify_url ?? "").trim();
@@ -502,7 +503,7 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
           {loadingMoreTracks && (
             <p className="py-2 text-center text-[11px] text-gray-500">Meer tracks laden...</p>
           )}
-          <div ref={loadMoreRef} className="h-1 w-full" />
+          <div ref={loadMoreRef} className="h-10 w-full sm:h-2" />
         </div>
       )}
     </div>

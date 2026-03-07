@@ -712,7 +712,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
   }, [view, filteredSavedTracks, filteredSharedTracks, savedTrackThumbs, pumpThumbnailQueue]);
 
   return (
-    <div className="flex h-[68dvh] max-h-[68dvh] flex-col gap-1.5 overflow-hidden sm:h-auto sm:max-h-[40vh]">
+    <div className="flex h-[62dvh] max-h-[62dvh] min-h-0 flex-col gap-1.5 overflow-hidden pb-[max(env(safe-area-inset-bottom),4px)] sm:h-auto sm:max-h-[40vh] sm:pb-0">
       {/* Header + navigation */}
       <div className="flex shrink-0 items-center justify-between">
         {view !== "playlists" ? (
@@ -806,7 +806,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
 
       {/* Playlist list */}
       {view === "playlists" && !loading && (
-        <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto">
+        <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto pb-14 sm:pb-2">
           {showPlaylistSections && (
           <div className="mb-2 rounded-md border border-gray-700/70 bg-gray-900/50 p-2">
             <div className="mb-1 flex items-center justify-between">
@@ -1029,7 +1029,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
             {importError && <p className="mt-1 text-[10px] text-red-300">{importError}</p>}
           </details>
           )}
-          <div ref={loadMoreRef} className="h-1 w-full" />
+          <div ref={loadMoreRef} className="h-10 w-full sm:h-2" />
         </div>
       )}
 
@@ -1088,7 +1088,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
       )}
 
       {view === "tracks" && spotifyEnabled && !loading && (
-        <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto">
+        <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto pb-14 sm:pb-2">
           {filteredTracks.map((track) => {
             const artists = track.artists?.map((a) => a?.name).filter(Boolean).join(", ") || "";
             const imgs = track.album?.images;
@@ -1148,12 +1148,12 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
               Meer nummers laden...
             </p>
           )}
-          <div ref={loadMoreRef} className="h-1 w-full" />
+          <div ref={loadMoreRef} className="h-10 w-full sm:h-2" />
         </div>
       )}
 
       {view === "importedTracks" && !savedTracksLoading && (
-        <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto">
+        <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto pb-14 sm:pb-2">
           {filteredSavedTracks.map((track) => {
             const isAdded = addedTrackId === track.id;
             const spotifyUrl = (track.spotify_url ?? "").trim();
@@ -1208,12 +1208,12 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
               Meer tracks laden...
             </p>
           )}
-          <div ref={loadMoreRef} className="h-1 w-full" />
+          <div ref={loadMoreRef} className="h-10 w-full sm:h-2" />
         </div>
       )}
 
       {view === "sharedTracks" && !sharedTracksLoading && (
-        <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto">
+        <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto pb-14 sm:pb-2">
           {filteredSharedTracks.map((track) => {
             const isAdded = addedTrackId === track.id;
             const spotifyUrl = (track.spotify_url ?? "").trim();
@@ -1268,7 +1268,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
               Meer tracks laden...
             </p>
           )}
-          <div ref={loadMoreRef} className="h-1 w-full" />
+          <div ref={loadMoreRef} className="h-10 w-full sm:h-2" />
         </div>
       )}
     </div>
