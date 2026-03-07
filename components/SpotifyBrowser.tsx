@@ -738,33 +738,6 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
       {view === "playlists" && !loading && (
         <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto">
           {showPlaylistSections && (
-          <div className="mb-2 rounded-md border border-gray-700/70 bg-gray-900/60 p-2">
-            <p className="text-[11px] font-semibold text-gray-200">Import Exportify</p>
-            <p className="mt-0.5 text-[10px] text-gray-500">Upload .csv of .zip met playlists uit Exportify.</p>
-            <input
-              type="file"
-              accept=".csv,.zip,text/csv,application/csv,application/vnd.ms-excel,application/zip,application/x-zip-compressed"
-              onChange={(e) => {
-                const file = e.target.files?.[0] ?? null;
-                setImportFile(file);
-                setImportError(null);
-              }}
-              className="mt-2 w-full text-[10px] text-gray-400 file:mr-2 file:rounded file:border-0 file:bg-gray-700 file:px-2 file:py-1 file:text-[10px] file:font-medium file:text-white"
-            />
-            <button
-              type="button"
-              onClick={() => { void handleImportExportify(); }}
-              disabled={!importFile || importing}
-              className="mt-2 rounded bg-violet-600 px-2 py-1 text-[10px] font-semibold text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {importing ? "Importeren..." : "Importeer bestand"}
-            </button>
-            {importStatus && <p className="mt-1 text-[10px] text-green-300">{importStatus}</p>}
-            {importError && <p className="mt-1 text-[10px] text-red-300">{importError}</p>}
-          </div>
-          )}
-
-          {showPlaylistSections && (
           <div className="mb-2 rounded-md border border-gray-700/70 bg-gray-900/50 p-2">
             <div className="mb-1 flex items-center justify-between">
               <p className="text-[11px] font-semibold text-gray-200">Persoonlijke playlists</p>
@@ -917,6 +890,34 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                 </p>
               )}
             </>
+          )}
+          {showPlaylistSections && (
+          <details className="mb-2 rounded-md border border-gray-700/70 bg-gray-900/60 p-2">
+            <summary className="cursor-pointer list-none text-[11px] font-semibold text-gray-200">
+              Nieuwe playlist toevoegen
+            </summary>
+            <p className="mt-1 text-[10px] text-gray-500">Upload .csv of .zip met playlists uit Exportify.</p>
+            <input
+              type="file"
+              accept=".csv,.zip,text/csv,application/csv,application/vnd.ms-excel,application/zip,application/x-zip-compressed"
+              onChange={(e) => {
+                const file = e.target.files?.[0] ?? null;
+                setImportFile(file);
+                setImportError(null);
+              }}
+              className="mt-2 w-full text-[10px] text-gray-400 file:mr-2 file:rounded file:border-0 file:bg-gray-700 file:px-2 file:py-1 file:text-[10px] file:font-medium file:text-white"
+            />
+            <button
+              type="button"
+              onClick={() => { void handleImportExportify(); }}
+              disabled={!importFile || importing}
+              className="mt-2 rounded bg-violet-600 px-2 py-1 text-[10px] font-semibold text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {importing ? "Importeren..." : "Importeer bestand"}
+            </button>
+            {importStatus && <p className="mt-1 text-[10px] text-green-300">{importStatus}</p>}
+            {importError && <p className="mt-1 text-[10px] text-red-300">{importError}</p>}
+          </details>
           )}
           <div ref={loadMoreRef} className="h-1 w-full" />
         </div>

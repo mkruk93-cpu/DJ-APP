@@ -47,6 +47,8 @@ import {
   getSharedStoreUsage,
   updateSharedPlaylistName,
   deleteSharedPlaylist,
+  appendTracksToSharedPlaylist,
+  deleteSharedPlaylistTrack,
   hasSharedPlaylist,
   parseSharedFallbackPlaylistId,
   parseSharedFallbackPlayMode,
@@ -1511,6 +1513,71 @@ app.post('/api/shared-playlists/import', upload.any(), async (req, res) => {
   }
 });
 
+app.post('/api/shared-playlists/:id/import', upload.any(), async (req, res) => {
+  const token = getAdminTokenFromRequest(req);
+  if (!isAdmin(token ?? undefined)) {
+    return res.status(403).json({ error: 'Unauthorized' });
+  }
+  const playlistId = String(req.params.id ?? '').trim();
+  if (!playlistId) {
+    return res.status(400).json({ error: 'Playlist id ontbreekt' });
+  }
+  const uploaded = Array.isArray(req.files) ? req.files : [];
+  if (uploaded.length === 0) {
+    return res.status(400).json({ error: 'Bestand ontbreekt (field: file/files)' });
+  }
+  const onlyCsv = uploaded.every((file) => extname(file.originalname ?? '').toLowerCase() === '.csv');
+  if (!onlyCsv) {
+    return res.status(400).json({ error: 'Alleen .csv bestanden zijn toegestaan voor gedeelde import' });
+  }
+  try {
+    const mergedTracks: Array<{
+      title: string;
+      artist: string;
+      album: string | null;
+      spotifyUrl: string | null;
+    }> = [];
+    const seenKeys = new Set<string>();
+    const normalizeDedupe = (value: string): string => value.toLowerCase().replace(/\s+/g, ' ').trim();
+    for (const file of uploaded) {
+      const parsed = parseExportifyUpload(file.originalname ?? 'import.csv', file.buffer, {
+        maxPlaylists: 1,
+        maxTracksPerPlaylist: USER_PLAYLIST_MAX_TRACKS_PER_IMPORT,
+      }).filter((playlist) => playlist.tracks.length > 0);
+      for (const playlist of parsed) {
+        for (const track of playlist.tracks) {
+          const dedupeKey = `${normalizeDedupe(track.artist)}|${normalizeDedupe(track.title)}`;
+          if (seenKeys.has(dedupeKey)) continue;
+          seenKeys.add(dedupeKey);
+          mergedTracks.push({
+            title: track.title,
+            artist: track.artist,
+            album: track.album,
+            spotifyUrl: track.spotifyUrl,
+          });
+        }
+      }
+    }
+    if (mergedTracks.length === 0) {
+      return res.status(400).json({ error: 'Geen geldige tracks gevonden in CSV' });
+    }
+    const trackInputs = mergedTracks.map((track, index) => ({
+      title: track.title.slice(0, 300),
+      artist: track.artist.slice(0, 300),
+      album: track.album?.slice(0, 300) ?? null,
+      spotify_url: track.spotifyUrl?.slice(0, 600) ?? null,
+      position: index + 1,
+    }));
+    const updated = await appendTracksToSharedPlaylist(playlistId, trackInputs, getSharedStoreLimits());
+    if (!updated) return res.status(404).json({ error: 'Playlist niet gevonden' });
+    const usage = await getSharedStoreUsage();
+    return res.json({ ok: true, playlist: updated, usage });
+  } catch (err) {
+    console.error('[rest] /api/shared-playlists/:id/import error:', err);
+    return res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
 app.get('/api/shared-playlists/:id/tracks', async (req, res) => {
   const playlistId = String(req.params.id ?? '').trim();
   if (!playlistId) {
@@ -1584,6 +1651,27 @@ app.delete('/api/shared-playlists/:id', async (req, res) => {
     return res.json({ ok: true, usage });
   } catch (err) {
     console.error('[rest] /api/shared-playlists/:id DELETE error:', err);
+    return res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
+app.delete('/api/shared-playlists/:id/tracks/:trackId', async (req, res) => {
+  const token = getAdminTokenFromRequest(req);
+  if (!isAdmin(token ?? undefined)) {
+    return res.status(403).json({ error: 'Unauthorized' });
+  }
+  const playlistId = String(req.params.id ?? '').trim();
+  const trackId = String(req.params.trackId ?? '').trim();
+  if (!playlistId || !trackId) {
+    return res.status(400).json({ error: 'Playlist id en track id zijn verplicht' });
+  }
+  try {
+    const updated = await deleteSharedPlaylistTrack(playlistId, trackId);
+    if (!updated) return res.status(404).json({ error: 'Playlist of track niet gevonden' });
+    const usage = await getSharedStoreUsage();
+    return res.json({ ok: true, playlist: updated, usage });
+  } catch (err) {
+    console.error('[rest] /api/shared-playlists/:id/tracks/:trackId DELETE error:', err);
     return res.status(500).json({ error: getErrorMessage(err) });
   }
 });

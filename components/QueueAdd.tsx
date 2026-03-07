@@ -582,12 +582,30 @@ export default function QueueAdd() {
     const viewportHeight = window.innerHeight;
     const spaceBelow = viewportHeight - rect.bottom;
     const spaceAbove = rect.top;
+
+    // Mobile: always stretch the results list to the bottom viewport edge.
+    // This avoids the empty strip under the list on phones.
+    if (isMobile) {
+      const top = Math.min(Math.max(8, Math.round(rect.bottom + 8)), Math.max(8, viewportHeight - 140));
+      const maxHeight = Math.max(120, viewportHeight - top - 8);
+      setDropdownStyle({
+        position: 'fixed',
+        left: '8px',
+        right: '8px',
+        top: `${top}px`,
+        bottom: '8px',
+        marginTop: '0',
+        transform: 'none',
+        maxHeight: `${maxHeight}px`,
+      });
+      return;
+    }
     
     // Check if we have enough space below (need at least 200px for meaningful dropdown)
     if (spaceBelow >= 200) {
       // Position normally below input
       setDropdownStyle({
-        maxHeight: `${Math.min(spaceBelow - 20, viewportHeight * 0.6)}px`
+        maxHeight: `${Math.max(140, spaceBelow - 8)}px`
       });
     } else if (spaceAbove >= 200) {
       // Position above input if more space there
@@ -596,7 +614,7 @@ export default function QueueAdd() {
         top: 'auto',
         marginBottom: '4px',
         marginTop: '0',
-        maxHeight: `${Math.min(spaceAbove - 20, viewportHeight * 0.6)}px`
+        maxHeight: `${Math.max(140, spaceAbove - 8)}px`
       });
     } else {
       // Use fixed positioning in center if neither has enough space
@@ -609,7 +627,7 @@ export default function QueueAdd() {
         maxHeight: `${viewportHeight * 0.6}px`
       });
     }
-  }, []);
+  }, [isMobile]);
 
   // Update dropdown position when results are shown
   useEffect(() => {

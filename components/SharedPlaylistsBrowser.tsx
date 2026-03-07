@@ -283,42 +283,6 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
 
       {view === "playlists" && !loading && (
         <div className="min-h-0 flex-1 space-y-px overflow-y-auto">
-          <div className="mb-2 rounded-lg border border-gray-700/70 bg-gradient-to-br from-gray-900 to-gray-900/70 p-2.5">
-            <p className="text-[11px] font-semibold text-gray-200">Nieuwe playlist toevoegen</p>
-            <p className="mt-0.5 text-[10px] text-gray-500">Upload meerdere Exportify CSV's. We voegen samen en dedupliceren.</p>
-            <input
-              type="text"
-              value={importName}
-              onChange={(e) => setImportName(e.target.value)}
-              placeholder="Playlist naam (verplicht)"
-              className="mt-2 w-full rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[11px] text-white placeholder-gray-500 outline-none focus:border-violet-500"
-            />
-            <input
-              type="file"
-              multiple
-              accept=".csv,text/csv,application/csv,application/vnd.ms-excel"
-              onChange={(e) => {
-                const files = Array.from(e.target.files ?? []).filter((file) => file.name.toLowerCase().endsWith(".csv"));
-                setImportFiles(files);
-                setError(null);
-              }}
-              className="mt-2 w-full text-[10px] text-gray-400 file:mr-2 file:rounded file:border-0 file:bg-gray-700 file:px-2 file:py-1 file:text-[10px] file:font-medium file:text-white"
-            />
-            {importFiles.length > 0 && (
-              <p className="mt-1 text-[10px] text-gray-400">{importFiles.length} CSV bestand(en) geselecteerd</p>
-            )}
-            <button
-              type="button"
-              onClick={() => { void handleImport(); }}
-              disabled={importFiles.length === 0 || !importName.trim() || importing}
-              className="mt-2 rounded bg-violet-600 px-2 py-1 text-[10px] font-semibold text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {importing ? "Importeren..." : "Importeer bestand"}
-            </button>
-            {status && <p className="mt-1 text-[10px] text-green-300">{status}</p>}
-            {error && <p className="mt-1 text-[10px] text-red-300">{error}</p>}
-          </div>
-
           <div className="mb-2 rounded-md border border-blue-700/70 bg-blue-950/20 p-2">
             {sharedUsage && (
               <p className="mb-1 text-[10px] text-blue-300/80">
@@ -354,6 +318,43 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
               </button>
             ))}
           </div>
+          <details className="mb-2 rounded-lg border border-gray-700/70 bg-gradient-to-br from-gray-900 to-gray-900/70 p-2.5">
+            <summary className="cursor-pointer list-none text-[11px] font-semibold text-gray-200">
+              Nieuwe playlist toevoegen
+            </summary>
+            <p className="mt-1 text-[10px] text-gray-500">Upload meerdere Exportify CSV's. We voegen samen en dedupliceren.</p>
+            <input
+              type="text"
+              value={importName}
+              onChange={(e) => setImportName(e.target.value)}
+              placeholder="Playlist naam (verplicht)"
+              className="mt-2 w-full rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[11px] text-white placeholder-gray-500 outline-none focus:border-violet-500"
+            />
+            <input
+              type="file"
+              multiple
+              accept=".csv,text/csv,application/csv,application/vnd.ms-excel"
+              onChange={(e) => {
+                const files = Array.from(e.target.files ?? []).filter((file) => file.name.toLowerCase().endsWith(".csv"));
+                setImportFiles(files);
+                setError(null);
+              }}
+              className="mt-2 w-full text-[10px] text-gray-400 file:mr-2 file:rounded file:border-0 file:bg-gray-700 file:px-2 file:py-1 file:text-[10px] file:font-medium file:text-white"
+            />
+            {importFiles.length > 0 && (
+              <p className="mt-1 text-[10px] text-gray-400">{importFiles.length} CSV bestand(en) geselecteerd</p>
+            )}
+            <button
+              type="button"
+              onClick={() => { void handleImport(); }}
+              disabled={importFiles.length === 0 || !importName.trim() || importing}
+              className="mt-2 rounded bg-violet-600 px-2 py-1 text-[10px] font-semibold text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {importing ? "Importeren..." : "Importeer bestand"}
+            </button>
+            {status && <p className="mt-1 text-[10px] text-green-300">{status}</p>}
+            {error && <p className="mt-1 text-[10px] text-red-300">{error}</p>}
+          </details>
         </div>
       )}
 

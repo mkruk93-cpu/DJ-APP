@@ -201,15 +201,74 @@ function titleFromFilename(filePath: string): string {
 }
 
 function autoTrackTitle(artist: string, title: string): string {
+  const cleanArtist = sanitizeDisplayText(artist);
+  const cleanTitle = sanitizeDisplayText(title);
   // For generic genre names as title, just use the artist
   const genericTitles = ['melodic techno', 'hard techno', 'euphoric hardstyle', 'hardstyle', 'trance', 'house', 'techno'];
-  if (!title || title === artist || genericTitles.some(g => title.toLowerCase().includes(g))) {
-    return artist;
+  if (!cleanTitle || cleanTitle === cleanArtist || genericTitles.some(g => cleanTitle.toLowerCase().includes(g))) {
+    return cleanArtist;
   }
-  return `${artist} - ${title}`.trim();
+  return `${cleanArtist} - ${cleanTitle}`.trim();
 }
 
 const DISPLAY_TITLE_SEPARATORS = [' - ', ' – ', ' — ', ' | ', ': '];
+const ARTIST_WORD_STOPWORDS = new Set(['the', 'dj', 'mc', 'and', 'feat', 'ft', 'featuring', 'vs', 'x']);
+const TITLE_WORD_STOPWORDS = new Set([
+  'official', 'video', 'visualizer', 'visualiser', 'audio', 'hq', 'hd', 'lyrics', 'lyric', 'edit',
+  'remix', 'bootleg', 'extended', 'mix', 'version', 'release', 'records', 'recordings',
+]);
+
+function sanitizeDisplayText(value: string): string {
+  return value
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeArtistSearchQuery(artist: string): string {
+  return sanitizeDisplayText(
+    artist
+      .replace(/[;/|]+/g, ' & ')
+      .replace(/\s*&\s*/g, ' & '),
+  );
+}
+
+function normalizeWordLoose(word: string): string {
+  let out = word.trim();
+  if (out.length > 4 && out.endsWith('ies')) return `${out.slice(0, -3)}y`;
+  if (out.length > 3 && out.endsWith('s')) out = out.slice(0, -1);
+  return out;
+}
+
+function toLooseWords(value: string, stopwords: Set<string>): string[] {
+  return value
+    .split(' ')
+    .map((part) => normalizeWordLoose(part.trim()))
+    .filter((part) => part.length > 1 && !stopwords.has(part));
+}
+
+function hasLooseArtistMatch(expectedNorm: string, candidateNorm: string): boolean {
+  if (!expectedNorm || !candidateNorm) return false;
+  if (expectedNorm.includes(candidateNorm) || candidateNorm.includes(expectedNorm)) return true;
+  const expectedWords = toLooseWords(expectedNorm, ARTIST_WORD_STOPWORDS);
+  const candidateWords = toLooseWords(candidateNorm, ARTIST_WORD_STOPWORDS);
+  if (expectedWords.length === 0 || candidateWords.length === 0) return false;
+  const candidateSet = new Set(candidateWords);
+  const matched = expectedWords.filter((word) => candidateSet.has(word)).length;
+  if (expectedWords.length <= 2) return matched >= 1;
+  return matched >= Math.max(2, Math.ceil(expectedWords.length * 0.6));
+}
+
+function hasSufficientTitleMatch(expectedTitleNorm: string, actualTitleNorm: string): boolean {
+  const expectedWords = toLooseWords(expectedTitleNorm, TITLE_WORD_STOPWORDS);
+  if (expectedWords.length === 0) return true;
+  const actualWords = toLooseWords(actualTitleNorm, TITLE_WORD_STOPWORDS);
+  if (actualWords.length === 0) return false;
+  const actualSet = new Set(actualWords);
+  const matched = expectedWords.filter((word) => actualSet.has(word)).length;
+  if (expectedWords.length <= 2) return matched >= 1;
+  return matched >= Math.max(2, Math.ceil(expectedWords.length * 0.45));
+}
 
 function hasDisplayArtistSeparator(value: string): boolean {
   const text = value.trim();
@@ -221,7 +280,7 @@ function hasDisplayArtistSeparator(value: string): boolean {
 }
 
 function parseDisplayArtistTitle(value: string): { artist: string | null; title: string } {
-  const text = value.trim();
+  const text = sanitizeDisplayText(value);
   for (const sep of DISPLAY_TITLE_SEPARATORS) {
     const idx = text.indexOf(sep);
     if (idx <= 0 || idx >= text.length - sep.length) continue;
@@ -233,8 +292,8 @@ function parseDisplayArtistTitle(value: string): { artist: string | null; title:
 }
 
 function stripLeadingArtistFromTitle(title: string, artist: string): string {
-  const cleanTitle = title.trim();
-  const cleanArtist = artist.trim();
+  const cleanTitle = sanitizeDisplayText(title);
+  const cleanArtist = sanitizeDisplayText(artist);
   if (!cleanTitle || !cleanArtist) return cleanTitle;
   for (const sep of DISPLAY_TITLE_SEPARATORS) {
     const prefix = `${cleanArtist}${sep}`.toLowerCase();
@@ -257,7 +316,7 @@ function normalizeArtistMatchText(text: string): string {
 }
 
 function extractLeadingTitleArtistNormalized(title: string): string | null {
-  const raw = title.trim();
+  const raw = sanitizeDisplayText(title);
   if (!raw) return null;
   for (const sep of DISPLAY_TITLE_SEPARATORS) {
     const idx = raw.indexOf(sep);
@@ -294,13 +353,13 @@ function buildAutoDisplayTitle(
   fallbackArtist: string | null | undefined,
   fallbackTitle: string | null | undefined,
 ): string {
-  const detected = (detectedTitle ?? '').trim();
+  const detected = sanitizeDisplayText(detectedTitle ?? '');
   if (detected && hasDisplayArtistSeparator(detected)) return detected;
-  const artist = (fallbackArtist ?? '').trim();
-  const baseTitle = (fallbackTitle ?? '').trim();
+  const artist = sanitizeDisplayText(fallbackArtist ?? '');
+  const baseTitle = sanitizeDisplayText(fallbackTitle ?? '');
   if (!artist) return detected || baseTitle || 'Unknown title';
   const candidate = stripLeadingArtistFromTitle(detected || baseTitle, artist) || baseTitle || detected;
-  return autoTrackTitle(artist, candidate || 'Unknown title');
+  return sanitizeDisplayText(autoTrackTitle(artist, candidate || 'Unknown title'));
 }
 
 function getNormalizedDisplayArtist(value: string | null | undefined): string | null {
@@ -390,11 +449,13 @@ async function resolveShortAutoCandidate(query: string, genreId?: string): Promi
     }
 
     // Keep the original query for better artist matching
-    const searchQuery = query;
+    const searchQuery = sanitizeDisplayText(query);
     const parsedQuery = parseDisplayArtistTitle(searchQuery);
     const expectedArtistNorm = parsedQuery.artist
       ? normalizeArtistMatchText(parsedQuery.artist)
       : '';
+    const expectedTitleNorm = normalizeArtistMatchText(parsedQuery.title || '');
+    const shouldRequireTitleMatch = !!parsedQuery.artist && !!parsedQuery.title;
 
     // Try YouTube first with aggressive timeout
     const ytResults = await Promise.race([
@@ -487,15 +548,17 @@ async function resolveShortAutoCandidate(query: string, genreId?: string): Promi
           const channelNorm = normalizeArtistMatchText(result.channel || '');
           const leadingArtistNorm = extractLeadingTitleArtistNormalized(result.title || '');
           const leadingArtistMatches = !!leadingArtistNorm && (
-            leadingArtistNorm.includes(expectedArtistNorm) || expectedArtistNorm.includes(leadingArtistNorm)
+            hasLooseArtistMatch(expectedArtistNorm, leadingArtistNorm)
           );
           const creditedInTitle = hasArtistCreditInTitleNormalized(titleNorm, expectedArtistNorm);
-          const artistAnywhereMatch = titleNorm.includes(expectedArtistNorm) || channelNorm.includes(expectedArtistNorm);
+          const artistAnywhereMatch = hasLooseArtistMatch(expectedArtistNorm, titleNorm)
+            || hasLooseArtistMatch(expectedArtistNorm, channelNorm);
 
           // Uploader can differ, but if title has "Artist - Title" and leading artist mismatches,
           // only allow explicit remix/feat credit for expected artist.
           if (leadingArtistNorm && !leadingArtistMatches && !creditedInTitle) return false;
           if (!leadingArtistNorm && !artistAnywhereMatch && !creditedInTitle) return false;
+          if (shouldRequireTitleMatch && !hasSufficientTitleMatch(expectedTitleNorm, titleNorm)) return false;
         }
         
         // For euphoric hardstyle, be extra strict about artist matching
@@ -1135,11 +1198,14 @@ async function prepareSharedAutoFallbackTrack(
       .map((track) => {
         const title = (track.title ?? '').trim();
         const artist = (track.artist ?? '').trim();
-        const query = artist ? `${artist} - ${title}` : title;
+        const searchArtist = artist ? normalizeArtistSearchQuery(artist) : '';
+        const query = searchArtist ? `${searchArtist} - ${title}` : title;
+        const recentKey = artist ? `${artist} - ${title}` : title;
         return {
           title,
           artist: artist || null,
           query: query.trim(),
+          recentKey: sanitizeDisplayText(recentKey),
           thumbnail: null as string | null,
         };
       })
@@ -1148,8 +1214,8 @@ async function prepareSharedAutoFallbackTrack(
     if (candidates.length === 0) return null;
 
     const fresh = candidates.filter((entry) =>
-      !recentAutoTrackKeys.includes(normalizeAutoKey(entry.query))
-      && !wasPlayedAutoToday(entry.query),
+      !recentAutoTrackKeys.includes(normalizeAutoKey(entry.recentKey))
+      && !wasPlayedAutoToday(entry.recentKey),
     );
     const pool = fresh.length > 0 ? fresh : candidates;
     let choice: typeof pool[number] | undefined;
@@ -1219,7 +1285,7 @@ async function prepareSharedAutoFallbackTrack(
       return null;
     }
 
-    rememberAutoTrackKey(choice.query);
+    rememberAutoTrackKey(choice.recentKey);
     pendingAutoUpcoming = null;
     console.log(`[auto-download] Ready (shared:${playlistId}): ${resolvedTitle} (${finalDuration}s)`);
     return {

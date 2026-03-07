@@ -4,9 +4,13 @@ import { useEffect, useState } from "react";
 import { getRadioToken } from "@/lib/auth";
 import {
   deleteSharedPlaylistAdmin,
+  deleteSharedPlaylistTrackAdmin,
+  getSharedPlaylistTracksPage,
+  importIntoSharedPlaylistAdmin,
   listSharedPlaylists,
   updateSharedPlaylistAdmin,
   type SharedPlaylist,
+  type UserPlaylistTrack,
 } from "@/lib/userPlaylistsApi";
 
 export default function SharedPlaylistManager() {
@@ -16,6 +20,13 @@ export default function SharedPlaylistManager() {
   const [status, setStatus] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [nameDraft, setNameDraft] = useState("");
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [tracks, setTracks] = useState<UserPlaylistTrack[]>([]);
+  const [tracksLoading, setTracksLoading] = useState(false);
+  const [tracksError, setTracksError] = useState<string | null>(null);
+  const [trackFilter, setTrackFilter] = useState("");
+  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
+  const [uploading, setUploading] = useState(false);
 
   async function loadPlaylists() {
     setLoading(true);
@@ -76,6 +87,89 @@ export default function SharedPlaylistManager() {
     }
   }
 
+  async function openPlaylistContent(playlist: SharedPlaylist) {
+    if (expandedId === playlist.id) {
+      setExpandedId(null);
+      setTracks([]);
+      setTracksError(null);
+      setUploadFiles([]);
+      return;
+    }
+    setExpandedId(playlist.id);
+    setTracks([]);
+    setTracksError(null);
+    setTrackFilter("");
+    setUploadFiles([]);
+    setTracksLoading(true);
+    try {
+      const page = await getSharedPlaylistTracksPage(playlist.id, 300, 0);
+      setTracks(page.items);
+    } catch (err) {
+      setTracksError(err instanceof Error ? err.message : "Kon playlist inhoud niet laden.");
+    } finally {
+      setTracksLoading(false);
+    }
+  }
+
+  async function handleDeleteTrack(playlist: SharedPlaylist, track: UserPlaylistTrack) {
+    const token = getRadioToken();
+    if (!token) {
+      setError("Admin token ontbreekt.");
+      return;
+    }
+    setError(null);
+    setStatus(null);
+    try {
+      const result = await deleteSharedPlaylistTrackAdmin(playlist.id, track.id, token);
+      setTracks((prev) => prev.filter((row) => row.id !== track.id));
+      setItems((prev) =>
+        prev.map((row) => (row.id === result.playlist.id ? { ...row, track_count: result.playlist.track_count } : row)),
+      );
+      setStatus("Track verwijderd uit playlist.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Track verwijderen mislukt.");
+    }
+  }
+
+  async function handleAppendCsv(playlist: SharedPlaylist) {
+    const token = getRadioToken();
+    if (!token) {
+      setError("Admin token ontbreekt.");
+      return;
+    }
+    if (uploadFiles.length === 0) {
+      setError("Kies eerst 1 of meerdere CSV bestanden.");
+      return;
+    }
+    setError(null);
+    setStatus(null);
+    setUploading(true);
+    try {
+      const result = await importIntoSharedPlaylistAdmin(playlist.id, uploadFiles, token);
+      setItems((prev) =>
+        prev.map((row) => (row.id === result.playlist.id ? { ...row, track_count: result.playlist.track_count } : row)),
+      );
+      setUploadFiles([]);
+      const page = await getSharedPlaylistTracksPage(playlist.id, 300, 0);
+      setTracks(page.items);
+      setStatus("CSV toegevoegd. Nieuwe tracks zijn gededuped en ingeladen.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "CSV toevoegen mislukt.");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  const filteredTracks = tracks.filter((track) => {
+    const q = trackFilter.toLowerCase().trim();
+    if (!q) return true;
+    return (
+      track.title.toLowerCase().includes(q)
+      || (track.artist ?? "").toLowerCase().includes(q)
+      || (track.album ?? "").toLowerCase().includes(q)
+    );
+  });
+
   return (
     <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
       <div className="mb-2 flex items-center justify-between">
@@ -130,6 +224,13 @@ export default function SharedPlaylistManager() {
                   <div className="flex gap-1">
                     <button
                       type="button"
+                      onClick={() => { void openPlaylistContent(playlist); }}
+                      className="rounded border border-gray-700 px-2 py-1 text-[11px] text-violet-300 transition hover:text-violet-200"
+                    >
+                      {expandedId === playlist.id ? "Sluit" : "Inhoud"}
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => {
                         setEditingId(playlist.id);
                         setNameDraft(playlist.name);
@@ -146,6 +247,69 @@ export default function SharedPlaylistManager() {
                       Delete
                     </button>
                   </div>
+                </div>
+              )}
+              {expandedId === playlist.id && (
+                <div className="mt-2 rounded border border-gray-800 bg-gray-950/60 p-2">
+                  <p className="text-[11px] font-semibold text-gray-200">Inhoud bewerken</p>
+                  <div className="mt-2 rounded border border-gray-800 bg-gray-900/70 p-2">
+                    <p className="text-[10px] font-semibold text-gray-300">CSV toevoegen (dedupe)</p>
+                    <input
+                      type="file"
+                      multiple
+                      accept=".csv,text/csv,application/csv,application/vnd.ms-excel"
+                      onChange={(e) => {
+                        const files = Array.from(e.target.files ?? []).filter((file) =>
+                          file.name.toLowerCase().endsWith(".csv"),
+                        );
+                        setUploadFiles(files);
+                      }}
+                      className="mt-1 w-full text-[10px] text-gray-400 file:mr-2 file:rounded file:border-0 file:bg-gray-700 file:px-2 file:py-1 file:text-[10px] file:font-medium file:text-white"
+                    />
+                    {uploadFiles.length > 0 && (
+                      <p className="mt-1 text-[10px] text-gray-400">{uploadFiles.length} CSV geselecteerd</p>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => { void handleAppendCsv(playlist); }}
+                      disabled={uploading || uploadFiles.length === 0}
+                      className="mt-1 rounded bg-violet-600 px-2 py-1 text-[10px] font-semibold text-white transition hover:bg-violet-500 disabled:opacity-50"
+                    >
+                      {uploading ? "Toevoegen..." : "Voeg CSV toe"}
+                    </button>
+                  </div>
+
+                  <input
+                    value={trackFilter}
+                    onChange={(e) => setTrackFilter(e.target.value)}
+                    placeholder="Filter tracks..."
+                    className="mt-2 w-full rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[11px] text-white placeholder-gray-500"
+                  />
+                  {tracksError && <p className="mt-1 text-[10px] text-red-300">{tracksError}</p>}
+                  {tracksLoading ? (
+                    <p className="mt-2 text-[10px] text-gray-400">Tracks laden...</p>
+                  ) : (
+                    <div className="mt-2 max-h-52 space-y-1 overflow-y-auto">
+                      {filteredTracks.map((track) => (
+                        <div key={track.id} className="flex items-center justify-between gap-2 rounded border border-gray-800 bg-gray-900/70 px-2 py-1">
+                          <div className="min-w-0">
+                            <p className="truncate text-[11px] font-medium text-white">{track.title}</p>
+                            <p className="truncate text-[10px] text-gray-400">{track.artist ?? "Unknown"}</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => { void handleDeleteTrack(playlist, track); }}
+                            className="shrink-0 rounded border border-red-700/60 px-2 py-0.5 text-[10px] text-red-300 transition hover:text-red-200"
+                          >
+                            Verwijder
+                          </button>
+                        </div>
+                      ))}
+                      {filteredTracks.length === 0 && (
+                        <p className="text-[10px] text-gray-500">Geen tracks gevonden.</p>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

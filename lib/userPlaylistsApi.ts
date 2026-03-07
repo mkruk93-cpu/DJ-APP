@@ -222,3 +222,41 @@ export async function deleteSharedPlaylistAdmin(
   const payload = await parseOrThrow<{ ok: boolean; usage: { playlists: number; tracks: number } }>(res);
   return payload.usage;
 }
+
+export async function importIntoSharedPlaylistAdmin(
+  playlistId: string,
+  files: File[],
+  token: string,
+): Promise<{ playlist: SharedPlaylist; usage: { playlists: number; tracks: number } }> {
+  if (!files.length) {
+    throw new Error('Geen bestanden geselecteerd');
+  }
+  const safeId = encodeURIComponent(playlistId);
+  const form = new FormData();
+  for (const file of files) {
+    form.append('files', file);
+  }
+  form.append('token', token);
+  const res = await fetch(`${getServerUrl()}/api/shared-playlists/${safeId}/import`, {
+    method: 'POST',
+    body: form,
+  });
+  const payload = await parseOrThrow<{ ok: boolean; playlist: SharedPlaylist; usage: { playlists: number; tracks: number } }>(res);
+  return { playlist: payload.playlist, usage: payload.usage };
+}
+
+export async function deleteSharedPlaylistTrackAdmin(
+  playlistId: string,
+  trackId: string,
+  token: string,
+): Promise<{ playlist: SharedPlaylist; usage: { playlists: number; tracks: number } }> {
+  const safePlaylistId = encodeURIComponent(playlistId);
+  const safeTrackId = encodeURIComponent(trackId);
+  const res = await fetch(`${getServerUrl()}/api/shared-playlists/${safePlaylistId}/tracks/${safeTrackId}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  });
+  const payload = await parseOrThrow<{ ok: boolean; playlist: SharedPlaylist; usage: { playlists: number; tracks: number } }>(res);
+  return { playlist: payload.playlist, usage: payload.usage };
+}

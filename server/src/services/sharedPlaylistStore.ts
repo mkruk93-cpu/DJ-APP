@@ -389,6 +389,75 @@ export async function deleteSharedPlaylist(playlistId: string): Promise<boolean>
   });
 }
 
+export async function appendTracksToSharedPlaylist(
+  playlistId: string,
+  tracks: SharedTrackInput[],
+  limits: SharedStoreLimits,
+): Promise<SharedPlaylistSummary | null> {
+  return withWriteLock((store) => {
+    const playlist = store.playlists.find((entry) => entry.id === playlistId);
+    if (!playlist) return null;
+    const maxTracksPerPlaylist = Math.max(1, limits.maxTracksPerSharedPlaylist);
+    const existingKeys = new Set<string>(
+      playlist.tracks.map((track) => makeTrackKey(track.artist, track.title)),
+    );
+    let nextPosition = playlist.tracks.reduce((max, track) => Math.max(max, track.position), 0) + 1;
+    for (const input of tracks) {
+      if (playlist.tracks.length >= maxTracksPerPlaylist) break;
+      const title = input.title.trim();
+      const artist = input.artist?.trim() || null;
+      if (!title) continue;
+      const key = makeTrackKey(artist, title);
+      if (existingKeys.has(key)) continue;
+      existingKeys.add(key);
+      playlist.tracks.push({
+        id: randomUUID(),
+        title,
+        artist,
+        album: input.album?.trim() || null,
+        spotify_url: input.spotify_url?.trim() || null,
+        position: nextPosition++,
+      });
+    }
+    playlist.track_count = playlist.tracks.length;
+    return {
+      id: playlist.id,
+      name: playlist.name,
+      source: playlist.source,
+      created_at: playlist.created_at,
+      imported_at: playlist.imported_at,
+      track_count: playlist.track_count,
+      added_by: playlist.added_by,
+    };
+  });
+}
+
+export async function deleteSharedPlaylistTrack(
+  playlistId: string,
+  trackId: string,
+): Promise<SharedPlaylistSummary | null> {
+  return withWriteLock((store) => {
+    const playlist = store.playlists.find((entry) => entry.id === playlistId);
+    if (!playlist) return null;
+    const index = playlist.tracks.findIndex((track) => track.id === trackId);
+    if (index < 0) return null;
+    playlist.tracks.splice(index, 1);
+    playlist.tracks = playlist.tracks
+      .sort((a, b) => a.position - b.position)
+      .map((track, idx) => ({ ...track, position: idx + 1 }));
+    playlist.track_count = playlist.tracks.length;
+    return {
+      id: playlist.id,
+      name: playlist.name,
+      source: playlist.source,
+      created_at: playlist.created_at,
+      imported_at: playlist.imported_at,
+      track_count: playlist.track_count,
+      added_by: playlist.added_by,
+    };
+  });
+}
+
 export async function getSharedStoreUsage(): Promise<{ playlists: number; tracks: number }> {
   const store = readStore();
   return {
