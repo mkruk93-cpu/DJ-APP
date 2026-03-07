@@ -17,11 +17,26 @@ export interface UserPlaylistTrack {
   position: number;
 }
 
+export interface PlaylistTrackPage {
+  items: UserPlaylistTrack[];
+  paging: {
+    total: number;
+    limit: number;
+    offset: number;
+    hasMore: boolean;
+  };
+}
+
 export interface UserPlaylistImportResult {
   ok: boolean;
   imported: Array<{ id: string; name: string; trackCount: number }>;
   totalPlaylists: number;
   totalTracks: number;
+  shared?: {
+    importedPlaylists: number;
+    warnings: Array<{ name: string; reason: string }>;
+    usage: { playlists: number; tracks: number };
+  };
 }
 
 function getServerUrl(): string {
@@ -73,6 +88,19 @@ export async function getUserPlaylistTracks(playlistId: string): Promise<UserPla
   return parseOrThrow<UserPlaylistTrack[]>(res);
 }
 
+export async function getUserPlaylistTracksPage(
+  playlistId: string,
+  limit = 120,
+  offset = 0,
+): Promise<PlaylistTrackPage> {
+  const params = withIdentityParams();
+  params.set('limit', String(limit));
+  params.set('offset', String(offset));
+  const safeId = encodeURIComponent(playlistId);
+  const res = await fetch(`${getServerUrl()}/api/user-playlists/${safeId}/tracks?${params.toString()}`);
+  return parseOrThrow<PlaylistTrackPage>(res);
+}
+
 export async function deleteUserPlaylist(playlistId: string): Promise<void> {
   const params = withIdentityParams();
   const safeId = encodeURIComponent(playlistId);
@@ -93,4 +121,47 @@ export async function getSpotifyOembed(spotifyUrl: string): Promise<SpotifyOembe
   params.set('url', spotifyUrl);
   const res = await fetch(`${getServerUrl()}/api/spotify/oembed?${params.toString()}`);
   return parseOrThrow<SpotifyOembedResult>(res);
+}
+
+export interface SharedPlaylist {
+  id: string;
+  name: string;
+  source: string;
+  created_at: string;
+  imported_at: string;
+  track_count: number;
+  added_by: string | null;
+}
+
+export interface SharedPlaylistsResponse {
+  items: SharedPlaylist[];
+  usage: { playlists: number; tracks: number };
+  paging: { limit: number; offset: number };
+}
+
+export async function listSharedPlaylists(limit = 100, offset = 0): Promise<SharedPlaylistsResponse> {
+  const params = new URLSearchParams();
+  params.set('limit', String(limit));
+  params.set('offset', String(offset));
+  const res = await fetch(`${getServerUrl()}/api/shared-playlists?${params.toString()}`);
+  return parseOrThrow<SharedPlaylistsResponse>(res);
+}
+
+export async function getSharedPlaylistTracks(playlistId: string): Promise<UserPlaylistTrack[]> {
+  const safeId = encodeURIComponent(playlistId);
+  const res = await fetch(`${getServerUrl()}/api/shared-playlists/${safeId}/tracks`);
+  return parseOrThrow<UserPlaylistTrack[]>(res);
+}
+
+export async function getSharedPlaylistTracksPage(
+  playlistId: string,
+  limit = 120,
+  offset = 0,
+): Promise<PlaylistTrackPage> {
+  const params = new URLSearchParams();
+  params.set('limit', String(limit));
+  params.set('offset', String(offset));
+  const safeId = encodeURIComponent(playlistId);
+  const res = await fetch(`${getServerUrl()}/api/shared-playlists/${safeId}/tracks?${params.toString()}`);
+  return parseOrThrow<PlaylistTrackPage>(res);
 }

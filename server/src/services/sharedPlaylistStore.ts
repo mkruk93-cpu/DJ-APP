@@ -1,0 +1,348 @@
+import fs from 'node:fs';
+import { dirname, join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+
+export interface SharedTrackInput {
+  title: string;
+  artist: string | null;
+  album: string | null;
+  spotify_url: string | null;
+  position: number;
+}
+
+interface SharedTrack {
+  id: string;
+  title: string;
+  artist: string | null;
+  album: string | null;
+  spotify_url: string | null;
+  position: number;
+}
+
+interface SharedPlaylist {
+  id: string;
+  name: string;
+  source: string;
+  created_at: string;
+  imported_at: string;
+  track_count: number;
+  added_by: string | null;
+  tracks: SharedTrack[];
+}
+
+interface SharedStoreShape {
+  playlists: SharedPlaylist[];
+}
+
+const SHARED_FALLBACK_PREFIX = 'shared:';
+
+export interface SharedPlaylistSummary {
+  id: string;
+  name: string;
+  source: string;
+  created_at: string;
+  imported_at: string;
+  track_count: number;
+  added_by: string | null;
+}
+
+export interface SharedPlaylistTrack {
+  id: string;
+  title: string;
+  artist: string | null;
+  album: string | null;
+  spotify_url: string | null;
+  position: number;
+}
+
+export interface SharedPlaylistTrackPage {
+  items: SharedPlaylistTrack[];
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+}
+
+export interface SharedIngestOptions {
+  name: string;
+  source?: string;
+  createdAt?: string;
+  addedBy?: string | null;
+}
+
+export interface SharedIngestResult {
+  imported: boolean;
+  playlistId: string | null;
+  name: string;
+  trackCount: number;
+  reason?: string;
+}
+
+export interface SharedStoreLimits {
+  maxSharedPlaylists: number;
+  maxSharedTracks: number;
+  maxTracksPerSharedPlaylist: number;
+}
+
+const STORE_FILE = process.env.SHARED_PLAYLIST_STORE_FILE
+  ? process.env.SHARED_PLAYLIST_STORE_FILE
+  : join(process.cwd(), 'data', 'shared_playlists_store.json');
+
+let writeQueue: Promise<void> = Promise.resolve();
+
+export function toSharedFallbackPlaylistId(playlistId: string): string {
+  return `${SHARED_FALLBACK_PREFIX}${playlistId.trim()}`;
+}
+
+export function parseSharedFallbackPlaylistId(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith(SHARED_FALLBACK_PREFIX)) return null;
+  const id = trimmed.slice(SHARED_FALLBACK_PREFIX.length).trim();
+  return id || null;
+}
+
+function emptyStore(): SharedStoreShape {
+  return { playlists: [] };
+}
+
+function ensureStoreDir(): void {
+  const dir = dirname(STORE_FILE);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+}
+
+function readStore(): SharedStoreShape {
+  ensureStoreDir();
+  if (!fs.existsSync(STORE_FILE)) return emptyStore();
+  try {
+    const raw = fs.readFileSync(STORE_FILE, 'utf8');
+    if (!raw.trim()) return emptyStore();
+    const parsed = JSON.parse(raw) as Partial<SharedStoreShape>;
+    const playlists = Array.isArray(parsed.playlists) ? parsed.playlists : [];
+    return { playlists };
+  } catch (err) {
+    console.warn('[shared-playlists] Store read failed, using empty store:', (err as Error).message);
+    return emptyStore();
+  }
+}
+
+function writeStore(store: SharedStoreShape): void {
+  ensureStoreDir();
+  const tmpFile = `${STORE_FILE}.tmp`;
+  fs.writeFileSync(tmpFile, JSON.stringify(store, null, 2), 'utf8');
+  fs.renameSync(tmpFile, STORE_FILE);
+}
+
+function normalizeText(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\w\s-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function makeTrackKey(artist: string | null, title: string): string {
+  return `${normalizeText(artist ?? '')}|${normalizeText(title)}`;
+}
+
+function totalTrackCount(playlists: SharedPlaylist[]): number {
+  return playlists.reduce((sum, playlist) => sum + playlist.tracks.length, 0);
+}
+
+function normalizePosition(index: number, position: number): number {
+  if (Number.isFinite(position) && position > 0) return Math.floor(position);
+  return index + 1;
+}
+
+async function withWriteLock<T>(operation: (store: SharedStoreShape) => T): Promise<T> {
+  const run = writeQueue.then(() => {
+    const store = readStore();
+    const result = operation(store);
+    writeStore(store);
+    return result;
+  });
+  writeQueue = run.then(() => undefined, () => undefined);
+  return run;
+}
+
+function enforceLimits(store: SharedStoreShape, limits: SharedStoreLimits): void {
+  const normalizedPlaylists = Math.max(1, limits.maxSharedPlaylists);
+  const normalizedTracks = Math.max(1, limits.maxSharedTracks);
+
+  // Remove oldest playlists first when caps are exceeded.
+  store.playlists.sort((a, b) => a.imported_at.localeCompare(b.imported_at));
+  while (store.playlists.length > normalizedPlaylists) {
+    store.playlists.shift();
+  }
+  while (totalTrackCount(store.playlists) > normalizedTracks && store.playlists.length > 0) {
+    store.playlists.shift();
+  }
+}
+
+export async function ingestSharedPlaylist(
+  tracks: SharedTrackInput[],
+  options: SharedIngestOptions,
+  limits: SharedStoreLimits,
+): Promise<SharedIngestResult> {
+  return withWriteLock((store) => {
+    const existingTrackKeys = new Set<string>();
+    for (const playlist of store.playlists) {
+      for (const track of playlist.tracks) {
+        existingTrackKeys.add(makeTrackKey(track.artist, track.title));
+      }
+    }
+
+    const maxTracksPerPlaylist = Math.max(1, limits.maxTracksPerSharedPlaylist);
+    const uniqueInPlaylist = new Set<string>();
+    const normalizedTracks: SharedTrack[] = [];
+
+    for (const [index, input] of tracks.entries()) {
+      const title = input.title.trim();
+      const artist = input.artist?.trim() || null;
+      if (!title) continue;
+
+      const key = makeTrackKey(artist, title);
+      if (uniqueInPlaylist.has(key)) continue;
+      uniqueInPlaylist.add(key);
+      if (existingTrackKeys.has(key)) continue;
+
+      normalizedTracks.push({
+        id: randomUUID(),
+        title,
+        artist,
+        album: input.album?.trim() || null,
+        spotify_url: input.spotify_url?.trim() || null,
+        position: normalizePosition(index, input.position),
+      });
+
+      if (normalizedTracks.length >= maxTracksPerPlaylist) break;
+    }
+
+    if (normalizedTracks.length === 0) {
+      return {
+        imported: false,
+        playlistId: null,
+        name: options.name,
+        trackCount: 0,
+        reason: 'Geen unieke tracks over na dedupe',
+      };
+    }
+
+    const createdAt = options.createdAt ?? new Date().toISOString();
+    const importedAt = new Date().toISOString();
+    const playlistId = randomUUID();
+    const safeName = options.name.trim().slice(0, 140) || 'Shared playlist';
+
+    store.playlists.push({
+      id: playlistId,
+      name: safeName,
+      source: options.source?.trim() || 'exportify-shared',
+      created_at: createdAt,
+      imported_at: importedAt,
+      track_count: normalizedTracks.length,
+      added_by: options.addedBy?.trim() || null,
+      tracks: normalizedTracks,
+    });
+
+    enforceLimits(store, limits);
+
+    const stillExists = store.playlists.some((playlist) => playlist.id === playlistId);
+    if (!stillExists) {
+      return {
+        imported: false,
+        playlistId: null,
+        name: safeName,
+        trackCount: 0,
+        reason: 'Playlist verwijderd door storage limieten',
+      };
+    }
+
+    return {
+      imported: true,
+      playlistId,
+      name: safeName,
+      trackCount: normalizedTracks.length,
+    };
+  });
+}
+
+export async function listSharedPlaylists(limit = 100, offset = 0): Promise<SharedPlaylistSummary[]> {
+  const safeLimit = Math.max(1, Math.min(limit, 250));
+  const safeOffset = Math.max(0, offset);
+  const store = readStore();
+  return store.playlists
+    .slice()
+    .sort((a, b) => b.imported_at.localeCompare(a.imported_at))
+    .slice(safeOffset, safeOffset + safeLimit)
+    .map((playlist) => ({
+      id: playlist.id,
+      name: playlist.name,
+      source: playlist.source,
+      created_at: playlist.created_at,
+      imported_at: playlist.imported_at,
+      track_count: playlist.track_count,
+      added_by: playlist.added_by,
+    }));
+}
+
+export async function getSharedPlaylistTracks(playlistId: string): Promise<SharedPlaylistTrack[] | null> {
+  const store = readStore();
+  const playlist = store.playlists.find((entry) => entry.id === playlistId);
+  if (!playlist) return null;
+  return playlist.tracks
+    .slice()
+    .sort((a, b) => a.position - b.position)
+    .map((track) => ({
+      id: track.id,
+      title: track.title,
+      artist: track.artist,
+      album: track.album,
+      spotify_url: track.spotify_url,
+      position: track.position,
+    }));
+}
+
+export async function getSharedPlaylistTracksPage(
+  playlistId: string,
+  limit: number,
+  offset: number,
+): Promise<SharedPlaylistTrackPage | null> {
+  const store = readStore();
+  const playlist = store.playlists.find((entry) => entry.id === playlistId);
+  if (!playlist) return null;
+  const sorted = playlist.tracks.slice().sort((a, b) => a.position - b.position);
+  const safeLimit = Math.max(1, Math.min(limit, 300));
+  const safeOffset = Math.max(0, offset);
+  const pageItems = sorted.slice(safeOffset, safeOffset + safeLimit).map((track) => ({
+    id: track.id,
+    title: track.title,
+    artist: track.artist,
+    album: track.album,
+    spotify_url: track.spotify_url,
+    position: track.position,
+  }));
+  return {
+    items: pageItems,
+    total: sorted.length,
+    limit: safeLimit,
+    offset: safeOffset,
+    hasMore: safeOffset + pageItems.length < sorted.length,
+  };
+}
+
+export async function hasSharedPlaylist(playlistId: string): Promise<boolean> {
+  const store = readStore();
+  return store.playlists.some((entry) => entry.id === playlistId);
+}
+
+export async function getSharedStoreUsage(): Promise<{ playlists: number; tracks: number }> {
+  const store = readStore();
+  return {
+    playlists: store.playlists.length,
+    tracks: totalTrackCount(store.playlists),
+  };
+}

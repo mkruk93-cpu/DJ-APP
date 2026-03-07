@@ -14,10 +14,13 @@ import {
 } from "@/lib/spotify";
 import {
   deleteUserPlaylist,
-  getUserPlaylistTracks,
+  getUserPlaylistTracksPage,
+  getSharedPlaylistTracksPage,
   getSpotifyOembed,
   importUserPlaylistFile,
+  listSharedPlaylists,
   listUserPlaylists,
+  type SharedPlaylist,
   type UserPlaylist,
   type UserPlaylistTrack,
 } from "@/lib/userPlaylistsApi";
@@ -25,6 +28,7 @@ import {
 interface SpotifyBrowserProps {
   onAddTrack: (track: { id?: string; query: string; artist?: string | null; title?: string | null }) => void;
   submitting: boolean;
+  mode?: "all" | "playlistsOnly" | "spotifyOnly";
 }
 
 function formatDuration(ms: number): string {
@@ -34,10 +38,11 @@ function formatDuration(ms: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-type View = "playlists" | "tracks" | "importedTracks";
+type View = "playlists" | "tracks" | "importedTracks" | "sharedTracks";
 type TrackSource = "liked" | "playlist" | null;
+const IMPORTED_TRACK_PAGE_SIZE = 120;
 
-export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowserProps) {
+export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }: SpotifyBrowserProps) {
   const [connected, setConnected] = useState(false);
   const [user, setUser] = useState<SpotifyUser | null>(null);
   const [playlists, setPlaylists] = useState<SpotifyPlaylist[]>([]);
@@ -61,14 +66,29 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
   const [savedPlaylistsLoading, setSavedPlaylistsLoading] = useState(false);
   const [savedTracks, setSavedTracks] = useState<UserPlaylistTrack[]>([]);
   const [savedTracksLoading, setSavedTracksLoading] = useState(false);
+  const [savedTracksLoadingMore, setSavedTracksLoadingMore] = useState(false);
   const [savedTracksError, setSavedTracksError] = useState<string | null>(null);
+  const [savedTracksOffset, setSavedTracksOffset] = useState(0);
+  const [savedTracksHasMore, setSavedTracksHasMore] = useState(false);
   const [selectedSavedPlaylist, setSelectedSavedPlaylist] = useState<UserPlaylist | null>(null);
+  const [sharedPlaylists, setSharedPlaylists] = useState<SharedPlaylist[]>([]);
+  const [sharedPlaylistsLoading, setSharedPlaylistsLoading] = useState(false);
+  const [sharedTracks, setSharedTracks] = useState<UserPlaylistTrack[]>([]);
+  const [sharedTracksLoading, setSharedTracksLoading] = useState(false);
+  const [sharedTracksLoadingMore, setSharedTracksLoadingMore] = useState(false);
+  const [sharedTracksError, setSharedTracksError] = useState<string | null>(null);
+  const [sharedTracksOffset, setSharedTracksOffset] = useState(0);
+  const [sharedTracksHasMore, setSharedTracksHasMore] = useState(false);
+  const [selectedSharedPlaylist, setSelectedSharedPlaylist] = useState<SharedPlaylist | null>(null);
+  const [sharedUsage, setSharedUsage] = useState<{ playlists: number; tracks: number } | null>(null);
   const [savedTrackThumbs, setSavedTrackThumbs] = useState<Record<string, string>>({});
   const listRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const thumbnailLoadingRef = useRef<Set<string>>(new Set());
 
   const configured = isSpotifyConfigured();
+  const showPlaylistSections = mode !== "spotifyOnly";
+  const showSpotifySection = mode !== "playlistsOnly";
 
   const checkConnection = useCallback(() => {
     const c = isSpotifyConnected();
@@ -77,25 +97,32 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
   }, []);
 
   useEffect(() => {
-    void loadSavedPlaylists();
+    if (showPlaylistSections) {
+      void loadSavedPlaylists();
+      void loadSharedPlaylists();
+    }
+    if (!showSpotifySection) return;
     if (!checkConnection()) return;
     loadUser();
     void loadPlaylists(false);
-  }, [checkConnection]);
+  }, [checkConnection, showPlaylistSections, showSpotifySection]);
 
   useEffect(() => {
     function onStorage(e: StorageEvent) {
-      if ((e.key === "spotify_token" || e.key === "spotify_refresh_token") && e.newValue) {
+      if ((e.key === "spotify_token" || e.key === "spotify_refresh_token") && e.newValue && showSpotifySection) {
         setConnected(true);
         setAuthStatus(null);
         loadUser();
         void loadPlaylists(false);
-        void loadSavedPlaylists();
+        if (showPlaylistSections) {
+          void loadSavedPlaylists();
+          void loadSharedPlaylists();
+        }
       }
     }
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
-  }, []);
+  }, [showPlaylistSections, showSpotifySection]);
 
   async function loadUser() {
     try {
@@ -119,21 +146,107 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
     }
   }
 
+  async function loadSharedPlaylists() {
+    setSharedPlaylistsLoading(true);
+    try {
+      const result = await listSharedPlaylists(120, 0);
+      setSharedPlaylists(result.items);
+      setSharedUsage(result.usage);
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : "Kon gedeelde playlists niet laden.");
+    } finally {
+      setSharedPlaylistsLoading(false);
+    }
+  }
+
+  async function loadSavedTracksPage(playlistId: string, append: boolean) {
+    if (append) setSavedTracksLoadingMore(true);
+    else setSavedTracksLoading(true);
+    setSavedTracksError(null);
+    try {
+      const page = await getUserPlaylistTracksPage(
+        playlistId,
+        IMPORTED_TRACK_PAGE_SIZE,
+        append ? savedTracksOffset : 0,
+      );
+      setSavedTracks((prev) => {
+        if (!append) return page.items;
+        const map = new Map<string, UserPlaylistTrack>();
+        for (const item of prev) map.set(item.id, item);
+        for (const item of page.items) map.set(item.id, item);
+        return [...map.values()];
+      });
+      const nextOffset = page.paging.offset + page.items.length;
+      setSavedTracksOffset(nextOffset);
+      setSavedTracksHasMore(page.paging.hasMore);
+    } catch (err) {
+      setSavedTracksError(err instanceof Error ? err.message : "Kon tracks niet laden.");
+      if (!append) {
+        setSavedTracks([]);
+        setSavedTracksOffset(0);
+        setSavedTracksHasMore(false);
+      }
+    } finally {
+      setSavedTracksLoading(false);
+      setSavedTracksLoadingMore(false);
+    }
+  }
+
   async function openSavedPlaylist(playlist: UserPlaylist) {
     setSelectedSavedPlaylist(playlist);
+    setSelectedSharedPlaylist(null);
     setView("importedTracks");
     setFilter("");
     setSavedTracks([]);
+    setSavedTracksOffset(0);
+    setSavedTracksHasMore(false);
     setSavedTracksError(null);
-    setSavedTracksLoading(true);
+    await loadSavedTracksPage(playlist.id, false);
+  }
+
+  async function loadSharedTracksPage(playlistId: string, append: boolean) {
+    if (append) setSharedTracksLoadingMore(true);
+    else setSharedTracksLoading(true);
+    setSharedTracksError(null);
     try {
-      const tracks = await getUserPlaylistTracks(playlist.id);
-      setSavedTracks(tracks);
+      const page = await getSharedPlaylistTracksPage(
+        playlistId,
+        IMPORTED_TRACK_PAGE_SIZE,
+        append ? sharedTracksOffset : 0,
+      );
+      setSharedTracks((prev) => {
+        if (!append) return page.items;
+        const map = new Map<string, UserPlaylistTrack>();
+        for (const item of prev) map.set(item.id, item);
+        for (const item of page.items) map.set(item.id, item);
+        return [...map.values()];
+      });
+      const nextOffset = page.paging.offset + page.items.length;
+      setSharedTracksOffset(nextOffset);
+      setSharedTracksHasMore(page.paging.hasMore);
     } catch (err) {
-      setSavedTracksError(err instanceof Error ? err.message : "Kon tracks niet laden.");
+      setSharedTracksError(err instanceof Error ? err.message : "Kon gedeelde tracks niet laden.");
+      if (!append) {
+        setSharedTracks([]);
+        setSharedTracksOffset(0);
+        setSharedTracksHasMore(false);
+      }
     } finally {
-      setSavedTracksLoading(false);
+      setSharedTracksLoading(false);
+      setSharedTracksLoadingMore(false);
     }
+  }
+
+  async function openSharedPlaylist(playlist: SharedPlaylist) {
+    setSelectedSharedPlaylist(playlist);
+    setSelectedSavedPlaylist(null);
+    setView("sharedTracks");
+    setFilter("");
+    setSharedTracks([]);
+    setSharedTracksOffset(0);
+    setSharedTracksHasMore(false);
+    setSharedTracksError(null);
+    await loadSharedTracksPage(playlist.id, false);
   }
 
   async function removeSavedPlaylist(playlist: UserPlaylist) {
@@ -178,9 +291,16 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
     setImportStatus(null);
     try {
       const result = await importUserPlaylistFile(importFile);
-      setImportStatus(`Import klaar: ${result.totalPlaylists} playlist(s), ${result.totalTracks} tracks.`);
+      const sharedInfo = result.shared
+        ? ` · gedeeld: ${result.shared.importedPlaylists}`
+        : "";
+      setImportStatus(`Import klaar: ${result.totalPlaylists} playlist(s), ${result.totalTracks} tracks${sharedInfo}.`);
       setImportFile(null);
       await loadSavedPlaylists();
+      await loadSharedPlaylists();
+      if (result.shared?.warnings?.length) {
+        setImportError(`Shared waarschuwingen: ${result.shared.warnings.slice(0, 2).map((w) => `${w.name} (${w.reason})`).join(", ")}`);
+      }
     } catch (err) {
       setImportError(err instanceof Error ? err.message : "Import mislukt.");
     } finally {
@@ -369,6 +489,16 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
     }
     if (trackSource === "playlist" && selectedPlaylist) {
       await loadPlaylistTracks(selectedPlaylist, true);
+      return;
+    }
+    if (view === "importedTracks" && selectedSavedPlaylist) {
+      if (savedTracksLoading || savedTracksLoadingMore || !savedTracksHasMore) return;
+      await loadSavedTracksPage(selectedSavedPlaylist.id, true);
+      return;
+    }
+    if (view === "sharedTracks" && selectedSharedPlaylist) {
+      if (sharedTracksLoading || sharedTracksLoadingMore || !sharedTracksHasMore) return;
+      await loadSharedTracksPage(selectedSharedPlaylist.id, true);
     }
   }
 
@@ -388,15 +518,37 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
 
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [view, playlistsNext, tracksNext, trackSource, selectedPlaylist, loading, loadingMore]);
+  }, [
+    view,
+    playlistsNext,
+    tracksNext,
+    trackSource,
+    selectedPlaylist,
+    selectedSavedPlaylist,
+    selectedSharedPlaylist,
+    savedTracksHasMore,
+    sharedTracksHasMore,
+    savedTracksLoading,
+    savedTracksLoadingMore,
+    sharedTracksLoading,
+    sharedTracksLoadingMore,
+    savedTracksOffset,
+    sharedTracksOffset,
+    loading,
+    loadingMore,
+  ]);
 
   useEffect(() => {
+    if (!showSpotifySection) return;
     const onTokenRefresh = () => {
       setConnected(checkConnection());
       setAuthStatus("Spotify sessie vernieuwd.");
       if (view === "playlists") {
         void loadPlaylists(false);
-        void loadSavedPlaylists();
+        if (showPlaylistSections) {
+          void loadSavedPlaylists();
+          void loadSharedPlaylists();
+        }
         return;
       }
       if (trackSource === "liked") {
@@ -414,9 +566,12 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
       window.removeEventListener("spotify:token_refreshed", onTokenRefresh);
       window.removeEventListener("spotify:connected", onTokenRefresh);
     };
-  }, [checkConnection, view, trackSource, selectedPlaylist]);
+  }, [checkConnection, showPlaylistSections, showSpotifySection, view, trackSource, selectedPlaylist]);
 
   const spotifyEnabled = configured && connected;
+  const headerLabel = showSpotifySection
+    ? (spotifyEnabled ? (user?.display_name ?? "Spotify") : "Spotify")
+    : "Playlists";
 
   const filteredPlaylists = playlists.filter((p) =>
     p?.name?.toLowerCase().includes(filter.toLowerCase()),
@@ -441,11 +596,22 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
     );
   });
 
+  const filteredSharedTracks = sharedTracks.filter((track) => {
+    const q = filter.toLowerCase();
+    if (!q) return true;
+    return (
+      track.title.toLowerCase().includes(q) ||
+      (track.artist ?? "").toLowerCase().includes(q) ||
+      (track.album ?? "").toLowerCase().includes(q)
+    );
+  });
+
   useEffect(() => {
-    if (view !== "importedTracks") return;
+    if (view !== "importedTracks" && view !== "sharedTracks") return;
+    const visibleTracks = view === "sharedTracks" ? filteredSharedTracks : filteredSavedTracks;
     const uniqueUrls = Array.from(
       new Set(
-        filteredSavedTracks
+        visibleTracks
           .map((track) => (track.spotify_url ?? "").trim())
           .filter((url) => url.startsWith("https://open.spotify.com/track/")),
       ),
@@ -455,7 +621,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
     for (const url of missing) {
       void resolveSavedTrackThumbnail(url);
     }
-  }, [view, filteredSavedTracks, savedTrackThumbs]);
+  }, [view, filteredSavedTracks, filteredSharedTracks, savedTrackThumbs]);
 
   return (
     <div className="flex max-h-[40vh] flex-col gap-1.5 overflow-hidden">
@@ -470,22 +636,33 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
               setTracksNext(null);
               setTrackSource(null);
               setSavedTracks([]);
+              setSavedTracksOffset(0);
+              setSavedTracksHasMore(false);
               setSelectedSavedPlaylist(null);
+              setSharedTracks([]);
+              setSharedTracksOffset(0);
+              setSharedTracksHasMore(false);
+              setSelectedSharedPlaylist(null);
               setFilter("");
               setTrackError(null);
               setSavedTracksError(null);
+              setSharedTracksError(null);
             }}
             className="flex items-center gap-1 text-xs text-violet-400 transition hover:text-violet-300"
           >
             <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
             </svg>
-            {view === "importedTracks" ? (selectedSavedPlaylist?.name ?? "Terug") : (selectedPlaylist?.name ?? "Terug")}
+            {view === "importedTracks"
+              ? (selectedSavedPlaylist?.name ?? "Terug")
+              : view === "sharedTracks"
+                ? (selectedSharedPlaylist?.name ?? "Terug")
+                : (selectedPlaylist?.name ?? "Terug")}
           </button>
         ) : (
           <div className="flex items-center gap-1.5 text-[11px] text-gray-400">
             <span className={`h-1.5 w-1.5 rounded-full ${spotifyEnabled ? "bg-[#1DB954]" : "bg-violet-400"}`} />
-            {spotifyEnabled ? (user?.display_name ?? "Spotify") : "Exportify"}
+            {headerLabel}
           </div>
         )}
         {spotifyEnabled && (
@@ -512,7 +689,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
       )}
 
       {/* Loading */}
-      {(loading || savedTracksLoading) && (
+      {(loading || savedTracksLoading || sharedTracksLoading) && (
         <div className="flex shrink-0 items-center justify-center py-3">
           <span className="block h-4 w-4 animate-spin rounded-full border-2 border-[#1DB954] border-t-transparent" />
         </div>
@@ -521,6 +698,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
       {/* Playlist list */}
       {view === "playlists" && !loading && (
         <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto">
+          {showPlaylistSections && (
           <div className="mb-2 rounded-md border border-gray-700/70 bg-gray-900/60 p-2">
             <p className="text-[11px] font-semibold text-gray-200">Import Exportify</p>
             <p className="mt-0.5 text-[10px] text-gray-500">Upload .csv of .zip met playlists uit Exportify.</p>
@@ -545,7 +723,9 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
             {importStatus && <p className="mt-1 text-[10px] text-green-300">{importStatus}</p>}
             {importError && <p className="mt-1 text-[10px] text-red-300">{importError}</p>}
           </div>
+          )}
 
+          {showPlaylistSections && (
           <div className="mb-2 rounded-md border border-gray-700/70 bg-gray-900/50 p-2">
             <div className="mb-1 flex items-center justify-between">
               <p className="text-[11px] font-semibold text-gray-200">Persoonlijke playlists</p>
@@ -580,13 +760,52 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
               </div>
             ))}
           </div>
+          )}
 
-          {!configured && (
+          {showPlaylistSections && (
+          <div className="mb-2 rounded-md border border-blue-700/70 bg-blue-950/20 p-2">
+            <div className="mb-1 flex items-center justify-between">
+              <p className="text-[11px] font-semibold text-blue-100">Gedeelde playlists</p>
+              <button
+                type="button"
+                onClick={() => { void loadSharedPlaylists(); }}
+                disabled={sharedPlaylistsLoading}
+                className="text-[10px] text-blue-300 transition hover:text-blue-200 disabled:opacity-40"
+              >
+                {sharedPlaylistsLoading ? "Laden..." : "Ververs"}
+              </button>
+            </div>
+            {sharedUsage && (
+              <p className="mb-1 text-[10px] text-blue-300/80">
+                Pool: {sharedUsage.playlists} playlists · {sharedUsage.tracks} tracks
+              </p>
+            )}
+            {sharedPlaylists.length === 0 && !sharedPlaylistsLoading && (
+              <p className="text-[10px] text-gray-400">Nog geen gedeelde playlists beschikbaar.</p>
+            )}
+            {sharedPlaylists.slice(0, 80).map((playlist) => (
+              <div key={playlist.id} className="mt-1 flex items-center justify-between rounded bg-gray-800/70 px-2 py-1">
+                <button
+                  type="button"
+                  onClick={() => { void openSharedPlaylist(playlist); }}
+                  className="truncate text-left text-[11px] text-white transition hover:text-blue-300"
+                >
+                  {playlist.name}
+                </button>
+                <span className="ml-2 shrink-0 text-[10px] text-gray-400">
+                  {playlist.track_count} tracks
+                </span>
+              </div>
+            ))}
+          </div>
+          )}
+
+          {showSpotifySection && !configured && (
             <p className="mb-2 text-[10px] text-gray-500">
               Spotify is niet geconfigureerd. Exportify import werkt wel.
             </p>
           )}
-          {configured && !connected && (
+          {showSpotifySection && configured && !connected && (
             <div className="mb-2 rounded-md border border-green-700/40 bg-green-950/20 p-2">
               <p className="text-[10px] text-gray-300">Spotify koppelen is optioneel voor browse/liked songs.</p>
               <button
@@ -599,7 +818,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
             </div>
           )}
 
-          {spotifyEnabled && (
+          {showSpotifySection && spotifyEnabled && (
             <>
               <button
                 type="button"
@@ -696,6 +915,21 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
         </div>
       )}
 
+      {sharedTracksError && view === "sharedTracks" && !sharedTracksLoading && (
+        <div className="shrink-0 rounded-md border border-yellow-500/30 bg-yellow-500/10 p-2">
+          <p className="text-[11px] text-yellow-400">{sharedTracksError}</p>
+          <button
+            type="button"
+            onClick={() => {
+              if (selectedSharedPlaylist) void openSharedPlaylist(selectedSharedPlaylist);
+            }}
+            className="mt-1 text-[11px] text-violet-400 transition hover:text-violet-300"
+          >
+            Opnieuw proberen
+          </button>
+        </div>
+      )}
+
       {/* Track list */}
       {view === "tracks" && !spotifyEnabled && (
         <div className="rounded-md border border-yellow-500/30 bg-yellow-500/10 p-2">
@@ -769,7 +1003,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
       )}
 
       {view === "importedTracks" && !savedTracksLoading && (
-        <div className="min-h-0 flex-1 space-y-px overflow-y-auto">
+        <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto">
           {filteredSavedTracks.map((track) => {
             const isAdded = addedTrackId === track.id;
             const spotifyUrl = (track.spotify_url ?? "").trim();
@@ -819,6 +1053,72 @@ export default function SpotifyBrowser({ onAddTrack, submitting }: SpotifyBrowse
               Geen tracks gevonden
             </p>
           )}
+          {savedTracksLoadingMore && (
+            <p className="py-2 text-center text-[11px] text-gray-500">
+              Meer tracks laden...
+            </p>
+          )}
+          <div ref={loadMoreRef} className="h-1 w-full" />
+        </div>
+      )}
+
+      {view === "sharedTracks" && !sharedTracksLoading && (
+        <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto">
+          {filteredSharedTracks.map((track) => {
+            const isAdded = addedTrackId === track.id;
+            const spotifyUrl = (track.spotify_url ?? "").trim();
+            const thumb = spotifyUrl ? savedTrackThumbs[spotifyUrl] : "";
+            return (
+              <button
+                type="button"
+                key={track.id}
+                onClick={() => handleAddSavedTrack(track)}
+                disabled={submitting || isAdded}
+                className={`flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition ${
+                  isAdded ? "bg-green-500/10" : "hover:bg-gray-800/80"
+                } disabled:opacity-60`}
+              >
+                {thumb ? (
+                  <img
+                    src={thumb}
+                    alt=""
+                    className="h-10 w-10 shrink-0 rounded object-cover"
+                  />
+                ) : (
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-gray-800">
+                    <svg className="h-4 w-4 text-gray-500" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.7 0 12 0zm5.5 17.3c-.2.4-.7.5-1 .2-2.8-1.7-6.3-2.1-10.5-1.1-.4.1-.8-.2-.9-.6-.1-.4.2-.8.5-.9 4.6-1 8.6-.6 11.7 1.3.3.2.4.7.2 1.1zm1.4-3.3c-.3.4-.8.5-1.3.3-3.2-2-8.1-2.6-11.9-1.4-.5.2-1-.1-1.2-.6-.1-.5.2-1 .7-1.1 4.3-1.3 9.8-.6 13.6 1.7.5.3.6.8.3 1.1z" />
+                    </svg>
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-medium text-white">{track.title}</p>
+                  <p className="truncate text-[10px] text-gray-400">{track.artist ?? "Unknown"}</p>
+                </div>
+                {isAdded ? (
+                  <span className="rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
+                    Toegevoegd
+                  </span>
+                ) : (
+                  <svg className="h-3.5 w-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                  </svg>
+                )}
+              </button>
+            );
+          })}
+
+          {filteredSharedTracks.length === 0 && !sharedTracksError && (
+            <p className="py-2 text-center text-[11px] text-gray-500">
+              Geen tracks gevonden
+            </p>
+          )}
+          {sharedTracksLoadingMore && (
+            <p className="py-2 text-center text-[11px] text-gray-500">
+              Meer tracks laden...
+            </p>
+          )}
+          <div ref={loadMoreRef} className="h-1 w-full" />
         </div>
       )}
     </div>

@@ -11,7 +11,7 @@ import {
 } from "@/lib/genreDropdown";
 import type { GenreOption } from "@/lib/radioApi";
 
-type FallbackListTab = "local" | "auto";
+type FallbackListTab = "local" | "auto" | "playlists";
 
 function normalizeAutoGenreId(raw: string): string {
   const value = raw.trim().toLowerCase();
@@ -38,11 +38,15 @@ export default function FallbackGenreSelector() {
     [genres],
   );
   const localGenres = useMemo(
-    () => sortedGenres.filter((genre) => !genre.id.startsWith("auto:")),
+    () => sortedGenres.filter((genre) => !genre.id.startsWith("auto:") && !genre.id.startsWith("shared:")),
     [sortedGenres],
   );
   const autoGenres = useMemo(
     () => sortedGenres.filter((genre) => genre.id.startsWith("auto:")),
+    [sortedGenres],
+  );
+  const sharedPlaylists = useMemo(
+    () => sortedGenres.filter((genre) => genre.id.startsWith("shared:")),
     [sortedGenres],
   );
   const autoGenreCanonicalCount = useMemo(() => {
@@ -114,6 +118,10 @@ export default function FallbackGenreSelector() {
       setActiveListTab("auto");
       return;
     }
+    if (activeGenre?.startsWith("shared:")) {
+      setActiveListTab("playlists");
+      return;
+    }
     setActiveListTab("local");
   }, [activeGenre]);
 
@@ -148,9 +156,9 @@ export default function FallbackGenreSelector() {
         }
       >
         <p className="mb-1 rounded-md bg-gray-800/70 px-2 py-1.5 text-[11px] leading-snug text-gray-300">
-          Kies lokaal genre (Marco PC) of Online (Genres-tab) voor random nummers als de wachtrij leeg is.
+          Kies lokaal genre, online genre, of gedeelde playlist voor random nummers als de wachtrij leeg is.
         </p>
-        <div className="mb-1 grid grid-cols-2 gap-1 rounded-md border border-gray-800 bg-gray-900/70 p-1">
+        <div className="mb-1 grid grid-cols-3 gap-1 rounded-md border border-gray-800 bg-gray-900/70 p-1">
           <button
             type="button"
             onClick={() => setActiveListTab("local")}
@@ -172,6 +180,17 @@ export default function FallbackGenreSelector() {
             }`}
           >
             Online ({autoGenreCanonicalCount + (likedAutoGenre ? 1 : 0)})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveListTab("playlists")}
+            className={`rounded px-2 py-1 text-[11px] font-semibold transition ${
+              activeListTab === "playlists"
+                ? "bg-violet-600/30 text-violet-100"
+                : "text-gray-300 hover:bg-gray-800"
+            }`}
+          >
+            Playlists ({sharedPlaylists.length})
           </button>
         </div>
         {activeGenreBy && (
@@ -210,7 +229,7 @@ export default function FallbackGenreSelector() {
               </p>
             )}
           </>
-        ) : (
+        ) : activeListTab === "auto" ? (
           <>
             {likedAutoGenre && (
               <button
@@ -282,6 +301,36 @@ export default function FallbackGenreSelector() {
             {groupedAutoSections.length === 0 && !likedAutoGenre && (
               <p className="px-2 py-2 text-[11px] text-gray-400">
                 Geen genres beschikbaar in de Online lijst.
+              </p>
+            )}
+          </>
+        ) : (
+          <>
+            {sharedPlaylists.map((playlist) => {
+              const isActive = playlist.id === activeGenre;
+              return (
+                <button
+                  key={playlist.id}
+                  type="button"
+                  onClick={() => {
+                    const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
+                    getSocket().emit("fallback:genre:set", { genreId: playlist.id, selectedBy });
+                    if (menuRef.current) menuRef.current.open = false;
+                  }}
+                  className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
+                    isActive
+                      ? "bg-violet-600/25 text-violet-100"
+                      : "text-gray-300 hover:bg-gray-800 hover:text-white"
+                  }`}
+                >
+                  <span className="truncate">{playlist.label.replace(/^Playlist ·\s*/i, "")}</span>
+                  <span className="ml-2 text-[10px] text-gray-500">{playlist.trackCount}</span>
+                </button>
+              );
+            })}
+            {sharedPlaylists.length === 0 && (
+              <p className="px-2 py-2 text-[11px] text-gray-400">
+                Geen publieke playlists beschikbaar.
               </p>
             )}
           </>

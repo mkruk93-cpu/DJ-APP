@@ -50,6 +50,21 @@ export interface PlaylistUsage {
   tracks: number;
 }
 
+export interface PlaylistTrackPage {
+  items: Array<{
+    id: string;
+    title: string;
+    artist: string | null;
+    album: string | null;
+    spotify_url: string | null;
+    position: number;
+  }>;
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+}
+
 const STORE_FILE = process.env.USER_PLAYLIST_STORE_FILE
   ? process.env.USER_PLAYLIST_STORE_FILE
   : join(process.cwd(), 'data', 'user_playlists_store.json');
@@ -176,6 +191,28 @@ export async function getUserPlaylistTracks(
   const playlist = store.playlists.find((entry) => entry.id === playlistId && matchesOwner(entry, owner));
   if (!playlist) return null;
   return [...playlist.tracks].sort((a, b) => a.position - b.position);
+}
+
+export async function getUserPlaylistTracksPage(
+  owner: PlaylistOwner,
+  playlistId: string,
+  limit: number,
+  offset: number,
+): Promise<PlaylistTrackPage | null> {
+  const store = readStore();
+  const playlist = store.playlists.find((entry) => entry.id === playlistId && matchesOwner(entry, owner));
+  if (!playlist) return null;
+  const sorted = [...playlist.tracks].sort((a, b) => a.position - b.position);
+  const safeLimit = Math.max(1, Math.min(limit, 300));
+  const safeOffset = Math.max(0, offset);
+  const items = sorted.slice(safeOffset, safeOffset + safeLimit);
+  return {
+    items,
+    total: sorted.length,
+    limit: safeLimit,
+    offset: safeOffset,
+    hasMore: safeOffset + items.length < sorted.length,
+  };
 }
 
 export async function deleteUserPlaylist(

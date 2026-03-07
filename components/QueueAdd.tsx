@@ -9,6 +9,7 @@ import { isSpotifyConfigured } from "@/lib/spotify";
 import { getGenres, getGenreHits, addPriorityArtistToGenre, blockArtistForGenre, type GenreOption, type GenreHit } from "@/lib/radioApi";
 import { buildGroupedGenreSections, GENRE_FALLBACK_OPTIONS, getGenreGroupMembers, isGroupedParentGenre, resolveGenreLabel } from "@/lib/genreDropdown";
 import SpotifyBrowser from "@/components/SpotifyBrowser";
+import SharedPlaylistsBrowser from "@/components/SharedPlaylistsBrowser";
 
 class SpotifyErrorBoundary extends Component<
   { children: ReactNode; onReset: () => void },
@@ -72,7 +73,7 @@ class QueueAddErrorBoundary extends Component<
   }
 }
 
-type SearchSource = "youtube" | "soundcloud" | "spotify" | "genres";
+type SearchSource = "youtube" | "soundcloud" | "spotify" | "genres" | "playlists";
 
 const YT_URL_REGEX =
   /^https?:\/\/(www\.)?(youtube\.com\/(watch\?.*v=|shorts\/|embed\/)|youtu\.be\/)[\w-]+/i;
@@ -541,7 +542,7 @@ export default function QueueAdd() {
   }, [source, activeGenre, genreHasMore, genreHitsLoading, genreHitsLoadingMore, loadGenreHits]);
 
   function handleSearchListScroll(e: React.UIEvent<HTMLDivElement>) {
-    if (source === "spotify" || source === "genres") return;
+    if (source === "spotify" || source === "genres" || source === "playlists") return;
     if (searching || searchingMore || !searchHasMore || !searchQuery) return;
     
     const el = e.currentTarget;
@@ -553,7 +554,7 @@ export default function QueueAdd() {
 
   // Improved touch-based scroll detection for mobile
   const handleSearchListTouch = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
-    if (source === "spotify" || source === "genres") return;
+    if (source === "spotify" || source === "genres" || source === "playlists") return;
     if (searching || searchingMore || !searchHasMore || !searchQuery) return;
 
     const el = e.currentTarget;
@@ -732,7 +733,7 @@ export default function QueueAdd() {
   }, [pendingUndo, queue]);
 
   useEffect(() => {
-    if (source === "spotify" || source === "genres") return;
+    if (source === "spotify" || source === "genres" || source === "playlists") return;
     const query = searchQuery.trim();
     if (query.length < 2) return;
     setSearchOffsetSafe(0);
@@ -829,7 +830,7 @@ export default function QueueAdd() {
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (source === "spotify" || source === "genres") return;
+    if (source === "spotify" || source === "genres" || source === "playlists") return;
     const trimmed = input.trim();
 
     if (!isSupportedUrl(trimmed)) {
@@ -912,7 +913,7 @@ export default function QueueAdd() {
       loadGenres(genreQuery);
       return;
     }
-    if (newSource === "spotify") return;
+    if (newSource === "spotify" || newSource === "playlists") return;
     const query = input.trim();
     if (query.length >= 2 && !isSupportedUrl(query)) {
       if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -1065,6 +1066,26 @@ export default function QueueAdd() {
               Genres
             </span>
           </button>
+          <button
+            type="button"
+            onClick={() => switchSource("playlists")}
+            className={`group flex h-8 min-w-0 basis-0 items-center justify-center rounded-md px-1.5 text-[11px] font-semibold transition-all duration-200 ${
+              source === "playlists"
+                ? "flex-[1.4] bg-blue-500/20 text-blue-300"
+                : "flex-1 text-gray-400 hover:text-gray-200"
+            }`}
+          >
+            <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M8 6h12M8 12h12M8 18h12M3 6h.01M3 12h.01M3 18h.01" />
+            </svg>
+            <span
+              className={`overflow-hidden whitespace-nowrap transition-all duration-200 ${
+                source === "playlists" ? "ml-1 max-w-[86px] opacity-100" : "max-w-0 opacity-0"
+              }`}
+            >
+              Playlists
+            </span>
+          </button>
           {hasSpotifySource && (
             <button
               type="button"
@@ -1093,6 +1114,8 @@ export default function QueueAdd() {
           <SpotifyErrorBoundary onReset={() => switchSource("youtube")}>
             <SpotifyBrowser onAddTrack={handleSpotifyAdd} submitting={submitting} />
           </SpotifyErrorBoundary>
+        ) : source === "playlists" ? (
+          <SharedPlaylistsBrowser onAddTrack={handleSpotifyAdd} submitting={submitting} />
         ) : source === "genres" ? (
           <div className="flex min-h-0 flex-col gap-2">
             <input

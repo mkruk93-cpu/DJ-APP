@@ -30,14 +30,26 @@ import {
   type GenreItem,
   type GenreHitItem,
 } from './services/discovery.js';
-import { parseExportifyUpload } from './services/exportifyImport.js';
+import { parseExportifyUpload, type ExportifyPlaylistImport } from './services/exportifyImport.js';
 import {
   createUserPlaylist,
   listUserPlaylists as listStoredUserPlaylists,
   getUserPlaylistTracks as getStoredUserPlaylistTracks,
+  getUserPlaylistTracksPage as getStoredUserPlaylistTracksPage,
   deleteUserPlaylist as deleteStoredUserPlaylist,
   getUserPlaylistUsage,
 } from './services/userPlaylistStore.js';
+import {
+  ingestSharedPlaylist,
+  listSharedPlaylists,
+  getSharedPlaylistTracks,
+  getSharedPlaylistTracksPage,
+  getSharedStoreUsage,
+  hasSharedPlaylist,
+  parseSharedFallbackPlaylistId,
+  toSharedFallbackPlaylistId,
+  type SharedStoreLimits,
+} from './services/sharedPlaylistStore.js';
 
 function getErrorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -70,6 +82,11 @@ const USER_PLAYLIST_MAX_TRACKS_PER_IMPORT = 3000;
 const USER_PLAYLIST_MAX_PLAYLISTS_PER_IMPORT = 20;
 const USER_PLAYLIST_MAX_STORED_PLAYLISTS_PER_USER = 80;
 const USER_PLAYLIST_MAX_STORED_TRACKS_PER_USER = 20_000;
+const SHARED_PLAYLIST_MAX_PLAYLISTS = 500;
+const SHARED_PLAYLIST_MAX_TRACKS = 150_000;
+const SHARED_PLAYLIST_MAX_TRACKS_PER_PLAYLIST = 1500;
+const SHARED_EXPORTIFY_INBOX_DIR = process.env.SHARED_EXPORTIFY_INBOX_DIR ?? pathJoin(process.cwd(), 'data', 'exportify_inbox');
+const SHARED_IMPORT_POLL_MS = Math.max(15_000, parseInt(process.env.SHARED_IMPORT_POLL_MS ?? '60000', 10) || 60_000);
 const SPOTIFY_OEMBED_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 const DOWNLOAD_PATH = process.env.DOWNLOAD_PATH ?? '';
@@ -90,6 +107,7 @@ const ICECAST = useIcecast
 
 const streamHub = new StreamHub();
 const spotifyOembedCache = new Map<string, { thumbnail_url: string | null; title: string | null; author_name: string | null; ts: number }>();
+let sharedInboxJobRunning = false;
 
 if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
   console.error('Missing SUPABASE_URL or SUPABASE_SERVICE_KEY');
@@ -197,6 +215,148 @@ function getUserIdentityFromRequest(req: Request): { nickname: string; deviceId:
   return { nickname, deviceId };
 }
 
+function getAdminTokenFromRequest(req: Request): string | null {
+  const token = getIdentityValueFromRequest(req, 'token');
+  return token ? token.trim() : null;
+}
+
+function getSharedStoreLimits(): SharedStoreLimits {
+  return {
+    maxSharedPlaylists: SHARED_PLAYLIST_MAX_PLAYLISTS,
+    maxSharedTracks: SHARED_PLAYLIST_MAX_TRACKS,
+    maxTracksPerSharedPlaylist: SHARED_PLAYLIST_MAX_TRACKS_PER_PLAYLIST,
+  };
+}
+
+interface SharedImportWarning {
+  name: string;
+  reason: string;
+}
+
+async function ingestParsedPlaylistsIntoShared(
+  parsed: ExportifyPlaylistImport[],
+  addedBy: string | null,
+  source = 'exportify-shared',
+): Promise<{
+  imported: Array<{ id: string; name: string; trackCount: number }>;
+  warnings: SharedImportWarning[];
+}> {
+  const limits = getSharedStoreLimits();
+  const imported: Array<{ id: string; name: string; trackCount: number }> = [];
+  const warnings: SharedImportWarning[] = [];
+
+  for (const playlist of parsed) {
+    const safeName = playlist.name.trim().slice(0, 140) || 'Shared playlist';
+    const trackInputs = playlist.tracks.map((track, index) => ({
+      title: track.title.slice(0, 300),
+      artist: track.artist.slice(0, 300),
+      album: track.album?.slice(0, 300) ?? null,
+      spotify_url: track.spotifyUrl?.slice(0, 600) ?? null,
+      position: index + 1,
+    }));
+    const result = await ingestSharedPlaylist(trackInputs, {
+      name: safeName,
+      source,
+      addedBy,
+    }, limits);
+    if (result.imported && result.playlistId) {
+      imported.push({
+        id: result.playlistId,
+        name: result.name,
+        trackCount: result.trackCount,
+      });
+    } else {
+      warnings.push({
+        name: safeName,
+        reason: result.reason ?? 'Onbekende ingest fout',
+      });
+    }
+  }
+
+  return { imported, warnings };
+}
+
+function ensureDir(path: string): void {
+  if (!fs.existsSync(path)) fs.mkdirSync(path, { recursive: true });
+}
+
+function moveFileWithTimestamp(sourcePath: string, targetDir: string): string {
+  ensureDir(targetDir);
+  const fileName = basename(sourcePath);
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const destinationPath = pathJoin(targetDir, `${stamp}_${fileName}`);
+  fs.renameSync(sourcePath, destinationPath);
+  return destinationPath;
+}
+
+async function runSharedInboxImportJob(trigger: 'poll' | 'manual' = 'poll'): Promise<{
+  processedFiles: number;
+  importedPlaylists: number;
+  warnings: SharedImportWarning[];
+}> {
+  if (sharedInboxJobRunning) {
+    return { processedFiles: 0, importedPlaylists: 0, warnings: [{ name: 'job', reason: 'Import job draait al' }] };
+  }
+  sharedInboxJobRunning = true;
+  try {
+    ensureDir(SHARED_EXPORTIFY_INBOX_DIR);
+    const processedDir = pathJoin(SHARED_EXPORTIFY_INBOX_DIR, 'processed');
+    const failedDir = pathJoin(SHARED_EXPORTIFY_INBOX_DIR, 'failed');
+    ensureDir(processedDir);
+    ensureDir(failedDir);
+
+    const entries = fs.readdirSync(SHARED_EXPORTIFY_INBOX_DIR, { withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .filter((entry) => {
+        const lower = extname(entry.name).toLowerCase();
+        return lower === '.csv' || lower === '.zip';
+      });
+
+    let processedFiles = 0;
+    let importedPlaylists = 0;
+    const warnings: SharedImportWarning[] = [];
+
+    for (const entry of entries) {
+      const fullPath = pathJoin(SHARED_EXPORTIFY_INBOX_DIR, entry.name);
+      try {
+        const buffer = fs.readFileSync(fullPath);
+        const parsed = parseExportifyUpload(entry.name, buffer, {
+          maxPlaylists: USER_PLAYLIST_MAX_PLAYLISTS_PER_IMPORT,
+          maxTracksPerPlaylist: USER_PLAYLIST_MAX_TRACKS_PER_IMPORT,
+        }).filter((playlist) => playlist.tracks.length > 0);
+        if (parsed.length === 0) {
+          warnings.push({ name: entry.name, reason: 'Geen geldige playlists gevonden' });
+          moveFileWithTimestamp(fullPath, failedDir);
+          processedFiles += 1;
+          continue;
+        }
+
+        const result = await ingestParsedPlaylistsIntoShared(parsed, `inbox:${trigger}`, 'exportify-inbox');
+        importedPlaylists += result.imported.length;
+        warnings.push(...result.warnings.map((warning) => ({
+          name: `${entry.name}:${warning.name}`,
+          reason: warning.reason,
+        })));
+        moveFileWithTimestamp(fullPath, processedDir);
+        processedFiles += 1;
+      } catch (err) {
+        warnings.push({ name: entry.name, reason: getErrorMessage(err) });
+        try {
+          moveFileWithTimestamp(fullPath, failedDir);
+        } catch {}
+        processedFiles += 1;
+      }
+    }
+
+    if (processedFiles > 0 || trigger === 'manual') {
+      console.log(`[shared-inbox] trigger=${trigger} processed=${processedFiles} imported=${importedPlaylists} warnings=${warnings.length}`);
+    }
+    return { processedFiles, importedPlaylists, warnings };
+  } finally {
+    sharedInboxJobRunning = false;
+  }
+}
+
 function normalizeSpotifyTrackUrl(raw: string): string | null {
   try {
     const parsed = new URL(raw.trim());
@@ -228,7 +388,7 @@ async function resolveActiveFallbackGenre(persistFix = false): Promise<string | 
   const raw = await getActiveFallbackGenre(sb);
   const normalized = normalizeFallbackGenreId(raw);
   let resolved = normalized;
-  if (resolved && !isKnownFallbackGenre(resolved)) {
+  if (resolved && !(await isKnownFallbackSelection(resolved))) {
     resolved = null;
   }
   if (!resolved) {
@@ -238,6 +398,14 @@ async function resolveActiveFallbackGenre(persistFix = false): Promise<string | 
     await setSetting(sb, 'fallback_active_genre', resolved);
   }
   return resolved;
+}
+
+async function isKnownFallbackSelection(genreId: string | null): Promise<boolean> {
+  if (!genreId) return false;
+  if (isKnownFallbackGenre(genreId)) return true;
+  const sharedPlaylistId = parseSharedFallbackPlaylistId(genreId);
+  if (!sharedPlaylistId) return false;
+  return hasSharedPlaylist(sharedPlaylistId);
 }
 
 async function emitFallbackGenreUpdate(target?: { emit: (event: string, payload: unknown) => void }): Promise<void> {
@@ -274,7 +442,18 @@ async function getCombinedFallbackGenres(): Promise<FallbackGenre[]> {
     label: 'Auto playlist · Liked tracks',
     trackCount: 0,
   };
-  return [...localGenres, likedGenre, ...autoGenres];
+  let sharedPlaylists: Awaited<ReturnType<typeof listSharedPlaylists>> = [];
+  try {
+    sharedPlaylists = await listSharedPlaylists(120, 0);
+  } catch (err) {
+    console.warn('[fallback] Shared playlist list unavailable:', (err as Error).message);
+  }
+  const sharedGenres: FallbackGenre[] = sharedPlaylists.map((playlist) => ({
+    id: toSharedFallbackPlaylistId(playlist.id),
+    label: `Playlist · ${playlist.name}`,
+    trackCount: playlist.track_count,
+  }));
+  return [...localGenres, likedGenre, ...autoGenres, ...sharedGenres];
 }
 
 async function getServerState(): Promise<ServerState> {
@@ -1106,11 +1285,19 @@ app.post('/api/user-playlists/import', upload.single('file'), async (req, res) =
       });
     }
 
+    const sharedIngest = await ingestParsedPlaylistsIntoShared(parsed, identity.nickname, 'exportify-user');
+    const sharedUsage = await getSharedStoreUsage();
+
     res.json({
       ok: true,
       imported,
       totalPlaylists: imported.length,
       totalTracks,
+      shared: {
+        importedPlaylists: sharedIngest.imported.length,
+        warnings: sharedIngest.warnings,
+        usage: sharedUsage,
+      },
     });
   } catch (err) {
     console.error('[rest] /api/user-playlists/import error:', err);
@@ -1145,6 +1332,25 @@ app.get('/api/user-playlists/:id/tracks', async (req, res) => {
   }
 
   try {
+    const hasPaging = typeof req.query.limit !== 'undefined' || typeof req.query.offset !== 'undefined';
+    if (hasPaging) {
+      const parsedLimit = parseInt(String(req.query.limit ?? '120'), 10);
+      const parsedOffset = parseInt(String(req.query.offset ?? '0'), 10);
+      const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(parsedLimit, 300)) : 120;
+      const offset = Number.isFinite(parsedOffset) ? Math.max(0, parsedOffset) : 0;
+      const page = await getStoredUserPlaylistTracksPage(identity, playlistId, limit, offset);
+      if (!page) return res.status(404).json({ error: 'Playlist niet gevonden' });
+      return res.json({
+        items: page.items,
+        paging: {
+          total: page.total,
+          limit: page.limit,
+          offset: page.offset,
+          hasMore: page.hasMore,
+        },
+      });
+    }
+
     const tracks = await getStoredUserPlaylistTracks(identity, playlistId);
     if (!tracks) return res.status(404).json({ error: 'Playlist niet gevonden' });
     res.json(tracks);
@@ -1170,6 +1376,80 @@ app.delete('/api/user-playlists/:id', async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error('[rest] /api/user-playlists/:id DELETE error:', err);
+    res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
+app.get('/api/shared-playlists', async (req, res) => {
+  const parsedLimit = parseInt(String(req.query.limit ?? '100'), 10);
+  const parsedOffset = parseInt(String(req.query.offset ?? '0'), 10);
+  const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(parsedLimit, 250)) : 100;
+  const offset = Number.isFinite(parsedOffset) ? Math.max(0, parsedOffset) : 0;
+  try {
+    const [items, usage] = await Promise.all([
+      listSharedPlaylists(limit, offset),
+      getSharedStoreUsage(),
+    ]);
+    res.json({
+      items,
+      usage,
+      paging: { limit, offset },
+    });
+  } catch (err) {
+    console.error('[rest] /api/shared-playlists GET error:', err);
+    res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
+app.get('/api/shared-playlists/:id/tracks', async (req, res) => {
+  const playlistId = String(req.params.id ?? '').trim();
+  if (!playlistId) {
+    return res.status(400).json({ error: 'Playlist id ontbreekt' });
+  }
+  try {
+    const hasPaging = typeof req.query.limit !== 'undefined' || typeof req.query.offset !== 'undefined';
+    if (hasPaging) {
+      const parsedLimit = parseInt(String(req.query.limit ?? '120'), 10);
+      const parsedOffset = parseInt(String(req.query.offset ?? '0'), 10);
+      const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(parsedLimit, 300)) : 120;
+      const offset = Number.isFinite(parsedOffset) ? Math.max(0, parsedOffset) : 0;
+      const page = await getSharedPlaylistTracksPage(playlistId, limit, offset);
+      if (!page) return res.status(404).json({ error: 'Playlist niet gevonden' });
+      return res.json({
+        items: page.items,
+        paging: {
+          total: page.total,
+          limit: page.limit,
+          offset: page.offset,
+          hasMore: page.hasMore,
+        },
+      });
+    }
+
+    const tracks = await getSharedPlaylistTracks(playlistId);
+    if (!tracks) return res.status(404).json({ error: 'Playlist niet gevonden' });
+    res.json(tracks);
+  } catch (err) {
+    console.error('[rest] /api/shared-playlists/:id/tracks error:', err);
+    res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
+app.post('/api/shared-playlists/refresh-inbox', async (req, res) => {
+  const token = getAdminTokenFromRequest(req);
+  if (!isAdmin(token ?? undefined)) {
+    return res.status(403).json({ error: 'Unauthorized' });
+  }
+  try {
+    const result = await runSharedInboxImportJob('manual');
+    const usage = await getSharedStoreUsage();
+    res.json({
+      ok: true,
+      ...result,
+      usage,
+    });
+  } catch (err) {
+    console.error('[rest] /api/shared-playlists/refresh-inbox error:', err);
     res.status(500).json({ error: getErrorMessage(err) });
   }
 });
@@ -1818,7 +2098,7 @@ app.post('/api/settings', async (req, res) => {
   try {
     if (key === 'fallback_active_genre') {
       const requested = normalizeFallbackGenreId(value);
-      if (requested && !isKnownFallbackGenre(requested)) {
+      if (requested && !(await isKnownFallbackSelection(requested))) {
         return res.status(400).json({ error: 'Unknown fallback genre' });
       }
       const nextGenre = requested ?? getDefaultFallbackGenreId();
@@ -2508,7 +2788,7 @@ io.on('connection', (socket) => {
     try {
       if (data.key === 'fallback_active_genre') {
         const requested = normalizeFallbackGenreId(data.value);
-        if (requested && !isKnownFallbackGenre(requested)) {
+        if (requested && !(await isKnownFallbackSelection(requested))) {
           socket.emit('error:toast', { message: 'Onbekend fallback genre' });
           return;
         }
@@ -2590,7 +2870,7 @@ io.on('connection', (socket) => {
   // ── fallback:genre:set (global, all listeners) ──
   socket.on('fallback:genre:set', async (data: { genreId: string; selectedBy?: string }) => {
     const requested = normalizeFallbackGenreId(data.genreId);
-    if (!requested || !isKnownFallbackGenre(requested)) {
+    if (!requested || !(await isKnownFallbackSelection(requested))) {
       socket.emit('error:toast', { message: 'Dit genre is niet beschikbaar' });
       return;
     }
@@ -2690,6 +2970,16 @@ async function main(): Promise<void> {
 
   // Pre-load SoundCloud client_id in background
   getSoundCloudClientId().catch(() => {});
+
+  console.log(`[shared-inbox] Watching ${SHARED_EXPORTIFY_INBOX_DIR} every ${Math.round(SHARED_IMPORT_POLL_MS / 1000)}s`);
+  void runSharedInboxImportJob('poll').catch((err) => {
+    console.warn('[shared-inbox] Initial import scan failed:', getErrorMessage(err));
+  });
+  setInterval(() => {
+    void runSharedInboxImportJob('poll').catch((err) => {
+      console.warn('[shared-inbox] Poll import failed:', getErrorMessage(err));
+    });
+  }, SHARED_IMPORT_POLL_MS);
 }
 
 main().catch((err) => {
