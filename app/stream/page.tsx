@@ -117,6 +117,7 @@ export default function StreamPage() {
   const [requestBadge, setRequestBadge] = useState(false);
   const [queueBadge, setQueueBadge] = useState(false);
   const [statsOpen, setStatsOpen] = useState(false);
+  const [mobileHeaderMenuOpen, setMobileHeaderMenuOpen] = useState(false);
   const [statsLoading, setStatsLoading] = useState(false);
   const [statsError, setStatsError] = useState<string | null>(null);
   const [statsSummary, setStatsSummary] = useState<PublicStatsSummary | null>(null);
@@ -176,6 +177,7 @@ export default function StreamPage() {
   const tunnelRecoveryTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const suppressNextQueueBadgeRef = useRef(false);
   const prevVisibleTrackKeyRef = useRef("");
+  const mobileHeaderMenuRef = useRef<HTMLDivElement>(null);
 
   const isStreamUnavailable = radioMode === "dj" ? !twitchLive : !streamOnline;
   const tabsAllowed = !isStreamUnavailable;
@@ -338,6 +340,17 @@ export default function StreamPage() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!mobileHeaderMenuOpen) return;
+    function onClickOutside(event: MouseEvent) {
+      if (mobileHeaderMenuRef.current && !mobileHeaderMenuRef.current.contains(event.target as Node)) {
+        setMobileHeaderMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [mobileHeaderMenuOpen]);
 
   useEffect(() => {
     if (!skipVoteToastExpiresAt) {
@@ -856,7 +869,7 @@ export default function StreamPage() {
           minHeight: "60px"
         }}
       >
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5">
+        <div className="flex items-center gap-1.5">
           <h1 className="min-w-0 truncate text-sm font-bold tracking-tight text-white sm:text-lg">
             🎵 <span className="text-violet-400">{process.env.NEXT_PUBLIC_TWITCH_CHANNEL ?? "Stream"}</span>
           </h1>
@@ -866,7 +879,7 @@ export default function StreamPage() {
             <OnlineUsers />
             <button
               onClick={() => setStatsOpen((prev) => !prev)}
-              className={`whitespace-nowrap rounded-lg border px-2 py-1 text-xs transition sm:px-3 sm:text-sm ${
+              className={`hidden whitespace-nowrap rounded-lg border px-2 py-1 text-xs transition sm:inline-flex sm:px-3 sm:text-sm ${
                 statsOpen
                   ? "border-violet-500/80 bg-violet-500/15 text-violet-200"
                   : "border-gray-700 text-gray-400 hover:border-gray-600 hover:text-white"
@@ -881,10 +894,47 @@ export default function StreamPage() {
                   router.push("/");
                 }
               }}
-              className="whitespace-nowrap rounded-lg border border-gray-700 px-2 py-1 text-xs text-gray-400 transition hover:border-gray-600 hover:text-white sm:px-3 sm:text-sm"
+              className="hidden whitespace-nowrap rounded-lg border border-gray-700 px-2 py-1 text-xs text-gray-400 transition hover:border-gray-600 hover:text-white sm:inline-flex sm:px-3 sm:text-sm"
             >
               Uitloggen
             </button>
+            <div ref={mobileHeaderMenuRef} className="relative sm:hidden">
+              <button
+                type="button"
+                onClick={() => setMobileHeaderMenuOpen((prev) => !prev)}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-gray-700 text-gray-300 transition hover:border-gray-600 hover:text-white"
+                aria-label="Header menu"
+              >
+                ⋯
+              </button>
+              {mobileHeaderMenuOpen && (
+                <div className="absolute right-0 top-full z-50 mt-1.5 w-36 rounded-lg border border-gray-700 bg-gray-900 p-1.5 shadow-xl shadow-black/40">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStatsOpen((prev) => !prev);
+                      setMobileHeaderMenuOpen(false);
+                    }}
+                    className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 transition hover:bg-gray-800"
+                  >
+                    {statsOpen ? "Sluit stats" : "Open stats"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobileHeaderMenuOpen(false);
+                      if (typeof window !== 'undefined') {
+                        localStorage.removeItem("nickname");
+                        router.push("/");
+                      }
+                    }}
+                    className="mt-1 block w-full rounded px-2 py-1.5 text-left text-xs text-red-200 transition hover:bg-red-900/30"
+                  >
+                    Uitloggen
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
         {/* Always show next track section, even during loading */}

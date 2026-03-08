@@ -177,6 +177,31 @@ export async function listSharedPlaylists(limit = 100, offset = 0): Promise<Shar
   return parseOrThrow<SharedPlaylistsResponse>(res);
 }
 
+export async function listAllSharedPlaylists(pageSize = 250, maxPages = 20): Promise<SharedPlaylistsResponse> {
+  const safePageSize = Math.max(1, Math.min(pageSize, 250));
+  const safeMaxPages = Math.max(1, maxPages);
+  let offset = 0;
+  const items: SharedPlaylist[] = [];
+  let usage: { playlists: number; tracks: number } = { playlists: 0, tracks: 0 };
+
+  for (let page = 0; page < safeMaxPages; page += 1) {
+    const result = await listSharedPlaylists(safePageSize, offset);
+    usage = result.usage;
+    items.push(...result.items);
+    if (result.items.length < safePageSize) break;
+    offset += result.items.length;
+  }
+
+  return {
+    items,
+    usage,
+    paging: {
+      limit: safePageSize,
+      offset: 0,
+    },
+  };
+}
+
 export async function getSharedPlaylistTracks(playlistId: string): Promise<UserPlaylistTrack[]> {
   const safeId = encodeURIComponent(playlistId);
   const res = await fetch(`${getServerUrl()}/api/shared-playlists/${safeId}/tracks`);

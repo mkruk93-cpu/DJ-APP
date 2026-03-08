@@ -50,6 +50,14 @@ const MODE_DESCRIPTIONS: Record<string, { icon: string; lines: string[] }> = {
   },
 };
 
+const MODE_SHORT_LABELS: Record<string, string> = {
+  dj: "DJ",
+  radio: "RAD",
+  democracy: "DEM",
+  jukebox: "JBOX",
+  party: "PTY",
+};
+
 export default function ModeIndicator() {
   const mode = useRadioStore((s) => s.mode);
   const connected = useRadioStore((s) => s.connected);
@@ -79,6 +87,7 @@ export default function ModeIndicator() {
 
   const color = MODE_COLORS[mode] ?? MODE_COLORS.radio;
   const label = MODE_LABELS[mode] ?? mode;
+  const shortLabel = MODE_SHORT_LABELS[mode] ?? label.slice(0, 3).toUpperCase();
   const info = MODE_DESCRIPTIONS[mode];
 
   return (
@@ -88,7 +97,8 @@ export default function ModeIndicator() {
         className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-semibold transition hover:brightness-125 ${color}`}
       >
         <span className="h-1.5 w-1.5 rounded-full bg-current" />
-        {label}
+        <span className="sm:hidden">{shortLabel}</span>
+        <span className="hidden sm:inline">{label}</span>
       </button>
 
       {open && info && (

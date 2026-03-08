@@ -78,7 +78,10 @@ export default function OnlineUsers() {
         className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-gray-700 px-2 py-1 text-xs text-gray-400 transition hover:border-gray-600 hover:text-white sm:gap-2 sm:px-3 sm:py-1.5 sm:text-sm"
       >
         <span className={`h-2 w-2 rounded-full ${isLoading ? 'bg-gray-500 animate-pulse' : (activeListeningCount > 0 ? 'bg-green-500' : 'bg-red-500')}`} />
-        <span className="whitespace-nowrap">
+        <span className="whitespace-nowrap sm:hidden">
+          {isLoading ? "..." : `${onlineUsers.length}/${activeListeningCount}`}
+        </span>
+        <span className="hidden whitespace-nowrap sm:inline">
           {isLoading ? 'Laden...' : `${onlineUsers.length} online · ${activeListeningCount} luisteren`}
         </span>
         <svg

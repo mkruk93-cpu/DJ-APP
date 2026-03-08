@@ -593,24 +593,23 @@ async function resolveShortAutoCandidate(
         if (!strictMatch && badKeywords.some(keyword => title.includes(keyword))) return false;
         if (!strictMatch && hasBlockedAutoKeyword(title, channel)) return false;
 
-        // Filter out software/plugin content
-        const softwareKeywords = ['sylenth1', 'vst', 'plugin', 'ableton', 'fl studio', 'logic pro'];
-        if (softwareKeywords.some(keyword => title.includes(keyword))) return false;
-        
-        // Must have hardstyle/electronic music indicators
-        const requiredGenreKeywords = ['hardstyle', 'euphoric', 'trance', 'techno', 'electronic', 'edm'];
-        const hasGenre = requiredGenreKeywords.some(keyword => title.includes(keyword));
-        
-        // Must have music production indicators
-        const musicIndicators = [
-          'audio', 'remix', 'edit', 'mix',
-          'rip', 'hq', '4k', 'visualizer', 'music', 'track', 'anthem'
-        ];
-        const hasIndicator = musicIndicators.some(keyword => title.includes(keyword));
-        const hasArtistTitleFormat = hasDisplayArtistSeparator(result.title || '');
-        
-        // Must have either genre keyword, music indicator or normal artist-title format.
-        if (!hasGenre && !hasIndicator && !hasArtistTitleFormat) return false;
+        if (!strictMetadata) {
+          // Filter out software/plugin content for loose discovery mode only.
+          const softwareKeywords = ['sylenth1', 'vst', 'plugin', 'ableton', 'fl studio', 'logic pro'];
+          if (softwareKeywords.some(keyword => title.includes(keyword))) return false;
+
+          // Heuristic genre/indicator gates are useful for generic search, but too strict for
+          // trusted playlist metadata where artist+title is already validated.
+          const requiredGenreKeywords = ['hardstyle', 'euphoric', 'trance', 'techno', 'electronic', 'edm'];
+          const hasGenre = requiredGenreKeywords.some(keyword => title.includes(keyword));
+          const musicIndicators = [
+            'audio', 'remix', 'edit', 'mix',
+            'rip', 'hq', '4k', 'visualizer', 'music', 'track', 'anthem'
+          ];
+          const hasIndicator = musicIndicators.some(keyword => title.includes(keyword));
+          const hasArtistTitleFormat = hasDisplayArtistSeparator(result.title || '');
+          if (!hasGenre && !hasIndicator && !hasArtistTitleFormat) return false;
+        }
         
         // Extract artist name from query and ensure it's in title or channel
         const queryWords = searchQuery.toLowerCase().split(/[\s\-]+/).filter(word => word.length > 2);
@@ -637,7 +636,7 @@ async function resolveShortAutoCandidate(
         }
         
         // For euphoric hardstyle, be extra strict about artist matching
-        if (searchQuery.toLowerCase().includes('euphoric') && !hasArtistMatch) return false;
+        if (!strictMetadata && searchQuery.toLowerCase().includes('euphoric') && !hasArtistMatch) return false;
         
         return true;
       })

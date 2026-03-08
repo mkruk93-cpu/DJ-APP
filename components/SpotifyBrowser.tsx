@@ -18,7 +18,7 @@ import {
   getSharedPlaylistTracksPage,
   getSpotifyOembed,
   importUserPlaylistFile,
-  listSharedPlaylists,
+  listAllSharedPlaylists,
   listUserPlaylists,
   type SharedPlaylist,
   type PlaylistGenreMetaInput,
@@ -217,7 +217,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
   async function loadSharedPlaylists() {
     setSharedPlaylistsLoading(true);
     try {
-      const result = await listSharedPlaylists(120, 0);
+      const result = await listAllSharedPlaylists(250, 30);
       setSharedPlaylists(result.items);
       setSharedUsage(result.usage);
     } catch (err) {
