@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getSupabase } from "@/lib/supabaseClient";
 
 interface PresenceState {
   nickname: string;
   listening?: boolean;
+  updatedAt?: number;
 }
 
 export default function OnlineUsers() {
@@ -13,10 +14,15 @@ export default function OnlineUsers() {
   const [expanded, setExpanded] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isListening, setIsListening] = useState(false);
+  const isListeningRef = useRef(false);
   const nickname =
     typeof window !== "undefined"
       ? localStorage.getItem("nickname") ?? "anon"
       : "anon";
+
+  useEffect(() => {
+    isListeningRef.current = isListening;
+  }, [isListening]);
 
   useEffect(() => {
     const sb = getSupabase();
@@ -26,7 +32,12 @@ export default function OnlineUsers() {
     let subscribed = false;
     const trackPresence = async (listening: boolean) => {
       if (!subscribed) return;
-      await channel.track({ nickname, listening });
+      await channel.track({ nickname, listening, updatedAt: Date.now() });
+    };
+    const getListeningSnapshot = () =>
+      !!((window as Window & { __radioListeningState?: boolean }).__radioListeningState ?? isListeningRef.current);
+    const resyncPresence = () => {
+      void trackPresence(getListeningSnapshot());
     };
 
     channel
@@ -49,9 +60,10 @@ export default function OnlineUsers() {
         if (status === "SUBSCRIBED") {
           subscribed = true;
           const initialListening =
-            (window as Window & { __radioListeningState?: boolean }).__radioListeningState ?? isListening;
+            (window as Window & { __radioListeningState?: boolean }).__radioListeningState ?? isListeningRef.current;
           setIsListening(!!initialListening);
           await trackPresence(!!initialListening);
+          setIsLoading(false);
         }
       });
 
@@ -62,9 +74,22 @@ export default function OnlineUsers() {
       void trackPresence(nextListening);
     }
     window.addEventListener("radio-listening-state", onListeningState as EventListener);
+    window.addEventListener("focus", resyncPresence);
+    window.addEventListener("pageshow", resyncPresence);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") resyncPresence();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    const heartbeat = window.setInterval(() => {
+      resyncPresence();
+    }, 10_000);
 
     return () => {
       window.removeEventListener("radio-listening-state", onListeningState as EventListener);
+      window.removeEventListener("focus", resyncPresence);
+      window.removeEventListener("pageshow", resyncPresence);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.clearInterval(heartbeat);
       sb.removeChannel(channel);
     };
   }, [nickname]);
