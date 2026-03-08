@@ -109,6 +109,7 @@ export interface RadioState {
   modeSettings: ModeSettings;
   listenerCount: number;
   streamOnline: boolean;
+  pausedForIdle: boolean;
   voteState: VoteState | null;
   durationVote: DurationVote | null;
   queuePushVote: QueuePushVote | null;

@@ -81,6 +81,7 @@ export default function AdminPage() {
             modeSettings: state.modeSettings ?? store.getState().modeSettings,
             listenerCount: state.listenerCount ?? 0,
             streamOnline: state.streamOnline ?? false,
+            pausedForIdle: state.pausedForIdle ?? false,
             durationVote: state.durationVote ?? null,
           });
         })

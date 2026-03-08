@@ -14,6 +14,7 @@ interface RadioStore extends RadioState {
   setModeSettings: (settings: ModeSettings) => void;
   setListenerCount: (count: number) => void;
   setStreamOnline: (online: boolean) => void;
+  setPausedForIdle: (pausedForIdle: boolean) => void;
   setVoteState: (vote: VoteState | null) => void;
   setDurationVote: (vote: DurationVote | null) => void;
   setQueuePushVote: (vote: QueuePushVote | null) => void;
@@ -58,6 +59,7 @@ export const useRadioStore = create<RadioStore>((set) => ({
   },
   listenerCount: 0,
   streamOnline: false,
+  pausedForIdle: false,
   voteState: null,
   durationVote: null,
   queuePushVote: null,
@@ -77,6 +79,7 @@ export const useRadioStore = create<RadioStore>((set) => ({
   setModeSettings: (modeSettings) => set({ modeSettings }),
   setListenerCount: (listenerCount) => set({ listenerCount }),
   setStreamOnline: (streamOnline) => set({ streamOnline }),
+  setPausedForIdle: (pausedForIdle) => set({ pausedForIdle }),
   setVoteState: (voteState) => set({ voteState }),
   setDurationVote: (durationVote) => set({ durationVote }),
   setQueuePushVote: (queuePushVote) => set({ queuePushVote }),
@@ -94,6 +97,7 @@ export const useRadioStore = create<RadioStore>((set) => ({
     activeFallbackSharedMode: "random",
     listenerCount: 0,
     streamOnline: false,
+    pausedForIdle: false,
     voteState: null,
     durationVote: null,
     queuePushVote: null,

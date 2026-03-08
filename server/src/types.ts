@@ -108,6 +108,7 @@ export interface ServerState {
   activeFallbackSharedMode: 'random' | 'ordered';
   listenerCount: number;
   streamOnline: boolean;
+  pausedForIdle: boolean;
   voteState: VoteState | null;
   durationVote: DurationVote | null;
   queuePushVote: Omit<QueuePushVote, 'voters'> | null;

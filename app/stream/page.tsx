@@ -140,6 +140,7 @@ export default function StreamPage() {
   const upcomingTrack = useRadioStore((s) => s.upcomingTrack);
   const radioMode = useRadioStore((s) => s.mode);
   const streamOnline = useRadioStore((s) => s.streamOnline);
+  const pausedForIdle = useRadioStore((s) => s.pausedForIdle);
   const store = useRadioStore;
 
   const [suppressFallback, setSuppressFallback] = useState(false);
@@ -179,7 +180,7 @@ export default function StreamPage() {
   const prevVisibleTrackKeyRef = useRef("");
   const mobileHeaderMenuRef = useRef<HTMLDivElement>(null);
 
-  const isStreamUnavailable = radioMode === "dj" ? !twitchLive : !streamOnline;
+  const isStreamUnavailable = radioMode === "dj" ? !twitchLive : (!streamOnline && !pausedForIdle);
   const tabsAllowed = !isStreamUnavailable;
   const showRequests = tabsAllowed && (twitchLive || (radioConnected && radioMode === "dj"));
   const showRadioPanel = tabsAllowed && radioMode !== "dj";
@@ -549,6 +550,7 @@ export default function StreamPage() {
             modeSettings: state.modeSettings ?? store.getState().modeSettings,
             listenerCount: state.listenerCount ?? 0,
             streamOnline: state.streamOnline ?? false,
+            pausedForIdle: state.pausedForIdle ?? false,
             durationVote: state.durationVote ?? null,
             queuePushVote: state.queuePushVote ?? null,
             queuePushLocked: state.queuePushLocked ?? false,
@@ -573,6 +575,7 @@ export default function StreamPage() {
       const hadActiveStream = !!(store.getState().streamOnline || store.getState().currentTrack);
       store.getState().setConnected(false);
       store.getState().setStreamOnline(false);
+      store.getState().setPausedForIdle(false);
       store.getState().setCurrentTrack(null);
       latestUpcomingRef.current = null;
       latestQueueRef.current = [];
@@ -590,6 +593,7 @@ export default function StreamPage() {
     socket.on("track:change", (track: Track | null) => {
       store.getState().setCurrentTrack(hydrateCurrentTrack(track));
       store.getState().setStreamOnline(track !== null);
+      if (track) store.getState().setPausedForIdle(false);
       store.getState().setVoteState(null);
     });
 
@@ -698,7 +702,7 @@ export default function StreamPage() {
     // Safety net: keep upcoming/current state in sync in case a socket event is missed.
     const stateSyncInterval = setInterval(() => {
       if (store.getState().connected) fetchState();
-    }, 8000);
+    }, 15000);
 
     return () => {
       if (toastTimerRef.current) {
@@ -775,7 +779,7 @@ export default function StreamPage() {
     tunnelRecoverySecondsLeft > 0;
   const showRadioOfflineState =
     mode === "radio" &&
-    (!radioStreamUrl || (!radioConnected && !showTunnelRecoveryState) || (!isDjModeConnected && radioConnected && !streamOnline));
+    (!radioStreamUrl || (!radioConnected && !showTunnelRecoveryState) || (!isDjModeConnected && radioConnected && !streamOnline && !pausedForIdle));
   const shouldPollCommunityWidgets = radioMode === "dj" && radioConnected;
   const nextQueueItem = queue[0] ?? null;
   const nextSourceTitle = firstNonEmpty(

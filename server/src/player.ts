@@ -22,6 +22,7 @@ let currentDecoder: ChildProcess | null = null;
 let encoder: ChildProcess | null = null;
 let isRunning = false;
 let keepFiles = false;
+let lastKeepFilesPruneAt = 0;
 
 // ── Seamless skip: hot-swap mechanism ──
 // When a skip is requested and a next track is ready, we pre-spawn
@@ -56,6 +57,9 @@ const SELF_HEAL_CHECK_MS = 5_000;
 const SELF_HEAL_COOLDOWN_MS = 6_000;
 const SELF_HEAL_STALL_MS = 35_000;
 const SELF_HEAL_DURATION_GRACE_SECONDS = 45;
+const KEEP_FILES_MAX_COUNT = Math.max(8, parseInt(process.env.KEEP_FILES_MAX_COUNT ?? '24', 10) || 24);
+const KEEP_FILES_MAX_AGE_MS = Math.max(5 * 60_000, parseInt(process.env.KEEP_FILES_MAX_AGE_MS ?? String(6 * 60 * 60_000), 10) || (6 * 60 * 60_000));
+const KEEP_FILES_PRUNE_INTERVAL_MS = Math.max(30_000, parseInt(process.env.KEEP_FILES_PRUNE_INTERVAL_MS ?? '120000', 10) || 120_000);
 
 function toWindowsSystemErrorCode(exitCode: number | null): number | null {
   if (exitCode === null) return null;
@@ -1755,8 +1759,51 @@ function cleanupFileIfSafe(filePath: string, reason: string): void {
   cleanupFile(filePath);
 }
 
+function maybePruneKeptFiles(reason: string): void {
+  if (!keepFiles || !_cacheDir) return;
+  const now = Date.now();
+  if (now - lastKeepFilesPruneAt < KEEP_FILES_PRUNE_INTERVAL_MS) return;
+  lastKeepFilesPruneAt = now;
+  try {
+    const names = fs.readdirSync(_cacheDir);
+    const entries = names
+      .map((name) => {
+        const fullPath = path.join(_cacheDir, name);
+        try {
+          const stat = fs.statSync(fullPath);
+          if (!stat.isFile()) return null;
+          return { fullPath, mtimeMs: stat.mtimeMs };
+        } catch {
+          return null;
+        }
+      })
+      .filter((entry): entry is { fullPath: string; mtimeMs: number } => entry !== null)
+      .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+    let prunedCount = 0;
+    for (let i = 0; i < entries.length; i += 1) {
+      const entry = entries[i];
+      const tooOld = now - entry.mtimeMs > KEEP_FILES_MAX_AGE_MS;
+      const overflow = i >= KEEP_FILES_MAX_COUNT;
+      if (!tooOld && !overflow) continue;
+      if (isProtectedPlaybackFile(entry.fullPath)) continue;
+      cleanupFile(entry.fullPath);
+      prunedCount += 1;
+    }
+    if (prunedCount > 0) {
+      console.log(`[cleanup] Pruned ${prunedCount} kept cache file(s) (${reason}); keep max=${KEEP_FILES_MAX_COUNT}, age<=${Math.round(KEEP_FILES_MAX_AGE_MS / 60000)}m`);
+    }
+  } catch (err) {
+    console.warn('[cleanup] Keep-files prune failed:', err);
+  }
+}
+
 export function getCurrentTrack(): Track | null {
   return currentTrack;
+}
+
+export function isPlayCycleRunning(): boolean {
+  return isRunning;
 }
 
 export function getUpcomingTrack(): UpcomingTrack | null {
@@ -1904,6 +1951,7 @@ function triggerSelfHeal(reason: string): void {
 function runSelfHealChecks(): void {
   if (!isRunning || !_sb) return;
   const now = Date.now();
+  maybePruneKeptFiles('runtime');
 
   if (skipWhenReady && nextReady && (!encoder?.stdin || encoder.stdin.destroyed)) {
     triggerSelfHeal('skip pending while encoder unavailable');
@@ -2344,6 +2392,10 @@ export function stopPlayCycle(): void {
     }
     autoReadyBuffer = [];
   }
+  currentTrack = null;
+  pendingAutoUpcoming = null;
+  pendingQueueUpcoming = null;
+  broadcastUpcomingTrack();
 }
 
 async function fillPreloadBuffer(sb: SupabaseClient, cacheDir: string, currentId: string | null): Promise<void> {

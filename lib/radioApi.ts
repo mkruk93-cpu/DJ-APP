@@ -151,6 +151,7 @@ function refreshState(): void {
         modeSettings: state.modeSettings ?? store.modeSettings,
         listenerCount: state.listenerCount ?? 0,
         streamOnline: state.streamOnline ?? false,
+        pausedForIdle: state.pausedForIdle ?? false,
       });
     })
     .catch(() => {});

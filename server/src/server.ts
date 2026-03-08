@@ -13,7 +13,7 @@ import { initCache } from './cleanup.js';
 import { seedSettings, getActiveMode, getActiveFallbackGenre, getModeSettings, getSetting, setSetting } from './settings.js';
 import { getQueue, addToQueue, removeFromQueue, reorderQueue, fetchVideoInfo, extractYoutubeId, extractSourceId, isSoundcloudUrl, getThumbnailUrl, encodeLocalFileUrl } from './queue.js';
 import { canPerformAction } from './permissions.js';
-import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, playerEvents, setKeepFiles, invalidatePreload, invalidateNextReady, removeQueueItemFromPreload, setActiveFallbackGenre, setSharedAutoPlaybackMode, resetSharedAutoPlaybackCycleForSelection } from './player.js';
+import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, isPlayCycleRunning, playerEvents, setKeepFiles, invalidatePreload, invalidateNextReady, removeQueueItemFromPreload, setActiveFallbackGenre, setSharedAutoPlaybackMode, resetSharedAutoPlaybackCycleForSelection } from './player.js';
 import { youtubeSearch, soundcloudSearch } from './services/search.js';
 import { startBridge } from './bridge.js';
 import { startNowPlayingWatcher } from './nowPlaying.js';
@@ -61,7 +61,12 @@ import {
 } from './services/sharedPlaylistStore.js';
 
 function getErrorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
+  if (err && typeof err === 'object') {
+    const record = err as Record<string, unknown>;
+    const message = typeof record.message === 'string' ? record.message : '';
+    const details = typeof record.details === 'string' ? record.details : '';
+    return `${message}\n${details}`.trim() || String(err);
+  }
   return String(err ?? 'unknown');
 }
 
@@ -102,6 +107,8 @@ const SPOTIFY_OEMBED_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const DOWNLOAD_PATH = process.env.DOWNLOAD_PATH ?? '';
 const REKORDBOX_OUTPUT_PATH = process.env.REKORDBOX_OUTPUT_PATH ?? '';
 const KEEP_FILES = process.env.KEEP_FILES === 'true';
+const AUTO_PAUSE_WHEN_IDLE = String(process.env.AUTO_PAUSE_WHEN_IDLE ?? 'true').toLowerCase() !== 'false';
+const AUTO_PAUSE_IDLE_GRACE_MS = Math.max(0, parseInt(process.env.AUTO_PAUSE_IDLE_GRACE_MS ?? '45000', 10) || 45_000);
 
 const useIcecast = !!process.env.ICECAST_HOST;
 const internalPlayerUseIcecast = String(process.env.INTERNAL_PLAYER_USE_ICECAST ?? '').toLowerCase() === 'true';
@@ -168,9 +175,11 @@ interface ListenerPresenceState {
   updatedAt: number;
 }
 const listenerPresenceBySocket = new Map<string, ListenerPresenceState>();
+let idleNoListenerSince: number | null = null;
+let playbackPausedForIdle = false;
 
 function applyPlaybackForMode(mode: Mode): void {
-  if (appliedPlaybackMode === mode) return;
+  if (appliedPlaybackMode === mode && (mode === 'dj' || isPlayCycleRunning())) return;
   appliedPlaybackMode = mode;
 
   if (mode === 'dj') {
@@ -183,12 +192,52 @@ function applyPlaybackForMode(mode: Mode): void {
   startPlayCycle(sb, io, CACHE_DIR, encoderTarget, streamHub);
 }
 
+function evaluateIdlePlayback(mode: Mode): void {
+  if (!AUTO_PAUSE_WHEN_IDLE) return;
+  if (mode === 'dj') {
+    idleNoListenerSince = null;
+    playbackPausedForIdle = false;
+    return;
+  }
+  const listeners = getEffectiveListenerCount();
+  if (listeners > 0) {
+    idleNoListenerSince = null;
+    if (playbackPausedForIdle) {
+      playbackPausedForIdle = false;
+      applyPlaybackForMode(mode);
+      io.emit('stream:status', { online: getCurrentTrack() !== null, listeners });
+      console.log('[player] Resumed play cycle: listeners detected');
+    }
+    return;
+  }
+  if (idleNoListenerSince === null) {
+    idleNoListenerSince = Date.now();
+    return;
+  }
+  if (playbackPausedForIdle) return;
+  if (Date.now() - idleNoListenerSince < AUTO_PAUSE_IDLE_GRACE_MS) return;
+  stopPlayCycle();
+  playbackPausedForIdle = true;
+  io.emit('track:change', null);
+  io.emit('stream:status', { online: false, listeners: 0 });
+  console.log(`[player] Auto-paused play cycle: no listeners for ${Math.round(AUTO_PAUSE_IDLE_GRACE_MS / 1000)}s`);
+}
+
 const startTime = Date.now();
 let lastStateLogKey: string | null = null;
 let lastGoodServerState: ServerState | null = null;
-const MODE_SYNC_INTERVAL_MS = 5_000;
-const MODE_SYNC_CONFIRM_POLLS = 2;
-const MODE_SYNC_COOLDOWN_MS = 10_000;
+const MODE_SYNC_INTERVAL_MS = Math.max(2_000, parseInt(process.env.MODE_SYNC_INTERVAL_MS ?? '8000', 10) || 8_000);
+const MODE_SYNC_CONFIRM_POLLS = Math.max(1, parseInt(process.env.MODE_SYNC_CONFIRM_POLLS ?? '3', 10) || 3);
+const MODE_SYNC_COOLDOWN_MS = Math.max(2_000, parseInt(process.env.MODE_SYNC_COOLDOWN_MS ?? '15000', 10) || 15_000);
+const STATE_RETRY_ATTEMPTS = Math.max(1, parseInt(process.env.STATE_RETRY_ATTEMPTS ?? '3', 10) || 3);
+const STATE_RETRY_BASE_DELAY_MS = Math.max(100, parseInt(process.env.STATE_RETRY_BASE_DELAY_MS ?? '300', 10) || 300);
+const STATE_ERROR_LOG_COOLDOWN_MS = Math.max(1_000, parseInt(process.env.STATE_ERROR_LOG_COOLDOWN_MS ?? '12000', 10) || 12_000);
+const STATE_CIRCUIT_FAILURE_THRESHOLD = Math.max(2, parseInt(process.env.STATE_CIRCUIT_FAILURE_THRESHOLD ?? '4', 10) || 4);
+const STATE_CIRCUIT_OPEN_MS = Math.max(2_000, parseInt(process.env.STATE_CIRCUIT_OPEN_MS ?? '30000', 10) || 30_000);
+let lastStateErrorLogAt = 0;
+let stateTransientFailureStreak = 0;
+let stateCircuitOpenUntil = 0;
+let lastStateCircuitLogAt = 0;
 
 function normalizeFallbackGenreId(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -208,6 +257,55 @@ function normalizeDeviceId(value: unknown): string | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
   return trimmed.slice(0, 120);
+}
+
+function isTransientStateError(err: unknown): boolean {
+  const text = getErrorMessage(err).toLowerCase();
+  return (
+    text.includes('fetch failed')
+    || text.includes('econnreset')
+    || text.includes('econnaborted')
+    || text.includes('etimedout')
+    || text.includes('timeout')
+    || text.includes('network socket disconnected')
+  );
+}
+
+async function withStateRetry<T>(fn: () => Promise<T>): Promise<T> {
+  let attempt = 0;
+  let lastErr: unknown = null;
+  while (attempt < STATE_RETRY_ATTEMPTS) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      attempt += 1;
+      if (attempt >= STATE_RETRY_ATTEMPTS || !isTransientStateError(err)) break;
+      const delay = STATE_RETRY_BASE_DELAY_MS * attempt;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+  throw lastErr;
+}
+
+function markStateFetchSuccess(): void {
+  stateTransientFailureStreak = 0;
+  stateCircuitOpenUntil = 0;
+}
+
+function markStateFetchFailure(err: unknown): void {
+  if (!isTransientStateError(err)) {
+    stateTransientFailureStreak = 0;
+    return;
+  }
+  stateTransientFailureStreak += 1;
+  if (stateTransientFailureStreak < STATE_CIRCUIT_FAILURE_THRESHOLD) return;
+  const now = Date.now();
+  stateCircuitOpenUntil = Math.max(stateCircuitOpenUntil, now + STATE_CIRCUIT_OPEN_MS);
+  if (now - lastStateCircuitLogAt >= STATE_ERROR_LOG_COOLDOWN_MS) {
+    lastStateCircuitLogAt = now;
+    console.warn(`[rest] /state circuit opened for ${Math.round(STATE_CIRCUIT_OPEN_MS / 1000)}s after ${stateTransientFailureStreak} transient failures`);
+  }
 }
 
 function getIdentityValueFromRequest(req: Request, key: string): string | null {
@@ -576,7 +674,7 @@ function scoreSearchResultForSubmission(
   const blocked = isBlockedSearchResult(title, channel);
 
   const strictTitleMatch = wantedTitleNorm
-    ? (titleNorm.includes(wantedTitleNorm) || tokenOverlap(expectedTitle, title) >= 0.9)
+    ? (titleNorm.includes(wantedTitleNorm) || tokenOverlap(expectedTitle ?? '', title) >= 0.9)
     : true;
   const strictArtistMatch = artistNorm
     ? (titleNorm.includes(artistNorm) || channelNorm.includes(artistNorm))
@@ -599,7 +697,7 @@ function scoreSearchResultForSubmission(
   if (wantedTitleNorm) {
     if (titleNorm.includes(wantedTitleNorm)) score += 10;
     else {
-      const overlap = tokenOverlap(expectedTitle, title);
+      const overlap = tokenOverlap(expectedTitle ?? '', title);
       score += overlap >= 0.5 ? 5 : -10;
     }
   }
@@ -887,7 +985,7 @@ function popDeferredQueueItemRoundRobin(): { addedBy: string; item: DeferredQueu
 }
 
 async function getServerState(): Promise<ServerState> {
-  const [mode, modeSettings, queue, activeFallbackGenre, activeFallbackGenreBy, fallbackGenres, activeFallbackSharedMode] = await Promise.all([
+  const [mode, modeSettings, queue, activeFallbackGenre, activeFallbackGenreBy, fallbackGenres, activeFallbackSharedMode] = await withStateRetry(() => Promise.all([
     getActiveMode(sb),
     getModeSettings(sb),
     getQueue(sb),
@@ -895,7 +993,7 @@ async function getServerState(): Promise<ServerState> {
     getSetting<string | null>(sb, 'fallback_active_genre_by'),
     getCombinedFallbackGenres(),
     resolveSharedPlaybackMode(),
-  ]);
+  ]));
 
   return {
     currentTrack: getCurrentTrack(),
@@ -909,6 +1007,7 @@ async function getServerState(): Promise<ServerState> {
     activeFallbackSharedMode,
     listenerCount: getEffectiveListenerCount(),
     streamOnline: getCurrentTrack() !== null,
+    pausedForIdle: playbackPausedForIdle,
     voteState: null,
     durationVote: activeDurationVote,
     queuePushVote: activeQueuePushVote
@@ -938,6 +1037,7 @@ function buildDegradedServerState(): ServerState {
       upcomingTrack: getUpcomingTrack(),
       listenerCount: getEffectiveListenerCount(),
       streamOnline: getCurrentTrack() !== null,
+      pausedForIdle: playbackPausedForIdle,
       queuePushLocked,
       skipLocked: isSkipLocked(),
       durationVote: activeDurationVote,
@@ -989,6 +1089,7 @@ function buildDegradedServerState(): ServerState {
     activeFallbackSharedMode: 'random',
     listenerCount: getEffectiveListenerCount(),
     streamOnline: getCurrentTrack() !== null,
+    pausedForIdle: playbackPausedForIdle,
     voteState: null,
     durationVote: activeDurationVote,
     queuePushVote: activeQueuePushVote
@@ -1586,8 +1687,15 @@ async function soundcloudSearchLocal(query: string, limit = 12): Promise<SearchR
 // ── REST Endpoints ───────────────────────────────────────────────────────────
 
 app.get('/state', async (_req, res) => {
+  const now = Date.now();
+  if (now < stateCircuitOpenUntil) {
+    const degraded = buildDegradedServerState();
+    res.json({ ...degraded, degraded: true, circuitOpen: true });
+    return;
+  }
   try {
     const state = await getServerState();
+    markStateFetchSuccess();
     lastGoodServerState = state;
     const stateLogKey = `${state.currentTrack?.title ?? 'none'}|${state.queue.length}|${state.mode}`;
     if (stateLogKey !== lastStateLogKey) {
@@ -1596,7 +1704,11 @@ app.get('/state', async (_req, res) => {
     }
     res.json(state);
   } catch (err) {
-    console.error('[rest] /state error:', err);
+    markStateFetchFailure(err);
+    if (now - lastStateErrorLogAt >= STATE_ERROR_LOG_COOLDOWN_MS) {
+      lastStateErrorLogAt = now;
+      console.error('[rest] /state error:', err);
+    }
     // Degraded fallback: never hard-fail /state for transient DB/network errors.
     const degraded = buildDegradedServerState();
     res.json({ ...degraded, degraded: true });
@@ -1609,6 +1721,26 @@ app.get('/health', (_req, res) => {
     uptime: Math.floor((Date.now() - startTime) / 1000),
     listeners: getEffectiveListenerCount(),
   });
+});
+
+app.get('/api/stream-health', async (_req, res) => {
+  const mode = await getActiveMode(sb).catch(() => 'radio' as Mode);
+  const listeners = getEffectiveListenerCount();
+  const streamOnline = getCurrentTrack() !== null;
+  const shouldAlert = mode !== 'dj' && listeners > 0 && !streamOnline && !playbackPausedForIdle;
+  const idleForSeconds = idleNoListenerSince ? Math.max(0, Math.floor((Date.now() - idleNoListenerSince) / 1000)) : 0;
+  const payload = {
+    status: shouldAlert ? 'down' : 'ok',
+    mode,
+    listeners,
+    streamOnline,
+    playCycleRunning: isPlayCycleRunning(),
+    pausedForIdle: playbackPausedForIdle,
+    idleForSeconds,
+    shouldAlert,
+    uptime: Math.floor((Date.now() - startTime) / 1000),
+  };
+  res.status(shouldAlert ? 503 : 200).json(payload);
 });
 
 app.get('/api/stats/summary', async (req, res) => {
@@ -2805,6 +2937,7 @@ app.post('/api/mode', async (req, res) => {
   try {
     await setSetting(sb, 'active_mode', mode);
     applyPlaybackForMode(mode as Mode);
+    evaluateIdlePlayback(mode as Mode);
     resetVotes();
     const modeSettings = await getModeSettings(sb);
     io.emit('mode:change', { mode: mode as Mode, settings: modeSettings });
@@ -3377,6 +3510,7 @@ io.on('connection', (socket) => {
     listening: false,
     updatedAt: Date.now(),
   });
+  getActiveMode(sb).then((mode) => evaluateIdlePlayback(mode)).catch(() => {});
   io.emit('stream:status', { online: getCurrentTrack() !== null, listeners: getEffectiveListenerCount() });
   void emitSkipVoteState();
   socket.emit('upcoming:update', getUpcomingTrack());
@@ -3402,6 +3536,7 @@ io.on('connection', (socket) => {
       updatedAt: Date.now(),
     });
     io.emit('stream:status', { online: getCurrentTrack() !== null, listeners: getEffectiveListenerCount() });
+    getActiveMode(sb).then((mode) => evaluateIdlePlayback(mode)).catch(() => {});
     void emitSkipVoteState();
   });
 
@@ -3694,6 +3829,7 @@ io.on('connection', (socket) => {
     try {
       await setSetting(sb, 'active_mode', data.mode);
       applyPlaybackForMode(data.mode as Mode);
+      evaluateIdlePlayback(data.mode as Mode);
       resetVotes();
       const modeSettings = await getModeSettings(sb);
       io.emit('mode:change', { mode: data.mode as Mode, settings: modeSettings });
@@ -3851,6 +3987,7 @@ io.on('connection', (socket) => {
     socketNicknameById.delete(socket.id);
     voteSkipSet.delete(socket.id);
     io.emit('stream:status', { online: getCurrentTrack() !== null, listeners: getEffectiveListenerCount() });
+    getActiveMode(sb).then((mode) => evaluateIdlePlayback(mode)).catch(() => {});
     void emitSkipVoteState();
   });
 });
@@ -3890,6 +4027,7 @@ async function main(): Promise<void> {
   const initialMode = await getActiveMode(sb);
   console.log(`[mode] Initial mode: ${initialMode}`);
   applyPlaybackForMode(initialMode);
+  evaluateIdlePlayback(initialMode);
   const initialTrack = getCurrentTrack();
   lastObservedTrackKey = initialTrack ? `${initialTrack.id}|${initialTrack.started_at}` : null;
 
@@ -3906,6 +4044,10 @@ async function main(): Promise<void> {
     lastObservedTrackKey = activeTrackKey;
     if (trackAdvanced) {
       void promoteOneDeferredQueueItem('track-ended');
+    }
+    if (Date.now() < stateCircuitOpenUntil) {
+      evaluateIdlePlayback(lastSyncedMode);
+      return;
     }
     getActiveMode(sb)
       .then(async (mode) => {
@@ -3927,11 +4069,13 @@ async function main(): Promise<void> {
         pendingSyncedModeCount = 0;
         lastModeApplyAt = Date.now();
         applyPlaybackForMode(mode);
+        evaluateIdlePlayback(mode);
         const modeSettings = await getModeSettings(sb);
         io.emit('mode:change', { mode, settings: modeSettings });
         console.log(`[mode] Synced mode from settings: ${mode}`);
       })
       .catch(() => {});
+    evaluateIdlePlayback(lastSyncedMode);
   }, MODE_SYNC_INTERVAL_MS);
 
   // Start the bridge (downloads approved requests)
