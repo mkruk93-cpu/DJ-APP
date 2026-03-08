@@ -72,15 +72,12 @@ function groupPlaylistsByGenre(playlists: SharedPlaylist[]): Array<{
     bySubgenre.set(subgenreLabel, bucket);
   }
   return Array.from(byGenre.entries())
-    .sort(([a], [b]) => a.localeCompare(b, "nl"))
     .map(([genreLabel, bySubgenre]) => ({
       genreLabel,
-      subgroups: Array.from(bySubgenre.entries())
-        .sort(([a], [b]) => a.localeCompare(b, "nl"))
-        .map(([subgenreLabel, items]) => ({
-          subgenreLabel,
-          items,
-        })),
+      subgroups: Array.from(bySubgenre.entries()).map(([subgenreLabel, items]) => ({
+        subgenreLabel,
+        items,
+      })),
     }));
 }
 
