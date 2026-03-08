@@ -23,6 +23,8 @@ interface AudioPlayerProps {
   preferSupabase?: boolean;
 }
 
+const VOLUME_STORAGE_KEY_BASE = "djapp:player-volume";
+
 function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
   const rn = r / 255;
   const gn = g / 255;
@@ -101,9 +103,32 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const nicknameRef = useRef<string>("anonymous");
   const connected = useRadioStore((s) => s.connected);
+
+  function getVolumeStorageKey(): string {
+    if (typeof window === "undefined") return VOLUME_STORAGE_KEY_BASE;
+    const nicknameRaw = localStorage.getItem("nickname") ?? "";
+    const nickname = nicknameRaw.trim().toLowerCase();
+    if (!nickname) return VOLUME_STORAGE_KEY_BASE;
+    return `${VOLUME_STORAGE_KEY_BASE}:${nickname}`;
+  }
+
+  function loadStoredVolume(): number | null {
+    if (typeof window === "undefined") return null;
+    const primary = localStorage.getItem(getVolumeStorageKey());
+    const fallback = localStorage.getItem(VOLUME_STORAGE_KEY_BASE);
+    const raw = primary ?? fallback;
+    if (raw === null) return null;
+    const parsed = Number.parseFloat(raw);
+    if (!Number.isFinite(parsed)) return null;
+    return Math.max(0, Math.min(1, parsed));
+  }
   useEffect(() => {
     if (typeof window === "undefined") return;
     nicknameRef.current = (localStorage.getItem("nickname") ?? "anonymous").trim() || "anonymous";
+    const storedVolume = loadStoredVolume();
+    if (storedVolume !== null) {
+      setVolume(storedVolume);
+    }
   }, []);
 
   useEffect(() => {
@@ -143,6 +168,14 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
 
   useEffect(() => {
     if (audioRef.current) audioRef.current.volume = volume;
+  }, [volume]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const value = String(Math.max(0, Math.min(1, volume)));
+    localStorage.setItem(getVolumeStorageKey(), value);
+    // Keep a generic fallback key for first-time nickname-less loads.
+    localStorage.setItem(VOLUME_STORAGE_KEY_BASE, value);
   }, [volume]);
 
   // Autoplay when stream source becomes available
@@ -653,9 +686,9 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
               <div
                 className="player-cover-ring player-cover-ring--inner absolute -inset-1 rounded-xl border"
                 style={{
-                  borderColor: "rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.42)",
+                  borderColor: "rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.52)",
                   boxShadow:
-                    "0 0 0 1px rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.18) inset, 0 0 8px rgba(var(--player-art-r), var(--player-art-g), var(--player-art-b), 0.12)",
+                    "0 0 0 1px rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.22) inset, 0 0 10px rgba(var(--player-art-r), var(--player-art-g), var(--player-art-b), 0.14)",
                 }}
               />
             )}
@@ -663,9 +696,9 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
               <div
                 className="player-cover-ring player-cover-ring--outer absolute -inset-[6px] rounded-[0.85rem] border"
                 style={{
-                  borderColor: "rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.34)",
+                  borderColor: "rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.42)",
                   boxShadow:
-                    "0 0 0 1px rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.14) inset, 0 0 10px rgba(var(--player-art-r), var(--player-art-g), var(--player-art-b), 0.1)",
+                    "0 0 0 1px rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.16) inset, 0 0 12px rgba(var(--player-art-r), var(--player-art-g), var(--player-art-b), 0.12)",
                 }}
               />
             )}
@@ -841,9 +874,9 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
             <div
               className="player-cover-ring player-cover-ring--inner absolute -inset-2 z-20 rounded-[1.05rem] border-2"
               style={{
-                borderColor: "rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.44)",
+                borderColor: "rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.54)",
                 boxShadow:
-                  "0 0 0 1px rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.2) inset, 0 0 12px rgba(var(--player-art-r), var(--player-art-g), var(--player-art-b), 0.14)",
+                  "0 0 0 1px rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.24) inset, 0 0 14px rgba(var(--player-art-r), var(--player-art-g), var(--player-art-b), 0.16)",
               }}
             />
           )}
@@ -851,9 +884,9 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
             <div
               className="player-cover-ring player-cover-ring--outer absolute -inset-4 z-20 rounded-[1.3rem] border"
               style={{
-                borderColor: "rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.36)",
+                borderColor: "rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.44)",
                 boxShadow:
-                  "0 0 0 1px rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.16) inset, 0 0 14px rgba(var(--player-art-r), var(--player-art-g), var(--player-art-b), 0.12)",
+                  "0 0 0 1px rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.18) inset, 0 0 16px rgba(var(--player-art-r), var(--player-art-g), var(--player-art-b), 0.14)",
               }}
             />
           )}

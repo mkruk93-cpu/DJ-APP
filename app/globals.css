@@ -148,11 +148,10 @@ body {
 
 .player-cover-ring--inner {
   animation:
-    player-cover-spin 14s linear infinite,
+    player-cover-spin 12s linear infinite,
     player-ring-layer-inner 32s steps(1, end) infinite,
-    player-ring-drift-inner 9.5s ease-in-out infinite,
     player-ring-breathe 3.8s ease-in-out infinite;
-  opacity: 0.62;
+  opacity: 0.68;
   --ring-orbit-angle: 0deg;
 }
 
@@ -168,11 +167,10 @@ body {
 
 .player-cover-ring--outer {
   animation:
-    player-cover-spin 20s linear infinite reverse,
+    player-cover-spin 16s linear infinite reverse,
     player-ring-layer-outer 32s steps(1, end) infinite,
-    player-ring-drift-outer 11.4s ease-in-out infinite,
     player-ring-breathe 4.8s ease-in-out infinite reverse;
-  opacity: 0.5;
+  opacity: 0.56;
   --ring-orbit-angle: 160deg;
 }
 
@@ -223,12 +221,12 @@ body {
 @keyframes player-ring-breathe {
   0%,
   100% {
-    opacity: 0.52;
-    transform: scale(1);
+    opacity: 0.5;
+    filter: saturate(1) brightness(1);
   }
   50% {
-    opacity: 0.85;
-    transform: scale(1.018);
+    opacity: 0.82;
+    filter: saturate(1.1) brightness(1.05);
   }
 }
 
@@ -241,26 +239,6 @@ body {
   50% {
     transform: scale(1.045);
     opacity: 0.56;
-  }
-}
-
-@keyframes player-ring-drift-inner {
-  0%,
-  100% {
-    transform: translate3d(0, 0, 0);
-  }
-  50% {
-    transform: translate3d(0.8px, -1.6px, 0);
-  }
-}
-
-@keyframes player-ring-drift-outer {
-  0%,
-  100% {
-    transform: translate3d(0, 0, 0);
-  }
-  50% {
-    transform: translate3d(-0.9px, 1.8px, 0);
   }
 }
 
