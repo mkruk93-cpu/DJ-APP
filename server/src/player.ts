@@ -51,12 +51,17 @@ let lastAudioProgressAt = 0;
 let lastTrackAnnouncedAt = 0;
 let lastPrepareKickAt = 0;
 let lastSelfHealAt = 0;
+let stallConsecutiveChecks = 0;
+let selfHealGraceUntil = 0;
+let expectedEncoderShutdownUntil = 0;
 let _io: IOServer | null = null;
 
 const SELF_HEAL_CHECK_MS = 5_000;
 const SELF_HEAL_COOLDOWN_MS = 6_000;
-const SELF_HEAL_STALL_MS = 35_000;
+const SELF_HEAL_STALL_MS = Math.max(20_000, parseInt(process.env.SELF_HEAL_STALL_MS ?? '55000', 10) || 55_000);
+const SELF_HEAL_STALL_CONFIRM_CHECKS = Math.max(1, parseInt(process.env.SELF_HEAL_STALL_CONFIRM_CHECKS ?? '2', 10) || 2);
 const SELF_HEAL_DURATION_GRACE_SECONDS = 45;
+const SELF_HEAL_START_GRACE_MS = Math.max(5_000, parseInt(process.env.SELF_HEAL_START_GRACE_MS ?? '25000', 10) || 25_000);
 const KEEP_FILES_MAX_COUNT = Math.max(8, parseInt(process.env.KEEP_FILES_MAX_COUNT ?? '24', 10) || 24);
 const KEEP_FILES_MAX_AGE_MS = Math.max(5 * 60_000, parseInt(process.env.KEEP_FILES_MAX_AGE_MS ?? String(6 * 60 * 60_000), 10) || (6 * 60 * 60_000));
 const KEEP_FILES_PRUNE_INTERVAL_MS = Math.max(30_000, parseInt(process.env.KEEP_FILES_PRUNE_INTERVAL_MS ?? '120000', 10) || 120_000);
@@ -70,6 +75,19 @@ function toWindowsSystemErrorCode(exitCode: number | null): number | null {
 function isBrokenPipeError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err ?? '');
   return /\bEPIPE\b/i.test(msg) || /\bbroken pipe\b/i.test(msg);
+}
+
+function isWriteAfterEndError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? '');
+  return /\bwrite after end\b/i.test(msg);
+}
+
+function markExpectedEncoderShutdown(ms = 7_000): void {
+  expectedEncoderShutdownUntil = Date.now() + ms;
+}
+
+function isExpectedEncoderShutdownWindow(): boolean {
+  return Date.now() < expectedEncoderShutdownUntil;
 }
 
 export function isSkipLocked(): boolean {
@@ -1905,6 +1923,7 @@ function killEncoderProcess(enc: ChildProcess | null): void {
 
 function markAudioProgress(): void {
   lastAudioProgressAt = Date.now();
+  stallConsecutiveChecks = 0;
 }
 
 function triggerSelfHeal(reason: string): void {
@@ -1952,13 +1971,14 @@ function runSelfHealChecks(): void {
   if (!isRunning || !_sb) return;
   const now = Date.now();
   maybePruneKeptFiles('runtime');
+  const inStartupGrace = now < selfHealGraceUntil;
 
   if (skipWhenReady && nextReady && (!encoder?.stdin || encoder.stdin.destroyed)) {
     triggerSelfHeal('skip pending while encoder unavailable');
     return;
   }
 
-  if (currentTrack?.duration && Number.isFinite(currentTrack.duration) && currentTrack.duration > 0) {
+  if (!inStartupGrace && currentTrack?.duration && Number.isFinite(currentTrack.duration) && currentTrack.duration > 0) {
     const startedAt = currentTrack.started_at - STREAM_DELAY_MS;
     const elapsedMs = now - startedAt;
     const maxExpectedMs = (currentTrack.duration + SELF_HEAL_DURATION_GRACE_SECONDS) * 1000;
@@ -1968,12 +1988,20 @@ function runSelfHealChecks(): void {
     }
   }
 
-  if (currentTrack) {
+  if (!inStartupGrace && currentTrack) {
     const idleMs = now - Math.max(lastAudioProgressAt, lastTrackAnnouncedAt);
     if (idleMs > SELF_HEAL_STALL_MS) {
+      stallConsecutiveChecks += 1;
+      if (stallConsecutiveChecks < SELF_HEAL_STALL_CONFIRM_CHECKS) {
+        console.warn(`[self-heal] stall detected (${Math.round(idleMs / 1000)}s), waiting confirm ${stallConsecutiveChecks}/${SELF_HEAL_STALL_CONFIRM_CHECKS}`);
+        return;
+      }
       triggerSelfHeal(`audio stalled for ${Math.round(idleMs / 1000)}s`);
       return;
     }
+    stallConsecutiveChecks = 0;
+  } else {
+    stallConsecutiveChecks = 0;
   }
 
   if (!nextReady && now - lastPrepareKickAt > 15_000) {
@@ -2255,6 +2283,7 @@ function ensureEncoder(): ChildProcess {
   nextEncoder.stdin?.on('error', (err) => {
     // Ignore stale error events from an older encoder process.
     if (encoder !== nextEncoder) return;
+    if ((!isRunning || isExpectedEncoderShutdownWindow()) && (isWriteAfterEndError(err) || isBrokenPipeError(err))) return;
     if (!isBrokenPipeError(err)) {
       console.warn(`[encoder] stdin error: ${err.message}`);
     }
@@ -2267,7 +2296,9 @@ function ensureEncoder(): ChildProcess {
     const winSystemCode = toWindowsSystemErrorCode(code);
     const tail = encoderStderrTail.trim().split('\n').slice(-2).join(' | ').trim();
     const suffix = tail ? ` — ${tail}` : '';
-    if (winSystemCode === 10053) {
+    if (isExpectedEncoderShutdownWindow() && (code === 0 || code === null || winSystemCode === 10053)) {
+      console.log(`[encoder] Exited after expected stop${suffix}`);
+    } else if (winSystemCode === 10053) {
       console.warn(`[encoder] Exited with code ${code} (Windows socket 10053: verbinding met Icecast verbroken)${suffix}`);
     } else if (code !== 0 && code !== null) {
       console.warn(`[encoder] Exited with error code ${code}${suffix}`);
@@ -2284,6 +2315,11 @@ function ensureEncoder(): ChildProcess {
   nextEncoder.on('error', (err) => {
     // Ignore stale error events from an older encoder process.
     if (encoder !== nextEncoder) return;
+    if (isExpectedEncoderShutdownWindow()) {
+      console.log(`[encoder] Ignored expected error during shutdown: ${err.message}`);
+      encoder = null;
+      return;
+    }
     console.error(`[encoder] Error: ${err.message}`);
     encoder = null;
     if (isRunning) {
@@ -2308,10 +2344,13 @@ export async function startPlayCycle(
   _cacheDir = cacheDir;
   _icecast = icecast;
   _streamHub = streamHub ?? null;
+  selfHealGraceUntil = Date.now() + SELF_HEAL_START_GRACE_MS;
+  expectedEncoderShutdownUntil = 0;
   lastAudioProgressAt = Date.now();
   lastTrackAnnouncedAt = Date.now();
   lastPrepareKickAt = Date.now();
   lastSelfHealAt = 0;
+  stallConsecutiveChecks = 0;
 
   playerEvents.on('queue:add', () => {
     // Invalidate fallback nextReady so queued track gets priority
@@ -2361,8 +2400,9 @@ export async function startPlayCycle(
   }
 }
 
-export function stopPlayCycle(): void {
+export function stopPlayCycle(options?: { preserveCurrentTrack?: boolean }): void {
   isRunning = false;
+  markExpectedEncoderShutdown();
   skipWhenReady = false;
   setSkipLock(false);
   if (skipLockWatchdog) {
@@ -2392,7 +2432,9 @@ export function stopPlayCycle(): void {
     }
     autoReadyBuffer = [];
   }
-  currentTrack = null;
+  if (!options?.preserveCurrentTrack) {
+    currentTrack = null;
+  }
   pendingAutoUpcoming = null;
   pendingQueueUpcoming = null;
   broadcastUpcomingTrack();
@@ -2970,7 +3012,9 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess): Promise<void> {
     function onStdinError(err: Error) {
       if (pipeError) return;
       pipeError = true;
-      console.warn(`[encoder] stdin error during decode: ${err.message}`);
+      if (!isExpectedEncoderShutdownWindow() && !isWriteAfterEndError(err)) {
+        console.warn(`[encoder] stdin error during decode: ${err.message}`);
+      }
       killDecoderProcess(decoder);
       finish(new Error(`encoder write failed: ${err.message}`));
     }
@@ -3083,7 +3127,9 @@ function pipeRunningDecoder(decoder: ChildProcess, enc: ChildProcess): Promise<v
     function onStdinError(err: Error) {
       if (pipeError) return;
       pipeError = true;
-      console.warn(`[encoder] stdin error during chained decode: ${err.message}`);
+      if (!isExpectedEncoderShutdownWindow() && !isWriteAfterEndError(err)) {
+        console.warn(`[encoder] stdin error during chained decode: ${err.message}`);
+      }
       killDecoderProcess(decoder);
       finish();
     }

@@ -216,9 +216,8 @@ function evaluateIdlePlayback(mode: Mode): void {
   }
   if (playbackPausedForIdle) return;
   if (Date.now() - idleNoListenerSince < AUTO_PAUSE_IDLE_GRACE_MS) return;
-  stopPlayCycle();
+  stopPlayCycle({ preserveCurrentTrack: true });
   playbackPausedForIdle = true;
-  io.emit('track:change', null);
   io.emit('stream:status', { online: false, listeners: 0 });
   console.log(`[player] Auto-paused play cycle: no listeners for ${Math.round(AUTO_PAUSE_IDLE_GRACE_MS / 1000)}s`);
 }

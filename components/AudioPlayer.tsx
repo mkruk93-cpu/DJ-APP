@@ -653,9 +653,9 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
               <div
                 className="player-cover-ring player-cover-ring--inner absolute -inset-1 rounded-xl border"
                 style={{
-                  borderColor: "rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.96)",
+                  borderColor: "rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.42)",
                   boxShadow:
-                    "0 0 0 1px rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.62) inset, 0 0 10px rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.2)",
+                    "0 0 0 1px rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.18) inset, 0 0 8px rgba(var(--player-art-r), var(--player-art-g), var(--player-art-b), 0.12)",
                 }}
               />
             )}
@@ -663,9 +663,9 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
               <div
                 className="player-cover-ring player-cover-ring--outer absolute -inset-[6px] rounded-[0.85rem] border"
                 style={{
-                  borderColor: "rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.86)",
+                  borderColor: "rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.34)",
                   boxShadow:
-                    "0 0 0 1px rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.54) inset, 0 0 12px rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.18)",
+                    "0 0 0 1px rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.14) inset, 0 0 10px rgba(var(--player-art-r), var(--player-art-g), var(--player-art-b), 0.1)",
                 }}
               />
             )}
@@ -841,9 +841,9 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
             <div
               className="player-cover-ring player-cover-ring--inner absolute -inset-2 z-20 rounded-[1.05rem] border-2"
               style={{
-                borderColor: "rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.98)",
+                borderColor: "rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.44)",
                 boxShadow:
-                  "0 0 0 1px rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.66) inset, 0 0 14px rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.22)",
+                  "0 0 0 1px rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.2) inset, 0 0 12px rgba(var(--player-art-r), var(--player-art-g), var(--player-art-b), 0.14)",
               }}
             />
           )}
@@ -851,9 +851,9 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
             <div
               className="player-cover-ring player-cover-ring--outer absolute -inset-4 z-20 rounded-[1.3rem] border"
               style={{
-                borderColor: "rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.9)",
+                borderColor: "rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.36)",
                 boxShadow:
-                  "0 0 0 1px rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.58) inset, 0 0 16px rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.2)",
+                  "0 0 0 1px rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.16) inset, 0 0 14px rgba(var(--player-art-r), var(--player-art-g), var(--player-art-b), 0.12)",
               }}
             />
           )}

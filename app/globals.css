@@ -100,20 +100,93 @@ body {
   transform-origin: center;
   backface-visibility: hidden;
   will-change: transform;
+  position: absolute;
+  isolation: isolate;
+  overflow: visible;
+  mix-blend-mode: normal;
+  transform-style: preserve-3d;
+  filter: saturate(1.02) brightness(1.03);
+}
+
+.player-cover-ring::before,
+.player-cover-ring::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.player-cover-ring::before {
+  background:
+    conic-gradient(
+      from calc(var(--ring-orbit-angle, 0deg) + 24deg),
+      rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.5),
+      rgba(167, 139, 250, 0.34) 20%,
+      rgba(196, 181, 253, 0.08) 36%,
+      rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.54) 54%,
+      rgba(125, 211, 252, 0.28) 74%,
+      rgba(var(--player-art-r), var(--player-art-g), var(--player-art-b), 0.44)
+    );
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
+  opacity: 0.46;
+}
+
+.player-cover-ring::after {
+  inset: -10px;
+  background:
+    radial-gradient(
+      72% 72% at 50% 50%,
+      rgba(var(--player-art-vibrant-r), var(--player-art-vibrant-g), var(--player-art-vibrant-b), 0.2),
+      rgba(var(--player-art-r), var(--player-art-g), var(--player-art-b), 0.06) 58%,
+      transparent 78%
+    );
+  filter: blur(4px);
+  opacity: 0.28;
 }
 
 .player-cover-ring--inner {
   animation:
-    player-cover-spin 16s linear infinite,
-    player-ring-layer-inner 32s steps(1, end) infinite;
-  opacity: 0.66;
+    player-cover-spin 14s linear infinite,
+    player-ring-layer-inner 32s steps(1, end) infinite,
+    player-ring-drift-inner 9.5s ease-in-out infinite,
+    player-ring-breathe 3.8s ease-in-out infinite;
+  opacity: 0.62;
+  --ring-orbit-angle: 0deg;
+}
+
+.player-cover-ring--inner::before {
+  animation:
+    player-ring-orbit 3.9s linear infinite,
+    player-ring-breathe 3.2s ease-in-out infinite;
+}
+
+.player-cover-ring--inner::after {
+  animation: player-ring-halo 2.8s ease-in-out infinite;
 }
 
 .player-cover-ring--outer {
   animation:
-    player-cover-spin 16s linear infinite reverse,
-    player-ring-layer-outer 32s steps(1, end) infinite;
-  opacity: 0.58;
+    player-cover-spin 20s linear infinite reverse,
+    player-ring-layer-outer 32s steps(1, end) infinite,
+    player-ring-drift-outer 11.4s ease-in-out infinite,
+    player-ring-breathe 4.8s ease-in-out infinite reverse;
+  opacity: 0.5;
+  --ring-orbit-angle: 160deg;
+}
+
+.player-cover-ring--outer::before {
+  opacity: 0.56;
+  animation:
+    player-ring-orbit 5.2s linear infinite reverse,
+    player-ring-breathe 4.2s ease-in-out infinite reverse;
+}
+
+.player-cover-ring--outer::after {
+  inset: -12px;
+  opacity: 0.34;
+  animation: player-ring-halo 3.7s ease-in-out infinite reverse;
 }
 
 @keyframes player-ring-layer-inner {
@@ -135,6 +208,73 @@ body {
   50%,
   100% {
     z-index: 20;
+  }
+}
+
+@keyframes player-ring-orbit {
+  from {
+    transform: rotate(0deg) scale(1);
+  }
+  to {
+    transform: rotate(360deg) scale(1);
+  }
+}
+
+@keyframes player-ring-breathe {
+  0%,
+  100% {
+    opacity: 0.52;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(1.018);
+  }
+}
+
+@keyframes player-ring-halo {
+  0%,
+  100% {
+    transform: scale(0.985);
+    opacity: 0.3;
+  }
+  50% {
+    transform: scale(1.045);
+    opacity: 0.56;
+  }
+}
+
+@keyframes player-ring-drift-inner {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0.8px, -1.6px, 0);
+  }
+}
+
+@keyframes player-ring-drift-outer {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(-0.9px, 1.8px, 0);
+  }
+}
+
+@media (max-width: 640px) {
+  .player-cover-ring::after {
+    filter: blur(3.5px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .player-cover-ring,
+  .player-cover-ring::before,
+  .player-cover-ring::after {
+    animation: none !important;
   }
 }
 
