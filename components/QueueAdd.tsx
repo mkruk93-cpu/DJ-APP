@@ -803,6 +803,9 @@ export default function QueueAdd() {
       keepResults?: boolean;
       keepInput?: boolean;
       onError?: () => void;
+      sourceType?: string | null;
+      sourceGenre?: string | null;
+      sourcePlaylist?: string | null;
     },
   ) {
     setSubmitting(true);
@@ -835,6 +838,9 @@ export default function QueueAdd() {
       ...(title ? { title } : {}),
       ...(artist ? { artist } : {}),
       ...(thumbnail ? { thumbnail } : {}),
+      ...(options?.sourceType ? { source_type: options.sourceType } : {}),
+      ...(options?.sourceGenre ? { source_genre: options.sourceGenre } : {}),
+      ...(options?.sourcePlaylist ? { source_playlist: options.sourcePlaylist } : {}),
     });
 
     // Do not block consecutive submissions while server validates this one.
@@ -860,7 +866,9 @@ export default function QueueAdd() {
       return;
     }
 
-    submitUrl(trimmed);
+    submitUrl(trimmed, undefined, null, null, {
+      sourceType: source,
+    });
   }
 
   function selectResult(result: SearchResult) {
@@ -877,6 +885,7 @@ export default function QueueAdd() {
       {
         keepResults: true,
         keepInput: true,
+        sourceType: source,
         onError: () => {
           setResultStatus((prev) => ({ ...prev, [key]: "idle" }));
           setRecentAdd((prev) => (prev?.key === key ? null : prev));
@@ -954,7 +963,15 @@ export default function QueueAdd() {
     }
   }
 
-  function handleSpotifyAdd(track: { id?: string; query: string; artist?: string | null; title?: string | null }) {
+  function handleSpotifyAdd(track: {
+    id?: string;
+    query: string;
+    artist?: string | null;
+    title?: string | null;
+    sourceType?: string | null;
+    sourceGenre?: string | null;
+    sourcePlaylist?: string | null;
+  }) {
     const spotifyKey = track.id ? `spotify:${track.id}` : `spotify:${Date.now()}`;
     setResultStatus((prev) => ({ ...prev, [spotifyKey]: "added" }));
     setTimeout(() => {
@@ -966,7 +983,11 @@ export default function QueueAdd() {
       (track.title ?? track.query).trim(),
       track.artist ?? null,
     );
-    submitUrl(track.query, undefined, track.title ?? null, track.artist ?? null);
+    submitUrl(track.query, undefined, track.title ?? null, track.artist ?? null, {
+      sourceType: track.sourceType ?? source,
+      sourceGenre: track.sourceGenre ?? null,
+      sourcePlaylist: track.sourcePlaylist ?? null,
+    });
   }
 
   async function prioritizeGenreArtist(item: GenreHitRow) {
@@ -1332,7 +1353,10 @@ export default function QueueAdd() {
                           }, 4000);
                           const localOrQuery = item.sourceHint?.startsWith("local://") ? item.sourceHint : item.query;
                           startRecentAdd(key, localOrQuery, item.title, item.artist);
-                          submitUrl(localOrQuery, item.thumbnail || undefined, item.title, item.artist);
+                          submitUrl(localOrQuery, item.thumbnail || undefined, item.title, item.artist, {
+                            sourceType: "genres",
+                            sourceGenre: activeGenreLabel,
+                          });
                         }}
                         disabled={submitting}
                         className={`rounded-md px-2.5 py-1 text-xs font-semibold text-white transition disabled:opacity-50 ${

@@ -27,7 +27,15 @@ import {
 } from "@/lib/userPlaylistsApi";
 
 interface SpotifyBrowserProps {
-  onAddTrack: (track: { id?: string; query: string; artist?: string | null; title?: string | null }) => void;
+  onAddTrack: (track: {
+    id?: string;
+    query: string;
+    artist?: string | null;
+    title?: string | null;
+    sourceType?: string | null;
+    sourceGenre?: string | null;
+    sourcePlaylist?: string | null;
+  }) => void;
   submitting: boolean;
   mode?: "all" | "playlistsOnly" | "spotifyOnly";
 }
@@ -522,7 +530,13 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
       const artists = track.artists?.map((a) => a?.name).filter(Boolean).join(", ") || "Unknown";
       const query = `${artists} - ${track.name ?? "Unknown"}`;
       setAddedTrackId(track.id);
-      onAddTrack({ id: track.id ?? undefined, query, artist: artists, title: track.name ?? null });
+      onAddTrack({
+        id: track.id ?? undefined,
+        query,
+        artist: artists,
+        title: track.name ?? null,
+        sourceType: "spotify",
+      });
       setTimeout(() => setAddedTrackId(null), 3000);
     } catch {}
   }
@@ -532,10 +546,16 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
     const title = (track.title ?? "").trim();
     const query = artist ? `${artist} - ${title}` : title;
     setAddedTrackId(track.id);
+    const playlistMeta = view === "sharedTracks" ? selectedSharedPlaylist : selectedSavedPlaylist;
+    const sourceType = view === "sharedTracks" ? "shared_playlist" : "user_playlist";
+    const sourceGenre = [playlistMeta?.genre_group, playlistMeta?.subgenre].filter(Boolean).join(" / ") || null;
     onAddTrack({
       query,
       artist: artist || null,
       title: title || null,
+      sourceType,
+      sourceGenre,
+      sourcePlaylist: playlistMeta?.name ?? null,
     });
     setTimeout(() => setAddedTrackId(null), 3000);
   }

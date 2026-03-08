@@ -30,6 +30,29 @@ type MobileTab = "chat" | "requests" | "radio" | "queue";
 type DesktopAccordionTab = "radio" | "queue";
 const TUNNEL_RECOVERY_WINDOW_MS = 150_000;
 
+interface PublicStatsSummary {
+  generatedAt: number;
+  periodDays: number;
+  totals: {
+    requests: number;
+    uniqueRequesters: number;
+    uniqueTracks: number;
+  };
+  topRequesters: Array<{ name: string; count: number }>;
+  topGenres: Array<{ name: string; count: number }>;
+  topSources: Array<{ name: string; count: number }>;
+  topArtists: Array<{ name: string; count: number }>;
+  topTracks: Array<{ name: string; count: number }>;
+  recentRequests: Array<{
+    ts: number;
+    added_by: string;
+    title: string | null;
+    artist: string | null;
+    source_type: string | null;
+    source_genre: string | null;
+  }>;
+}
+
 function firstNonEmpty(...values: Array<string | null | undefined>): string | null {
   for (const value of values) {
     if (typeof value === "string" && value.trim().length > 0) return value.trim();
@@ -83,6 +106,10 @@ export default function StreamPage() {
   const [chatBadge, setChatBadge] = useState(false);
   const [requestBadge, setRequestBadge] = useState(false);
   const [queueBadge, setQueueBadge] = useState(false);
+  const [statsOpen, setStatsOpen] = useState(false);
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [statsError, setStatsError] = useState<string | null>(null);
+  const [statsSummary, setStatsSummary] = useState<PublicStatsSummary | null>(null);
   const [isHydrated, setIsHydrated] = useState(false);
   const [showLoadingStates, setShowLoadingStates] = useState(true);
   const activeTabRef = useRef<MobileTab>(activeTab);
@@ -142,6 +169,7 @@ export default function StreamPage() {
   const showQueuePanel = tabsAllowed && radioMode !== "dj";
   const voteState = useRadioStore((s) => s.voteState);
   const syncedCurrentTrack = useSyncedTrack(radioMode === "dj" ? null : radioTrack);
+  const statsServerUrl = (radioServerUrl ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL ?? "").replace(/\/+$/, "");
 
   function hydrateCurrentTrack(track: Track | null): Track | null {
     if (!track) return null;
@@ -200,6 +228,25 @@ export default function StreamPage() {
 
   function dismissSkipVoteToast(): void {
     setSkipVoteToastHidden(true);
+  }
+
+  async function fetchPublicStats(): Promise<void> {
+    if (!statsServerUrl) {
+      setStatsError("Geen server URL beschikbaar voor statistieken.");
+      return;
+    }
+    setStatsLoading(true);
+    setStatsError(null);
+    try {
+      const res = await fetch(`${statsServerUrl}/api/stats/summary?days=30`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setStatsSummary(data as PublicStatsSummary);
+    } catch (err) {
+      setStatsError(err instanceof Error ? err.message : "Kon statistieken niet laden.");
+    } finally {
+      setStatsLoading(false);
+    }
   }
 
   function castSkipVoteFromToast(): void {
@@ -751,6 +798,15 @@ export default function StreamPage() {
     prevVisibleTrackKeyRef.current = visibleTrackKey;
   }, [syncedCurrentTrack, nextTitle, nextArtist, nextRequestedBy, nextIsFallback]);
 
+  useEffect(() => {
+    if (!statsOpen) return;
+    void fetchPublicStats();
+    const interval = setInterval(() => {
+      void fetchPublicStats();
+    }, 20_000);
+    return () => clearInterval(interval);
+  }, [statsOpen, statsServerUrl]);
+
   return (
     <div className="relative flex min-h-[100svh] h-dvh max-h-dvh flex-col overflow-hidden">
       <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
@@ -773,6 +829,16 @@ export default function StreamPage() {
             {/* Always show header components, with fallback during loading */}
             <ModeIndicator />
             <OnlineUsers />
+            <button
+              onClick={() => setStatsOpen((prev) => !prev)}
+              className={`whitespace-nowrap rounded-lg border px-2 py-1 text-xs transition sm:px-3 sm:text-sm ${
+                statsOpen
+                  ? "border-violet-500/80 bg-violet-500/15 text-violet-200"
+                  : "border-gray-700 text-gray-400 hover:border-gray-600 hover:text-white"
+              }`}
+            >
+              Stats
+            </button>
             <button
               onClick={() => {
                 if (typeof window !== 'undefined') {
@@ -1111,6 +1177,87 @@ export default function StreamPage() {
             >
               ×
             </button>
+          </div>
+        </div>
+      )}
+      {statsOpen && (
+        <div className="fixed inset-0 z-[140] flex items-end justify-center bg-black/45 p-2 sm:items-center sm:p-4">
+          <div className="flex h-[78dvh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50 sm:h-[80vh]">
+            <div className="flex items-center justify-between border-b border-gray-800 px-3 py-2">
+              <div>
+                <p className="text-sm font-semibold text-white">Publieke statistieken</p>
+                <p className="text-[11px] text-gray-400">Laatste 30 dagen</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setStatsOpen(false)}
+                className="rounded border border-gray-700 px-2 py-1 text-xs text-gray-300 transition hover:text-white"
+              >
+                Sluit
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2 pb-8">
+              {statsLoading && !statsSummary && (
+                <p className="text-sm text-gray-400">Statistieken laden...</p>
+              )}
+              {statsError && (
+                <p className="mb-2 text-xs text-red-300">{statsError}</p>
+              )}
+              {statsSummary && (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="rounded-lg border border-gray-800 bg-gray-950/60 p-2">
+                      <p className="text-[10px] uppercase tracking-wide text-gray-500">Aanvragen</p>
+                      <p className="text-lg font-semibold text-violet-200">{statsSummary.totals.requests}</p>
+                    </div>
+                    <div className="rounded-lg border border-gray-800 bg-gray-950/60 p-2">
+                      <p className="text-[10px] uppercase tracking-wide text-gray-500">Unieke aanvragers</p>
+                      <p className="text-lg font-semibold text-violet-200">{statsSummary.totals.uniqueRequesters}</p>
+                    </div>
+                    <div className="rounded-lg border border-gray-800 bg-gray-950/60 p-2">
+                      <p className="text-[10px] uppercase tracking-wide text-gray-500">Unieke tracks</p>
+                      <p className="text-lg font-semibold text-violet-200">{statsSummary.totals.uniqueTracks}</p>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <div className="rounded-lg border border-gray-800 bg-gray-950/50 p-2">
+                      <p className="mb-1 text-xs font-semibold text-gray-200">Top aanvragers</p>
+                      {statsSummary.topRequesters.slice(0, 8).map((row) => (
+                        <p key={`req-${row.name}`} className="text-[11px] text-gray-300">{row.name}: {row.count}</p>
+                      ))}
+                    </div>
+                    <div className="rounded-lg border border-gray-800 bg-gray-950/50 p-2">
+                      <p className="mb-1 text-xs font-semibold text-gray-200">Top genres</p>
+                      {statsSummary.topGenres.slice(0, 8).map((row) => (
+                        <p key={`genre-${row.name}`} className="text-[11px] text-gray-300">{row.name}: {row.count}</p>
+                      ))}
+                    </div>
+                    <div className="rounded-lg border border-gray-800 bg-gray-950/50 p-2">
+                      <p className="mb-1 text-xs font-semibold text-gray-200">Top bronnen</p>
+                      {statsSummary.topSources.slice(0, 8).map((row) => (
+                        <p key={`src-${row.name}`} className="text-[11px] text-gray-300">{row.name}: {row.count}</p>
+                      ))}
+                    </div>
+                    <div className="rounded-lg border border-gray-800 bg-gray-950/50 p-2">
+                      <p className="mb-1 text-xs font-semibold text-gray-200">Top artiesten</p>
+                      {statsSummary.topArtists.slice(0, 8).map((row) => (
+                        <p key={`artist-${row.name}`} className="text-[11px] text-gray-300">{row.name}: {row.count}</p>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-gray-800 bg-gray-950/50 p-2">
+                    <p className="mb-1 text-xs font-semibold text-gray-200">Recente aanvragen</p>
+                    {statsSummary.recentRequests.map((row, idx) => (
+                      <p key={`${row.ts}-${idx}`} className="text-[11px] text-gray-300">
+                        {new Date(row.ts).toLocaleTimeString()} · {row.added_by} · {(row.artist ? `${row.artist} - ` : "")}{row.title ?? "Onbekend"}
+                      </p>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

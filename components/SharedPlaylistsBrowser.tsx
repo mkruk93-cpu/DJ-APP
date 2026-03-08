@@ -12,7 +12,15 @@ import {
 } from "@/lib/userPlaylistsApi";
 
 interface SharedPlaylistsBrowserProps {
-  onAddTrack: (track: { id?: string; query: string; artist?: string | null; title?: string | null }) => void;
+  onAddTrack: (track: {
+    id?: string;
+    query: string;
+    artist?: string | null;
+    title?: string | null;
+    sourceType?: string | null;
+    sourceGenre?: string | null;
+    sourcePlaylist?: string | null;
+  }) => void;
   submitting: boolean;
 }
 
@@ -261,8 +269,19 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
     const artist = (track.artist ?? "").trim();
     const title = (track.title ?? "").trim();
     const query = artist ? `${artist} - ${title}` : title;
+    const sourceGenre = selectedPlaylist
+      ? [selectedPlaylist.genre_group, selectedPlaylist.subgenre].filter(Boolean).join(" / ") || null
+      : null;
     setAddedTrackId(track.id);
-    onAddTrack({ id: track.id, query, artist: artist || null, title: title || null });
+    onAddTrack({
+      id: track.id,
+      query,
+      artist: artist || null,
+      title: title || null,
+      sourceType: "shared_playlist",
+      sourceGenre,
+      sourcePlaylist: selectedPlaylist?.name ?? null,
+    });
     setTimeout(() => setAddedTrackId(null), 3000);
   }
 

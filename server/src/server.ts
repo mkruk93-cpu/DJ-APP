@@ -78,6 +78,7 @@ import {
   makeGenreHitsCacheKey,
   setGenreHitsCacheEntry,
 } from './genreHitsStore.js';
+import { getStatsSummary, recordRequestEvent } from './services/statsStore.js';
 
 // ── Environment ──────────────────────────────────────────────────────────────
 
@@ -570,6 +571,9 @@ interface DeferredQueueItem {
   title?: string | null;
   artist?: string | null;
   thumbnail?: string | null;
+  source_type?: string | null;
+  source_genre?: string | null;
+  source_playlist?: string | null;
   created_at: number;
 }
 
@@ -584,7 +588,15 @@ function normalizeQueueUser(value: string | null | undefined): string {
 }
 
 function makeDeferredQueueItem(
-  data: { youtube_url: string; title?: string | null; artist?: string | null; thumbnail?: string | null },
+  data: {
+    youtube_url: string;
+    title?: string | null;
+    artist?: string | null;
+    thumbnail?: string | null;
+    source_type?: string | null;
+    source_genre?: string | null;
+    source_playlist?: string | null;
+  },
 ): DeferredQueueItem {
   return {
     id: `dq_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
@@ -592,6 +604,9 @@ function makeDeferredQueueItem(
     title: data.title ?? null,
     artist: data.artist ?? null,
     thumbnail: data.thumbnail ?? null,
+    source_type: data.source_type ?? null,
+    source_genre: data.source_genre ?? null,
+    source_playlist: data.source_playlist ?? null,
     created_at: Date.now(),
   };
 }
@@ -1380,6 +1395,18 @@ app.get('/health', (_req, res) => {
     uptime: Math.floor((Date.now() - startTime) / 1000),
     listeners: getEffectiveListenerCount(),
   });
+});
+
+app.get('/api/stats/summary', async (req, res) => {
+  const rawDays = Number.parseInt(String(req.query.days ?? '30'), 10);
+  const days = Number.isFinite(rawDays) ? rawDays : 30;
+  try {
+    const summary = await getStatsSummary(days);
+    res.json(summary);
+  } catch (err) {
+    console.error('[rest] /api/stats/summary error:', err);
+    res.status(500).json({ error: getErrorMessage(err) });
+  }
 });
 
 app.get('/search', async (req, res) => {
@@ -2956,6 +2983,9 @@ interface QueueAddSubmission {
   title?: string | null;
   artist?: string | null;
   thumbnail?: string | null;
+  source_type?: string | null;
+  source_genre?: string | null;
+  source_playlist?: string | null;
 }
 
 async function addQueueItemFromSubmission(
@@ -3054,7 +3084,17 @@ io.on('connection', (socket) => {
   });
 
   // ── queue:add ──
-  socket.on('queue:add', async (data: { youtube_url: string; added_by: string; token?: string; thumbnail?: string; title?: string; artist?: string }) => {
+  socket.on('queue:add', async (data: {
+    youtube_url: string;
+    added_by: string;
+    token?: string;
+    thumbnail?: string;
+    title?: string;
+    artist?: string;
+    source_type?: string;
+    source_genre?: string;
+    source_playlist?: string;
+  }) => {
     try {
       const mode = await getActiveMode(sb);
       const admin = isAdmin(data.token);
@@ -3069,6 +3109,9 @@ io.on('connection', (socket) => {
         title: data.title ?? null,
         artist: data.artist ?? null,
         thumbnail: data.thumbnail ?? null,
+        source_type: (data.source_type ?? '').trim() || null,
+        source_genre: (data.source_genre ?? '').trim() || null,
+        source_playlist: (data.source_playlist ?? '').trim() || null,
       };
       if (!admin) {
         const [modeSettings, queueSnapshot] = await Promise.all([
@@ -3081,6 +3124,14 @@ io.on('connection', (socket) => {
         if (queuedByUser >= dynamicLimit) {
           const deferredItem = makeDeferredQueueItem(submission);
           const deferredTotal = pushDeferredQueueItem(addedBy, deferredItem);
+          void recordRequestEvent({
+            added_by: addedBy,
+            title: submission.title ?? submission.youtube_url ?? null,
+            artist: submission.artist ?? null,
+            source_type: submission.source_type ?? 'deferred',
+            source_genre: submission.source_genre ?? null,
+            source_playlist: submission.source_playlist ?? null,
+          });
           socket.emit('info:toast', {
             message: `Hoofdwachtrij vol (${queuedByUser}/${dynamicLimit}). Toegevoegd aan je eigen wachtrij (${deferredTotal}).`,
           });
@@ -3096,6 +3147,14 @@ io.on('connection', (socket) => {
       const queue = await getQueue(sb);
       io.emit('queue:added', { id: item.id, title: item.title ?? item.youtube_id, added_by: item.added_by ?? addedBy ?? 'onbekend' });
       io.emit('queue:update', { items: queue });
+      void recordRequestEvent({
+        added_by: addedBy,
+        title: item.title ?? null,
+        artist: submission.artist ?? null,
+        source_type: submission.source_type ?? null,
+        source_genre: submission.source_genre ?? null,
+        source_playlist: submission.source_playlist ?? null,
+      });
       playerEvents.emit('queue:add');
       console.log(`[queue] Added: ${item.youtube_id} by ${addedBy}`);
     } catch (err) {
