@@ -148,9 +148,9 @@ body {
 
 .player-cover-ring--inner {
   animation:
-    player-ring-spin-organic-inner 13.5s cubic-bezier(0.45, 0.02, 0.22, 1) infinite,
+    player-ring-spin-burst-inner 20s linear infinite,
     player-ring-layer-inner 32s steps(1, end) infinite,
-    player-ring-breathe 3.8s ease-in-out infinite alternate;
+    player-ring-breathe 5.6s ease-in-out infinite alternate;
   opacity: 0.68;
   --ring-orbit-angle: 0deg;
 }
@@ -167,9 +167,9 @@ body {
 
 .player-cover-ring--outer {
   animation:
-    player-ring-spin-organic-outer 17.8s cubic-bezier(0.42, 0.03, 0.2, 1) infinite,
+    player-ring-spin-burst-outer 24s linear infinite,
     player-ring-layer-outer 32s steps(1, end) infinite,
-    player-ring-breathe 4.8s ease-in-out infinite alternate-reverse;
+    player-ring-breathe 6.8s ease-in-out infinite alternate-reverse;
   opacity: 0.56;
   --ring-orbit-angle: 160deg;
 }
@@ -234,39 +234,57 @@ body {
   }
 }
 
-@keyframes player-ring-spin-organic-inner {
+@keyframes player-ring-spin-burst-inner {
   0% {
     transform: rotate(0deg);
   }
-  22% {
-    transform: rotate(94deg);
+  28% {
+    transform: rotate(28deg);
+  }
+  36% {
+    transform: rotate(32deg);
   }
   46% {
-    transform: rotate(181deg);
+    transform: rotate(196deg);
   }
-  68% {
-    transform: rotate(264deg);
+  54% {
+    transform: rotate(214deg);
+  }
+  66% {
+    transform: rotate(226deg);
+  }
+  78% {
+    transform: rotate(236deg);
   }
   100% {
-    transform: rotate(360deg);
+    transform: rotate(252deg);
   }
 }
 
-@keyframes player-ring-spin-organic-outer {
+@keyframes player-ring-spin-burst-outer {
   0% {
     transform: rotate(360deg);
   }
-  26% {
-    transform: rotate(272deg);
+  30% {
+    transform: rotate(332deg);
   }
-  51% {
-    transform: rotate(189deg);
+  40% {
+    transform: rotate(326deg);
   }
-  74% {
-    transform: rotate(102deg);
+  50% {
+    transform: rotate(182deg);
+  }
+  58% {
+    transform: rotate(166deg);
+  }
+  72% {
+    transform: rotate(152deg);
+  }
+  84% {
+    transform: rotate(140deg);
   }
   100% {
-    transform: rotate(0deg);
+    transform: rotate(126deg);
   }
 }
 
