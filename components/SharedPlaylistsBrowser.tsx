@@ -25,6 +25,7 @@ interface SharedPlaylistsBrowserProps {
 }
 
 type View = "playlists" | "tracks";
+type PlaylistSortMode = "name_asc" | "name_desc" | "tracks_desc" | "newest";
 const TRACK_PAGE_SIZE = 120;
 const PLAYLIST_GENRE_GROUPS = [
   "Hard Dance",
@@ -81,6 +82,30 @@ function groupPlaylistsByGenre(playlists: SharedPlaylist[]): Array<{
     }));
 }
 
+function sortPlaylists(items: SharedPlaylist[], mode: PlaylistSortMode): SharedPlaylist[] {
+  const copy = items.slice();
+  if (mode === "name_desc") {
+    copy.sort((a, b) => b.name.localeCompare(a.name, "nl"));
+    return copy;
+  }
+  if (mode === "tracks_desc") {
+    copy.sort((a, b) => (b.track_count - a.track_count) || a.name.localeCompare(b.name, "nl"));
+    return copy;
+  }
+  if (mode === "newest") {
+    copy.sort((a, b) => b.imported_at.localeCompare(a.imported_at) || a.name.localeCompare(b.name, "nl"));
+    return copy;
+  }
+  copy.sort((a, b) => a.name.localeCompare(b.name, "nl"));
+  return copy;
+}
+
+function getStorageKey(): string {
+  if (typeof window === "undefined") return "shared-playlists-browser:guest";
+  const nickname = (localStorage.getItem("nickname") ?? "guest").trim().toLowerCase() || "guest";
+  return `shared-playlists-browser:${nickname}`;
+}
+
 export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: SharedPlaylistsBrowserProps) {
   const [view, setView] = useState<View>("playlists");
   const [filter, setFilter] = useState("");
@@ -91,6 +116,9 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
   const [importFiles, setImportFiles] = useState<File[]>([]);
   const [importName, setImportName] = useState("");
   const [showHelp, setShowHelp] = useState(false);
+  const [playlistSortMode, setPlaylistSortMode] = useState<PlaylistSortMode>("name_asc");
+  const [collapsedGenres, setCollapsedGenres] = useState<string[]>([]);
+  const [collapsedSubgenres, setCollapsedSubgenres] = useState<string[]>([]);
   const [importGenreGroup, setImportGenreGroup] = useState("");
   const [importSubgenre, setImportSubgenre] = useState("");
   const [importCoverUrl, setImportCoverUrl] = useState("");
@@ -128,6 +156,36 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
     void loadSharedPlaylists();
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = localStorage.getItem(getStorageKey());
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Partial<{
+        sortMode: PlaylistSortMode;
+        showHelp: boolean;
+        collapsedGenres: string[];
+        collapsedSubgenres: string[];
+      }>;
+      if (parsed.sortMode) setPlaylistSortMode(parsed.sortMode);
+      if (typeof parsed.showHelp === "boolean") setShowHelp(parsed.showHelp);
+      if (Array.isArray(parsed.collapsedGenres)) setCollapsedGenres(parsed.collapsedGenres);
+      if (Array.isArray(parsed.collapsedSubgenres)) setCollapsedSubgenres(parsed.collapsedSubgenres);
+    } catch {
+      // Ignore invalid preferences.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(getStorageKey(), JSON.stringify({
+      sortMode: playlistSortMode,
+      showHelp,
+      collapsedGenres,
+      collapsedSubgenres,
+    }));
+  }, [playlistSortMode, showHelp, collapsedGenres, collapsedSubgenres]);
+
   const loadTracksPage = useCallback(async (playlistId: string, append: boolean) => {
     if (append) setLoadingMoreTracks(true);
     else setLoading(true);
@@ -164,6 +222,8 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
   async function openPlaylist(playlist: SharedPlaylist) {
     setSelectedPlaylist(playlist);
     setView("tracks");
+    setFilter("");
+    setError(null);
     setTracks([]);
     setTracksOffset(0);
     setTracksHasMore(false);
@@ -295,7 +355,11 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
   const filteredPlaylists = sharedPlaylists.filter((playlist) =>
     playlist.name.toLowerCase().includes(filter.toLowerCase()),
   );
-  const groupedPlaylists = useMemo(() => groupPlaylistsByGenre(filteredPlaylists), [filteredPlaylists]);
+  const sortedPlaylists = useMemo(
+    () => sortPlaylists(filteredPlaylists, playlistSortMode),
+    [filteredPlaylists, playlistSortMode],
+  );
+  const groupedPlaylists = useMemo(() => groupPlaylistsByGenre(sortedPlaylists), [sortedPlaylists]);
   const filteredTracks = tracks.filter((track) => {
     const q = filter.toLowerCase();
     if (!q) return true;
@@ -384,17 +448,52 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
             >
               Ververs
             </button>
+            <select
+              value={playlistSortMode}
+              onChange={(e) => setPlaylistSortMode(e.target.value as PlaylistSortMode)}
+              className="mb-1 w-full rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white"
+            >
+              <option value="name_asc">Sortering: Naam A-Z</option>
+              <option value="name_desc">Sortering: Naam Z-A</option>
+              <option value="tracks_desc">Sortering: Meeste tracks</option>
+              <option value="newest">Sortering: Nieuwste import</option>
+            </select>
             {groupedPlaylists.length === 0 && (
               <p className="text-[10px] text-gray-400">Nog geen publieke playlists beschikbaar.</p>
             )}
             {groupedPlaylists.map((genreGroup) => (
-              <details key={`genre:${genreGroup.genreLabel}`} open className="mt-1 rounded border border-blue-900/40 bg-blue-950/10 p-1">
+              <details
+                key={`genre:${genreGroup.genreLabel}`}
+                open={!collapsedGenres.includes(genreGroup.genreLabel)}
+                onToggle={(event) => {
+                  const isOpen = (event.currentTarget as HTMLDetailsElement).open;
+                  setCollapsedGenres((prev) => (
+                    isOpen
+                      ? prev.filter((entry) => entry !== genreGroup.genreLabel)
+                      : Array.from(new Set([...prev, genreGroup.genreLabel]))
+                  ));
+                }}
+                className="mt-1 rounded border border-blue-900/40 bg-blue-950/10 p-1"
+              >
                 <summary className="cursor-pointer list-none text-[11px] font-semibold text-blue-100">
                   {genreGroup.genreLabel} ({genreGroup.subgroups.reduce((acc, subgroup) => acc + subgroup.items.length, 0)})
                 </summary>
                 <div className="mt-1 space-y-1">
                   {genreGroup.subgroups.map((subgroup) => (
-                    <details key={`sub:${genreGroup.genreLabel}:${subgroup.subgenreLabel}`} open className="rounded border border-gray-800/80 bg-gray-900/40 p-1">
+                    <details
+                      key={`sub:${genreGroup.genreLabel}:${subgroup.subgenreLabel}`}
+                      open={!collapsedSubgenres.includes(`${genreGroup.genreLabel}::${subgroup.subgenreLabel}`)}
+                      onToggle={(event) => {
+                        const key = `${genreGroup.genreLabel}::${subgroup.subgenreLabel}`;
+                        const isOpen = (event.currentTarget as HTMLDetailsElement).open;
+                        setCollapsedSubgenres((prev) => (
+                          isOpen
+                            ? prev.filter((entry) => entry !== key)
+                            : Array.from(new Set([...prev, key]))
+                        ));
+                      }}
+                      className="rounded border border-gray-800/80 bg-gray-900/40 p-1"
+                    >
                       <summary className="cursor-pointer list-none text-[10px] font-semibold text-gray-300">
                         {subgroup.subgenreLabel} ({subgroup.items.length})
                       </summary>

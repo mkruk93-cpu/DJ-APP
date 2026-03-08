@@ -12,6 +12,7 @@ import {
 import type { GenreOption } from "@/lib/radioApi";
 
 type FallbackListTab = "local" | "auto" | "playlists";
+type PlaylistSortMode = "name_asc" | "name_desc" | "tracks_desc";
 
 function normalizeBucketLabel(value: string | null | undefined, fallback: string): string {
   const safe = (value ?? "").trim();
@@ -64,6 +65,41 @@ function groupSharedPlaylistsByGenre(
     }));
 }
 
+function sortSharedPlaylists(
+  playlists: Array<{
+    id: string;
+    label: string;
+    trackCount: number;
+    genre_group?: string | null;
+    subgenre?: string | null;
+  }>,
+  mode: PlaylistSortMode,
+): Array<{
+  id: string;
+  label: string;
+  trackCount: number;
+  genre_group?: string | null;
+  subgenre?: string | null;
+}> {
+  const copy = playlists.slice();
+  if (mode === "name_desc") {
+    copy.sort((a, b) => b.label.localeCompare(a.label, "nl"));
+    return copy;
+  }
+  if (mode === "tracks_desc") {
+    copy.sort((a, b) => (b.trackCount - a.trackCount) || a.label.localeCompare(b.label, "nl"));
+    return copy;
+  }
+  copy.sort((a, b) => a.label.localeCompare(b.label, "nl"));
+  return copy;
+}
+
+function getStorageKey(): string {
+  if (typeof window === "undefined") return "fallback-selector:guest";
+  const nickname = (localStorage.getItem("nickname") ?? "guest").trim().toLowerCase() || "guest";
+  return `fallback-selector:${nickname}`;
+}
+
 function normalizeAutoGenreId(raw: string): string {
   const value = raw.trim().toLowerCase();
   if (value === "terrorcore") return "terror";
@@ -84,6 +120,9 @@ export default function FallbackGenreSelector() {
   const [isMobile, setIsMobile] = useState(false);
   const [mobileMenuTop, setMobileMenuTop] = useState<number | null>(null);
   const [activeListTab, setActiveListTab] = useState<FallbackListTab>("local");
+  const [playlistSortMode, setPlaylistSortMode] = useState<PlaylistSortMode>("name_asc");
+  const [collapsedGenres, setCollapsedGenres] = useState<string[]>([]);
+  const [collapsedSubgenres, setCollapsedSubgenres] = useState<string[]>([]);
 
   const sortedGenres = useMemo(
     () => [...genres].sort((a, b) => a.label.localeCompare(b.label, "nl")),
@@ -101,9 +140,13 @@ export default function FallbackGenreSelector() {
     () => sortedGenres.filter((genre) => genre.id.startsWith("shared:")),
     [sortedGenres],
   );
+  const sortedSharedPlaylists = useMemo(
+    () => sortSharedPlaylists(sharedPlaylists, playlistSortMode),
+    [sharedPlaylists, playlistSortMode],
+  );
   const groupedSharedPlaylists = useMemo(
-    () => groupSharedPlaylistsByGenre(sharedPlaylists),
-    [sharedPlaylists],
+    () => groupSharedPlaylistsByGenre(sortedSharedPlaylists),
+    [sortedSharedPlaylists],
   );
   const autoGenreCanonicalCount = useMemo(() => {
     const unique = new Set<string>();
@@ -180,6 +223,33 @@ export default function FallbackGenreSelector() {
     }
     setActiveListTab("local");
   }, [activeGenre]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = localStorage.getItem(getStorageKey());
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Partial<{
+        playlistSortMode: PlaylistSortMode;
+        collapsedGenres: string[];
+        collapsedSubgenres: string[];
+      }>;
+      if (parsed.playlistSortMode) setPlaylistSortMode(parsed.playlistSortMode);
+      if (Array.isArray(parsed.collapsedGenres)) setCollapsedGenres(parsed.collapsedGenres);
+      if (Array.isArray(parsed.collapsedSubgenres)) setCollapsedSubgenres(parsed.collapsedSubgenres);
+    } catch {
+      // Ignore invalid preferences.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(getStorageKey(), JSON.stringify({
+      playlistSortMode,
+      collapsedGenres,
+      collapsedSubgenres,
+    }));
+  }, [playlistSortMode, collapsedGenres, collapsedSubgenres]);
 
   if (!shouldRender) return null;
 
@@ -395,14 +465,48 @@ export default function FallbackGenreSelector() {
                 </button>
               </div>
             </div>
+            <select
+              value={playlistSortMode}
+              onChange={(e) => setPlaylistSortMode(e.target.value as PlaylistSortMode)}
+              className="mb-1 w-full rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white"
+            >
+              <option value="name_asc">Sortering: Naam A-Z</option>
+              <option value="name_desc">Sortering: Naam Z-A</option>
+              <option value="tracks_desc">Sortering: Meeste tracks</option>
+            </select>
             {groupedSharedPlaylists.map((genreGroup) => (
-              <details key={`genre:${genreGroup.genreLabel}`} open className="mb-1 rounded border border-gray-800 bg-gray-900/50 p-1">
+              <details
+                key={`genre:${genreGroup.genreLabel}`}
+                open={!collapsedGenres.includes(genreGroup.genreLabel)}
+                onToggle={(event) => {
+                  const isOpen = (event.currentTarget as HTMLDetailsElement).open;
+                  setCollapsedGenres((prev) => (
+                    isOpen
+                      ? prev.filter((entry) => entry !== genreGroup.genreLabel)
+                      : Array.from(new Set([...prev, genreGroup.genreLabel]))
+                  ));
+                }}
+                className="mb-1 rounded border border-gray-800 bg-gray-900/50 p-1"
+              >
                 <summary className="cursor-pointer list-none px-1 py-0.5 text-[11px] font-semibold text-violet-100">
                   {genreGroup.genreLabel} ({genreGroup.subgroups.reduce((acc, subgroup) => acc + subgroup.items.length, 0)})
                 </summary>
                 <div className="mt-1 space-y-1">
                   {genreGroup.subgroups.map((subgroup) => (
-                    <details key={`sub:${genreGroup.genreLabel}:${subgroup.subgenreLabel}`} open className="rounded border border-gray-800/80 bg-gray-900/40 p-1">
+                    <details
+                      key={`sub:${genreGroup.genreLabel}:${subgroup.subgenreLabel}`}
+                      open={!collapsedSubgenres.includes(`${genreGroup.genreLabel}::${subgroup.subgenreLabel}`)}
+                      onToggle={(event) => {
+                        const key = `${genreGroup.genreLabel}::${subgroup.subgenreLabel}`;
+                        const isOpen = (event.currentTarget as HTMLDetailsElement).open;
+                        setCollapsedSubgenres((prev) => (
+                          isOpen
+                            ? prev.filter((entry) => entry !== key)
+                            : Array.from(new Set([...prev, key]))
+                        ));
+                      }}
+                      className="rounded border border-gray-800/80 bg-gray-900/40 p-1"
+                    >
                       <summary className="cursor-pointer list-none text-[10px] font-semibold text-gray-300">
                         {subgroup.subgenreLabel} ({subgroup.items.length})
                       </summary>
