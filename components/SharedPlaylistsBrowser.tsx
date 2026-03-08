@@ -10,6 +10,7 @@ import {
   type SharedPlaylist,
   type UserPlaylistTrack,
 } from "@/lib/userPlaylistsApi";
+import { getSocket } from "@/lib/socket";
 
 interface SharedPlaylistsBrowserProps {
   onAddTrack: (track: {
@@ -31,6 +32,7 @@ const PLAYLIST_GENRE_GROUPS = [
   "Hard Dance",
   "Hardcore",
   "Hardstyle",
+  "Nederlandstalig",
   "Electronic",
   "House",
   "Techno",
@@ -77,7 +79,7 @@ function groupPlaylistsByGenre(playlists: SharedPlaylist[]): Array<{
         .sort(([a], [b]) => a.localeCompare(b, "nl"))
         .map(([subgenreLabel, items]) => ({
           subgenreLabel,
-          items: items.slice().sort((a, b) => a.name.localeCompare(b.name, "nl")),
+          items,
         })),
     }));
 }
@@ -106,6 +108,10 @@ function getStorageKey(): string {
   return `shared-playlists-browser:${nickname}`;
 }
 
+function getLegacyStorageKey(): string {
+  return "shared-playlists-browser:guest";
+}
+
 export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: SharedPlaylistsBrowserProps) {
   const [view, setView] = useState<View>("playlists");
   const [filter, setFilter] = useState("");
@@ -119,6 +125,7 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
   const [playlistSortMode, setPlaylistSortMode] = useState<PlaylistSortMode>("name_asc");
   const [collapsedGenres, setCollapsedGenres] = useState<string[]>([]);
   const [collapsedSubgenres, setCollapsedSubgenres] = useState<string[]>([]);
+  const [hasStoredCollapseState, setHasStoredCollapseState] = useState(false);
   const [importGenreGroup, setImportGenreGroup] = useState("");
   const [importSubgenre, setImportSubgenre] = useState("");
   const [importCoverUrl, setImportCoverUrl] = useState("");
@@ -137,6 +144,17 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
   const thumbWorkersRef = useRef(0);
   const listRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  const viewRef = useRef<View>("playlists");
+
+  const backToPlaylists = useCallback(() => {
+    setView("playlists");
+    setSelectedPlaylist(null);
+    setTracks([]);
+    setTracksOffset(0);
+    setTracksHasMore(false);
+    setFilter("");
+    setError(null);
+  }, []);
 
   async function loadSharedPlaylists() {
     setLoading(true);
@@ -157,20 +175,38 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
   }, []);
 
   useEffect(() => {
+    viewRef.current = view;
+  }, [view]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handlePopState = () => {
+      if (viewRef.current !== "playlists") {
+        backToPlaylists();
+      }
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [backToPlaylists]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      const raw = localStorage.getItem(getStorageKey());
+      const raw = localStorage.getItem(getStorageKey()) ?? localStorage.getItem(getLegacyStorageKey());
       if (!raw) return;
       const parsed = JSON.parse(raw) as Partial<{
         sortMode: PlaylistSortMode;
         showHelp: boolean;
         collapsedGenres: string[];
         collapsedSubgenres: string[];
+        hasStoredCollapseState: boolean;
       }>;
       if (parsed.sortMode) setPlaylistSortMode(parsed.sortMode);
       if (typeof parsed.showHelp === "boolean") setShowHelp(parsed.showHelp);
       if (Array.isArray(parsed.collapsedGenres)) setCollapsedGenres(parsed.collapsedGenres);
       if (Array.isArray(parsed.collapsedSubgenres)) setCollapsedSubgenres(parsed.collapsedSubgenres);
+      if (typeof parsed.hasStoredCollapseState === "boolean") setHasStoredCollapseState(parsed.hasStoredCollapseState);
+      else setHasStoredCollapseState(true);
     } catch {
       // Ignore invalid preferences.
     }
@@ -178,13 +214,16 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    localStorage.setItem(getStorageKey(), JSON.stringify({
+    const payload = JSON.stringify({
       sortMode: playlistSortMode,
       showHelp,
       collapsedGenres,
       collapsedSubgenres,
-    }));
-  }, [playlistSortMode, showHelp, collapsedGenres, collapsedSubgenres]);
+      hasStoredCollapseState,
+    });
+    localStorage.setItem(getStorageKey(), payload);
+    localStorage.setItem(getLegacyStorageKey(), payload);
+  }, [playlistSortMode, showHelp, collapsedGenres, collapsedSubgenres, hasStoredCollapseState]);
 
   const loadTracksPage = useCallback(async (playlistId: string, append: boolean) => {
     if (append) setLoadingMoreTracks(true);
@@ -220,6 +259,9 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
   }, [tracksOffset]);
 
   async function openPlaylist(playlist: SharedPlaylist) {
+    if (typeof window !== "undefined" && viewRef.current === "playlists") {
+      window.history.pushState({ ...(window.history.state ?? {}), __inAppBack: "shared-playlists" }, "");
+    }
     setSelectedPlaylist(playlist);
     setView("tracks");
     setFilter("");
@@ -352,6 +394,16 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
     setTimeout(() => setAddedTrackId(null), 3000);
   }
 
+  function setAsAutoplayFallback(playlist: SharedPlaylist) {
+    const selectedBy = (typeof window !== "undefined" ? localStorage.getItem("nickname") : null)?.trim() || "onbekend";
+    getSocket().emit("fallback:genre:set", {
+      genreId: `shared:${playlist.id}`,
+      selectedBy,
+      sharedPlaybackMode: "random",
+    });
+    setStatus(`Autoplay fallback ingesteld op: ${playlist.name}`);
+  }
+
   const filteredPlaylists = sharedPlaylists.filter((playlist) =>
     playlist.name.toLowerCase().includes(filter.toLowerCase()),
   );
@@ -376,15 +428,7 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
         {view === "tracks" ? (
           <button
             type="button"
-            onClick={() => {
-              setView("playlists");
-              setSelectedPlaylist(null);
-              setTracks([]);
-              setTracksOffset(0);
-              setTracksHasMore(false);
-              setFilter("");
-              setError(null);
-            }}
+            onClick={backToPlaylists}
             className="flex items-center gap-1 text-xs text-violet-400 transition hover:text-violet-300"
           >
             <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -417,6 +461,11 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
             geef 1 playlistnaam op, en dubbele tracks worden automatisch verwijderd.
           </p>
         </div>
+      )}
+      {view === "playlists" && (
+        <p className="shrink-0 text-[10px] text-violet-300/90">
+          Tip: klik `Auto` bij een playlist om die direct als autoplay fallback te gebruiken.
+        </p>
       )}
 
       <input
@@ -464,9 +513,10 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
             {groupedPlaylists.map((genreGroup) => (
               <details
                 key={`genre:${genreGroup.genreLabel}`}
-                open={!collapsedGenres.includes(genreGroup.genreLabel)}
+                open={hasStoredCollapseState ? !collapsedGenres.includes(genreGroup.genreLabel) : false}
                 onToggle={(event) => {
                   const isOpen = (event.currentTarget as HTMLDetailsElement).open;
+                  setHasStoredCollapseState(true);
                   setCollapsedGenres((prev) => (
                     isOpen
                       ? prev.filter((entry) => entry !== genreGroup.genreLabel)
@@ -482,10 +532,11 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                   {genreGroup.subgroups.map((subgroup) => (
                     <details
                       key={`sub:${genreGroup.genreLabel}:${subgroup.subgenreLabel}`}
-                      open={!collapsedSubgenres.includes(`${genreGroup.genreLabel}::${subgroup.subgenreLabel}`)}
+                      open={hasStoredCollapseState ? !collapsedSubgenres.includes(`${genreGroup.genreLabel}::${subgroup.subgenreLabel}`) : false}
                       onToggle={(event) => {
                         const key = `${genreGroup.genreLabel}::${subgroup.subgenreLabel}`;
                         const isOpen = (event.currentTarget as HTMLDetailsElement).open;
+                        setHasStoredCollapseState(true);
                         setCollapsedSubgenres((prev) => (
                           isOpen
                             ? prev.filter((entry) => entry !== key)
@@ -499,10 +550,8 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                       </summary>
                       <div className="mt-1 space-y-1">
                         {subgroup.items.map((playlist) => (
-                          <button
+                          <div
                             key={playlist.id}
-                            type="button"
-                            onClick={() => { void openPlaylist(playlist); }}
                             className="flex w-full items-center gap-2 rounded-lg border border-gray-800 bg-gray-900/70 px-2.5 py-1.5 text-left transition hover:border-blue-700/60 hover:bg-gray-800/80"
                           >
                             {playlist.cover_url ? (
@@ -514,13 +563,25 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                                 </svg>
                               </div>
                             )}
-                            <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-white">
+                            <button
+                              type="button"
+                              onClick={() => { void openPlaylist(playlist); }}
+                              className="min-w-0 flex-1 truncate text-left text-[11px] font-semibold text-white"
+                            >
                               {playlist.name}
-                            </span>
+                            </button>
                             <span className="ml-2 shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-300">
                               {playlist.track_count}
                             </span>
-                          </button>
+                            <button
+                              type="button"
+                              onClick={() => setAsAutoplayFallback(playlist)}
+                              className="ml-1 shrink-0 rounded border border-violet-700/80 bg-violet-900/30 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200 transition hover:bg-violet-800/40"
+                              title="Gebruik als autoplay fallback"
+                            >
+                              Auto
+                            </button>
+                          </div>
                         ))}
                       </div>
                     </details>

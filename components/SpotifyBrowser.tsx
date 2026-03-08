@@ -55,6 +55,7 @@ const PLAYLIST_GENRE_GROUPS = [
   "Hard Dance",
   "Hardcore",
   "Hardstyle",
+  "Nederlandstalig",
   "Electronic",
   "House",
   "Techno",
@@ -100,7 +101,7 @@ function groupPlaylistsByGenre<T extends { name: string; genre_group: string | n
         .sort(([a], [b]) => a.localeCompare(b, "nl"))
         .map(([subgenreLabel, items]) => ({
           subgenreLabel,
-          items: items.slice().sort((a, b) => a.name.localeCompare(b.name, "nl")),
+          items,
         })),
     }));
 }
@@ -136,6 +137,10 @@ function getStorageKey(): string {
   return `spotify-browser:${nickname}`;
 }
 
+function getLegacyStorageKey(): string {
+  return "spotify-browser:guest";
+}
+
 export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }: SpotifyBrowserProps) {
   const [connected, setConnected] = useState(false);
   const [user, setUser] = useState<SpotifyUser | null>(null);
@@ -163,6 +168,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
   const [collapsedSavedSubgenres, setCollapsedSavedSubgenres] = useState<string[]>([]);
   const [collapsedSharedGenres, setCollapsedSharedGenres] = useState<string[]>([]);
   const [collapsedSharedSubgenres, setCollapsedSharedSubgenres] = useState<string[]>([]);
+  const [hasStoredCollapseState, setHasStoredCollapseState] = useState(false);
   const [savedPlaylists, setSavedPlaylists] = useState<UserPlaylist[]>([]);
   const [savedPlaylistsLoading, setSavedPlaylistsLoading] = useState(false);
   const [savedTracks, setSavedTracks] = useState<UserPlaylistTrack[]>([]);
@@ -192,10 +198,12 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
   const thumbnailLoadingRef = useRef<Set<string>>(new Set());
   const thumbnailQueueRef = useRef<string[]>([]);
   const thumbnailWorkersRef = useRef(0);
+  const viewRef = useRef<View>("playlists");
 
   const configured = isSpotifyConfigured();
   const showPlaylistSections = mode !== "spotifyOnly";
   const showSpotifySection = mode !== "playlistsOnly";
+  const showSharedPlaylistsInSpotifyTab = false;
 
   const checkConnection = useCallback(() => {
     const c = isSpotifyConnected();
@@ -203,16 +211,50 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
     return c;
   }, []);
 
+  const backToPlaylists = useCallback(() => {
+    setView("playlists");
+    setTracks([]);
+    setTracksNext(null);
+    setTrackSource(null);
+    setSavedTracks([]);
+    setSavedTracksOffset(0);
+    setSavedTracksHasMore(false);
+    setSelectedSavedPlaylist(null);
+    setSharedTracks([]);
+    setSharedTracksOffset(0);
+    setSharedTracksHasMore(false);
+    setSelectedSharedPlaylist(null);
+    setFilter("");
+    setTrackError(null);
+    setSavedTracksError(null);
+    setSharedTracksError(null);
+  }, []);
+
   useEffect(() => {
     if (showPlaylistSections) {
       void loadSavedPlaylists();
-      void loadSharedPlaylists();
+      if (showSharedPlaylistsInSpotifyTab) void loadSharedPlaylists();
     }
     if (!showSpotifySection) return;
     if (!checkConnection()) return;
     loadUser();
     void loadPlaylists(false);
-  }, [checkConnection, showPlaylistSections, showSpotifySection]);
+  }, [checkConnection, showPlaylistSections, showSpotifySection, showSharedPlaylistsInSpotifyTab]);
+
+  useEffect(() => {
+    viewRef.current = view;
+  }, [view]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handlePopState = () => {
+      if (viewRef.current !== "playlists") {
+        backToPlaylists();
+      }
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [backToPlaylists]);
 
   useEffect(() => {
     function onStorage(e: StorageEvent) {
@@ -223,18 +265,18 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
         void loadPlaylists(false);
         if (showPlaylistSections) {
           void loadSavedPlaylists();
-          void loadSharedPlaylists();
+          if (showSharedPlaylistsInSpotifyTab) void loadSharedPlaylists();
         }
       }
     }
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
-  }, [showPlaylistSections, showSpotifySection]);
+  }, [showPlaylistSections, showSpotifySection, showSharedPlaylistsInSpotifyTab]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      const raw = localStorage.getItem(getStorageKey());
+      const raw = localStorage.getItem(getStorageKey()) ?? localStorage.getItem(getLegacyStorageKey());
       if (!raw) return;
       const parsed = JSON.parse(raw) as Partial<{
         showHelp: boolean;
@@ -244,6 +286,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
         collapsedSavedSubgenres: string[];
         collapsedSharedGenres: string[];
         collapsedSharedSubgenres: string[];
+        hasStoredCollapseState: boolean;
       }>;
       if (typeof parsed.showHelp === "boolean") setShowHelp(parsed.showHelp);
       if (parsed.savedSortMode) setSavedSortMode(parsed.savedSortMode);
@@ -252,6 +295,8 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
       if (Array.isArray(parsed.collapsedSavedSubgenres)) setCollapsedSavedSubgenres(parsed.collapsedSavedSubgenres);
       if (Array.isArray(parsed.collapsedSharedGenres)) setCollapsedSharedGenres(parsed.collapsedSharedGenres);
       if (Array.isArray(parsed.collapsedSharedSubgenres)) setCollapsedSharedSubgenres(parsed.collapsedSharedSubgenres);
+      if (typeof parsed.hasStoredCollapseState === "boolean") setHasStoredCollapseState(parsed.hasStoredCollapseState);
+      else setHasStoredCollapseState(true);
     } catch {
       // Ignore invalid preferences.
     }
@@ -259,7 +304,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    localStorage.setItem(getStorageKey(), JSON.stringify({
+    const payload = JSON.stringify({
       showHelp,
       savedSortMode,
       sharedSortMode,
@@ -267,7 +312,10 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
       collapsedSavedSubgenres,
       collapsedSharedGenres,
       collapsedSharedSubgenres,
-    }));
+      hasStoredCollapseState,
+    });
+    localStorage.setItem(getStorageKey(), payload);
+    localStorage.setItem(getLegacyStorageKey(), payload);
   }, [
     showHelp,
     savedSortMode,
@@ -276,6 +324,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
     collapsedSavedSubgenres,
     collapsedSharedGenres,
     collapsedSharedSubgenres,
+    hasStoredCollapseState,
   ]);
 
   async function loadUser() {
@@ -347,6 +396,9 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
   }
 
   async function openSavedPlaylist(playlist: UserPlaylist) {
+    if (typeof window !== "undefined" && viewRef.current === "playlists") {
+      window.history.pushState({ ...(window.history.state ?? {}), __inAppBack: "spotify-saved" }, "");
+    }
     setSelectedSavedPlaylist(playlist);
     setSelectedSharedPlaylist(null);
     setView("importedTracks");
@@ -392,6 +444,9 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
   }
 
   async function openSharedPlaylist(playlist: SharedPlaylist) {
+    if (typeof window !== "undefined" && viewRef.current === "playlists") {
+      window.history.pushState({ ...(window.history.state ?? {}), __inAppBack: "spotify-shared" }, "");
+    }
     setSelectedSharedPlaylist(playlist);
     setSelectedSavedPlaylist(null);
     setView("sharedTracks");
@@ -473,7 +528,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
       setImportCoverUrl("");
       setImportAutoCover(true);
       await loadSavedPlaylists();
-      await loadSharedPlaylists();
+      if (showSharedPlaylistsInSpotifyTab) await loadSharedPlaylists();
       if (result.shared?.warnings?.length) {
         setImportError(`Shared waarschuwingen: ${result.shared.warnings.slice(0, 2).map((w) => `${w.name} (${w.reason})`).join(", ")}`);
       }
@@ -568,6 +623,9 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
   }
 
   async function openPlaylist(playlist: SpotifyPlaylist) {
+    if (typeof window !== "undefined" && viewRef.current === "playlists") {
+      window.history.pushState({ ...(window.history.state ?? {}), __inAppBack: "spotify-playlist" }, "");
+    }
     setSelectedPlaylist(playlist);
     setTrackSource("playlist");
     setView("tracks");
@@ -606,6 +664,9 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
   }
 
   async function openLikedSongs() {
+    if (typeof window !== "undefined" && viewRef.current === "playlists") {
+      window.history.pushState({ ...(window.history.state ?? {}), __inAppBack: "spotify-liked" }, "");
+    }
     setSelectedPlaylist({ id: "liked", name: "Liked Songs", images: [], tracks: { total: 0 }, owner: { display_name: "" } });
     setTrackSource("liked");
     setView("tracks");
@@ -735,7 +796,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
         void loadPlaylists(false);
         if (showPlaylistSections) {
           void loadSavedPlaylists();
-          void loadSharedPlaylists();
+          if (showSharedPlaylistsInSpotifyTab) void loadSharedPlaylists();
         }
         return;
       }
@@ -754,7 +815,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
       window.removeEventListener("spotify:token_refreshed", onTokenRefresh);
       window.removeEventListener("spotify:connected", onTokenRefresh);
     };
-  }, [checkConnection, showPlaylistSections, showSpotifySection, view, trackSource, selectedPlaylist]);
+  }, [checkConnection, showPlaylistSections, showSpotifySection, view, trackSource, selectedPlaylist, showSharedPlaylistsInSpotifyTab]);
 
   const spotifyEnabled = configured && connected;
   const headerLabel = showSpotifySection
@@ -836,24 +897,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
         {view !== "playlists" ? (
           <button
             type="button"
-            onClick={() => {
-              setView("playlists");
-              setTracks([]);
-              setTracksNext(null);
-              setTrackSource(null);
-              setSavedTracks([]);
-              setSavedTracksOffset(0);
-              setSavedTracksHasMore(false);
-              setSelectedSavedPlaylist(null);
-              setSharedTracks([]);
-              setSharedTracksOffset(0);
-              setSharedTracksHasMore(false);
-              setSelectedSharedPlaylist(null);
-              setFilter("");
-              setTrackError(null);
-              setSavedTracksError(null);
-              setSharedTracksError(null);
-            }}
+            onClick={backToPlaylists}
             className="flex items-center gap-1 text-xs text-violet-400 transition hover:text-violet-300"
           >
             <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -954,9 +998,10 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
             {groupedSavedPlaylists.map((genreGroup) => (
               <details
                 key={`saved-genre:${genreGroup.genreLabel}`}
-                open={!collapsedSavedGenres.includes(genreGroup.genreLabel)}
+                open={hasStoredCollapseState ? !collapsedSavedGenres.includes(genreGroup.genreLabel) : false}
                 onToggle={(event) => {
                   const isOpen = (event.currentTarget as HTMLDetailsElement).open;
+                  setHasStoredCollapseState(true);
                   setCollapsedSavedGenres((prev) => (
                     isOpen
                       ? prev.filter((entry) => entry !== genreGroup.genreLabel)
@@ -972,10 +1017,11 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                   {genreGroup.subgroups.map((subgroup) => (
                     <details
                       key={`saved-sub:${genreGroup.genreLabel}:${subgroup.subgenreLabel}`}
-                      open={!collapsedSavedSubgenres.includes(`${genreGroup.genreLabel}::${subgroup.subgenreLabel}`)}
+                      open={hasStoredCollapseState ? !collapsedSavedSubgenres.includes(`${genreGroup.genreLabel}::${subgroup.subgenreLabel}`) : false}
                       onToggle={(event) => {
                         const key = `${genreGroup.genreLabel}::${subgroup.subgenreLabel}`;
                         const isOpen = (event.currentTarget as HTMLDetailsElement).open;
+                        setHasStoredCollapseState(true);
                         setCollapsedSavedSubgenres((prev) => (
                           isOpen
                             ? prev.filter((entry) => entry !== key)
@@ -1028,7 +1074,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
           </div>
           )}
 
-          {showPlaylistSections && (
+          {showPlaylistSections && showSharedPlaylistsInSpotifyTab && (
           <div className="mb-2 rounded-md border border-blue-700/70 bg-blue-950/20 p-2">
             <div className="mb-1 flex items-center justify-between">
               <p className="text-[11px] font-semibold text-blue-100">Gedeelde playlists</p>
@@ -1062,9 +1108,10 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
             {groupedSharedPlaylists.map((genreGroup) => (
               <details
                 key={`shared-genre:${genreGroup.genreLabel}`}
-                open={!collapsedSharedGenres.includes(genreGroup.genreLabel)}
+                open={hasStoredCollapseState ? !collapsedSharedGenres.includes(genreGroup.genreLabel) : false}
                 onToggle={(event) => {
                   const isOpen = (event.currentTarget as HTMLDetailsElement).open;
+                  setHasStoredCollapseState(true);
                   setCollapsedSharedGenres((prev) => (
                     isOpen
                       ? prev.filter((entry) => entry !== genreGroup.genreLabel)
@@ -1080,10 +1127,11 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                   {genreGroup.subgroups.map((subgroup) => (
                     <details
                       key={`shared-sub:${genreGroup.genreLabel}:${subgroup.subgenreLabel}`}
-                      open={!collapsedSharedSubgenres.includes(`${genreGroup.genreLabel}::${subgroup.subgenreLabel}`)}
+                      open={hasStoredCollapseState ? !collapsedSharedSubgenres.includes(`${genreGroup.genreLabel}::${subgroup.subgenreLabel}`) : false}
                       onToggle={(event) => {
                         const key = `${genreGroup.genreLabel}::${subgroup.subgenreLabel}`;
                         const isOpen = (event.currentTarget as HTMLDetailsElement).open;
+                        setHasStoredCollapseState(true);
                         setCollapsedSharedSubgenres((prev) => (
                           isOpen
                             ? prev.filter((entry) => entry !== key)

@@ -58,9 +58,7 @@ function groupSharedPlaylistsByGenre(
         .sort(([a], [b]) => a.localeCompare(b, "nl"))
         .map(([subgenreLabel, items]) => ({
           subgenreLabel,
-          items: items
-            .slice()
-            .sort((a, b) => a.label.localeCompare(b.label, "nl")),
+          items,
         })),
     }));
 }
@@ -100,6 +98,10 @@ function getStorageKey(): string {
   return `fallback-selector:${nickname}`;
 }
 
+function getLegacyStorageKey(): string {
+  return "fallback-selector:guest";
+}
+
 function normalizeAutoGenreId(raw: string): string {
   const value = raw.trim().toLowerCase();
   if (value === "terrorcore") return "terror";
@@ -123,6 +125,7 @@ export default function FallbackGenreSelector() {
   const [playlistSortMode, setPlaylistSortMode] = useState<PlaylistSortMode>("name_asc");
   const [collapsedGenres, setCollapsedGenres] = useState<string[]>([]);
   const [collapsedSubgenres, setCollapsedSubgenres] = useState<string[]>([]);
+  const [hasStoredCollapseState, setHasStoredCollapseState] = useState(false);
 
   const sortedGenres = useMemo(
     () => [...genres].sort((a, b) => a.label.localeCompare(b.label, "nl")),
@@ -227,16 +230,19 @@ export default function FallbackGenreSelector() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      const raw = localStorage.getItem(getStorageKey());
+      const raw = localStorage.getItem(getStorageKey()) ?? localStorage.getItem(getLegacyStorageKey());
       if (!raw) return;
       const parsed = JSON.parse(raw) as Partial<{
         playlistSortMode: PlaylistSortMode;
         collapsedGenres: string[];
         collapsedSubgenres: string[];
+        hasStoredCollapseState: boolean;
       }>;
       if (parsed.playlistSortMode) setPlaylistSortMode(parsed.playlistSortMode);
       if (Array.isArray(parsed.collapsedGenres)) setCollapsedGenres(parsed.collapsedGenres);
       if (Array.isArray(parsed.collapsedSubgenres)) setCollapsedSubgenres(parsed.collapsedSubgenres);
+      if (typeof parsed.hasStoredCollapseState === "boolean") setHasStoredCollapseState(parsed.hasStoredCollapseState);
+      else setHasStoredCollapseState(true);
     } catch {
       // Ignore invalid preferences.
     }
@@ -244,12 +250,15 @@ export default function FallbackGenreSelector() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    localStorage.setItem(getStorageKey(), JSON.stringify({
+    const payload = JSON.stringify({
       playlistSortMode,
       collapsedGenres,
       collapsedSubgenres,
-    }));
-  }, [playlistSortMode, collapsedGenres, collapsedSubgenres]);
+      hasStoredCollapseState,
+    });
+    localStorage.setItem(getStorageKey(), payload);
+    localStorage.setItem(getLegacyStorageKey(), payload);
+  }, [playlistSortMode, collapsedGenres, collapsedSubgenres, hasStoredCollapseState]);
 
   if (!shouldRender) return null;
 
@@ -477,9 +486,10 @@ export default function FallbackGenreSelector() {
             {groupedSharedPlaylists.map((genreGroup) => (
               <details
                 key={`genre:${genreGroup.genreLabel}`}
-                open={!collapsedGenres.includes(genreGroup.genreLabel)}
+                open={hasStoredCollapseState ? !collapsedGenres.includes(genreGroup.genreLabel) : false}
                 onToggle={(event) => {
                   const isOpen = (event.currentTarget as HTMLDetailsElement).open;
+                  setHasStoredCollapseState(true);
                   setCollapsedGenres((prev) => (
                     isOpen
                       ? prev.filter((entry) => entry !== genreGroup.genreLabel)
@@ -495,10 +505,11 @@ export default function FallbackGenreSelector() {
                   {genreGroup.subgroups.map((subgroup) => (
                     <details
                       key={`sub:${genreGroup.genreLabel}:${subgroup.subgenreLabel}`}
-                      open={!collapsedSubgenres.includes(`${genreGroup.genreLabel}::${subgroup.subgenreLabel}`)}
+                      open={hasStoredCollapseState ? !collapsedSubgenres.includes(`${genreGroup.genreLabel}::${subgroup.subgenreLabel}`) : false}
                       onToggle={(event) => {
                         const key = `${genreGroup.genreLabel}::${subgroup.subgenreLabel}`;
                         const isOpen = (event.currentTarget as HTMLDetailsElement).open;
+                        setHasStoredCollapseState(true);
                         setCollapsedSubgenres((prev) => (
                           isOpen
                             ? prev.filter((entry) => entry !== key)
