@@ -289,6 +289,21 @@ function hasSufficientTitleMatch(expectedTitleNorm: string, actualTitleNorm: str
   return matched >= Math.max(2, Math.ceil(expectedWords.length * 0.45));
 }
 
+function hasStrictTitleMatch(expectedTitleNorm: string, actualTitleNorm: string): boolean {
+  if (!expectedTitleNorm) return true;
+  if (!actualTitleNorm) return false;
+  if (actualTitleNorm.includes(expectedTitleNorm)) return true;
+  const expectedWords = toLooseWords(expectedTitleNorm, TITLE_WORD_STOPWORDS);
+  if (expectedWords.length === 0) return true;
+  const actualWords = toLooseWords(actualTitleNorm, TITLE_WORD_STOPWORDS);
+  if (actualWords.length === 0) return false;
+  const actualSet = new Set(actualWords);
+  const matched = expectedWords.filter((word) => actualSet.has(word)).length;
+  if (expectedWords.length <= 2) return matched === expectedWords.length;
+  if (expectedWords.length <= 4) return matched >= expectedWords.length - 1;
+  return matched >= Math.ceil(expectedWords.length * 0.75);
+}
+
 function hasDisplayArtistSeparator(value: string): boolean {
   const text = value.trim();
   if (!text) return false;
@@ -475,9 +490,43 @@ const AUTO_BLOCKED_KEYWORDS = [
   'talk show',
 ];
 
+const STRICT_METADATA_BLOCKED_KEYWORDS = [
+  'advertisement',
+  'ad break',
+  'sponsored',
+  'promo code',
+  'trailer',
+  'teaser',
+  'reaction',
+  'review',
+  'interview',
+  'podcast',
+  'news',
+  'talk show',
+  'lyrics video',
+  'videoclip',
+  'official clip',
+  'official hardstyle clip',
+  'live at',
+  'full set',
+  'hour mix',
+  'radio show',
+];
+
 function hasBlockedAutoKeyword(title: string, channel = ''): boolean {
   const haystack = `${title} ${channel}`.toLowerCase();
   return AUTO_BLOCKED_KEYWORDS.some((keyword) => haystack.includes(keyword));
+}
+
+function hasUnexpectedStrictKeyword(
+  title: string,
+  channel: string,
+  expectedTitleNorm: string,
+): boolean {
+  const haystack = `${title} ${channel}`.toLowerCase();
+  return STRICT_METADATA_BLOCKED_KEYWORDS.some((keyword) => (
+    haystack.includes(keyword) && !expectedTitleNorm.includes(keyword)
+  ));
 }
 
 async function resolveShortAutoCandidate(
@@ -518,14 +567,14 @@ async function resolveShortAutoCandidate(
       const titleNorm = normalizeArtistMatchText(resultTitle || '');
       const channelNorm = normalizeArtistMatchText(resultChannel || '');
       const leadingArtistNorm = extractLeadingTitleArtistNormalized(resultTitle || '');
+      if (leadingArtistNorm && !hasLooseArtistMatch(expectedArtistNorm, leadingArtistNorm)) return false;
       const artistOk = (
         hasLooseArtistMatch(expectedArtistNorm, titleNorm)
         || hasLooseArtistMatch(expectedArtistNorm, channelNorm)
         || (!!leadingArtistNorm && hasLooseArtistMatch(expectedArtistNorm, leadingArtistNorm))
         || hasArtistCreditInTitleNormalized(titleNorm, expectedArtistNorm)
       );
-      const titleOk = titleNorm.includes(expectedTitleNorm)
-        || hasSufficientTitleMatch(expectedTitleNorm, titleNorm);
+      const titleOk = hasStrictTitleMatch(expectedTitleNorm, titleNorm);
       return artistOk && titleOk;
     };
 
@@ -590,6 +639,7 @@ async function resolveShortAutoCandidate(
         ];
         const strictMatch = hasStrictMetadataMatch(result.title, result.channel);
         if (strictMetadata && !strictMatch) return false;
+        if (strictMetadata && hasUnexpectedStrictKeyword(title, channel, expectedTitleNorm)) return false;
         if (!strictMatch && badKeywords.some(keyword => title.includes(keyword))) return false;
         if (!strictMatch && hasBlockedAutoKeyword(title, channel)) return false;
 
@@ -665,6 +715,7 @@ async function resolveShortAutoCandidate(
       if (!result.duration || result.duration < 120 || result.duration > AUTO_MAX_DURATION_SECONDS) continue;
       const strictMatch = hasStrictMetadataMatch(result.title, result.channel || '');
       if (strictMetadata && !strictMatch) continue;
+      if (strictMetadata && hasUnexpectedStrictKeyword(result.title, result.channel || '', expectedTitleNorm)) continue;
       if (!strictMatch && hasBlockedAutoKeyword(result.title, result.channel || '')) continue;
       
       return {

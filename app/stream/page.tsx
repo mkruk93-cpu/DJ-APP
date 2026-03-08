@@ -869,11 +869,11 @@ export default function StreamPage() {
           minHeight: "60px"
         }}
       >
-        <div className="flex items-center gap-1.5">
-          <h1 className="min-w-0 truncate text-sm font-bold tracking-tight text-white sm:text-lg">
+        <div className="flex w-full items-center gap-1.5">
+          <h1 className="min-w-0 flex-1 truncate text-sm font-bold tracking-tight text-white sm:text-lg">
             🎵 <span className="text-violet-400">{process.env.NEXT_PUBLIC_TWITCH_CHANNEL ?? "Stream"}</span>
           </h1>
-          <div className="flex min-w-0 shrink-0 items-center gap-1 sm:gap-3">
+          <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1 sm:gap-3">
             {/* Always show header components, with fallback during loading */}
             <ModeIndicator />
             <OnlineUsers />
