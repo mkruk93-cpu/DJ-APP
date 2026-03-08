@@ -7,6 +7,7 @@ import AudioVisualizer from "@/components/AudioVisualizer";
 import { parseTrackDisplay } from "@/lib/trackDisplay";
 import { useSyncedTrack } from "@/lib/useSyncedTrack";
 import { dislikeCurrentAutoTrack, likeCurrentAutoTrack } from "@/lib/radioApi";
+import { getSocket } from "@/lib/socket";
 import type { Track } from "@/lib/types";
 
 interface NowPlayingData {
@@ -98,7 +99,45 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const userPaused = useRef(false);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const nicknameRef = useRef<string>("anonymous");
   const connected = useRadioStore((s) => s.connected);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    nicknameRef.current = (localStorage.getItem("nickname") ?? "anonymous").trim() || "anonymous";
+  }, []);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      (window as Window & { __radioListeningState?: boolean }).__radioListeningState = playing;
+      window.dispatchEvent(new CustomEvent("radio-listening-state", { detail: { listening: playing } }));
+    }
+    const socket = getSocket();
+    if (socket && socket.connected) {
+      socket.emit("listener:state", {
+        nickname: nicknameRef.current,
+        listening: playing,
+      });
+    }
+  }, [playing, connected]);
+
+  useEffect(() => {
+    const socket = getSocket();
+    function onSocketConnect() {
+      socket.emit("listener:state", {
+        nickname: nicknameRef.current,
+        listening: playing,
+      });
+    }
+    socket.on("connect", onSocketConnect);
+    return () => {
+      socket.off("connect", onSocketConnect);
+      socket.emit("listener:state", {
+        nickname: nicknameRef.current,
+        listening: false,
+      });
+    };
+  }, [playing]);
+
   const syncedRadioTrack = useSyncedTrack(radioTrack);
   const activeFallbackGenre = useRadioStore((s) => s.activeFallbackGenre);
 
@@ -517,6 +556,8 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
       <audio
         ref={audioRef}
         crossOrigin="anonymous"
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
         onError={() => {
           if (playing && !userPaused.current && src) {
             if (reconnectTimer.current) clearTimeout(reconnectTimer.current);

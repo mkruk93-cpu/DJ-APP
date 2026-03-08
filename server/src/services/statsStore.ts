@@ -1,5 +1,7 @@
 import fs from 'node:fs';
 import { dirname, join } from 'node:path';
+import { getAnyUserPlaylistMetaByName } from './userPlaylistStore.js';
+import { getSharedPlaylistMetaByName } from './sharedPlaylistStore.js';
 
 export interface StatsRequestEventInput {
   added_by: string;
@@ -19,6 +21,8 @@ interface StatsRequestEvent {
   source_type: string | null;
   source_genre: string | null;
   source_playlist: string | null;
+  genre_inferred?: boolean;
+  source_inferred?: boolean;
   track_key: string;
 }
 
@@ -85,29 +89,122 @@ function buildTrackKey(artist: string | null, title: string | null): string {
   return `${normalizeText(artist)}|${normalizeText(title)}`;
 }
 
+function normalizeSourceType(value: string | null): string | null {
+  const raw = (value ?? '').trim().toLowerCase();
+  if (!raw) return null;
+  if (raw === 'shared' || raw === 'shared-playlist') return 'shared_playlist';
+  if (raw === 'user' || raw === 'user-playlist') return 'user_playlist';
+  if (raw === 'yt' || raw === 'youtube_search') return 'youtube';
+  return raw;
+}
+
+function splitArtistAndTitle(rawTitle: string): { artist: string; title: string } | null {
+  const separators = [' - ', ' — ', ' – ', ' | ', ': '];
+  for (const separator of separators) {
+    const idx = rawTitle.indexOf(separator);
+    if (idx <= 0 || idx >= rawTitle.length - separator.length) continue;
+    const left = rawTitle.slice(0, idx).trim();
+    const right = rawTitle.slice(idx + separator.length).trim();
+    if (!left || !right) continue;
+    if (left.length > 90 || right.length > 190) continue;
+    return { artist: left, title: right };
+  }
+  return null;
+}
+
+function combineGenre(genreGroup: string | null, subgenre: string | null): string | null {
+  const group = (genreGroup ?? '').trim();
+  const sub = (subgenre ?? '').trim();
+  if (group && sub) return `${group} / ${sub}`;
+  return group || sub || null;
+}
+
+async function enrichRequestInput(input: StatsRequestEventInput): Promise<{
+  addedBy: string;
+  title: string | null;
+  artist: string | null;
+  sourceType: string | null;
+  sourceGenre: string | null;
+  sourcePlaylist: string | null;
+  genreInferred: boolean;
+  sourceInferred: boolean;
+}> {
+  const addedBy = (input.added_by ?? '').trim() || 'anonymous';
+  let title = (input.title ?? '').trim() || null;
+  let artist = (input.artist ?? '').trim() || null;
+  let sourceType = normalizeSourceType(input.source_type ?? null);
+  let sourceGenre = (input.source_genre ?? '').trim() || null;
+  const sourcePlaylist = (input.source_playlist ?? '').trim() || null;
+  let genreInferred = false;
+  let sourceInferred = false;
+
+  if (!artist && title) {
+    const parsed = splitArtistAndTitle(title);
+    if (parsed) {
+      artist = parsed.artist;
+      title = parsed.title;
+    }
+  }
+
+  if ((!sourceGenre || !sourceType) && sourcePlaylist) {
+    if (!sourceType || sourceType === 'shared_playlist') {
+      const sharedMeta = await getSharedPlaylistMetaByName(sourcePlaylist);
+      if (sharedMeta) {
+        if (!sourceGenre) {
+          sourceGenre = combineGenre(sharedMeta.genre_group, sharedMeta.subgenre);
+          genreInferred = !!sourceGenre;
+        }
+        if (!sourceType) {
+          sourceType = 'shared_playlist';
+          sourceInferred = true;
+        }
+      }
+    }
+    if (!sourceGenre && (!sourceType || sourceType === 'user_playlist')) {
+      const userMeta = await getAnyUserPlaylistMetaByName(sourcePlaylist);
+      if (userMeta) {
+        sourceGenre = combineGenre(userMeta.genre_group, userMeta.subgenre);
+        genreInferred = !!sourceGenre;
+        if (!sourceType) {
+          sourceType = 'user_playlist';
+          sourceInferred = true;
+        }
+      }
+    }
+  }
+
+  return {
+    addedBy,
+    title,
+    artist,
+    sourceType,
+    sourceGenre,
+    sourcePlaylist,
+    genreInferred,
+    sourceInferred,
+  };
+}
+
 function clampRecent<T>(items: T[], maxItems: number): void {
   if (items.length <= maxItems) return;
   items.splice(0, items.length - maxItems);
 }
 
 export async function recordRequestEvent(input: StatsRequestEventInput): Promise<void> {
+  const enriched = await enrichRequestInput(input);
   await withWriteLock((store) => {
-    const artist = (input.artist ?? '').trim() || null;
-    const title = (input.title ?? '').trim() || null;
-    const addedBy = (input.added_by ?? '').trim() || 'anonymous';
-    const sourceType = (input.source_type ?? '').trim() || null;
-    const sourceGenre = (input.source_genre ?? '').trim() || null;
-    const sourcePlaylist = (input.source_playlist ?? '').trim() || null;
     const event: StatsRequestEvent = {
       id: `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
       ts: Date.now(),
-      added_by: addedBy,
-      title,
-      artist,
-      source_type: sourceType,
-      source_genre: sourceGenre,
-      source_playlist: sourcePlaylist,
-      track_key: buildTrackKey(artist, title),
+      added_by: enriched.addedBy,
+      title: enriched.title,
+      artist: enriched.artist,
+      source_type: enriched.sourceType,
+      source_genre: enriched.sourceGenre,
+      source_playlist: enriched.sourcePlaylist,
+      genre_inferred: enriched.genreInferred,
+      source_inferred: enriched.sourceInferred,
+      track_key: buildTrackKey(enriched.artist, enriched.title),
     };
     store.requests.push(event);
     clampRecent(store.requests, MAX_REQUEST_EVENTS);
@@ -134,6 +231,15 @@ export interface StatsSummary {
   topSources: Array<{ name: string; count: number }>;
   topArtists: Array<{ name: string; count: number }>;
   topTracks: Array<{ name: string; count: number }>;
+  topPlaylists: Array<{ name: string; count: number }>;
+  dataQuality: {
+    knownGenres: number;
+    inferredGenres: number;
+    missingGenres: number;
+    knownSources: number;
+    inferredSources: number;
+    missingSources: number;
+  };
   recentRequests: Array<{
     ts: number;
     added_by: string;
@@ -141,6 +247,7 @@ export interface StatsSummary {
     artist: string | null;
     source_type: string | null;
     source_genre: string | null;
+    source_playlist: string | null;
   }>;
 }
 
@@ -156,8 +263,15 @@ export async function getStatsSummary(periodDays = 30): Promise<StatsSummary> {
   const sourceCounts = new Map<string, number>();
   const artistCounts = new Map<string, number>();
   const trackCounts = new Map<string, number>();
+  const playlistCounts = new Map<string, number>();
   const uniqueTracks = new Set<string>();
   const uniqueRequesters = new Set<string>();
+  let knownGenres = 0;
+  let inferredGenres = 0;
+  let missingGenres = 0;
+  let knownSources = 0;
+  let inferredSources = 0;
+  let missingSources = 0;
 
   for (const row of requests) {
     requesterCounts.set(row.added_by, (requesterCounts.get(row.added_by) ?? 0) + 1);
@@ -165,9 +279,26 @@ export async function getStatsSummary(periodDays = 30): Promise<StatsSummary> {
 
     const genre = row.source_genre?.trim() || 'Onbekend';
     genreCounts.set(genre, (genreCounts.get(genre) ?? 0) + 1);
+    if (genre === 'Onbekend') {
+      missingGenres += 1;
+    } else if (row.genre_inferred) {
+      inferredGenres += 1;
+    } else {
+      knownGenres += 1;
+    }
 
     const source = row.source_type?.trim() || 'unknown';
     sourceCounts.set(source, (sourceCounts.get(source) ?? 0) + 1);
+    if (source === 'unknown') {
+      missingSources += 1;
+    } else if (row.source_inferred) {
+      inferredSources += 1;
+    } else {
+      knownSources += 1;
+    }
+
+    const playlist = row.source_playlist?.trim() || 'Onbekende playlist';
+    playlistCounts.set(playlist, (playlistCounts.get(playlist) ?? 0) + 1);
 
     const artist = row.artist?.trim() || 'Unknown artist';
     artistCounts.set(artist, (artistCounts.get(artist) ?? 0) + 1);
@@ -192,6 +323,15 @@ export async function getStatsSummary(periodDays = 30): Promise<StatsSummary> {
     topSources: topCounts(sourceCounts),
     topArtists: topCounts(artistCounts),
     topTracks: topCounts(trackCounts),
+    topPlaylists: topCounts(playlistCounts),
+    dataQuality: {
+      knownGenres,
+      inferredGenres,
+      missingGenres,
+      knownSources,
+      inferredSources,
+      missingSources,
+    },
     recentRequests: requests
       .slice()
       .sort((a, b) => b.ts - a.ts)
@@ -203,6 +343,7 @@ export async function getStatsSummary(periodDays = 30): Promise<StatsSummary> {
         artist: row.artist,
         source_type: row.source_type,
         source_genre: row.source_genre,
+        source_playlist: row.source_playlist,
       })),
   };
 }

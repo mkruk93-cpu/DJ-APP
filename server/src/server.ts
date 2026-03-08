@@ -13,7 +13,7 @@ import { initCache } from './cleanup.js';
 import { seedSettings, getActiveMode, getActiveFallbackGenre, getModeSettings, getSetting, setSetting } from './settings.js';
 import { getQueue, addToQueue, removeFromQueue, reorderQueue, fetchVideoInfo, extractYoutubeId, extractSourceId, isSoundcloudUrl, getThumbnailUrl, encodeLocalFileUrl } from './queue.js';
 import { canPerformAction } from './permissions.js';
-import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, playerEvents, setKeepFiles, invalidatePreload, invalidateNextReady, removeQueueItemFromPreload, setActiveFallbackGenre, setSharedAutoPlaybackMode } from './player.js';
+import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, playerEvents, setKeepFiles, invalidatePreload, invalidateNextReady, removeQueueItemFromPreload, setActiveFallbackGenre, setSharedAutoPlaybackMode, resetSharedAutoPlaybackCycleForSelection } from './player.js';
 import { youtubeSearch, soundcloudSearch } from './services/search.js';
 import { startBridge } from './bridge.js';
 import { startNowPlayingWatcher } from './nowPlaying.js';
@@ -51,6 +51,7 @@ import {
   deleteSharedPlaylist,
   appendTracksToSharedPlaylist,
   deleteSharedPlaylistTrack,
+  getSharedPlaylistSummaryById,
   hasSharedPlaylist,
   parseSharedFallbackPlaylistId,
   parseSharedFallbackPlayMode,
@@ -161,6 +162,12 @@ function isAdmin(token?: string): boolean {
 }
 
 let appliedPlaybackMode: Mode | null = null;
+interface ListenerPresenceState {
+  nickname: string;
+  listening: boolean;
+  updatedAt: number;
+}
+const listenerPresenceBySocket = new Map<string, ListenerPresenceState>();
 
 function applyPlaybackForMode(mode: Mode): void {
   if (appliedPlaybackMode === mode) return;
@@ -243,10 +250,34 @@ function getPlaylistGenreMetaFromRequest(req: Request): UserPlaylistGenreMeta & 
   const parentRaw = getIdentityValueFromRequest(req, 'related_parent_playlist_id')
     ?? getIdentityValueFromRequest(req, 'relatedParentPlaylistId')
     ?? getIdentityValueFromRequest(req, 'related_playlist_id');
+  const coverRaw = getIdentityValueFromRequest(req, 'cover_url')
+    ?? getIdentityValueFromRequest(req, 'coverUrl')
+    ?? getIdentityValueFromRequest(req, 'cover');
   const genre_group = (groupRaw ?? '').trim().slice(0, 80) || null;
   const subgenre = (subgenreRaw ?? '').trim().slice(0, 120) || null;
   const related_parent_playlist_id = (parentRaw ?? '').trim() || null;
-  return { genre_group, subgenre, related_parent_playlist_id };
+  const cover_url = /^https?:\/\//i.test((coverRaw ?? '').trim()) ? (coverRaw ?? '').trim().slice(0, 1200) : null;
+  return { genre_group, subgenre, related_parent_playlist_id, cover_url };
+}
+
+function parseBooleanFlag(raw: string | null | undefined, defaultValue: boolean): boolean {
+  if (raw == null) return defaultValue;
+  const value = raw.trim().toLowerCase();
+  if (!value) return defaultValue;
+  if (['1', 'true', 'yes', 'on'].includes(value)) return true;
+  if (['0', 'false', 'no', 'off'].includes(value)) return false;
+  return defaultValue;
+}
+
+function getPlaylistCoverOptionsFromRequest(req: Request): { coverUrl: string | null; autoCover: boolean } {
+  const coverRaw = getIdentityValueFromRequest(req, 'cover_url')
+    ?? getIdentityValueFromRequest(req, 'coverUrl')
+    ?? getIdentityValueFromRequest(req, 'cover');
+  const autoRaw = getIdentityValueFromRequest(req, 'auto_cover')
+    ?? getIdentityValueFromRequest(req, 'autoCover');
+  const coverUrl = /^https?:\/\//i.test((coverRaw ?? '').trim()) ? (coverRaw ?? '').trim().slice(0, 1200) : null;
+  const autoCover = parseBooleanFlag(autoRaw, true);
+  return { coverUrl, autoCover };
 }
 
 function getSharedStoreLimits(): SharedStoreLimits {
@@ -267,6 +298,7 @@ async function ingestParsedPlaylistsIntoShared(
   addedBy: string | null,
   source = 'exportify-shared',
   genreMeta?: SharedPlaylistGenreMeta,
+  coverOptions?: { coverUrl: string | null; autoCover: boolean },
 ): Promise<{
   imported: Array<{ id: string; name: string; trackCount: number }>;
   warnings: SharedImportWarning[];
@@ -284,11 +316,19 @@ async function ingestParsedPlaylistsIntoShared(
       spotify_url: track.spotifyUrl?.slice(0, 600) ?? null,
       position: index + 1,
     }));
+    const resolvedCoverUrl = await resolvePlaylistCoverUrlFromTracks(
+      trackInputs,
+      coverOptions?.coverUrl ?? genreMeta?.cover_url ?? null,
+      coverOptions?.autoCover ?? false,
+    );
     const result = await ingestSharedPlaylist(trackInputs, {
       name: safeName,
       source,
       addedBy,
-      genreMeta,
+      genreMeta: {
+        ...(genreMeta ?? { genre_group: null, subgenre: null, related_parent_playlist_id: null }),
+        cover_url: resolvedCoverUrl ?? genreMeta?.cover_url ?? null,
+      },
     }, limits);
     if (result.imported && result.playlistId) {
       imported.push({
@@ -400,6 +440,64 @@ function normalizeSpotifyTrackUrl(raw: string): string | null {
   }
 }
 
+async function fetchSpotifyOembedMeta(spotifyUrl: string): Promise<{
+  thumbnail_url: string | null;
+  title: string | null;
+  author_name: string | null;
+}> {
+  const cached = spotifyOembedCache.get(spotifyUrl);
+  if (cached && Date.now() - cached.ts < SPOTIFY_OEMBED_CACHE_TTL_MS) {
+    return {
+      thumbnail_url: cached.thumbnail_url,
+      title: cached.title,
+      author_name: cached.author_name,
+    };
+  }
+
+  const endpoint = `https://open.spotify.com/oembed?url=${encodeURIComponent(spotifyUrl)}`;
+  const response = await fetch(endpoint, { signal: AbortSignal.timeout(4000) });
+  if (!response.ok) {
+    throw new Error(`Spotify oembed HTTP ${response.status}`);
+  }
+  const payload = await response.json() as Record<string, unknown>;
+  const result = {
+    thumbnail_url: typeof payload.thumbnail_url === 'string' ? payload.thumbnail_url : null,
+    title: typeof payload.title === 'string' ? payload.title : null,
+    author_name: typeof payload.author_name === 'string' ? payload.author_name : null,
+    ts: Date.now(),
+  };
+  spotifyOembedCache.set(spotifyUrl, result);
+  return {
+    thumbnail_url: result.thumbnail_url,
+    title: result.title,
+    author_name: result.author_name,
+  };
+}
+
+async function resolvePlaylistCoverUrlFromTracks(
+  tracks: Array<{ spotify_url?: string | null }>,
+  preferredCoverUrl: string | null,
+  autoCover: boolean,
+): Promise<string | null> {
+  if (preferredCoverUrl) return preferredCoverUrl;
+  if (!autoCover) return null;
+  const candidates = Array.from(new Set(
+    tracks
+      .map((track) => normalizeSpotifyTrackUrl(String(track.spotify_url ?? '')))
+      .filter((url): url is string => !!url),
+  )).slice(0, 4);
+  for (const spotifyUrl of candidates) {
+    try {
+      const meta = await fetchSpotifyOembedMeta(spotifyUrl);
+      const thumb = (meta.thumbnail_url ?? '').trim();
+      if (thumb) return thumb.slice(0, 1200);
+    } catch {
+      // Continue probing with next candidate URL.
+    }
+  }
+  return null;
+}
+
 function parseArtistTitle(input: string): { artist: string | null; title: string | null } {
   const trimmed = input.trim();
   if (!trimmed) return { artist: null, title: null };
@@ -413,6 +511,106 @@ function parseArtistTitle(input: string): { artist: string | null; title: string
     }
   }
   return { artist: null, title: trimmed };
+}
+
+function normalizeSearchText(input: string | null | undefined): string {
+  return (input ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\w\s-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function tokenOverlap(a: string, b: string): number {
+  const aSet = new Set(normalizeSearchText(a).split(' ').filter((part) => part.length > 1));
+  const bSet = new Set(normalizeSearchText(b).split(' ').filter((part) => part.length > 1));
+  if (aSet.size === 0 || bSet.size === 0) return 0;
+  let matches = 0;
+  for (const token of aSet) {
+    if (bSet.has(token)) matches += 1;
+  }
+  return matches / Math.max(aSet.size, bSet.size);
+}
+
+const SEARCH_BLOCKED_KEYWORDS = [
+  'advertisement',
+  'ad break',
+  'sponsored',
+  'sponsor',
+  'promo code',
+  'trailer',
+  'teaser',
+  'reaction',
+  'review',
+  'tutorial',
+  'how to',
+  'podcast',
+  'interview',
+  'news',
+  'talk show',
+];
+
+function isBlockedSearchResult(title: string, channel: string): boolean {
+  const haystack = `${title} ${channel}`.toLowerCase();
+  return SEARCH_BLOCKED_KEYWORDS.some((keyword) => haystack.includes(keyword));
+}
+
+function scoreSearchResultForSubmission(
+  result: { title?: string | null; channel?: string | null; duration?: number | null },
+  expectedArtist: string | null,
+  expectedTitle: string | null,
+  options?: { strictMetadata?: boolean },
+): number {
+  const title = String(result.title ?? '').trim();
+  const channel = String(result.channel ?? '').trim();
+  if (!title) return -100;
+  const strictMetadata = options?.strictMetadata === true;
+
+  let score = 0;
+  const titleNorm = normalizeSearchText(title);
+  const channelNorm = normalizeSearchText(channel);
+  const artistNorm = normalizeSearchText(expectedArtist);
+  const wantedTitleNorm = normalizeSearchText(expectedTitle);
+  const blocked = isBlockedSearchResult(title, channel);
+
+  const strictTitleMatch = wantedTitleNorm
+    ? (titleNorm.includes(wantedTitleNorm) || tokenOverlap(expectedTitle, title) >= 0.9)
+    : true;
+  const strictArtistMatch = artistNorm
+    ? (titleNorm.includes(artistNorm) || channelNorm.includes(artistNorm))
+    : true;
+  const strictMetadataMatch = strictArtistMatch && strictTitleMatch;
+
+  if (!strictMetadata && blocked) return -100;
+  if (strictMetadata) {
+    // For trusted playlist metadata, require artist+title to match strongly.
+    // If that matches, allow terms like "tutorial" that are part of real track names.
+    if (!strictMetadataMatch) return -100;
+    score += 24;
+  }
+
+  if (artistNorm) {
+    const artistMatch = titleNorm.includes(artistNorm) || channelNorm.includes(artistNorm);
+    score += artistMatch ? 6 : -8;
+  }
+
+  if (wantedTitleNorm) {
+    if (titleNorm.includes(wantedTitleNorm)) score += 10;
+    else {
+      const overlap = tokenOverlap(expectedTitle, title);
+      score += overlap >= 0.5 ? 5 : -10;
+    }
+  }
+
+  const duration = result.duration ?? null;
+  if (duration !== null) {
+    if (duration < 95) score -= 4;
+    if (duration > 11 * 60) score -= 5;
+  }
+
+  return score;
 }
 
 async function resolveActiveFallbackGenre(persistFix = false): Promise<string | null> {
@@ -509,6 +707,13 @@ async function getCombinedFallbackGenres(): Promise<FallbackGenre[]> {
 }
 
 function getEffectiveListenerCount(): number {
+  const activeWebListeners = new Set<string>();
+  for (const [socketId, presence] of listenerPresenceBySocket.entries()) {
+    if (!presence.listening) continue;
+    const key = presence.nickname.trim().toLowerCase() || `socket:${socketId}`;
+    activeWebListeners.add(key);
+  }
+  if (activeWebListeners.size > 0) return activeWebListeners.size;
   const streamListeners = streamHub.listenerCount;
   if (streamListeners > 0) return streamListeners;
   return io.engine.clientsCount;
@@ -1484,6 +1689,7 @@ app.post('/api/user-playlists/import', upload.single('file'), async (req, res) =
 
   try {
     const genreMeta = getPlaylistGenreMetaFromRequest(req);
+    const coverOptions = getPlaylistCoverOptionsFromRequest(req);
     const parsed = parseExportifyUpload(originalName, req.file.buffer, {
       maxPlaylists: USER_PLAYLIST_MAX_PLAYLISTS_PER_IMPORT,
       maxTracksPerPlaylist: USER_PLAYLIST_MAX_TRACKS_PER_IMPORT,
@@ -1522,8 +1728,16 @@ app.post('/api/user-playlists/import', upload.single('file'), async (req, res) =
         spotify_url: track.spotifyUrl?.slice(0, 600) ?? null,
         position: index + 1,
       }));
+      const resolvedCoverUrl = await resolvePlaylistCoverUrlFromTracks(
+        tracksRows,
+        coverOptions.coverUrl,
+        coverOptions.autoCover,
+      );
 
-      const stored = await createUserPlaylist(identity, playlistName, tracksRows, 'exportify', genreMeta);
+      const stored = await createUserPlaylist(identity, playlistName, tracksRows, 'exportify', {
+        ...genreMeta,
+        cover_url: resolvedCoverUrl ?? genreMeta.cover_url ?? null,
+      });
 
       imported.push({
         id: stored.id,
@@ -1532,7 +1746,10 @@ app.post('/api/user-playlists/import', upload.single('file'), async (req, res) =
       });
     }
 
-    const sharedIngest = await ingestParsedPlaylistsIntoShared(parsed, identity.nickname, 'exportify-user', genreMeta);
+    const sharedIngest = await ingestParsedPlaylistsIntoShared(parsed, identity.nickname, 'exportify-user', {
+      ...genreMeta,
+      cover_url: coverOptions.coverUrl ?? genreMeta.cover_url ?? null,
+    }, coverOptions);
     const sharedUsage = await getSharedStoreUsage();
 
     res.json({
@@ -1664,6 +1881,7 @@ app.post('/api/shared-playlists/import', upload.any(), async (req, res) => {
   const identity = getUserIdentityFromRequest(req);
   try {
     const genreMeta = getPlaylistGenreMetaFromRequest(req);
+    const coverOptions = getPlaylistCoverOptionsFromRequest(req);
     const mergedTracks: Array<{
       title: string;
       artist: string;
@@ -1707,7 +1925,14 @@ app.post('/api/shared-playlists/import', upload.any(), async (req, res) => {
       name: requestedName,
       source: 'exportify-shared-upload',
       addedBy: identity?.nickname ?? null,
-      genreMeta,
+      genreMeta: {
+        ...genreMeta,
+        cover_url: await resolvePlaylistCoverUrlFromTracks(
+          trackInputs,
+          coverOptions.coverUrl ?? genreMeta.cover_url ?? null,
+          coverOptions.autoCover,
+        ),
+      },
     }, getSharedStoreLimits());
     if (!result.imported || !result.playlistId) {
       return res.status(400).json({ error: result.reason ?? 'Import mislukt' });
@@ -1838,6 +2063,7 @@ app.put('/api/shared-playlists/:id', async (req, res) => {
   }
   const nextName = getSharedPlaylistNameFromRequest(req);
   const nextMeta = getPlaylistGenreMetaFromRequest(req);
+  const coverOptions = getPlaylistCoverOptionsFromRequest(req);
   try {
     let updated: Awaited<ReturnType<typeof updateSharedPlaylistName>> = null;
     if (nextName) {
@@ -1853,14 +2079,50 @@ app.put('/api/shared-playlists/:id', async (req, res) => {
         || Object.prototype.hasOwnProperty.call(req.body, 'related_parent_playlist_id')
         || Object.prototype.hasOwnProperty.call(req.body, 'relatedParentPlaylistId')
         || Object.prototype.hasOwnProperty.call(req.body, 'related_playlist_id')
+        || Object.prototype.hasOwnProperty.call(req.body, 'cover_url')
+        || Object.prototype.hasOwnProperty.call(req.body, 'coverUrl')
+        || Object.prototype.hasOwnProperty.call(req.body, 'cover')
+        || Object.prototype.hasOwnProperty.call(req.body, 'auto_cover')
+        || Object.prototype.hasOwnProperty.call(req.body, 'autoCover')
       );
     if (wantsMetaUpdate) {
-      const metaUpdated = await updateSharedPlaylistGenreMeta(playlistId, nextMeta);
+      const hasCoverField = req.body && typeof req.body === 'object'
+        && (
+          Object.prototype.hasOwnProperty.call(req.body, 'cover_url')
+          || Object.prototype.hasOwnProperty.call(req.body, 'coverUrl')
+          || Object.prototype.hasOwnProperty.call(req.body, 'cover')
+        );
+      const hasExplicitCover = !!(coverOptions.coverUrl ?? nextMeta.cover_url);
+      let resolvedCover = coverOptions.coverUrl ?? nextMeta.cover_url ?? null;
+      const hasAutoCoverFlag = req.body && typeof req.body === 'object'
+        && (
+          Object.prototype.hasOwnProperty.call(req.body, 'auto_cover')
+          || Object.prototype.hasOwnProperty.call(req.body, 'autoCover')
+        );
+      if (!hasExplicitCover && hasAutoCoverFlag && coverOptions.autoCover) {
+        const tracks = await getSharedPlaylistTracks(playlistId);
+        if (tracks) {
+          resolvedCover = await resolvePlaylistCoverUrlFromTracks(
+            tracks,
+            null,
+            true,
+          );
+        }
+      } else if (!hasCoverField && !hasAutoCoverFlag) {
+        if (!updated) {
+          updated = await getSharedPlaylistSummaryById(playlistId);
+        }
+        resolvedCover = updated?.cover_url ?? null;
+      }
+      const metaUpdated = await updateSharedPlaylistGenreMeta(playlistId, {
+        ...nextMeta,
+        cover_url: resolvedCover ?? null,
+      });
       if (!metaUpdated) return res.status(404).json({ error: 'Playlist niet gevonden' });
       updated = metaUpdated;
     }
     if (!updated) {
-      return res.status(400).json({ error: 'Geef minstens playlist_name of genre/subgenre mee' });
+      return res.status(400).json({ error: 'Geef minstens playlist_name, cover of genre/subgenre mee' });
     }
     return res.json({ ok: true, playlist: updated });
   } catch (err) {
@@ -1936,29 +2198,8 @@ app.get('/api/spotify/oembed', async (req, res) => {
     return res.status(400).json({ error: 'Ongeldige Spotify track URL' });
   }
 
-  const cached = spotifyOembedCache.get(spotifyUrl);
-  if (cached && Date.now() - cached.ts < SPOTIFY_OEMBED_CACHE_TTL_MS) {
-    return res.json({
-      thumbnail_url: cached.thumbnail_url,
-      title: cached.title,
-      author_name: cached.author_name,
-    });
-  }
-
   try {
-    const endpoint = `https://open.spotify.com/oembed?url=${encodeURIComponent(spotifyUrl)}`;
-    const response = await fetch(endpoint, { signal: AbortSignal.timeout(4000) });
-    if (!response.ok) {
-      return res.status(404).json({ error: 'Spotify metadata niet gevonden' });
-    }
-    const payload = await response.json() as Record<string, unknown>;
-    const result = {
-      thumbnail_url: typeof payload.thumbnail_url === 'string' ? payload.thumbnail_url : null,
-      title: typeof payload.title === 'string' ? payload.title : null,
-      author_name: typeof payload.author_name === 'string' ? payload.author_name : null,
-      ts: Date.now(),
-    };
-    spotifyOembedCache.set(spotifyUrl, result);
+    const result = await fetchSpotifyOembedMeta(spotifyUrl);
     res.json({
       thumbnail_url: result.thumbnail_url,
       title: result.title,
@@ -2579,6 +2820,7 @@ app.post('/api/settings', async (req, res) => {
       const nextGenre = requested ?? getDefaultFallbackGenreId();
       await setSetting(sb, key, nextGenre);
       await setSetting(sb, 'fallback_active_genre_by', null);
+      resetSharedAutoPlaybackCycleForSelection(nextGenre);
       setActiveFallbackGenre(nextGenre);
       await emitFallbackGenreUpdate();
       console.log(`[rest] Setting updated: ${key}=${nextGenre ?? 'none'}`);
@@ -2992,24 +3234,49 @@ async function addQueueItemFromSubmission(
   submission: QueueAddSubmission,
   addedBy: string,
 ): Promise<{ item: Awaited<ReturnType<typeof addToQueue>> | null; error: string | null }> {
+  const sourceType = (submission.source_type ?? '').trim().toLowerCase();
+  const expectedArtist = (submission.artist ?? '').trim() || null;
+  const expectedTitle = (submission.title ?? '').trim() || null;
   let url = submission.youtube_url;
   let sourceId = extractSourceId(url);
   let discoveredTitle: string | null = null;
   let discoveredArtist: string | null = null;
 
   if (!sourceId) {
-    const searchResults = await youtubeSearchLocal(url, 1);
+    const strictMetadata = sourceType === 'spotify'
+      || sourceType === 'user_playlist'
+      || sourceType === 'shared_playlist';
+    const searchLimit = sourceType === 'spotify' || sourceType === 'user_playlist' || sourceType === 'shared_playlist'
+      ? 10
+      : 4;
+    const searchResults = await youtubeSearchLocal(url, searchLimit);
     if (searchResults.length === 0) {
       return { item: null, error: `Geen resultaat gevonden voor "${url}"` };
     }
-    url = searchResults[0].url;
+    const ranked = searchResults
+      .map((row) => ({
+        row,
+        score: scoreSearchResultForSubmission(
+          { title: row.title, channel: row.channel, duration: row.duration ?? null },
+          expectedArtist,
+          expectedTitle,
+          { strictMetadata },
+        ),
+      }))
+      .filter(({ score }) => score > -100)
+      .sort((a, b) => b.score - a.score);
+    const selectedRow = ranked[0]?.row ?? (strictMetadata ? null : searchResults[0]);
+    if (!selectedRow) {
+      return { item: null, error: `Geen bruikbaar resultaat gevonden voor "${url}"` };
+    }
+    url = selectedRow.url;
     sourceId = extractSourceId(url);
     if (!sourceId) {
       return { item: null, error: 'Kon geen geldig nummer vinden' };
     }
-    discoveredTitle = searchResults[0].title ?? null;
-    discoveredArtist = searchResults[0].channel ?? null;
-    console.log(`[queue] Search "${submission.youtube_url}" → ${searchResults[0].title} (${url})`);
+    discoveredTitle = selectedRow.title ?? null;
+    discoveredArtist = selectedRow.channel ?? null;
+    console.log(`[queue] Search "${submission.youtube_url}" → ${selectedRow.title} (${url})`);
   }
 
   const ytId = extractYoutubeId(url);
@@ -3027,15 +3294,43 @@ async function addQueueItemFromSubmission(
   }
 
   const thumbForQueue = thumbnail ?? info.thumbnail;
-  const submittedTitle = (submission.title ?? '').trim() || null;
-  const submittedArtist = (submission.artist ?? '').trim() || null;
-  const mergedTitle =
-    info.title ??
-    (submittedArtist && submittedTitle ? `${submittedArtist} - ${submittedTitle}` : null) ??
-    submittedTitle ??
-    (discoveredArtist && discoveredTitle ? `${discoveredArtist} - ${discoveredTitle}` : null) ??
-    discoveredTitle ??
-    sourceId;
+  const submittedTitle = expectedTitle;
+  const submittedArtist = expectedArtist;
+  const preferSubmittedArtistTitle =
+    sourceType === 'spotify'
+    || sourceType === 'user_playlist'
+    || sourceType === 'shared_playlist';
+  const submittedCombinedTitle =
+    submittedArtist && submittedTitle
+      ? `${submittedArtist} - ${submittedTitle}`
+      : null;
+  const playlistCombinedFallback =
+    submittedArtist
+      ? `${submittedArtist} - ${submittedTitle ?? discoveredTitle ?? info.title ?? sourceId}`
+      : null;
+  const discoveredCombinedTitle =
+    discoveredArtist && discoveredTitle
+      ? `${discoveredArtist} - ${discoveredTitle}`
+      : null;
+
+  const mergedTitle = preferSubmittedArtistTitle
+    ? (
+      submittedCombinedTitle
+      ?? playlistCombinedFallback
+      ?? submittedTitle
+      ?? info.title
+      ?? discoveredCombinedTitle
+      ?? discoveredTitle
+      ?? sourceId
+    )
+    : (
+      info.title
+      ?? submittedCombinedTitle
+      ?? submittedTitle
+      ?? discoveredCombinedTitle
+      ?? discoveredTitle
+      ?? sourceId
+    );
 
   const item = await addToQueue(sb, url, addedBy, mergedTitle, thumbForQueue);
   return { item, error: null };
@@ -3068,6 +3363,11 @@ async function promoteOneDeferredQueueItem(reason: 'track-ended' | 'manual'): Pr
 
 io.on('connection', (socket) => {
   console.log(`[socket] Client connected: ${socket.id}`);
+  listenerPresenceBySocket.set(socket.id, {
+    nickname: '',
+    listening: false,
+    updatedAt: Date.now(),
+  });
   io.emit('stream:status', { online: getCurrentTrack() !== null, listeners: getEffectiveListenerCount() });
   void emitSkipVoteState();
   socket.emit('upcoming:update', getUpcomingTrack());
@@ -3081,6 +3381,19 @@ io.on('connection', (socket) => {
   socket.on('auth:verify', (data: { token: string }, callback?: (valid: boolean) => void) => {
     const valid = isAdmin(data.token);
     if (typeof callback === 'function') callback(valid);
+  });
+
+  socket.on('listener:state', (data: { nickname?: string; listening?: boolean }) => {
+    const prev = listenerPresenceBySocket.get(socket.id);
+    const nickname = normalizeNickname(data?.nickname) ?? prev?.nickname ?? '';
+    const listening = !!data?.listening;
+    listenerPresenceBySocket.set(socket.id, {
+      nickname,
+      listening,
+      updatedAt: Date.now(),
+    });
+    io.emit('stream:status', { online: getCurrentTrack() !== null, listeners: getEffectiveListenerCount() });
+    void emitSkipVoteState();
   });
 
   // ── queue:add ──
@@ -3398,6 +3711,7 @@ io.on('connection', (socket) => {
         const nextGenre = requested ?? getDefaultFallbackGenreId();
         await setSetting(sb, data.key, nextGenre);
         await setSetting(sb, 'fallback_active_genre_by', null);
+        resetSharedAutoPlaybackCycleForSelection(nextGenre);
         setActiveFallbackGenre(nextGenre);
         await emitFallbackGenreUpdate();
         console.log(`[settings] Updated: ${data.key}=${nextGenre ?? 'none'}`);
@@ -3495,6 +3809,7 @@ io.on('connection', (socket) => {
         await setSetting(sb, 'fallback_shared_playback_mode', requestedSharedMode);
         setSharedAutoPlaybackMode(requestedSharedMode);
       }
+      resetSharedAutoPlaybackCycleForSelection(requested);
       setActiveFallbackGenre(requested);
       await emitFallbackGenreUpdate();
       console.log(`[fallback] Active genre changed: ${requested} by ${selectedBy}`);
@@ -3523,6 +3838,7 @@ io.on('connection', (socket) => {
 
   // ── disconnect ──
   socket.on('disconnect', () => {
+    listenerPresenceBySocket.delete(socket.id);
     socketNicknameById.delete(socket.id);
     voteSkipSet.delete(socket.id);
     io.emit('stream:status', { online: getCurrentTrack() !== null, listeners: getEffectiveListenerCount() });

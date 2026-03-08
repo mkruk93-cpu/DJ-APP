@@ -23,6 +23,8 @@ export default function SharedPlaylistManager() {
   const [genreGroupDraft, setGenreGroupDraft] = useState("");
   const [subgenreDraft, setSubgenreDraft] = useState("");
   const [relatedParentDraft, setRelatedParentDraft] = useState("");
+  const [coverDraft, setCoverDraft] = useState("");
+  const [autoCoverDraft, setAutoCoverDraft] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [tracks, setTracks] = useState<UserPlaylistTrack[]>([]);
   const [tracksLoading, setTracksLoading] = useState(false);
@@ -70,6 +72,8 @@ export default function SharedPlaylistManager() {
           genre_group: genreGroupDraft.trim() || null,
           subgenre: subgenreDraft.trim() || null,
           related_parent_playlist_id: relatedParentDraft.trim() || null,
+          cover_url: coverDraft.trim() || null,
+          auto_cover: autoCoverDraft,
         },
       );
       setItems((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
@@ -78,6 +82,8 @@ export default function SharedPlaylistManager() {
       setGenreGroupDraft("");
       setSubgenreDraft("");
       setRelatedParentDraft("");
+      setCoverDraft("");
+      setAutoCoverDraft(true);
       setStatus("Playlist-instellingen bijgewerkt.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Playlist bijwerken mislukt.");
@@ -240,6 +246,21 @@ export default function SharedPlaylistManager() {
                           </option>
                         ))}
                     </select>
+                    <input
+                      value={coverDraft}
+                      onChange={(e) => setCoverDraft(e.target.value)}
+                      placeholder="Cover URL (optioneel)"
+                      className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-xs text-white"
+                    />
+                    <label className="flex items-center gap-2 rounded border border-gray-700 bg-gray-800 px-2 py-1 text-xs text-gray-200">
+                      <input
+                        type="checkbox"
+                        checked={autoCoverDraft}
+                        onChange={(e) => setAutoCoverDraft(e.target.checked)}
+                        className="h-3.5 w-3.5 accent-violet-500"
+                      />
+                      Auto cover (uit tracks)
+                    </label>
                   </div>
                   <div className="flex gap-2">
                     <button
@@ -257,6 +278,8 @@ export default function SharedPlaylistManager() {
                         setGenreGroupDraft("");
                         setSubgenreDraft("");
                         setRelatedParentDraft("");
+                        setCoverDraft("");
+                        setAutoCoverDraft(true);
                       }}
                       className="rounded border border-gray-700 px-2 py-1 text-xs text-gray-300 hover:text-white"
                     >
@@ -266,7 +289,21 @@ export default function SharedPlaylistManager() {
                 </div>
               ) : (
                 <div className="flex items-center justify-between gap-2">
-                  <div className="min-w-0">
+                  <div className="flex min-w-0 items-center gap-2">
+                    {playlist.cover_url ? (
+                      <img
+                        src={playlist.cover_url}
+                        alt=""
+                        className="h-8 w-8 shrink-0 rounded object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-gray-800">
+                        <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V4.5A2.25 2.25 0 0016.5 2.25h-1.875a2.25 2.25 0 00-2.25 2.25v13.5m0 0a2.25 2.25 0 01-2.25 2.25H8.25a2.25 2.25 0 01-2.25-2.25V6.75" />
+                        </svg>
+                      </div>
+                    )}
+                    <div className="min-w-0">
                     <p className="truncate text-xs font-semibold text-white">{playlist.name}</p>
                     <p className="text-[10px] text-gray-500">
                       {playlist.track_count} tracks
@@ -274,6 +311,7 @@ export default function SharedPlaylistManager() {
                         ? ` · ${[playlist.genre_group, playlist.subgenre].filter(Boolean).join(" / ")}`
                         : ""}
                     </p>
+                    </div>
                   </div>
                   <div className="flex gap-1">
                     <button
@@ -291,6 +329,8 @@ export default function SharedPlaylistManager() {
                         setGenreGroupDraft(playlist.genre_group ?? "");
                         setSubgenreDraft(playlist.subgenre ?? "");
                         setRelatedParentDraft(playlist.related_parent_playlist_id ?? "");
+                        setCoverDraft(playlist.cover_url ?? "");
+                        setAutoCoverDraft(true);
                       }}
                       className="rounded border border-gray-700 px-2 py-1 text-[11px] text-blue-300 transition hover:text-blue-200"
                     >

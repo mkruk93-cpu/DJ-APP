@@ -21,6 +21,7 @@ interface StorePlaylist {
   genre_group: string | null;
   subgenre: string | null;
   related_parent_playlist_id: string | null;
+  cover_url: string | null;
   tracks: StoreTrack[];
 }
 
@@ -49,12 +50,14 @@ export interface PlaylistSummary {
   genre_group: string | null;
   subgenre: string | null;
   related_parent_playlist_id: string | null;
+  cover_url: string | null;
 }
 
 export interface PlaylistGenreMeta {
   genre_group: string | null;
   subgenre: string | null;
   related_parent_playlist_id: string | null;
+  cover_url?: string | null;
 }
 
 export interface PlaylistUsage {
@@ -131,10 +134,13 @@ function normalizeGenreMeta(input?: PlaylistGenreMeta | null): PlaylistGenreMeta
   const genreGroup = (input?.genre_group ?? '').trim().slice(0, 80);
   const subgenre = (input?.subgenre ?? '').trim().slice(0, 120);
   const relatedParent = (input?.related_parent_playlist_id ?? '').trim();
+  const coverRaw = (input?.cover_url ?? '').trim();
+  const cover_url = /^https?:\/\//i.test(coverRaw) ? coverRaw.slice(0, 1200) : null;
   return {
     genre_group: genreGroup || null,
     subgenre: subgenre || null,
     related_parent_playlist_id: relatedParent || null,
+    cover_url,
   };
 }
 
@@ -143,12 +149,14 @@ function normalizeStoredPlaylist(raw: StorePlaylist): StorePlaylist {
     genre_group: (raw as Partial<StorePlaylist>).genre_group ?? null,
     subgenre: (raw as Partial<StorePlaylist>).subgenre ?? null,
     related_parent_playlist_id: (raw as Partial<StorePlaylist>).related_parent_playlist_id ?? null,
+    cover_url: (raw as Partial<StorePlaylist>).cover_url ?? null,
   });
   return {
     ...raw,
     genre_group: meta.genre_group,
     subgenre: meta.subgenre,
     related_parent_playlist_id: meta.related_parent_playlist_id,
+    cover_url: meta.cover_url ?? null,
   };
 }
 
@@ -203,6 +211,7 @@ export async function createUserPlaylist(
       genre_group: meta.genre_group,
       subgenre: meta.subgenre,
       related_parent_playlist_id: meta.related_parent_playlist_id,
+      cover_url: meta.cover_url ?? null,
       tracks: normalizedTracks,
     });
 
@@ -227,6 +236,7 @@ export async function listUserPlaylists(owner: PlaylistOwner): Promise<PlaylistS
       genre_group: playlist.genre_group ?? null,
       subgenre: playlist.subgenre ?? null,
       related_parent_playlist_id: playlist.related_parent_playlist_id ?? null,
+      cover_url: playlist.cover_url ?? null,
     }));
 }
 
@@ -272,4 +282,23 @@ export async function deleteUserPlaylist(
     store.playlists.splice(index, 1);
     return true;
   });
+}
+
+export async function getAnyUserPlaylistMetaByName(name: string): Promise<{
+  id: string;
+  name: string;
+  genre_group: string | null;
+  subgenre: string | null;
+} | null> {
+  const needle = name.trim().toLowerCase();
+  if (!needle) return null;
+  const store = readStore();
+  const match = store.playlists.find((playlist) => playlist.name.trim().toLowerCase() === needle);
+  if (!match) return null;
+  return {
+    id: match.id,
+    name: match.name,
+    genre_group: match.genre_group ?? null,
+    subgenre: match.subgenre ?? null,
+  };
 }

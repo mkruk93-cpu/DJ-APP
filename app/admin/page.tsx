@@ -267,29 +267,42 @@ export default function AdminPage() {
       </header>
 
       <main className="mx-auto max-w-4xl space-y-4 p-6">
-        <div className="flex items-center justify-between rounded-xl border border-gray-800 bg-gray-900 p-4">
-          <div>
-            <p className="text-sm font-semibold text-white">DJ verzoekjes intake</p>
-            <p className="text-xs text-gray-500">
-              {autoApprove
-                ? "Automatisch binnenhalen (direct approved)"
-                : "Handmatig accepteren/afwijzen (blijft pending)"}
-            </p>
+        <details open className="overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
+          <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-semibold text-white transition hover:bg-gray-800/60">
+            DJ verzoekjes intake
+            <span className="text-xs text-gray-400">Uitklappen</span>
+          </summary>
+          <div className="border-t border-gray-800 p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold text-white">Moderatie</p>
+                <p className="text-xs text-gray-500">
+                  {autoApprove
+                    ? "Automatisch binnenhalen (direct approved)"
+                    : "Handmatig accepteren/afwijzen (blijft pending)"}
+                </p>
+              </div>
+              <button
+                onClick={toggleAutoApprove}
+                className="flex items-center gap-2 rounded-lg border border-gray-700 px-3 py-1.5 text-sm transition hover:border-gray-600"
+              >
+                <span
+                  className={`inline-block h-3 w-3 rounded-full ${autoApprove ? "bg-green-400 shadow-sm shadow-green-400/50" : "bg-gray-600"}`}
+                />
+                <span className={autoApprove ? "font-semibold text-green-400" : "text-gray-400"}>
+                  {autoApprove ? "AUTOMATISCH" : "HANDMATIG"}
+                </span>
+              </button>
+            </div>
           </div>
-          <button
-            onClick={toggleAutoApprove}
-            className="flex items-center gap-2 rounded-lg border border-gray-700 px-3 py-1.5 text-sm transition hover:border-gray-600"
-          >
-            <span
-              className={`inline-block h-3 w-3 rounded-full ${autoApprove ? "bg-green-400 shadow-sm shadow-green-400/50" : "bg-gray-600"}`}
-            />
-            <span className={autoApprove ? "font-semibold text-green-400" : "text-gray-400"}>
-              {autoApprove ? "AUTOMATISCH" : "HANDMATIG"}
-            </span>
-          </button>
-        </div>
+        </details>
 
-        <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
+        <details open className="overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
+          <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-semibold text-white transition hover:bg-gray-800/60">
+            Server verbinding
+            <span className="text-xs text-gray-400">Uitklappen</span>
+          </summary>
+          <div className="border-t border-gray-800 p-4">
             <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-gray-500">
               Radio Server URL (Cloudflare Tunnel)
             </label>
@@ -315,105 +328,166 @@ export default function AdminPage() {
                   ? `Verbinden met ${effectiveServerUrl.slice(0, 40)}...`
                   : "Plak hier de Cloudflare Tunnel URL van je radio server."}
             </p>
-        </div>
+          </div>
+        </details>
 
           {/* Radio admin auth */}
         {radioConnected && !radioAuthed && (
-          <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
-            <h3 className="mb-3 text-sm font-semibold text-white">Radio Admin Token</h3>
-            <form onSubmit={handleRadioAuth} className="flex gap-2">
-              <input
-                type="password"
-                value={radioToken}
-                onChange={(e) => { setRadioTokenState(e.target.value); setRadioAuthError(""); }}
-                placeholder="Admin token van de server"
-                className="flex-1 rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
-              />
-              <button
-                type="submit"
-                className="shrink-0 rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-violet-500"
-              >
-                Verifieer
-              </button>
-            </form>
-            {radioAuthError && <p className="mt-2 text-sm text-red-400">{radioAuthError}</p>}
-          </div>
+          <details open className="overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
+            <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-semibold text-white transition hover:bg-gray-800/60">
+              Radio admin authenticatie
+              <span className="text-xs text-gray-400">Uitklappen</span>
+            </summary>
+            <div className="border-t border-gray-800 p-4">
+              <h3 className="mb-3 text-sm font-semibold text-white">Radio Admin Token</h3>
+              <form onSubmit={handleRadioAuth} className="flex gap-2">
+                <input
+                  type="password"
+                  value={radioToken}
+                  onChange={(e) => { setRadioTokenState(e.target.value); setRadioAuthError(""); }}
+                  placeholder="Admin token van de server"
+                  className="flex-1 rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
+                />
+                <button
+                  type="submit"
+                  className="shrink-0 rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-violet-500"
+                >
+                  Verifieer
+                </button>
+              </form>
+              {radioAuthError && <p className="mt-2 text-sm text-red-400">{radioAuthError}</p>}
+            </div>
+          </details>
         )}
 
           {/* Radio admin controls */}
         {radioConnected && radioAuthed && (
           <>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <ListenerCount />
-              <StreamStatus />
-            </div>
-
-              {/* Keep files toggle */}
-              <div className="flex items-center justify-between rounded-xl border border-gray-800 bg-gray-900 p-4">
-                <div>
-                  <p className="text-sm font-semibold text-white">Bestanden bewaren</p>
-                  <p className="text-xs text-gray-500">
-                    {keepFiles
-                      ? "Audio bestanden blijven staan na afspelen"
-                      : "Audio bestanden worden verwijderd na afspelen"}
-                  </p>
-                </div>
-                <button
-                  onClick={async () => {
-                    try {
-                      await apiSetKeepFiles(!keepFiles);
-                      setKeepFiles(!keepFiles);
-                    } catch (err) {
-                      console.warn("[admin] keepFiles failed:", err);
-                    }
-                  }}
-                  className="flex items-center gap-2 rounded-lg border border-gray-700 px-3 py-1.5 text-sm transition hover:border-gray-600"
-                >
-                  <span
-                    className={`inline-block h-3 w-3 rounded-full ${keepFiles ? "bg-green-400 shadow-sm shadow-green-400/50" : "bg-gray-600"}`}
-                  />
-                  <span className={keepFiles ? "font-semibold text-green-400" : "text-gray-400"}>
-                    {keepFiles ? "BEWAREN" : "VERWIJDEREN"}
-                  </span>
-                </button>
+            <details open className="overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
+              <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-semibold text-white transition hover:bg-gray-800/60">
+                Live status
+                <span className="text-xs text-gray-400">Uitklappen</span>
+              </summary>
+              <div className="grid gap-4 border-t border-gray-800 p-4 sm:grid-cols-2">
+                <ListenerCount />
+                <StreamStatus />
               </div>
+            </details>
 
-            <ModeSelector />
-            <ModeSettings />
-
-              {/* Now playing + skip */}
-              {radioTrack && (
-                <div className="flex items-center gap-3 rounded-xl border border-gray-800 bg-gray-900 p-4">
-                  {radioTrack.thumbnail && (
-                    <img
-                      src={radioTrack.thumbnail}
-                      alt=""
-                      className="h-14 w-20 shrink-0 rounded-lg object-cover"
-                    />
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Nu speelt</p>
-                    <p className="truncate text-sm font-medium text-white">
-                      {radioTrack.title ?? radioTrack.youtube_id}
+            <details className="overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
+              <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-semibold text-white transition hover:bg-gray-800/60">
+                Playback & modus instellingen
+                <span className="text-xs text-gray-400">Uitklappen</span>
+              </summary>
+              <div className="space-y-4 border-t border-gray-800 p-4">
+                <div className="flex items-center justify-between rounded-xl border border-gray-800 bg-gray-900 p-4">
+                  <div>
+                    <p className="text-sm font-semibold text-white">Bestanden bewaren</p>
+                    <p className="text-xs text-gray-500">
+                      {keepFiles
+                        ? "Audio bestanden blijven staan na afspelen"
+                        : "Audio bestanden worden verwijderd na afspelen"}
                     </p>
                   </div>
                   <button
-                    onClick={handleRadioSkip}
-                    className="shrink-0 rounded-lg bg-red-600/20 px-4 py-2 text-sm font-semibold text-red-400 transition hover:bg-red-600/30"
+                    onClick={async () => {
+                      try {
+                        await apiSetKeepFiles(!keepFiles);
+                        setKeepFiles(!keepFiles);
+                      } catch (err) {
+                        console.warn("[admin] keepFiles failed:", err);
+                      }
+                    }}
+                    className="flex items-center gap-2 rounded-lg border border-gray-700 px-3 py-1.5 text-sm transition hover:border-gray-600"
                   >
-                    Skip
+                    <span
+                      className={`inline-block h-3 w-3 rounded-full ${keepFiles ? "bg-green-400 shadow-sm shadow-green-400/50" : "bg-gray-600"}`}
+                    />
+                    <span className={keepFiles ? "font-semibold text-green-400" : "text-gray-400"}>
+                      {keepFiles ? "BEWAREN" : "VERWIJDEREN"}
+                    </span>
                   </button>
                 </div>
-              )}
+                <ModeSelector />
+                <ModeSettings />
+              </div>
+            </details>
 
-            <DurationVotePanel />
-            <QueueAdd />
-            <QueueManager />
-            <GenreManagerErrorBoundary>
-              <GenreManager />
-            </GenreManagerErrorBoundary>
-            <SharedPlaylistManager />
-            <PlayedHistory />
+            <details className="overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
+              <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-semibold text-white transition hover:bg-gray-800/60">
+                Nu speelt & voting
+                <span className="text-xs text-gray-400">Uitklappen</span>
+              </summary>
+              <div className="space-y-4 border-t border-gray-800 p-4">
+                {radioTrack && (
+                  <div className="flex items-center gap-3 rounded-xl border border-gray-800 bg-gray-900 p-4">
+                    {radioTrack.thumbnail && (
+                      <img
+                        src={radioTrack.thumbnail}
+                        alt=""
+                        className="h-14 w-20 shrink-0 rounded-lg object-cover"
+                      />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Nu speelt</p>
+                      <p className="truncate text-sm font-medium text-white">
+                        {radioTrack.title ?? radioTrack.youtube_id}
+                      </p>
+                    </div>
+                    <button
+                      onClick={handleRadioSkip}
+                      className="shrink-0 rounded-lg bg-red-600/20 px-4 py-2 text-sm font-semibold text-red-400 transition hover:bg-red-600/30"
+                    >
+                      Skip
+                    </button>
+                  </div>
+                )}
+                <DurationVotePanel />
+              </div>
+            </details>
+
+            <details className="overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
+              <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-semibold text-white transition hover:bg-gray-800/60">
+                Queue beheer
+                <span className="text-xs text-gray-400">Uitklappen</span>
+              </summary>
+              <div className="space-y-4 border-t border-gray-800 p-4">
+                <QueueAdd />
+                <QueueManager />
+              </div>
+            </details>
+
+            <details className="overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
+              <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-semibold text-white transition hover:bg-gray-800/60">
+                Genre beheer
+                <span className="text-xs text-gray-400">Uitklappen</span>
+              </summary>
+              <div className="border-t border-gray-800 p-4">
+                <GenreManagerErrorBoundary>
+                  <GenreManager />
+                </GenreManagerErrorBoundary>
+              </div>
+            </details>
+
+            <details className="overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
+              <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-semibold text-white transition hover:bg-gray-800/60">
+                Publieke playlists beheer
+                <span className="text-xs text-gray-400">Uitklappen</span>
+              </summary>
+              <div className="border-t border-gray-800 p-4">
+                <SharedPlaylistManager />
+              </div>
+            </details>
+
+            <details className="overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
+              <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-semibold text-white transition hover:bg-gray-800/60">
+                Speelgeschiedenis
+                <span className="text-xs text-gray-400">Uitklappen</span>
+              </summary>
+              <div className="border-t border-gray-800 p-4">
+                <PlayedHistory />
+              </div>
+            </details>
           </>
         )}
       </main>

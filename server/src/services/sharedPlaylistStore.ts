@@ -14,6 +14,7 @@ export interface PlaylistGenreMeta {
   genre_group: string | null;
   subgenre: string | null;
   related_parent_playlist_id: string | null;
+  cover_url?: string | null;
 }
 
 interface SharedTrack {
@@ -36,6 +37,7 @@ interface SharedPlaylist {
   genre_group: string | null;
   subgenre: string | null;
   related_parent_playlist_id: string | null;
+  cover_url: string | null;
   tracks: SharedTrack[];
 }
 
@@ -57,6 +59,7 @@ export interface SharedPlaylistSummary {
   genre_group: string | null;
   subgenre: string | null;
   related_parent_playlist_id: string | null;
+  cover_url: string | null;
 }
 
 export interface SharedPlaylistTrack {
@@ -183,10 +186,13 @@ function normalizeGenreMeta(input?: PlaylistGenreMeta | null): PlaylistGenreMeta
   const genreGroup = (input?.genre_group ?? '').trim().slice(0, 80);
   const subgenre = (input?.subgenre ?? '').trim().slice(0, 120);
   const relatedParent = (input?.related_parent_playlist_id ?? '').trim();
+  const coverRaw = (input?.cover_url ?? '').trim();
+  const cover_url = /^https?:\/\//i.test(coverRaw) ? coverRaw.slice(0, 1200) : null;
   return {
     genre_group: genreGroup || null,
     subgenre: subgenre || null,
     related_parent_playlist_id: relatedParent || null,
+    cover_url,
   };
 }
 
@@ -195,12 +201,14 @@ function normalizeStoredPlaylist(raw: SharedPlaylist): SharedPlaylist {
     genre_group: (raw as Partial<SharedPlaylist>).genre_group ?? null,
     subgenre: (raw as Partial<SharedPlaylist>).subgenre ?? null,
     related_parent_playlist_id: (raw as Partial<SharedPlaylist>).related_parent_playlist_id ?? null,
+    cover_url: (raw as Partial<SharedPlaylist>).cover_url ?? null,
   });
   return {
     ...raw,
     genre_group: meta.genre_group,
     subgenre: meta.subgenre,
     related_parent_playlist_id: meta.related_parent_playlist_id,
+    cover_url: meta.cover_url ?? null,
   };
 }
 
@@ -300,6 +308,7 @@ export async function ingestSharedPlaylist(
       genre_group: meta.genre_group,
       subgenre: meta.subgenre,
       related_parent_playlist_id: meta.related_parent_playlist_id,
+      cover_url: meta.cover_url ?? null,
       tracks: normalizedTracks,
     });
 
@@ -344,6 +353,7 @@ export async function listSharedPlaylists(limit = 100, offset = 0): Promise<Shar
       genre_group: playlist.genre_group ?? null,
       subgenre: playlist.subgenre ?? null,
       related_parent_playlist_id: playlist.related_parent_playlist_id ?? null,
+      cover_url: playlist.cover_url ?? null,
     }));
 }
 
@@ -418,6 +428,7 @@ export async function updateSharedPlaylistName(
       genre_group: playlist.genre_group ?? null,
       subgenre: playlist.subgenre ?? null,
       related_parent_playlist_id: playlist.related_parent_playlist_id ?? null,
+      cover_url: playlist.cover_url ?? null,
     };
   });
 }
@@ -433,6 +444,9 @@ export async function updateSharedPlaylistGenreMeta(
     playlist.genre_group = nextMeta.genre_group;
     playlist.subgenre = nextMeta.subgenre;
     playlist.related_parent_playlist_id = nextMeta.related_parent_playlist_id;
+    if (Object.prototype.hasOwnProperty.call(nextMeta, 'cover_url')) {
+      playlist.cover_url = nextMeta.cover_url ?? null;
+    }
     return {
       id: playlist.id,
       name: playlist.name,
@@ -444,6 +458,7 @@ export async function updateSharedPlaylistGenreMeta(
       genre_group: playlist.genre_group ?? null,
       subgenre: playlist.subgenre ?? null,
       related_parent_playlist_id: playlist.related_parent_playlist_id ?? null,
+      cover_url: playlist.cover_url ?? null,
     };
   });
 }
@@ -499,6 +514,7 @@ export async function appendTracksToSharedPlaylist(
       genre_group: playlist.genre_group ?? null,
       subgenre: playlist.subgenre ?? null,
       related_parent_playlist_id: playlist.related_parent_playlist_id ?? null,
+      cover_url: playlist.cover_url ?? null,
     };
   });
 }
@@ -528,6 +544,7 @@ export async function deleteSharedPlaylistTrack(
       genre_group: playlist.genre_group ?? null,
       subgenre: playlist.subgenre ?? null,
       related_parent_playlist_id: playlist.related_parent_playlist_id ?? null,
+      cover_url: playlist.cover_url ?? null,
     };
   });
 }
@@ -537,5 +554,45 @@ export async function getSharedStoreUsage(): Promise<{ playlists: number; tracks
   return {
     playlists: store.playlists.length,
     tracks: totalTrackCount(store.playlists),
+  };
+}
+
+export async function getSharedPlaylistMetaByName(name: string): Promise<{
+  id: string;
+  name: string;
+  genre_group: string | null;
+  subgenre: string | null;
+} | null> {
+  const needle = name.trim().toLowerCase();
+  if (!needle) return null;
+  const store = readStore();
+  const match = store.playlists.find((playlist) => playlist.name.trim().toLowerCase() === needle);
+  if (!match) return null;
+  return {
+    id: match.id,
+    name: match.name,
+    genre_group: match.genre_group ?? null,
+    subgenre: match.subgenre ?? null,
+  };
+}
+
+export async function getSharedPlaylistSummaryById(playlistId: string): Promise<SharedPlaylistSummary | null> {
+  const id = playlistId.trim();
+  if (!id) return null;
+  const store = readStore();
+  const playlist = store.playlists.find((entry) => entry.id === id);
+  if (!playlist) return null;
+  return {
+    id: playlist.id,
+    name: playlist.name,
+    source: playlist.source,
+    created_at: playlist.created_at,
+    imported_at: playlist.imported_at,
+    track_count: playlist.track_count,
+    added_by: playlist.added_by,
+    genre_group: playlist.genre_group ?? null,
+    subgenre: playlist.subgenre ?? null,
+    related_parent_playlist_id: playlist.related_parent_playlist_id ?? null,
+    cover_url: playlist.cover_url ?? null,
   };
 }

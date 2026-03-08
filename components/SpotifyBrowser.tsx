@@ -145,6 +145,8 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
   const [importGenreGroup, setImportGenreGroup] = useState("");
   const [importSubgenre, setImportSubgenre] = useState("");
   const [importRelatedPlaylistId, setImportRelatedPlaylistId] = useState("");
+  const [importCoverUrl, setImportCoverUrl] = useState("");
+  const [importAutoCover, setImportAutoCover] = useState(true);
   const [savedTrackThumbs, setSavedTrackThumbs] = useState<Record<string, string>>({});
   const listRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
@@ -373,6 +375,8 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
         genre_group: importGenreGroup.trim() || null,
         subgenre: importSubgenre.trim() || null,
         related_parent_playlist_id: importRelatedPlaylistId.trim() || null,
+        cover_url: importCoverUrl.trim() || null,
+        auto_cover: importAutoCover,
       };
       const result = await importUserPlaylistFile(importFile, meta);
       const sharedInfo = result.shared
@@ -382,6 +386,8 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
       setImportFile(null);
       setImportSubgenre("");
       setImportRelatedPlaylistId("");
+      setImportCoverUrl("");
+      setImportAutoCover(true);
       await loadSavedPlaylists();
       await loadSharedPlaylists();
       if (result.shared?.warnings?.length) {
@@ -580,15 +586,6 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
       await loadPlaylists(true);
       return;
     }
-    if (!tracksNext) return;
-    if (trackSource === "liked") {
-      await loadLikedSongs(true);
-      return;
-    }
-    if (trackSource === "playlist" && selectedPlaylist) {
-      await loadPlaylistTracks(selectedPlaylist, true);
-      return;
-    }
     if (view === "importedTracks" && selectedSavedPlaylist) {
       if (savedTracksLoading || savedTracksLoadingMore || !savedTracksHasMore) return;
       await loadSavedTracksPage(selectedSavedPlaylist.id, true);
@@ -597,6 +594,15 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
     if (view === "sharedTracks" && selectedSharedPlaylist) {
       if (sharedTracksLoading || sharedTracksLoadingMore || !sharedTracksHasMore) return;
       await loadSharedTracksPage(selectedSharedPlaylist.id, true);
+      return;
+    }
+    if (!tracksNext) return;
+    if (trackSource === "liked") {
+      await loadLikedSongs(true);
+      return;
+    }
+    if (trackSource === "playlist" && selectedPlaylist) {
+      await loadPlaylistTracks(selectedPlaylist, true);
     }
   }
 
@@ -845,6 +851,19 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
             )}
             {savedPlaylistTreeRows.map(({ item: playlist, depth }) => (
               <div key={playlist.id} className="mt-1 flex items-center justify-between rounded-lg border border-gray-800 bg-gray-900/70 px-2.5 py-1.5" style={{ marginLeft: `${depth * 12}px` }}>
+                {playlist.cover_url ? (
+                  <img
+                    src={playlist.cover_url}
+                    alt=""
+                    className="mr-2 h-8 w-8 shrink-0 rounded object-cover"
+                  />
+                ) : (
+                  <div className="mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded bg-gray-800">
+                    <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V4.5A2.25 2.25 0 0016.5 2.25h-1.875a2.25 2.25 0 00-2.25 2.25v13.5m0 0a2.25 2.25 0 01-2.25 2.25H8.25a2.25 2.25 0 01-2.25-2.25V6.75" />
+                    </svg>
+                  </div>
+                )}
                 <button
                   type="button"
                   onClick={() => { void openSavedPlaylist(playlist); }}
@@ -892,6 +911,19 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
             )}
             {sharedPlaylistTreeRows.slice(0, 120).map(({ item: playlist, depth }) => (
               <div key={playlist.id} className="mt-1 flex items-center justify-between rounded-lg border border-gray-800 bg-gray-900/70 px-2.5 py-1.5" style={{ marginLeft: `${depth * 12}px` }}>
+                {playlist.cover_url ? (
+                  <img
+                    src={playlist.cover_url}
+                    alt=""
+                    className="mr-2 h-8 w-8 shrink-0 rounded object-cover"
+                  />
+                ) : (
+                  <div className="mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded bg-gray-800">
+                    <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V4.5A2.25 2.25 0 0016.5 2.25h-1.875a2.25 2.25 0 00-2.25 2.25v13.5m0 0a2.25 2.25 0 01-2.25 2.25H8.25a2.25 2.25 0 01-2.25-2.25V6.75" />
+                    </svg>
+                  </div>
+                )}
                 <button
                   type="button"
                   onClick={() => { void openSharedPlaylist(playlist); }}
@@ -1026,6 +1058,23 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                   <option key={playlist.id} value={playlist.id}>{playlist.name}</option>
                 ))}
               </select>
+            </div>
+            <div className="mt-2 grid gap-1.5 sm:grid-cols-[1fr_auto]">
+              <input
+                value={importCoverUrl}
+                onChange={(e) => setImportCoverUrl(e.target.value)}
+                placeholder="Playlist cover URL (optioneel)"
+                className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white placeholder-gray-500"
+              />
+              <label className="flex items-center gap-1.5 rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-gray-200">
+                <input
+                  type="checkbox"
+                  checked={importAutoCover}
+                  onChange={(e) => setImportAutoCover(e.target.checked)}
+                  className="h-3 w-3 accent-violet-500"
+                />
+                Auto cover
+              </label>
             </div>
             <input
               type="file"

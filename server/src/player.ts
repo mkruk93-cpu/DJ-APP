@@ -101,6 +101,7 @@ let activeFallbackGenre: string | null = null;
 type SharedAutoPlaybackMode = 'random' | 'ordered';
 let activeSharedAutoPlaybackMode: SharedAutoPlaybackMode = 'random';
 const sharedPlaylistOrderCursor = new Map<string, number>();
+const sharedPlaylistRandomPlayedKeys = new Map<string, Set<string>>();
 
 type ActiveAutoSource =
   | { type: 'genre'; key: string; genreId: string }
@@ -115,6 +116,13 @@ function normalizeSharedAutoPlaybackMode(value: unknown): SharedAutoPlaybackMode
 
 export function setSharedAutoPlaybackMode(mode: string | null | undefined): void {
   activeSharedAutoPlaybackMode = normalizeSharedAutoPlaybackMode(mode);
+}
+
+export function resetSharedAutoPlaybackCycleForSelection(genreId: string | null): void {
+  const sharedPlaylistId = parseSharedFallbackPlaylistId(genreId);
+  if (!sharedPlaylistId) return;
+  sharedPlaylistOrderCursor.delete(sharedPlaylistId);
+  sharedPlaylistRandomPlayedKeys.delete(sharedPlaylistId);
 }
 
 function getActiveAutoSource(): ActiveAutoSource | null {
@@ -154,10 +162,21 @@ function getEncoderRateArgs(): string[] {
 
 export function setActiveFallbackGenre(genreId: string | null): void {
   const previousGenre = activeFallbackGenre;
+  const previousSharedPlaylistId = parseSharedFallbackPlaylistId(previousGenre);
+  const nextSharedPlaylistId = parseSharedFallbackPlaylistId(genreId);
   activeFallbackGenre = genreId;
   const changed = (previousGenre ?? '').trim().toLowerCase() !== (genreId ?? '').trim().toLowerCase();
   const activeAuto = getActiveAutoSource();
   if (changed) {
+    if (previousSharedPlaylistId) {
+      sharedPlaylistOrderCursor.delete(previousSharedPlaylistId);
+      sharedPlaylistRandomPlayedKeys.delete(previousSharedPlaylistId);
+    }
+    if (nextSharedPlaylistId) {
+      // Start each new shared playlist selection as a fresh cycle.
+      sharedPlaylistOrderCursor.delete(nextSharedPlaylistId);
+      sharedPlaylistRandomPlayedKeys.delete(nextSharedPlaylistId);
+    }
     pendingAutoUpcoming = null;
     if (autoReadyBuffer.length > 0) {
       for (const entry of autoReadyBuffer) {
@@ -431,7 +450,41 @@ interface AutoSearchCandidate {
   source: 'youtube' | 'soundcloud';
 }
 
-async function resolveShortAutoCandidate(query: string, genreId?: string): Promise<AutoSearchCandidate | null> {
+interface AutoCandidateMatchOptions {
+  expectedArtist?: string | null;
+  expectedTitle?: string | null;
+  strictMetadata?: boolean;
+}
+
+const AUTO_BLOCKED_KEYWORDS = [
+  'advertisement',
+  'ad break',
+  'sponsored',
+  'sponsor',
+  'promo code',
+  'trailer',
+  'teaser',
+  'reaction',
+  'review',
+  'interview',
+  'podcast',
+  'tutorial',
+  'how to',
+  'analysis',
+  'news',
+  'talk show',
+];
+
+function hasBlockedAutoKeyword(title: string, channel = ''): boolean {
+  const haystack = `${title} ${channel}`.toLowerCase();
+  return AUTO_BLOCKED_KEYWORDS.some((keyword) => haystack.includes(keyword));
+}
+
+async function resolveShortAutoCandidate(
+  query: string,
+  genreId?: string,
+  options?: AutoCandidateMatchOptions,
+): Promise<AutoSearchCandidate | null> {
   // Use the same fast API-based search as genre hits instead of yt-dlp processes
   try {
     // Import search functions from the search service
@@ -451,11 +504,30 @@ async function resolveShortAutoCandidate(query: string, genreId?: string): Promi
     // Keep the original query for better artist matching
     const searchQuery = sanitizeDisplayText(query);
     const parsedQuery = parseDisplayArtistTitle(searchQuery);
-    const expectedArtistNorm = parsedQuery.artist
-      ? normalizeArtistMatchText(parsedQuery.artist)
+    const expectedArtistRaw = options?.expectedArtist?.trim() || parsedQuery.artist || '';
+    const expectedTitleRaw = options?.expectedTitle?.trim() || parsedQuery.title || '';
+    const strictMetadata = options?.strictMetadata === true;
+    const expectedArtistNorm = expectedArtistRaw
+      ? normalizeArtistMatchText(expectedArtistRaw)
       : '';
-    const expectedTitleNorm = normalizeArtistMatchText(parsedQuery.title || '');
-    const shouldRequireTitleMatch = !!parsedQuery.artist && !!parsedQuery.title;
+    const expectedTitleNorm = normalizeArtistMatchText(expectedTitleRaw);
+    const shouldRequireTitleMatch = strictMetadata || (!!expectedArtistRaw && !!expectedTitleRaw);
+
+    const hasStrictMetadataMatch = (resultTitle: string | null | undefined, resultChannel: string | null | undefined): boolean => {
+      if (!expectedArtistNorm || !expectedTitleNorm) return false;
+      const titleNorm = normalizeArtistMatchText(resultTitle || '');
+      const channelNorm = normalizeArtistMatchText(resultChannel || '');
+      const leadingArtistNorm = extractLeadingTitleArtistNormalized(resultTitle || '');
+      const artistOk = (
+        hasLooseArtistMatch(expectedArtistNorm, titleNorm)
+        || hasLooseArtistMatch(expectedArtistNorm, channelNorm)
+        || (!!leadingArtistNorm && hasLooseArtistMatch(expectedArtistNorm, leadingArtistNorm))
+        || hasArtistCreditInTitleNormalized(titleNorm, expectedArtistNorm)
+      );
+      const titleOk = titleNorm.includes(expectedTitleNorm)
+        || hasSufficientTitleMatch(expectedTitleNorm, titleNorm);
+      return artistOk && titleOk;
+    };
 
     // Try YouTube first with aggressive timeout
     const ytResults = await Promise.race([
@@ -516,7 +588,10 @@ async function resolveShortAutoCandidate(query: string, genreId?: string): Promi
           'acoustic live', 'cover', 'live at', 'southampton', 'concert', 'performance',
           'trailer', 'teaser', 'sample', 'scene', 'movie clip', 'official trailer'
         ];
-        if (badKeywords.some(keyword => title.includes(keyword))) return false;
+        const strictMatch = hasStrictMetadataMatch(result.title, result.channel);
+        if (strictMetadata && !strictMatch) return false;
+        if (!strictMatch && badKeywords.some(keyword => title.includes(keyword))) return false;
+        if (!strictMatch && hasBlockedAutoKeyword(title, channel)) return false;
 
         // Filter out software/plugin content
         const softwareKeywords = ['sylenth1', 'vst', 'plugin', 'ableton', 'fl studio', 'logic pro'];
@@ -589,6 +664,9 @@ async function resolveShortAutoCandidate(query: string, genreId?: string): Promi
     for (const result of scResults) {
       if (!result.title || isSetLikeAutoTitle(result.title)) continue;
       if (!result.duration || result.duration < 120 || result.duration > AUTO_MAX_DURATION_SECONDS) continue;
+      const strictMatch = hasStrictMetadataMatch(result.title, result.channel || '');
+      if (strictMetadata && !strictMatch) continue;
+      if (!strictMatch && hasBlockedAutoKeyword(result.title, result.channel || '')) continue;
       
       return {
         url: result.url,
@@ -1205,6 +1283,7 @@ async function prepareSharedAutoFallbackTrack(
           artist: artist || null,
           query: query.trim(),
           recentKey: sanitizeDisplayText(recentKey),
+          cycleKey: normalizeAutoKey(`${artist} ${title}`),
           thumbnail: null as string | null,
         };
       })
@@ -1223,13 +1302,32 @@ async function prepareSharedAutoFallbackTrack(
       choice = pool[index];
       sharedPlaylistOrderCursor.set(playlistId, (index + 1) % pool.length);
     } else {
-      choice = pool[Math.floor(Math.random() * pool.length)];
+      const playedSet = sharedPlaylistRandomPlayedKeys.get(playlistId) ?? new Set<string>();
+      let randomPool = pool.filter((entry) => !playedSet.has(entry.cycleKey));
+      if (randomPool.length === 0) {
+        playedSet.clear();
+        randomPool = pool;
+      }
+      choice = randomPool[Math.floor(Math.random() * randomPool.length)];
+      sharedPlaylistRandomPlayedKeys.set(playlistId, playedSet);
     }
     if (!choice) return null;
 
     console.log(`[auto-download] Trying (shared:${playlistId}): ${choice.query}`);
     const pseudo = buildAutoFallbackSourceForQuery(`shared_${playlistId}`, choice.query);
-    const selected = await resolveShortAutoCandidate(choice.query);
+    let selected = await resolveShortAutoCandidate(choice.query, undefined, {
+      expectedArtist: choice.artist,
+      expectedTitle: choice.title,
+      strictMetadata: true,
+    });
+    if (!selected && choice.title) {
+      // Retry with a looser query to handle edge-cases where artist-prefix blocks discovery.
+      selected = await resolveShortAutoCandidate(choice.title, undefined, {
+        expectedArtist: choice.artist,
+        expectedTitle: choice.title,
+        strictMetadata: true,
+      });
+    }
     if (!isAutoSourceStillActive(expectedSourceKey)) return null;
     if (!selected) {
       console.warn(`[auto-download] No short candidate (shared:${playlistId}) for query: ${choice.query}`);
@@ -1283,6 +1381,9 @@ async function prepareSharedAutoFallbackTrack(
       return null;
     }
 
+    const playedSet = sharedPlaylistRandomPlayedKeys.get(playlistId) ?? new Set<string>();
+    playedSet.add(choice.cycleKey);
+    sharedPlaylistRandomPlayedKeys.set(playlistId, playedSet);
     rememberAutoTrackKey(choice.recentKey);
     pendingAutoUpcoming = null;
     console.log(`[auto-download] Ready (shared:${playlistId}): ${resolvedTitle} (${finalDuration}s)`);
@@ -2938,7 +3039,9 @@ function downloadQueueItemShared(
   })();
 
   queueDownloadInFlight.set(key, run);
-  run.finally(() => {
+  // Guard against unhandled-rejection process crashes when multiple
+  // async callers race on the same in-flight download promise.
+  run.catch(() => undefined).finally(() => {
     if (queueDownloadInFlight.get(key) === run) {
       queueDownloadInFlight.delete(key);
     }
@@ -3216,7 +3319,11 @@ async function prepareNextTrack(
         if (!item) throw err;
         const removed = await markUnplayableQueueItem(sb, item, 'prepare', msg);
         if (!removed) {
-          throw err;
+          // Keep server alive on transient/first download failure (e.g. age-restricted video).
+          // The item stays in queue and will be retried in a later prepare cycle.
+          pendingQueueUpcoming = null;
+          broadcastUpcomingTrack();
+          return;
         }
         queue = await getQueue(sb);
         item = pickNextQueueItem(queue, currentItemId, currentQueueItemId);

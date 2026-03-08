@@ -43,6 +43,15 @@ interface PublicStatsSummary {
   topSources: Array<{ name: string; count: number }>;
   topArtists: Array<{ name: string; count: number }>;
   topTracks: Array<{ name: string; count: number }>;
+  topPlaylists: Array<{ name: string; count: number }>;
+  dataQuality: {
+    knownGenres: number;
+    inferredGenres: number;
+    missingGenres: number;
+    knownSources: number;
+    inferredSources: number;
+    missingSources: number;
+  };
   recentRequests: Array<{
     ts: number;
     added_by: string;
@@ -50,6 +59,7 @@ interface PublicStatsSummary {
     artist: string | null;
     source_type: string | null;
     source_genre: string | null;
+    source_playlist: string | null;
   }>;
 }
 
@@ -110,6 +120,11 @@ export default function StreamPage() {
   const [statsLoading, setStatsLoading] = useState(false);
   const [statsError, setStatsError] = useState<string | null>(null);
   const [statsSummary, setStatsSummary] = useState<PublicStatsSummary | null>(null);
+  const [statsDays, setStatsDays] = useState<7 | 30 | 90 | 180>(30);
+  const [statsFilter, setStatsFilter] = useState<{
+    kind: "requester" | "genre" | "source" | "artist" | "playlist" | null;
+    value: string | null;
+  }>({ kind: null, value: null });
   const [isHydrated, setIsHydrated] = useState(false);
   const [showLoadingStates, setShowLoadingStates] = useState(true);
   const activeTabRef = useRef<MobileTab>(activeTab);
@@ -230,7 +245,7 @@ export default function StreamPage() {
     setSkipVoteToastHidden(true);
   }
 
-  async function fetchPublicStats(): Promise<void> {
+  async function fetchPublicStats(days: number): Promise<void> {
     if (!statsServerUrl) {
       setStatsError("Geen server URL beschikbaar voor statistieken.");
       return;
@@ -238,7 +253,7 @@ export default function StreamPage() {
     setStatsLoading(true);
     setStatsError(null);
     try {
-      const res = await fetch(`${statsServerUrl}/api/stats/summary?days=30`);
+      const res = await fetch(`${statsServerUrl}/api/stats/summary?days=${Math.max(1, days)}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setStatsSummary(data as PublicStatsSummary);
@@ -800,12 +815,32 @@ export default function StreamPage() {
 
   useEffect(() => {
     if (!statsOpen) return;
-    void fetchPublicStats();
+    void fetchPublicStats(statsDays);
     const interval = setInterval(() => {
-      void fetchPublicStats();
+      void fetchPublicStats(statsDays);
     }, 20_000);
     return () => clearInterval(interval);
-  }, [statsOpen, statsServerUrl]);
+  }, [statsOpen, statsServerUrl, statsDays]);
+
+  const filteredRecentStats = (statsSummary?.recentRequests ?? []).filter((row) => {
+    if (!statsFilter.kind || !statsFilter.value) return true;
+    if (statsFilter.kind === "requester") return row.added_by === statsFilter.value;
+    if (statsFilter.kind === "genre") return (row.source_genre?.trim() || "Onbekend") === statsFilter.value;
+    if (statsFilter.kind === "source") return (row.source_type?.trim() || "unknown") === statsFilter.value;
+    if (statsFilter.kind === "artist") return (row.artist?.trim() || "Unknown artist") === statsFilter.value;
+    if (statsFilter.kind === "playlist") return (row.source_playlist?.trim() || "Onbekende playlist") === statsFilter.value;
+    return true;
+  });
+
+  function applyStatsFilter(
+    kind: "requester" | "genre" | "source" | "artist" | "playlist",
+    value: string,
+  ): void {
+    setStatsFilter((prev) => {
+      if (prev.kind === kind && prev.value === value) return { kind: null, value: null };
+      return { kind, value };
+    });
+  }
 
   return (
     <div className="relative flex min-h-[100svh] h-dvh max-h-dvh flex-col overflow-hidden">
@@ -1186,7 +1221,7 @@ export default function StreamPage() {
             <div className="flex items-center justify-between border-b border-gray-800 px-3 py-2">
               <div>
                 <p className="text-sm font-semibold text-white">Publieke statistieken</p>
-                <p className="text-[11px] text-gray-400">Laatste 30 dagen</p>
+                <p className="text-[11px] text-gray-400">Klik op rijen om te filteren</p>
               </div>
               <button
                 type="button"
@@ -1205,6 +1240,42 @@ export default function StreamPage() {
               )}
               {statsSummary && (
                 <div className="space-y-3">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {[7, 30, 90, 180].map((days) => (
+                      <button
+                        key={days}
+                        type="button"
+                        onClick={() => setStatsDays(days as 7 | 30 | 90 | 180)}
+                        className={`rounded border px-2 py-1 text-[11px] transition ${
+                          statsDays === days
+                            ? "border-violet-500/70 bg-violet-500/20 text-violet-100"
+                            : "border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white"
+                        }`}
+                      >
+                        {days}d
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStatsFilter({ kind: null, value: null });
+                        void fetchPublicStats(statsDays);
+                      }}
+                      className="rounded border border-gray-700 px-2 py-1 text-[11px] text-gray-300 transition hover:border-gray-600 hover:text-white"
+                    >
+                      Ververs
+                    </button>
+                    {statsFilter.kind && statsFilter.value && (
+                      <button
+                        type="button"
+                        onClick={() => setStatsFilter({ kind: null, value: null })}
+                        className="rounded border border-blue-700/70 bg-blue-900/25 px-2 py-1 text-[11px] text-blue-200 transition hover:bg-blue-900/40"
+                      >
+                        Filter: {statsFilter.kind} = {statsFilter.value} ×
+                      </button>
+                    )}
+                  </div>
+
                   <div className="grid grid-cols-3 gap-2">
                     <div className="rounded-lg border border-gray-800 bg-gray-950/60 p-2">
                       <p className="text-[10px] uppercase tracking-wide text-gray-500">Aanvragen</p>
@@ -1220,39 +1291,102 @@ export default function StreamPage() {
                     </div>
                   </div>
 
-                  <div className="grid gap-2 sm:grid-cols-2">
+                  <div className="rounded-lg border border-gray-800 bg-gray-950/50 p-2">
+                    <p className="mb-1 text-xs font-semibold text-gray-200">Datakwaliteit</p>
+                    <div className="grid grid-cols-2 gap-2 text-[11px] text-gray-300 sm:grid-cols-3">
+                      <p>Genres bekend: <span className="text-violet-200">{statsSummary.dataQuality.knownGenres}</span></p>
+                      <p>Genres afgeleid: <span className="text-emerald-300">{statsSummary.dataQuality.inferredGenres}</span></p>
+                      <p>Genres missen: <span className="text-amber-300">{statsSummary.dataQuality.missingGenres}</span></p>
+                      <p>Bron bekend: <span className="text-violet-200">{statsSummary.dataQuality.knownSources}</span></p>
+                      <p>Bron afgeleid: <span className="text-emerald-300">{statsSummary.dataQuality.inferredSources}</span></p>
+                      <p>Bron mist: <span className="text-amber-300">{statsSummary.dataQuality.missingSources}</span></p>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                     <div className="rounded-lg border border-gray-800 bg-gray-950/50 p-2">
                       <p className="mb-1 text-xs font-semibold text-gray-200">Top aanvragers</p>
                       {statsSummary.topRequesters.slice(0, 8).map((row) => (
-                        <p key={`req-${row.name}`} className="text-[11px] text-gray-300">{row.name}: {row.count}</p>
+                        <button
+                          key={`req-${row.name}`}
+                          type="button"
+                          onClick={() => applyStatsFilter("requester", row.name)}
+                          className="block w-full rounded px-1 py-0.5 text-left text-[11px] text-gray-300 transition hover:bg-gray-800 hover:text-white"
+                        >
+                          {row.name}: {row.count}
+                        </button>
                       ))}
                     </div>
                     <div className="rounded-lg border border-gray-800 bg-gray-950/50 p-2">
                       <p className="mb-1 text-xs font-semibold text-gray-200">Top genres</p>
                       {statsSummary.topGenres.slice(0, 8).map((row) => (
-                        <p key={`genre-${row.name}`} className="text-[11px] text-gray-300">{row.name}: {row.count}</p>
+                        <button
+                          key={`genre-${row.name}`}
+                          type="button"
+                          onClick={() => applyStatsFilter("genre", row.name)}
+                          className="block w-full rounded px-1 py-0.5 text-left text-[11px] text-gray-300 transition hover:bg-gray-800 hover:text-white"
+                        >
+                          {row.name}: {row.count}
+                        </button>
                       ))}
                     </div>
                     <div className="rounded-lg border border-gray-800 bg-gray-950/50 p-2">
                       <p className="mb-1 text-xs font-semibold text-gray-200">Top bronnen</p>
                       {statsSummary.topSources.slice(0, 8).map((row) => (
-                        <p key={`src-${row.name}`} className="text-[11px] text-gray-300">{row.name}: {row.count}</p>
+                        <button
+                          key={`src-${row.name}`}
+                          type="button"
+                          onClick={() => applyStatsFilter("source", row.name)}
+                          className="block w-full rounded px-1 py-0.5 text-left text-[11px] text-gray-300 transition hover:bg-gray-800 hover:text-white"
+                        >
+                          {row.name}: {row.count}
+                        </button>
                       ))}
                     </div>
                     <div className="rounded-lg border border-gray-800 bg-gray-950/50 p-2">
                       <p className="mb-1 text-xs font-semibold text-gray-200">Top artiesten</p>
                       {statsSummary.topArtists.slice(0, 8).map((row) => (
-                        <p key={`artist-${row.name}`} className="text-[11px] text-gray-300">{row.name}: {row.count}</p>
+                        <button
+                          key={`artist-${row.name}`}
+                          type="button"
+                          onClick={() => applyStatsFilter("artist", row.name)}
+                          className="block w-full rounded px-1 py-0.5 text-left text-[11px] text-gray-300 transition hover:bg-gray-800 hover:text-white"
+                        >
+                          {row.name}: {row.count}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="rounded-lg border border-gray-800 bg-gray-950/50 p-2 sm:col-span-2 lg:col-span-1">
+                      <p className="mb-1 text-xs font-semibold text-gray-200">Top playlists</p>
+                      {statsSummary.topPlaylists.slice(0, 8).map((row) => (
+                        <button
+                          key={`playlist-${row.name}`}
+                          type="button"
+                          onClick={() => applyStatsFilter("playlist", row.name)}
+                          className="block w-full rounded px-1 py-0.5 text-left text-[11px] text-gray-300 transition hover:bg-gray-800 hover:text-white"
+                        >
+                          {row.name}: {row.count}
+                        </button>
                       ))}
                     </div>
                   </div>
 
                   <div className="rounded-lg border border-gray-800 bg-gray-950/50 p-2">
-                    <p className="mb-1 text-xs font-semibold text-gray-200">Recente aanvragen</p>
-                    {statsSummary.recentRequests.map((row, idx) => (
-                      <p key={`${row.ts}-${idx}`} className="text-[11px] text-gray-300">
-                        {new Date(row.ts).toLocaleTimeString()} · {row.added_by} · {(row.artist ? `${row.artist} - ` : "")}{row.title ?? "Onbekend"}
-                      </p>
+                    <p className="mb-1 text-xs font-semibold text-gray-200">
+                      Recente aanvragen {statsFilter.kind ? `(gefilterd: ${filteredRecentStats.length})` : ""}
+                    </p>
+                    {filteredRecentStats.length === 0 && (
+                      <p className="text-[11px] text-gray-500">Geen resultaten voor deze filter.</p>
+                    )}
+                    {filteredRecentStats.map((row, idx) => (
+                      <div key={`${row.ts}-${idx}`} className="rounded px-1 py-1 text-[11px] text-gray-300 hover:bg-gray-800/60">
+                        <p>
+                          {new Date(row.ts).toLocaleTimeString()} · {row.added_by} · {(row.artist ? `${row.artist} - ` : "")}{row.title ?? "Onbekend"}
+                        </p>
+                        <p className="mt-0.5 text-[10px] text-gray-500">
+                          bron: {row.source_type ?? "unknown"} · genre: {row.source_genre ?? "Onbekend"} · playlist: {row.source_playlist ?? "n.v.t."}
+                        </p>
+                      </div>
                     ))}
                   </div>
                 </div>

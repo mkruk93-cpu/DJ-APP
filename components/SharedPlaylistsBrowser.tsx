@@ -90,6 +90,8 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
   const [importGenreGroup, setImportGenreGroup] = useState("");
   const [importSubgenre, setImportSubgenre] = useState("");
   const [importRelatedPlaylistId, setImportRelatedPlaylistId] = useState("");
+  const [importCoverUrl, setImportCoverUrl] = useState("");
+  const [importAutoCover, setImportAutoCover] = useState(true);
   const [addedTrackId, setAddedTrackId] = useState<string | null>(null);
   const [sharedPlaylists, setSharedPlaylists] = useState<SharedPlaylist[]>([]);
   const [sharedUsage, setSharedUsage] = useState<{ playlists: number; tracks: number } | null>(null);
@@ -250,6 +252,8 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
         genre_group: importGenreGroup.trim() || null,
         subgenre: importSubgenre.trim() || null,
         related_parent_playlist_id: importRelatedPlaylistId.trim() || null,
+        cover_url: importCoverUrl.trim() || null,
+        auto_cover: importAutoCover,
       };
       const result = await importSharedPlaylistFiles(importFiles, safeName, meta);
       setStatus(`Import klaar: ${result.playlist.name} (${result.playlist.trackCount} unieke tracks).`);
@@ -257,6 +261,8 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
       setImportName("");
       setImportSubgenre("");
       setImportRelatedPlaylistId("");
+      setImportCoverUrl("");
+      setImportAutoCover(true);
       await loadSharedPlaylists();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Import mislukt.");
@@ -388,11 +394,15 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                 className="mt-1 flex w-full items-center gap-2 rounded-lg border border-gray-800 bg-gray-900/70 px-2.5 py-1.5 text-left transition hover:border-blue-700/60 hover:bg-gray-800/80"
                 style={{ marginLeft: `${depth * 12}px` }}
               >
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-blue-500/15">
-                  <svg className="h-4 w-4 text-blue-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                    <path d="M8 6h12M8 12h12M8 18h12M3 6h.01M3 12h.01M3 18h.01" />
-                  </svg>
-                </div>
+                {playlist.cover_url ? (
+                  <img src={playlist.cover_url} alt="" className="h-8 w-8 shrink-0 rounded object-cover" />
+                ) : (
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-blue-500/15">
+                    <svg className="h-4 w-4 text-blue-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <path d="M8 6h12M8 12h12M8 18h12M3 6h.01M3 12h.01M3 18h.01" />
+                    </svg>
+                  </div>
+                )}
                 <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-white">
                   {depth > 0 ? "↳ " : ""}{playlist.name}
                   {(playlist.genre_group || playlist.subgenre) ? (
@@ -442,6 +452,24 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                   <option key={playlist.id} value={playlist.id}>{playlist.name}</option>
                 ))}
               </select>
+            </div>
+            <div className="mt-2 grid gap-1.5 sm:grid-cols-[1fr_auto]">
+              <input
+                type="text"
+                value={importCoverUrl}
+                onChange={(e) => setImportCoverUrl(e.target.value)}
+                placeholder="Playlist cover URL (optioneel)"
+                className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white placeholder-gray-500"
+              />
+              <label className="flex items-center gap-1.5 rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-gray-200">
+                <input
+                  type="checkbox"
+                  checked={importAutoCover}
+                  onChange={(e) => setImportAutoCover(e.target.checked)}
+                  className="h-3 w-3 accent-violet-500"
+                />
+                Auto cover
+              </label>
             </div>
             <input
               type="text"

@@ -9,6 +9,7 @@ export interface UserPlaylist {
   genre_group: string | null;
   subgenre: string | null;
   related_parent_playlist_id: string | null;
+  cover_url: string | null;
 }
 
 export interface UserPlaylistTrack {
@@ -77,6 +78,8 @@ export async function importUserPlaylistFile(
   if (meta?.genre_group) form.append('genre_group', meta.genre_group);
   if (meta?.subgenre) form.append('subgenre', meta.subgenre);
   if (meta?.related_parent_playlist_id) form.append('related_parent_playlist_id', meta.related_parent_playlist_id);
+  if (typeof meta?.cover_url === 'string') form.append('cover_url', meta.cover_url);
+  if (typeof meta?.auto_cover === 'boolean') form.append('auto_cover', meta.auto_cover ? 'true' : 'false');
   const res = await fetch(url, {
     method: 'POST',
     body: form,
@@ -143,12 +146,15 @@ export interface SharedPlaylist {
   genre_group: string | null;
   subgenre: string | null;
   related_parent_playlist_id: string | null;
+  cover_url: string | null;
 }
 
 export interface PlaylistGenreMetaInput {
   genre_group?: string | null;
   subgenre?: string | null;
   related_parent_playlist_id?: string | null;
+  cover_url?: string | null;
+  auto_cover?: boolean | null;
 }
 
 export interface SharedPlaylistsResponse {
@@ -209,6 +215,8 @@ export async function importSharedPlaylistFiles(
   if (meta?.genre_group) form.append('genre_group', meta.genre_group);
   if (meta?.subgenre) form.append('subgenre', meta.subgenre);
   if (meta?.related_parent_playlist_id) form.append('related_parent_playlist_id', meta.related_parent_playlist_id);
+  if (typeof meta?.cover_url === 'string') form.append('cover_url', meta.cover_url);
+  if (typeof meta?.auto_cover === 'boolean') form.append('auto_cover', meta.auto_cover ? 'true' : 'false');
   const res = await fetch(`${getServerUrl()}/api/shared-playlists/import`, {
     method: "POST",
     body: form,
@@ -229,6 +237,8 @@ export async function updateSharedPlaylistAdmin(
     body.genre_group = meta.genre_group ?? null;
     body.subgenre = meta.subgenre ?? null;
     body.related_parent_playlist_id = meta.related_parent_playlist_id ?? null;
+    body.cover_url = meta.cover_url ?? null;
+    if (typeof meta.auto_cover === 'boolean') body.auto_cover = meta.auto_cover;
   }
   const res = await fetch(`${getServerUrl()}/api/shared-playlists/${safeId}`, {
     method: "PUT",
