@@ -148,8 +148,7 @@ body {
 
 .player-cover-ring--inner {
   animation:
-    player-ring-spin-burst-inner 20s linear infinite,
-    player-ring-layer-inner 32s steps(1, end) infinite,
+    player-ring-spin-burst-inner 22s linear infinite,
     player-ring-breathe 5.6s ease-in-out infinite alternate;
   opacity: 0.68;
   --ring-orbit-angle: 0deg;
@@ -170,8 +169,7 @@ body {
 
 .player-cover-ring--outer {
   animation:
-    player-ring-spin-burst-outer 24s linear infinite,
-    player-ring-layer-outer 32s steps(1, end) infinite,
+    player-ring-spin-burst-outer 26s linear infinite,
     player-ring-breathe 6.8s ease-in-out infinite alternate-reverse;
   opacity: 0.56;
   --ring-orbit-angle: 160deg;
@@ -243,65 +241,59 @@ body {
   0% {
     transform: rotate(0deg);
   }
-  24% {
-    transform: rotate(30deg);
+  20% {
+    transform: rotate(24deg);
   }
-  34% {
-    transform: rotate(46deg);
+  35% {
+    transform: rotate(42deg);
   }
-  44% {
-    transform: rotate(214deg);
+  48% {
+    transform: rotate(210deg);
   }
-  54% {
-    transform: rotate(252deg);
+  58% {
+    transform: rotate(278deg);
   }
-  64% {
-    transform: rotate(274deg);
+  70% {
+    transform: rotate(322deg);
   }
-  74% {
-    transform: rotate(288deg);
-  }
-  84% {
-    transform: rotate(298deg);
+  82% {
+    transform: rotate(346deg);
   }
   92% {
-    transform: rotate(306deg);
+    transform: rotate(356deg);
   }
   100% {
-    transform: rotate(312deg);
+    transform: rotate(360deg);
   }
 }
 
 @keyframes player-ring-spin-burst-outer {
   0% {
-    transform: rotate(360deg);
+    transform: rotate(0deg);
   }
-  24% {
-    transform: rotate(330deg);
+  22% {
+    transform: rotate(-20deg);
   }
-  34% {
-    transform: rotate(314deg);
+  36% {
+    transform: rotate(-34deg);
   }
-  44% {
-    transform: rotate(146deg);
+  50% {
+    transform: rotate(-176deg);
   }
-  54% {
-    transform: rotate(108deg);
+  60% {
+    transform: rotate(-242deg);
   }
-  64% {
-    transform: rotate(86deg);
-  }
-  74% {
-    transform: rotate(72deg);
+  72% {
+    transform: rotate(-300deg);
   }
   84% {
-    transform: rotate(62deg);
+    transform: rotate(-332deg);
   }
-  92% {
-    transform: rotate(54deg);
+  94% {
+    transform: rotate(-350deg);
   }
   100% {
-    transform: rotate(48deg);
+    transform: rotate(-360deg);
   }
 }
 
