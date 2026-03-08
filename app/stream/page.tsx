@@ -128,6 +128,7 @@ export default function StreamPage() {
   }>({ kind: null, value: null });
   const [isHydrated, setIsHydrated] = useState(false);
   const [showLoadingStates, setShowLoadingStates] = useState(true);
+  const [radioStateReady, setRadioStateReady] = useState(false);
   const activeTabRef = useRef<MobileTab>(activeTab);
   activeTabRef.current = activeTab;
   const previousQueueLengthRef = useRef<number>(0);
@@ -528,6 +529,7 @@ export default function StreamPage() {
           return r.json();
         })
         .then((state) => {
+          setRadioStateReady(true);
           const nextQueueLength = state.queue?.length ?? 0;
           previousQueueLengthRef.current = nextQueueLength;
           latestUpcomingRef.current = state.upcomingTrack ?? null;
@@ -565,6 +567,7 @@ export default function StreamPage() {
 
     socket.on("connect", () => {
       store.getState().setConnected(true);
+      setRadioStateReady(false);
       setPreferRadioUi(true);
       setSuppressFallback(false);
       setTunnelRecoveryUntil(null);
@@ -585,6 +588,7 @@ export default function StreamPage() {
       store.getState().setSkipLocked(false);
       setQueueBadge(false);
       setSuppressFallback(true);
+      setRadioStateReady(false);
       if (hadActiveStream) {
         setTunnelRecoveryUntil(Date.now() + TUNNEL_RECOVERY_WINDOW_MS);
       }
@@ -779,6 +783,7 @@ export default function StreamPage() {
     tunnelRecoverySecondsLeft > 0;
   const showRadioOfflineState =
     mode === "radio" &&
+    radioStateReady &&
     (!radioStreamUrl || (!radioConnected && !showTunnelRecoveryState) || (!isDjModeConnected && radioConnected && !streamOnline && !pausedForIdle));
   const shouldPollCommunityWidgets = radioMode === "dj" && radioConnected;
   const nextQueueItem = queue[0] ?? null;
