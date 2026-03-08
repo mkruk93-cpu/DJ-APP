@@ -243,26 +243,32 @@ body {
   0% {
     transform: rotate(0deg);
   }
-  28% {
-    transform: rotate(28deg);
+  24% {
+    transform: rotate(30deg);
   }
-  36% {
-    transform: rotate(32deg);
+  34% {
+    transform: rotate(46deg);
   }
-  46% {
-    transform: rotate(196deg);
-  }
-  54% {
+  44% {
     transform: rotate(214deg);
   }
-  66% {
-    transform: rotate(226deg);
+  54% {
+    transform: rotate(252deg);
   }
-  78% {
-    transform: rotate(236deg);
+  64% {
+    transform: rotate(274deg);
+  }
+  74% {
+    transform: rotate(288deg);
+  }
+  84% {
+    transform: rotate(298deg);
+  }
+  92% {
+    transform: rotate(306deg);
   }
   100% {
-    transform: rotate(252deg);
+    transform: rotate(312deg);
   }
 }
 
@@ -270,26 +276,32 @@ body {
   0% {
     transform: rotate(360deg);
   }
-  30% {
-    transform: rotate(332deg);
+  24% {
+    transform: rotate(330deg);
   }
-  40% {
-    transform: rotate(326deg);
+  34% {
+    transform: rotate(314deg);
   }
-  50% {
-    transform: rotate(182deg);
+  44% {
+    transform: rotate(146deg);
   }
-  58% {
-    transform: rotate(166deg);
+  54% {
+    transform: rotate(108deg);
   }
-  72% {
-    transform: rotate(152deg);
+  64% {
+    transform: rotate(86deg);
+  }
+  74% {
+    transform: rotate(72deg);
   }
   84% {
-    transform: rotate(140deg);
+    transform: rotate(62deg);
+  }
+  92% {
+    transform: rotate(54deg);
   }
   100% {
-    transform: rotate(126deg);
+    transform: rotate(48deg);
   }
 }
 
