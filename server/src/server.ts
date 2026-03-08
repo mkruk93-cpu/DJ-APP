@@ -691,7 +691,16 @@ async function getCombinedFallbackGenres(): Promise<FallbackGenre[]> {
   };
   let sharedPlaylists: Awaited<ReturnType<typeof listSharedPlaylists>> = [];
   try {
-    sharedPlaylists = await listSharedPlaylists(120, 0);
+    const pageSize = 250;
+    const maxPages = 30;
+    const allShared: Awaited<ReturnType<typeof listSharedPlaylists>> = [];
+    for (let page = 0; page < maxPages; page += 1) {
+      const offset = page * pageSize;
+      const chunk = await listSharedPlaylists(pageSize, offset);
+      allShared.push(...chunk);
+      if (chunk.length < pageSize) break;
+    }
+    sharedPlaylists = allShared;
   } catch (err) {
     console.warn('[fallback] Shared playlist list unavailable:', (err as Error).message);
   }

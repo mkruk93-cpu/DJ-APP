@@ -304,6 +304,51 @@ function hasStrictTitleMatch(expectedTitleNorm: string, actualTitleNorm: string)
   return matched >= Math.ceil(expectedWords.length * 0.75);
 }
 
+function splitNormalizedWords(value: string): string[] {
+  return value
+    .split(' ')
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+}
+
+function hasVeryStrictArtistMatch(expectedArtistNorm: string, candidateNorm: string): boolean {
+  if (!expectedArtistNorm || !candidateNorm) return false;
+  if (candidateNorm === expectedArtistNorm) return true;
+  const expectedWords = splitNormalizedWords(expectedArtistNorm);
+  const candidateWords = splitNormalizedWords(candidateNorm);
+  if (expectedWords.length === 0 || candidateWords.length === 0) return false;
+  const candidateSet = new Set(candidateWords);
+  const matched = expectedWords.filter((word) => candidateSet.has(word)).length;
+  if (matched < expectedWords.length) return false;
+  // Allow tiny suffixes like "topic", "official", "music", but block large drift.
+  return candidateWords.length <= expectedWords.length + 2;
+}
+
+const STRICT_TITLE_TRAILING_ALLOW = new Set([
+  'original',
+  'mix',
+  'edit',
+  'radio',
+  'extended',
+  'version',
+  'vip',
+  'bootleg',
+  'rework',
+  'remaster',
+]);
+
+function hasVeryStrictTitleMatch(expectedTitleNorm: string, resultTitleNorm: string): boolean {
+  if (!expectedTitleNorm || !resultTitleNorm) return false;
+  if (resultTitleNorm === expectedTitleNorm) return true;
+  if (!resultTitleNorm.startsWith(expectedTitleNorm)) return false;
+  const trailing = resultTitleNorm.slice(expectedTitleNorm.length).trim();
+  if (!trailing) return true;
+  const trailingWords = splitNormalizedWords(trailing);
+  if (trailingWords.length === 0) return true;
+  if (trailingWords.length > 3) return false;
+  return trailingWords.every((word) => STRICT_TITLE_TRAILING_ALLOW.has(word));
+}
+
 function hasDisplayArtistSeparator(value: string): boolean {
   const text = value.trim();
   if (!text) return false;
@@ -567,14 +612,13 @@ async function resolveShortAutoCandidate(
       const titleNorm = normalizeArtistMatchText(resultTitle || '');
       const channelNorm = normalizeArtistMatchText(resultChannel || '');
       const leadingArtistNorm = extractLeadingTitleArtistNormalized(resultTitle || '');
-      if (leadingArtistNorm && !hasLooseArtistMatch(expectedArtistNorm, leadingArtistNorm)) return false;
       const artistOk = (
-        hasLooseArtistMatch(expectedArtistNorm, titleNorm)
-        || hasLooseArtistMatch(expectedArtistNorm, channelNorm)
-        || (!!leadingArtistNorm && hasLooseArtistMatch(expectedArtistNorm, leadingArtistNorm))
-        || hasArtistCreditInTitleNormalized(titleNorm, expectedArtistNorm)
+        (!!leadingArtistNorm && hasVeryStrictArtistMatch(expectedArtistNorm, leadingArtistNorm))
+        || hasVeryStrictArtistMatch(expectedArtistNorm, channelNorm)
       );
-      const titleOk = hasStrictTitleMatch(expectedTitleNorm, titleNorm);
+      if (!artistOk) return false;
+      const titleOk = hasVeryStrictTitleMatch(expectedTitleNorm, titleNorm)
+        || hasStrictTitleMatch(expectedTitleNorm, titleNorm);
       return artistOk && titleOk;
     };
 

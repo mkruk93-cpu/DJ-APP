@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   isSpotifyConnected,
   isSpotifyConfigured,
@@ -73,33 +73,35 @@ function keepFieldVisibleOnMobile(target: HTMLElement): void {
   });
 }
 
-function buildPlaylistTreeRows<T extends { id: string; related_parent_playlist_id: string | null }>(
-  items: T[],
-): Array<{ item: T; depth: number }> {
-  const byId = new Map(items.map((item) => [item.id, item]));
-  const children = new Map<string | null, T[]>();
-  const roots: T[] = [];
-  for (const item of items) {
-    const parentId = item.related_parent_playlist_id?.trim() || null;
-    if (parentId && byId.has(parentId) && parentId !== item.id) {
-      const bucket = children.get(parentId) ?? [];
-      bucket.push(item);
-      children.set(parentId, bucket);
-    } else {
-      roots.push(item);
-    }
+function normalizeBucketLabel(value: string | null | undefined, fallback: string): string {
+  const safe = (value ?? "").trim();
+  return safe || fallback;
+}
+
+function groupPlaylistsByGenre<T extends { name: string; genre_group: string | null; subgenre: string | null }>(
+  playlists: T[],
+): Array<{ genreLabel: string; subgroups: Array<{ subgenreLabel: string; items: T[] }> }> {
+  const byGenre = new Map<string, Map<string, T[]>>();
+  for (const playlist of playlists) {
+    const genreLabel = normalizeBucketLabel(playlist.genre_group, "Overig");
+    const subgenreLabel = normalizeBucketLabel(playlist.subgenre, "Algemeen");
+    if (!byGenre.has(genreLabel)) byGenre.set(genreLabel, new Map<string, T[]>());
+    const bySubgenre = byGenre.get(genreLabel)!;
+    const bucket = bySubgenre.get(subgenreLabel) ?? [];
+    bucket.push(playlist);
+    bySubgenre.set(subgenreLabel, bucket);
   }
-  const output: Array<{ item: T; depth: number }> = [];
-  const walk = (node: T, depth: number, chain: Set<string>) => {
-    output.push({ item: node, depth });
-    if (chain.has(node.id)) return;
-    const nextChain = new Set(chain);
-    nextChain.add(node.id);
-    const kids = children.get(node.id) ?? [];
-    for (const child of kids) walk(child, Math.min(depth + 1, 5), nextChain);
-  };
-  for (const root of roots) walk(root, 0, new Set());
-  return output;
+  return Array.from(byGenre.entries())
+    .sort(([a], [b]) => a.localeCompare(b, "nl"))
+    .map(([genreLabel, bySubgenre]) => ({
+      genreLabel,
+      subgroups: Array.from(bySubgenre.entries())
+        .sort(([a], [b]) => a.localeCompare(b, "nl"))
+        .map(([subgenreLabel, items]) => ({
+          subgenreLabel,
+          items: items.slice().sort((a, b) => a.name.localeCompare(b.name, "nl")),
+        })),
+    }));
 }
 
 export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }: SpotifyBrowserProps) {
@@ -144,7 +146,6 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
   const [sharedUsage, setSharedUsage] = useState<{ playlists: number; tracks: number } | null>(null);
   const [importGenreGroup, setImportGenreGroup] = useState("");
   const [importSubgenre, setImportSubgenre] = useState("");
-  const [importRelatedPlaylistId, setImportRelatedPlaylistId] = useState("");
   const [importCoverUrl, setImportCoverUrl] = useState("");
   const [importAutoCover, setImportAutoCover] = useState(true);
   const [savedTrackThumbs, setSavedTrackThumbs] = useState<Record<string, string>>({});
@@ -374,7 +375,6 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
       const meta: PlaylistGenreMetaInput = {
         genre_group: importGenreGroup.trim() || null,
         subgenre: importSubgenre.trim() || null,
-        related_parent_playlist_id: importRelatedPlaylistId.trim() || null,
         cover_url: importCoverUrl.trim() || null,
         auto_cover: importAutoCover,
       };
@@ -385,7 +385,6 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
       setImportStatus(`Import klaar: ${result.totalPlaylists} playlist(s), ${result.totalTracks} tracks${sharedInfo}.`);
       setImportFile(null);
       setImportSubgenre("");
-      setImportRelatedPlaylistId("");
       setImportCoverUrl("");
       setImportAutoCover(true);
       await loadSavedPlaylists();
@@ -686,8 +685,8 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
   const filteredSharedPlaylists = sharedPlaylists.filter((playlist) =>
     playlist.name.toLowerCase().includes(filter.toLowerCase()),
   );
-  const savedPlaylistTreeRows = buildPlaylistTreeRows(filteredSavedPlaylists);
-  const sharedPlaylistTreeRows = buildPlaylistTreeRows(filteredSharedPlaylists);
+  const groupedSavedPlaylists = useMemo(() => groupPlaylistsByGenre(filteredSavedPlaylists), [filteredSavedPlaylists]);
+  const groupedSharedPlaylists = useMemo(() => groupPlaylistsByGenre(filteredSharedPlaylists), [filteredSharedPlaylists]);
 
   const filteredTracks = tracks.filter((t) => {
     if (!t?.name) return false;
@@ -846,44 +845,57 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                 {savedPlaylistsLoading ? "Laden..." : "Ververs"}
               </button>
             </div>
-            {savedPlaylistTreeRows.length === 0 && !savedPlaylistsLoading && (
+            {groupedSavedPlaylists.length === 0 && !savedPlaylistsLoading && (
               <p className="text-[10px] text-gray-500">Nog geen geïmporteerde playlists.</p>
             )}
-            {savedPlaylistTreeRows.map(({ item: playlist, depth }) => (
-              <div key={playlist.id} className="mt-1 flex items-center justify-between rounded-lg border border-gray-800 bg-gray-900/70 px-2.5 py-1.5" style={{ marginLeft: `${depth * 12}px` }}>
-                {playlist.cover_url ? (
-                  <img
-                    src={playlist.cover_url}
-                    alt=""
-                    className="mr-2 h-8 w-8 shrink-0 rounded object-cover"
-                  />
-                ) : (
-                  <div className="mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded bg-gray-800">
-                    <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V4.5A2.25 2.25 0 0016.5 2.25h-1.875a2.25 2.25 0 00-2.25 2.25v13.5m0 0a2.25 2.25 0 01-2.25 2.25H8.25a2.25 2.25 0 01-2.25-2.25V6.75" />
-                    </svg>
-                  </div>
-                )}
-                <button
-                  type="button"
-                  onClick={() => { void openSavedPlaylist(playlist); }}
-                  className="min-w-0 flex-1 truncate text-left text-[11px] font-semibold text-white transition hover:text-violet-300"
-                >
-                  {depth > 0 ? "↳ " : ""}{playlist.name}
-                  {(playlist.genre_group || playlist.subgenre) ? (
-                    <span className="ml-1 text-[10px] font-normal text-gray-400">
-                      ({[playlist.genre_group, playlist.subgenre].filter(Boolean).join(" / ")})
-                    </span>
-                  ) : null}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { void removeSavedPlaylist(playlist); }}
-                  className="ml-2 text-[10px] text-red-300 transition hover:text-red-200"
-                >
-                  Verwijder
-                </button>
-              </div>
+            {groupedSavedPlaylists.map((genreGroup) => (
+              <details key={`saved-genre:${genreGroup.genreLabel}`} open className="mt-1 rounded border border-gray-800 bg-gray-900/40 p-1">
+                <summary className="cursor-pointer list-none text-[11px] font-semibold text-gray-200">
+                  {genreGroup.genreLabel} ({genreGroup.subgroups.reduce((acc, subgroup) => acc + subgroup.items.length, 0)})
+                </summary>
+                <div className="mt-1 space-y-1">
+                  {genreGroup.subgroups.map((subgroup) => (
+                    <details key={`saved-sub:${genreGroup.genreLabel}:${subgroup.subgenreLabel}`} open className="rounded border border-gray-800/80 bg-gray-900/50 p-1">
+                      <summary className="cursor-pointer list-none text-[10px] font-semibold text-gray-300">
+                        {subgroup.subgenreLabel} ({subgroup.items.length})
+                      </summary>
+                      <div className="mt-1 space-y-1">
+                        {subgroup.items.map((playlist) => (
+                          <div key={playlist.id} className="flex items-center justify-between rounded-lg border border-gray-800 bg-gray-900/70 px-2.5 py-1.5">
+                            {playlist.cover_url ? (
+                              <img
+                                src={playlist.cover_url}
+                                alt=""
+                                className="mr-2 h-8 w-8 shrink-0 rounded object-cover"
+                              />
+                            ) : (
+                              <div className="mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded bg-gray-800">
+                                <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V4.5A2.25 2.25 0 0016.5 2.25h-1.875a2.25 2.25 0 00-2.25 2.25v13.5m0 0a2.25 2.25 0 01-2.25 2.25H8.25a2.25 2.25 0 01-2.25-2.25V6.75" />
+                                </svg>
+                              </div>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => { void openSavedPlaylist(playlist); }}
+                              className="min-w-0 flex-1 truncate text-left text-[11px] font-semibold text-white transition hover:text-violet-300"
+                            >
+                              {playlist.name}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { void removeSavedPlaylist(playlist); }}
+                              className="ml-2 text-[10px] text-red-300 transition hover:text-red-200"
+                            >
+                              Verwijder
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  ))}
+                </div>
+              </details>
             ))}
           </div>
           )}
@@ -906,40 +918,53 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                 Pool: {sharedUsage.playlists} playlists · {sharedUsage.tracks} tracks
               </p>
             )}
-            {sharedPlaylistTreeRows.length === 0 && !sharedPlaylistsLoading && (
+            {groupedSharedPlaylists.length === 0 && !sharedPlaylistsLoading && (
               <p className="text-[10px] text-gray-400">Nog geen gedeelde playlists beschikbaar.</p>
             )}
-            {sharedPlaylistTreeRows.slice(0, 120).map(({ item: playlist, depth }) => (
-              <div key={playlist.id} className="mt-1 flex items-center justify-between rounded-lg border border-gray-800 bg-gray-900/70 px-2.5 py-1.5" style={{ marginLeft: `${depth * 12}px` }}>
-                {playlist.cover_url ? (
-                  <img
-                    src={playlist.cover_url}
-                    alt=""
-                    className="mr-2 h-8 w-8 shrink-0 rounded object-cover"
-                  />
-                ) : (
-                  <div className="mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded bg-gray-800">
-                    <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V4.5A2.25 2.25 0 0016.5 2.25h-1.875a2.25 2.25 0 00-2.25 2.25v13.5m0 0a2.25 2.25 0 01-2.25 2.25H8.25a2.25 2.25 0 01-2.25-2.25V6.75" />
-                    </svg>
-                  </div>
-                )}
-                <button
-                  type="button"
-                  onClick={() => { void openSharedPlaylist(playlist); }}
-                  className="min-w-0 flex-1 truncate text-left text-[11px] font-semibold text-white transition hover:text-blue-300"
-                >
-                  {depth > 0 ? "↳ " : ""}{playlist.name}
-                  {(playlist.genre_group || playlist.subgenre) ? (
-                    <span className="ml-1 text-[10px] font-normal text-gray-400">
-                      ({[playlist.genre_group, playlist.subgenre].filter(Boolean).join(" / ")})
-                    </span>
-                  ) : null}
-                </button>
-                <span className="ml-2 shrink-0 text-[10px] text-gray-400">
-                  {playlist.track_count} tracks
-                </span>
-              </div>
+            {groupedSharedPlaylists.map((genreGroup) => (
+              <details key={`shared-genre:${genreGroup.genreLabel}`} open className="mt-1 rounded border border-blue-900/40 bg-blue-950/10 p-1">
+                <summary className="cursor-pointer list-none text-[11px] font-semibold text-blue-100">
+                  {genreGroup.genreLabel} ({genreGroup.subgroups.reduce((acc, subgroup) => acc + subgroup.items.length, 0)})
+                </summary>
+                <div className="mt-1 space-y-1">
+                  {genreGroup.subgroups.map((subgroup) => (
+                    <details key={`shared-sub:${genreGroup.genreLabel}:${subgroup.subgenreLabel}`} open className="rounded border border-gray-800/80 bg-gray-900/40 p-1">
+                      <summary className="cursor-pointer list-none text-[10px] font-semibold text-gray-300">
+                        {subgroup.subgenreLabel} ({subgroup.items.length})
+                      </summary>
+                      <div className="mt-1 space-y-1">
+                        {subgroup.items.map((playlist) => (
+                          <div key={playlist.id} className="flex items-center justify-between rounded-lg border border-gray-800 bg-gray-900/70 px-2.5 py-1.5">
+                            {playlist.cover_url ? (
+                              <img
+                                src={playlist.cover_url}
+                                alt=""
+                                className="mr-2 h-8 w-8 shrink-0 rounded object-cover"
+                              />
+                            ) : (
+                              <div className="mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded bg-gray-800">
+                                <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V4.5A2.25 2.25 0 0016.5 2.25h-1.875a2.25 2.25 0 00-2.25 2.25v13.5m0 0a2.25 2.25 0 01-2.25 2.25H8.25a2.25 2.25 0 01-2.25-2.25V6.75" />
+                                </svg>
+                              </div>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => { void openSharedPlaylist(playlist); }}
+                              className="min-w-0 flex-1 truncate text-left text-[11px] font-semibold text-white transition hover:text-blue-300"
+                            >
+                              {playlist.name}
+                            </button>
+                            <span className="ml-2 shrink-0 text-[10px] text-gray-400">
+                              {playlist.track_count} tracks
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  ))}
+                </div>
+              </details>
             ))}
           </div>
           )}
@@ -1029,7 +1054,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
               Nieuwe playlist toevoegen
             </summary>
             <p className="mt-1 text-[10px] text-gray-500">Upload .csv of .zip met playlists uit Exportify.</p>
-            <div className="mt-2 grid gap-1.5 sm:grid-cols-3">
+            <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
               <select
                 value={importGenreGroup}
                 onChange={(e) => setImportGenreGroup(e.target.value)}
@@ -1047,17 +1072,6 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                 placeholder="Subgenre (optioneel)"
                 className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white placeholder-gray-500"
               />
-              <select
-                value={importRelatedPlaylistId}
-                onChange={(e) => setImportRelatedPlaylistId(e.target.value)}
-                onFocus={(e) => keepFieldVisibleOnMobile(e.currentTarget)}
-                className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white"
-              >
-                <option value="">Verwante parent-playlist</option>
-                {savedPlaylists.map((playlist) => (
-                  <option key={playlist.id} value={playlist.id}>{playlist.name}</option>
-                ))}
-              </select>
             </div>
             <div className="mt-2 grid gap-1.5 sm:grid-cols-[1fr_auto]">
               <input

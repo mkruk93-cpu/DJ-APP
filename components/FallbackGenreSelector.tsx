@@ -13,35 +13,55 @@ import type { GenreOption } from "@/lib/radioApi";
 
 type FallbackListTab = "local" | "auto" | "playlists";
 
-function buildSharedFallbackTreeRows(
-  items: Array<{ id: string; related_parent_playlist_id?: string | null }>,
-): Array<{ id: string; depth: number }> {
-  const byId = new Map(items.map((item) => [item.id, item]));
-  const children = new Map<string | null, Array<{ id: string; related_parent_playlist_id?: string | null }>>();
-  const roots: Array<{ id: string; related_parent_playlist_id?: string | null }> = [];
-  for (const item of items) {
-    const parentRaw = item.related_parent_playlist_id?.trim() || null;
-    const parentId = parentRaw ? `shared:${parentRaw}` : null;
-    if (parentId && byId.has(parentId) && parentId !== item.id) {
-      const bucket = children.get(parentId) ?? [];
-      bucket.push(item);
-      children.set(parentId, bucket);
-    } else {
-      roots.push(item);
-    }
+function normalizeBucketLabel(value: string | null | undefined, fallback: string): string {
+  const safe = (value ?? "").trim();
+  return safe || fallback;
+}
+
+function groupSharedPlaylistsByGenre(
+  playlists: Array<{
+    id: string;
+    label: string;
+    trackCount: number;
+    genre_group?: string | null;
+    subgenre?: string | null;
+  }>,
+): Array<{
+  genreLabel: string;
+  subgroups: Array<{
+    subgenreLabel: string;
+    items: Array<{
+      id: string;
+      label: string;
+      trackCount: number;
+      genre_group?: string | null;
+      subgenre?: string | null;
+    }>;
+  }>;
+}> {
+  const byGenre = new Map<string, Map<string, typeof playlists>>();
+  for (const playlist of playlists) {
+    const genreLabel = normalizeBucketLabel(playlist.genre_group, "Overig");
+    const subgenreLabel = normalizeBucketLabel(playlist.subgenre, "Algemeen");
+    if (!byGenre.has(genreLabel)) byGenre.set(genreLabel, new Map<string, typeof playlists>());
+    const bySubgenre = byGenre.get(genreLabel)!;
+    const bucket = bySubgenre.get(subgenreLabel) ?? [];
+    bucket.push(playlist);
+    bySubgenre.set(subgenreLabel, bucket);
   }
-  const rows: Array<{ id: string; depth: number }> = [];
-  const walk = (node: { id: string }, depth: number, chain: Set<string>) => {
-    rows.push({ id: node.id, depth });
-    if (chain.has(node.id)) return;
-    const nextChain = new Set(chain);
-    nextChain.add(node.id);
-    for (const child of children.get(node.id) ?? []) {
-      walk(child, Math.min(depth + 1, 5), nextChain);
-    }
-  };
-  for (const root of roots) walk(root, 0, new Set());
-  return rows;
+  return Array.from(byGenre.entries())
+    .sort(([a], [b]) => a.localeCompare(b, "nl"))
+    .map(([genreLabel, bySubgenre]) => ({
+      genreLabel,
+      subgroups: Array.from(bySubgenre.entries())
+        .sort(([a], [b]) => a.localeCompare(b, "nl"))
+        .map(([subgenreLabel, items]) => ({
+          subgenreLabel,
+          items: items
+            .slice()
+            .sort((a, b) => a.label.localeCompare(b.label, "nl")),
+        })),
+    }));
 }
 
 function normalizeAutoGenreId(raw: string): string {
@@ -81,7 +101,10 @@ export default function FallbackGenreSelector() {
     () => sortedGenres.filter((genre) => genre.id.startsWith("shared:")),
     [sortedGenres],
   );
-  const sharedPlaylistRows = useMemo(() => buildSharedFallbackTreeRows(sharedPlaylists), [sharedPlaylists]);
+  const groupedSharedPlaylists = useMemo(
+    () => groupSharedPlaylistsByGenre(sharedPlaylists),
+    [sharedPlaylists],
+  );
   const autoGenreCanonicalCount = useMemo(() => {
     const unique = new Set<string>();
     for (const genre of autoGenres) {
@@ -372,43 +395,50 @@ export default function FallbackGenreSelector() {
                 </button>
               </div>
             </div>
-            {sharedPlaylistRows.map((row) => {
-              const playlist = sharedPlaylists.find((entry) => entry.id === row.id);
-              if (!playlist) return null;
-              const isActive = playlist.id === activeGenre;
-              return (
-                <button
-                  key={playlist.id}
-                  type="button"
-                  onClick={() => {
-                    const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
-                    getSocket().emit("fallback:genre:set", {
-                      genreId: playlist.id,
-                      selectedBy,
-                      sharedPlaybackMode,
-                    });
-                    if (menuRef.current) menuRef.current.open = false;
-                  }}
-                  className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
-                    isActive
-                      ? "bg-violet-600/25 text-violet-100"
-                      : "text-gray-300 hover:bg-gray-800 hover:text-white"
-                  }`}
-                  style={{ marginLeft: `${row.depth * 10}px` }}
-                >
-                  <span className="truncate">
-                    {row.depth > 0 ? "↳ " : ""}
-                    {playlist.label.replace(/^Playlist ·\s*/i, "")}
-                    {(playlist.genre_group || playlist.subgenre) ? (
-                      <span className="ml-1 text-[10px] text-gray-500">
-                        ({[playlist.genre_group, playlist.subgenre].filter(Boolean).join(" / ")})
-                      </span>
-                    ) : null}
-                  </span>
-                  <span className="ml-2 text-[10px] text-gray-500">{playlist.trackCount}</span>
-                </button>
-              );
-            })}
+            {groupedSharedPlaylists.map((genreGroup) => (
+              <details key={`genre:${genreGroup.genreLabel}`} open className="mb-1 rounded border border-gray-800 bg-gray-900/50 p-1">
+                <summary className="cursor-pointer list-none px-1 py-0.5 text-[11px] font-semibold text-violet-100">
+                  {genreGroup.genreLabel} ({genreGroup.subgroups.reduce((acc, subgroup) => acc + subgroup.items.length, 0)})
+                </summary>
+                <div className="mt-1 space-y-1">
+                  {genreGroup.subgroups.map((subgroup) => (
+                    <details key={`sub:${genreGroup.genreLabel}:${subgroup.subgenreLabel}`} open className="rounded border border-gray-800/80 bg-gray-900/40 p-1">
+                      <summary className="cursor-pointer list-none text-[10px] font-semibold text-gray-300">
+                        {subgroup.subgenreLabel} ({subgroup.items.length})
+                      </summary>
+                      <div className="mt-1 space-y-0.5">
+                        {subgroup.items.map((playlist) => {
+                          const isActive = playlist.id === activeGenre;
+                          return (
+                            <button
+                              key={playlist.id}
+                              type="button"
+                              onClick={() => {
+                                const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
+                                getSocket().emit("fallback:genre:set", {
+                                  genreId: playlist.id,
+                                  selectedBy,
+                                  sharedPlaybackMode,
+                                });
+                                if (menuRef.current) menuRef.current.open = false;
+                              }}
+                              className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
+                                isActive
+                                  ? "bg-violet-600/25 text-violet-100"
+                                  : "text-gray-300 hover:bg-gray-800 hover:text-white"
+                              }`}
+                            >
+                              <span className="truncate">{playlist.label.replace(/^Playlist ·\s*/i, "")}</span>
+                              <span className="ml-2 text-[10px] text-gray-500">{playlist.trackCount}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </details>
+                  ))}
+                </div>
+              </details>
+            ))}
             {sharedPlaylists.length === 0 && (
               <p className="px-2 py-2 text-[11px] text-gray-400">
                 Geen publieke playlists beschikbaar.
