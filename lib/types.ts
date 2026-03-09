@@ -103,6 +103,7 @@ export interface RadioState {
   queue: QueueItem[];
   fallbackGenres: FallbackGenre[];
   activeFallbackGenre: string | null;
+  activeFallbackGenres: string[];
   activeFallbackGenreBy: string | null;
   activeFallbackSharedMode: 'random' | 'ordered';
   mode: Mode;

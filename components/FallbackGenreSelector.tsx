@@ -112,6 +112,7 @@ export default function FallbackGenreSelector() {
   const connected = useRadioStore((s) => s.connected);
   const genres = useRadioStore((s) => s.fallbackGenres);
   const activeGenre = useRadioStore((s) => s.activeFallbackGenre);
+  const activeGenres = useRadioStore((s) => s.activeFallbackGenres);
   const activeGenreBy = useRadioStore((s) => s.activeFallbackGenreBy);
   const sharedPlaybackMode = useRadioStore((s) => s.activeFallbackSharedMode);
   const menuRef = useRef<HTMLDetailsElement | null>(null);
@@ -123,6 +124,7 @@ export default function FallbackGenreSelector() {
   const [collapsedGenres, setCollapsedGenres] = useState<string[]>([]);
   const [collapsedSubgenres, setCollapsedSubgenres] = useState<string[]>([]);
   const [hasStoredCollapseState, setHasStoredCollapseState] = useState(false);
+  const [showFallbackHelp, setShowFallbackHelp] = useState(false);
 
   const sortedGenres = useMemo(
     () => [...genres].sort((a, b) => a.label.localeCompare(b.label, "nl")),
@@ -185,8 +187,17 @@ export default function FallbackGenreSelector() {
     return buildGroupedGenreSections(Array.from(optionMap.values()), "");
   }, [autoGenres]);
 
+  const selectedSharedGenres = useMemo(
+    () => Array.from(new Set((activeGenres ?? []).filter((id) => id.startsWith("shared:")))),
+    [activeGenres],
+  );
   const shouldRender = connected && sortedGenres.length > 0;
-  const activeLabel = sortedGenres.find((g) => g.id === activeGenre)?.label ?? activeGenre ?? "Kies genre";
+  const activeLabel = useMemo(() => {
+    if (selectedSharedGenres.length > 1) {
+      return `${selectedSharedGenres.length} playlists actief`;
+    }
+    return sortedGenres.find((g) => g.id === activeGenre)?.label ?? activeGenre ?? "Kies genre";
+  }, [sortedGenres, activeGenre, selectedSharedGenres]);
 
   useEffect(() => {
     function updateMobileState() {
@@ -213,6 +224,10 @@ export default function FallbackGenreSelector() {
   }, [isMobile]);
 
   useEffect(() => {
+    if (selectedSharedGenres.length > 1) {
+      setActiveListTab("playlists");
+      return;
+    }
     if (activeGenre?.startsWith("auto:")) {
       setActiveListTab("auto");
       return;
@@ -222,7 +237,34 @@ export default function FallbackGenreSelector() {
       return;
     }
     setActiveListTab("local");
-  }, [activeGenre]);
+  }, [activeGenre, selectedSharedGenres.length]);
+
+  function emitSharedSelection(nextSelected: string[]): void {
+    const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
+    const normalized = Array.from(new Set(nextSelected.filter((id) => id.startsWith("shared:"))));
+    const primary = normalized[0] ?? activeGenre ?? null;
+    if (!primary) return;
+    const selectedLabel = sortedSharedPlaylists.find((playlist) => playlist.id === primary)?.label ?? primary;
+    getSocket().emit("fallback:genre:set", {
+      genreId: primary,
+      genreIds: normalized,
+      selectedBy,
+      selectedLabel,
+      sharedPlaybackMode,
+    });
+  }
+
+  function selectAllSharedPlaylists(): void {
+    const all = sortedSharedPlaylists.map((playlist) => playlist.id).filter((id) => id.startsWith("shared:"));
+    if (all.length === 0) return;
+    emitSharedSelection(all);
+  }
+
+  function clearSharedPlaylistsWithSafeDefault(): void {
+    const fallback = sortedSharedPlaylists[0]?.id;
+    if (!fallback) return;
+    emitSharedSelection([fallback]);
+  }
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -438,6 +480,42 @@ export default function FallbackGenreSelector() {
           </>
         ) : (
           <>
+            <div className="mb-1 rounded-md border border-gray-800 bg-gray-900/70 p-1.5">
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <p className="text-[10px] font-semibold text-gray-300">Playlist selectie</p>
+                <button
+                  type="button"
+                  onClick={() => setShowFallbackHelp((prev) => !prev)}
+                  className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-gray-700 text-[10px] text-gray-300 transition hover:border-violet-500 hover:text-white"
+                  aria-label="Hoe werkt autoplay fallback?"
+                  title="Hoe werkt autoplay fallback?"
+                >
+                  ?
+                </button>
+              </div>
+              {showFallbackHelp && (
+                <div className="mb-1 rounded border border-violet-700/40 bg-violet-900/20 px-2 py-1 text-[10px] leading-relaxed text-violet-100">
+                  Vink meerdere playlists aan voor een mix. De speler verdeelt tracks netjes over de geselecteerde playlists.
+                  Als een track niet gevonden wordt, probeert hij de volgende kandidaat automatisch.
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-1">
+                <button
+                  type="button"
+                  onClick={selectAllSharedPlaylists}
+                  className="rounded border border-gray-700 px-2 py-1 text-[11px] font-semibold text-gray-200 transition hover:bg-gray-800"
+                >
+                  Alles aan
+                </button>
+                <button
+                  type="button"
+                  onClick={clearSharedPlaylistsWithSafeDefault}
+                  className="rounded border border-gray-700 px-2 py-1 text-[11px] font-semibold text-gray-200 transition hover:bg-gray-800"
+                >
+                  Alles uit
+                </button>
+              </div>
+            </div>
             <div className="mb-1 rounded-md border border-gray-800 bg-gray-900/70 p-1">
               <p className="mb-1 px-1 text-[10px] text-gray-400">Afspeelvolgorde</p>
               <div className="grid grid-cols-2 gap-1">
@@ -520,29 +598,33 @@ export default function FallbackGenreSelector() {
                       </summary>
                       <div className="mt-1 space-y-0.5">
                         {subgroup.items.map((playlist) => {
-                          const isActive = playlist.id === activeGenre;
+                          const isActive = selectedSharedGenres.includes(playlist.id);
                           return (
-                            <button
+                            <label
                               key={playlist.id}
-                              type="button"
-                              onClick={() => {
-                                const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
-                                getSocket().emit("fallback:genre:set", {
-                                  genreId: playlist.id,
-                                  selectedBy,
-                                  sharedPlaybackMode,
-                                });
-                                if (menuRef.current) menuRef.current.open = false;
-                              }}
-                              className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
+                              className={`flex w-full cursor-pointer items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
                                 isActive
                                   ? "bg-violet-600/25 text-violet-100"
                                   : "text-gray-300 hover:bg-gray-800 hover:text-white"
                               }`}
                             >
-                              <span className="truncate">{playlist.label.replace(/^Playlist ·\s*/i, "")}</span>
+                              <span className="mr-2 flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={isActive}
+                                  onChange={() => {
+                                    const next = isActive
+                                      ? selectedSharedGenres.filter((id) => id !== playlist.id)
+                                      : [...selectedSharedGenres, playlist.id];
+                                    const safeNext = next.length > 0 ? next : [playlist.id];
+                                    emitSharedSelection(safeNext);
+                                  }}
+                                  className="h-3.5 w-3.5 rounded border-gray-600 bg-gray-800 text-violet-500 focus:ring-violet-500"
+                                />
+                                <span className="truncate">{playlist.label.replace(/^Playlist ·\s*/i, "")}</span>
+                              </span>
                               <span className="ml-2 text-[10px] text-gray-500">{playlist.trackCount}</span>
-                            </button>
+                            </label>
                           );
                         })}
                       </div>
@@ -551,6 +633,11 @@ export default function FallbackGenreSelector() {
                 </div>
               </details>
             ))}
+            {selectedSharedGenres.length > 1 && (
+              <div className="mb-1 rounded-md border border-violet-700/40 bg-violet-900/20 px-2 py-1 text-[10px] text-violet-100">
+                Mix actief: {selectedSharedGenres.length} playlists
+              </div>
+            )}
             {sharedPlaylists.length === 0 && (
               <p className="px-2 py-2 text-[11px] text-gray-400">
                 Geen publieke playlists beschikbaar.

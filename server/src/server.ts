@@ -13,7 +13,7 @@ import { initCache } from './cleanup.js';
 import { seedSettings, getActiveMode, getActiveFallbackGenre, getModeSettings, getSetting, setSetting } from './settings.js';
 import { getQueue, addToQueue, removeFromQueue, reorderQueue, fetchVideoInfo, extractYoutubeId, extractSourceId, isSoundcloudUrl, getThumbnailUrl, encodeLocalFileUrl } from './queue.js';
 import { canPerformAction } from './permissions.js';
-import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, isPlayCycleRunning, playerEvents, setKeepFiles, invalidatePreload, invalidateNextReady, removeQueueItemFromPreload, setActiveFallbackGenre, setSharedAutoPlaybackMode, resetSharedAutoPlaybackCycleForSelection } from './player.js';
+import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, isPlayCycleRunning, playerEvents, setKeepFiles, invalidatePreload, invalidateNextReady, removeQueueItemFromPreload, setActiveFallbackGenre, setActiveSharedFallbackPlaylists, setSharedAutoPlaybackMode, resetSharedAutoPlaybackCycleForSelection } from './player.js';
 import { youtubeSearch, soundcloudSearch, spotdlSearch } from './services/search.js';
 import { startBridge } from './bridge.js';
 import { startNowPlayingWatcher } from './nowPlaying.js';
@@ -85,6 +85,7 @@ import {
   setGenreHitsCacheEntry,
 } from './genreHitsStore.js';
 import { getStatsSummary, recordRequestEvent } from './services/statsStore.js';
+import { recordMissingTrackLookup } from './services/missingTrackLog.js';
 
 // ── Environment ──────────────────────────────────────────────────────────────
 
@@ -856,6 +857,42 @@ async function resolveSharedPlaybackMode(persistFix = false): Promise<'random' |
   return mode;
 }
 
+function normalizeSharedFallbackGenreIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== 'string') continue;
+    const normalized = normalizeFallbackGenreId(entry);
+    const sharedId = parseSharedFallbackPlaylistId(normalized);
+    if (!sharedId || !hasSharedPlaylist(sharedId)) continue;
+    const fallbackId = toSharedFallbackPlaylistId(sharedId);
+    if (seen.has(fallbackId)) continue;
+    seen.add(fallbackId);
+    out.push(fallbackId);
+  }
+  return out;
+}
+
+async function resolveActiveSharedFallbackGenres(
+  activeGenreId: string | null,
+  persistFix = false,
+): Promise<string[]> {
+  const raw = await getSetting<unknown>(sb, 'fallback_active_shared_playlist_ids');
+  let normalized = normalizeSharedFallbackGenreIds(raw);
+  const activeSharedId = parseSharedFallbackPlaylistId(activeGenreId);
+  if (activeSharedId) {
+    const activeSharedGenre = toSharedFallbackPlaylistId(activeSharedId);
+    if (!normalized.includes(activeSharedGenre)) {
+      normalized = [activeSharedGenre, ...normalized];
+    }
+  }
+  if (persistFix) {
+    await setSetting(sb, 'fallback_active_shared_playlist_ids', normalized);
+  }
+  return normalized;
+}
+
 async function isKnownFallbackSelection(genreId: string | null): Promise<boolean> {
   if (!genreId) return false;
   if (isKnownFallbackGenre(genreId)) return true;
@@ -870,11 +907,14 @@ async function emitFallbackGenreUpdate(target?: { emit: (event: string, payload:
     getSetting<string | null>(sb, 'fallback_active_genre_by'),
     resolveSharedPlaybackMode(),
   ]);
+  const activeGenreIds = await resolveActiveSharedFallbackGenres(activeGenreId, true);
   setSharedAutoPlaybackMode(sharedMode);
   setActiveFallbackGenre(activeGenreId);
+  setActiveSharedFallbackPlaylists(activeGenreIds);
   const genres = await getCombinedFallbackGenres();
   const payload = {
     activeGenreId,
+    activeGenreIds,
     selectedBy: normalizeNickname(selectedBy),
     sharedPlaybackMode: sharedMode,
     genres,
@@ -1108,6 +1148,7 @@ async function getServerState(): Promise<ServerState> {
     getCombinedFallbackGenres(),
     resolveSharedPlaybackMode(),
   ]));
+  const activeFallbackGenres = await resolveActiveSharedFallbackGenres(activeFallbackGenre, true);
 
   return {
     currentTrack: getCurrentTrack(),
@@ -1117,6 +1158,7 @@ async function getServerState(): Promise<ServerState> {
     modeSettings,
     fallbackGenres,
     activeFallbackGenre,
+    activeFallbackGenres,
     activeFallbackGenreBy: normalizeNickname(activeFallbackGenreBy),
     activeFallbackSharedMode,
     listenerCount: getEffectiveListenerCount(),
@@ -1199,6 +1241,7 @@ function buildDegradedServerState(): ServerState {
     },
     fallbackGenres: [],
     activeFallbackGenre: null,
+    activeFallbackGenres: [],
     activeFallbackGenreBy: null,
     activeFallbackSharedMode: 'random',
     listenerCount: getEffectiveListenerCount(),
@@ -3075,9 +3118,12 @@ app.post('/api/settings', async (req, res) => {
       }
       const nextGenre = requested ?? getDefaultFallbackGenreId();
       await setSetting(sb, key, nextGenre);
+      const sharedId = parseSharedFallbackPlaylistId(nextGenre);
+      await setSetting(sb, 'fallback_active_shared_playlist_ids', sharedId ? [toSharedFallbackPlaylistId(sharedId)] : []);
       await setSetting(sb, 'fallback_active_genre_by', null);
       resetSharedAutoPlaybackCycleForSelection(nextGenre);
       setActiveFallbackGenre(nextGenre);
+      setActiveSharedFallbackPlaylists(sharedId ? [toSharedFallbackPlaylistId(sharedId)] : []);
       await emitFallbackGenreUpdate();
       console.log(`[rest] Setting updated: ${key}=${nextGenre ?? 'none'}`);
       return res.json({ ok: true });
@@ -3624,6 +3670,15 @@ async function addQueueItemFromSubmission(
         score: evaluation.score,
         reasons: evaluation.reasons.join('|') || 'none',
       }));
+      recordMissingTrackLookup({
+        source: 'queue_add',
+        query: submission.youtube_url,
+        strictMetadata,
+        expectedArtist,
+        expectedTitle,
+        providerCandidates: searchResults.length,
+        diagnostics,
+      });
       console.warn(`[queue] No usable result for "${submission.youtube_url}" strict=${strictMetadata} candidates=${searchResults.length} diagnostics=${JSON.stringify(diagnostics)}`);
       return { item: null, error: `Geen bruikbaar resultaat gevonden voor "${url}"` };
     }
@@ -4166,8 +4221,12 @@ io.on('connection', (socket) => {
   });
 
   // ── fallback:genre:set (global, all listeners) ──
-  socket.on('fallback:genre:set', async (data: { genreId: string; selectedBy?: string; sharedPlaybackMode?: string }) => {
-    const requested = normalizeFallbackGenreId(data.genreId);
+  socket.on('fallback:genre:set', async (data: { genreId?: string; genreIds?: string[]; selectedBy?: string; selectedLabel?: string; sharedPlaybackMode?: string }) => {
+    const requestedList = normalizeSharedFallbackGenreIds(data.genreIds);
+    const requestedSingle = normalizeFallbackGenreId(data.genreId);
+    const requested = requestedSingle
+      ?? requestedList[0]
+      ?? null;
     if (!requested || !(await isKnownFallbackSelection(requested))) {
       socket.emit('error:toast', { message: 'Dit genre is niet beschikbaar' });
       return;
@@ -4176,6 +4235,10 @@ io.on('connection', (socket) => {
     const requestedSharedMode = normalizeSharedPlaybackMode(data.sharedPlaybackMode);
     try {
       await setSetting(sb, 'fallback_active_genre', requested);
+      const activeSharedList = requestedList.length > 0
+        ? requestedList
+        : (parseSharedFallbackPlaylistId(requested) ? [toSharedFallbackPlaylistId(parseSharedFallbackPlaylistId(requested)!)] : []);
+      await setSetting(sb, 'fallback_active_shared_playlist_ids', activeSharedList);
       await setSetting(sb, 'fallback_active_genre_by', selectedBy);
       const sharedId = parseSharedFallbackPlaylistId(requested);
       if (sharedId) {
@@ -4184,7 +4247,16 @@ io.on('connection', (socket) => {
       }
       resetSharedAutoPlaybackCycleForSelection(requested);
       setActiveFallbackGenre(requested);
+      setActiveSharedFallbackPlaylists(activeSharedList);
       await emitFallbackGenreUpdate();
+      if (activeSharedList.length > 1) {
+        socket.emit('info:toast', { message: `Autoplay mix ingesteld: ${activeSharedList.length} playlists actief` });
+      } else if (parseSharedFallbackPlaylistId(requested)) {
+        const selectedLabel = String(data.selectedLabel ?? requested).replace(/^Playlist ·\s*/i, '').trim();
+        socket.emit('info:toast', { message: `Autoplay playlist: ${selectedLabel}` });
+      } else {
+        socket.emit('info:toast', { message: `Autoplay fallback ingesteld op ${requested}` });
+      }
       console.log(`[fallback] Active genre changed: ${requested} by ${selectedBy}`);
     } catch (err) {
       console.error('[socket] fallback:genre:set error:', err);
@@ -4234,9 +4306,11 @@ async function main(): Promise<void> {
   console.log('[server] Settings seeded');
   reloadFallbackGenres();
   const startupFallbackGenre = await resolveActiveFallbackGenre(true);
+  const startupFallbackGenres = await resolveActiveSharedFallbackGenres(startupFallbackGenre, true);
   const startupSharedMode = await resolveSharedPlaybackMode(true);
   setSharedAutoPlaybackMode(startupSharedMode);
   setActiveFallbackGenre(startupFallbackGenre);
+  setActiveSharedFallbackPlaylists(startupFallbackGenres);
   console.log(`[fallback] Active genre: ${startupFallbackGenre ?? 'none'}`);
 
   httpServer.listen(PORT, () => {

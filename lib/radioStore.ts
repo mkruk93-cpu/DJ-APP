@@ -8,6 +8,7 @@ interface RadioStore extends RadioState {
   setQueue: (items: QueueItem[]) => void;
   setFallbackGenres: (genres: FallbackGenre[]) => void;
   setActiveFallbackGenre: (genreId: string | null) => void;
+  setActiveFallbackGenres: (genreIds: string[]) => void;
   setActiveFallbackGenreBy: (nickname: string | null) => void;
   setActiveFallbackSharedMode: (mode: "random" | "ordered") => void;
   setMode: (mode: Mode, settings: ModeSettings) => void;
@@ -33,6 +34,7 @@ export const useRadioStore = create<RadioStore>((set) => ({
   queue: [],
   fallbackGenres: [],
   activeFallbackGenre: null,
+  activeFallbackGenres: [],
   activeFallbackGenreBy: null,
   activeFallbackSharedMode: "random",
   mode: 'radio',
@@ -73,6 +75,7 @@ export const useRadioStore = create<RadioStore>((set) => ({
   setQueue: (queue) => set({ queue }),
   setFallbackGenres: (fallbackGenres) => set({ fallbackGenres }),
   setActiveFallbackGenre: (activeFallbackGenre) => set({ activeFallbackGenre }),
+  setActiveFallbackGenres: (activeFallbackGenres) => set({ activeFallbackGenres }),
   setActiveFallbackGenreBy: (activeFallbackGenreBy) => set({ activeFallbackGenreBy }),
   setActiveFallbackSharedMode: (activeFallbackSharedMode) => set({ activeFallbackSharedMode }),
   setMode: (mode, modeSettings) => set({ mode, modeSettings }),
@@ -93,6 +96,7 @@ export const useRadioStore = create<RadioStore>((set) => ({
     queue: [],
     fallbackGenres: [],
     activeFallbackGenre: null,
+    activeFallbackGenres: [],
     activeFallbackGenreBy: null,
     activeFallbackSharedMode: "random",
     listenerCount: 0,

@@ -104,6 +104,7 @@ export interface ServerState {
   modeSettings: ModeSettings;
   fallbackGenres: FallbackGenre[];
   activeFallbackGenre: string | null;
+  activeFallbackGenres: string[];
   activeFallbackGenreBy: string | null;
   activeFallbackSharedMode: 'random' | 'ordered';
   listenerCount: number;

@@ -6,6 +6,7 @@ const TABLE = 'radio_settings';
 const DEFAULTS: Record<string, unknown> = {
   active_mode: 'radio',
   fallback_active_genre: null,
+  fallback_active_shared_playlist_ids: [],
   fallback_active_genre_by: null,
   democracy_threshold: 51,
   democracy_timer: 15,

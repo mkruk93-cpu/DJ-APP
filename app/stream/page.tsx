@@ -117,6 +117,7 @@ export default function StreamPage() {
   const [requestBadge, setRequestBadge] = useState(false);
   const [queueBadge, setQueueBadge] = useState(false);
   const [statsOpen, setStatsOpen] = useState(false);
+  const [appInfoOpen, setAppInfoOpen] = useState(false);
   const [mobileHeaderMenuOpen, setMobileHeaderMenuOpen] = useState(false);
   const [statsLoading, setStatsLoading] = useState(false);
   const [statsError, setStatsError] = useState<string | null>(null);
@@ -547,6 +548,7 @@ export default function StreamPage() {
             queue: state.queue ?? [],
             fallbackGenres: state.fallbackGenres ?? [],
             activeFallbackGenre: state.activeFallbackGenre ?? null,
+            activeFallbackGenres: state.activeFallbackGenres ?? [],
             activeFallbackGenreBy: state.activeFallbackGenreBy ?? null,
             activeFallbackSharedMode: state.activeFallbackSharedMode ?? "random",
             mode: state.mode ?? "radio",
@@ -631,9 +633,10 @@ export default function StreamPage() {
       store.getState().setUpcomingTrack(upcoming);
     });
 
-    socket.on("fallback:genre:update", (data: { activeGenreId: string | null; selectedBy?: string | null; sharedPlaybackMode?: "random" | "ordered"; genres: Array<{ id: string; label: string; trackCount: number }> }) => {
+    socket.on("fallback:genre:update", (data: { activeGenreId: string | null; activeGenreIds?: string[]; selectedBy?: string | null; sharedPlaybackMode?: "random" | "ordered"; genres: Array<{ id: string; label: string; trackCount: number }> }) => {
       store.getState().setFallbackGenres(data.genres ?? []);
       store.getState().setActiveFallbackGenre(data.activeGenreId ?? null);
+      store.getState().setActiveFallbackGenres(Array.isArray(data.activeGenreIds) ? data.activeGenreIds : []);
       store.getState().setActiveFallbackGenreBy(data.selectedBy ?? null);
       store.getState().setActiveFallbackSharedMode(data.sharedPlaybackMode ?? "random");
     });
@@ -920,6 +923,16 @@ export default function StreamPage() {
             >
               Uitloggen
             </button>
+            <button
+              onClick={() => setAppInfoOpen((prev) => !prev)}
+              className={`hidden whitespace-nowrap rounded-lg border px-2 py-1 text-xs transition sm:inline-flex sm:px-3 sm:text-sm ${
+                appInfoOpen
+                  ? "border-violet-500/80 bg-violet-500/15 text-violet-200"
+                  : "border-gray-700 text-gray-400 hover:border-gray-600 hover:text-white"
+              }`}
+            >
+              Info
+            </button>
             <div ref={mobileHeaderMenuRef} className="relative sm:hidden">
               <button
                 type="button"
@@ -940,6 +953,16 @@ export default function StreamPage() {
                     className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 transition hover:bg-gray-800"
                   >
                     {statsOpen ? "Sluit stats" : "Open stats"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAppInfoOpen((prev) => !prev);
+                      setMobileHeaderMenuOpen(false);
+                    }}
+                    className="mt-1 block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 transition hover:bg-gray-800"
+                  >
+                    {appInfoOpen ? "Sluit info" : "Open info"}
                   </button>
                   <button
                     type="button"
@@ -1525,6 +1548,32 @@ export default function StreamPage() {
               >
                 Verbergen
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {appInfoOpen && (
+        <div className="fixed inset-0 z-[160] flex items-end justify-center bg-black/70 px-2 py-2 sm:items-center sm:p-6">
+          <div className="w-full max-w-2xl rounded-2xl border border-gray-700 bg-gray-950 p-4 shadow-2xl shadow-black/50 sm:p-5">
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-white">Hoe deze app werkt</h2>
+                <p className="mt-1 text-xs text-gray-400">Korte uitleg van de radio, wachtrij en autoplay fallback.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAppInfoOpen(false)}
+                className="rounded-md border border-gray-700 px-2 py-1 text-xs text-gray-300 transition hover:border-gray-600 hover:text-white"
+              >
+                Sluiten
+              </button>
+            </div>
+            <div className="space-y-2 text-sm text-gray-200">
+              <p><span className="font-semibold text-violet-300">1. Aanvragen:</span> in de add-track tabs kun je tracks zoeken of uit playlists toevoegen aan de wachtrij.</p>
+              <p><span className="font-semibold text-violet-300">2. Wachtrij:</span> als de wachtrij niet leeg is, speelt de server die tracks af in volgorde.</p>
+              <p><span className="font-semibold text-violet-300">3. Autoplay fallback:</span> als de wachtrij leeg is, gebruikt de app het gekozen fallback genre of de geselecteerde autoplay playlists.</p>
+              <p><span className="font-semibold text-violet-300">4. Skip en stemmen:</span> afhankelijk van de modus kan admin skippen of kunnen luisteraars stemmen om te skippen.</p>
+              <p><span className="font-semibold text-violet-300">5. Statistieken:</span> via Stats zie je top-aanvragers, genres, bronnen en recente verzoeken.</p>
             </div>
           </div>
         </div>
