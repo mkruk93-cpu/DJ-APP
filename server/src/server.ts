@@ -3177,6 +3177,19 @@ function getSkipVoteTimerSeconds(): number {
   return Math.max(0, Math.ceil((voteExpiresAt - Date.now()) / 1000));
 }
 
+function getSkipVoteEligibleListenerCount(): number {
+  const activeWebListeners = new Set<string>();
+  for (const [socketId, presence] of listenerPresenceBySocket.entries()) {
+    if (!presence.listening) continue;
+    const key = presence.nickname.trim().toLowerCase() || `socket:${socketId}`;
+    activeWebListeners.add(key);
+  }
+  if (activeWebListeners.size > 0) return activeWebListeners.size;
+  if (streamHub.listenerCount > 0) return streamHub.listenerCount;
+  // Prevent phantom extra sockets from forcing unnecessary second votes.
+  return Math.max(1, voteSkipSet.size);
+}
+
 async function emitSkipVoteState(): Promise<void> {
   if (voteSkipSet.size <= 0) {
     io.emit('vote:update', null);
@@ -3185,22 +3198,25 @@ async function emitSkipVoteState(): Promise<void> {
 
   const settings = await getModeSettings(sb);
   const threshold = settings.democracy_threshold / 100;
-  const required = Math.max(1, Math.ceil(getEffectiveListenerCount() * threshold));
+  const required = Math.max(1, Math.ceil(getSkipVoteEligibleListenerCount() * threshold));
   const timer = getSkipVoteTimerSeconds();
+
+  // If the threshold is already met, skip immediately and avoid
+  // briefly broadcasting a stale "more votes needed" vote state.
+  if (voteSkipSet.size >= required && !isSkipLocked()) {
+    console.log(`[vote] Threshold reached — skipping (votes=${voteSkipSet.size}, required=${required})`);
+    resetVotes();
+    io.emit('vote:update', null);
+    skipCurrentTrack();
+    markSkipTriggered();
+    return;
+  }
 
   io.emit('vote:update', {
     votes: voteSkipSet.size,
     required,
     timer,
   });
-
-  if (voteSkipSet.size >= required && !isSkipLocked()) {
-    console.log('[vote] Threshold reached — skipping');
-    resetVotes();
-    io.emit('vote:update', null);
-    skipCurrentTrack();
-    markSkipTriggered();
-  }
 }
 
 // ── Duration vote state ─────────────────────────────────────────────────────
@@ -3980,6 +3996,14 @@ io.on('connection', (socket) => {
   // ── vote:skip ──
   socket.on('vote:skip', async () => {
     try {
+      const currentPresence = listenerPresenceBySocket.get(socket.id);
+      if (currentPresence && !currentPresence.listening) {
+        listenerPresenceBySocket.set(socket.id, {
+          ...currentPresence,
+          listening: true,
+          updatedAt: Date.now(),
+        });
+      }
       const mode = await getActiveMode(sb);
       if (!canPerformAction(mode, 'vote_skip', false)) {
         socket.emit('error:toast', { message: 'Stemmen is niet beschikbaar in deze modus' });
