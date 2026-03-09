@@ -187,10 +187,17 @@ export default function FallbackGenreSelector() {
     return buildGroupedGenreSections(Array.from(optionMap.values()), "");
   }, [autoGenres]);
 
-  const selectedSharedGenres = useMemo(
-    () => Array.from(new Set((activeGenres ?? []).filter((id) => id.startsWith("shared:")))),
-    [activeGenres],
-  );
+  const selectedSharedGenres = useMemo(() => {
+    const explicit = Array.from(new Set((activeGenres ?? []).filter((id) => id.startsWith("shared:"))));
+    if (explicit.length > 0) return explicit;
+    if (activeGenre?.startsWith("shared:")) return [activeGenre];
+    return [];
+  }, [activeGenres, activeGenre]);
+  const selectedGenreIds = useMemo(() => {
+    const explicit = Array.from(new Set(activeGenres ?? []));
+    if (explicit.length > 0) return explicit;
+    return activeGenre ? [activeGenre] : [];
+  }, [activeGenres, activeGenre]);
   const shouldRender = connected && sortedGenres.length > 0;
   const activeLabel = useMemo(() => {
     if (selectedSharedGenres.length > 1) {
@@ -252,6 +259,29 @@ export default function FallbackGenreSelector() {
       selectedLabel,
       sharedPlaybackMode,
     });
+  }
+
+  function emitSelection(nextSelected: string[]): void {
+    const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
+    const normalized = Array.from(new Set(nextSelected.map((id) => id.trim()).filter(Boolean)));
+    const primary = normalized[0] ?? activeGenre ?? null;
+    if (!primary) return;
+    const selectedLabel = sortedGenres.find((genre) => genre.id === primary)?.label ?? primary;
+    getSocket().emit("fallback:genre:set", {
+      genreId: primary,
+      genreIds: normalized,
+      selectedBy,
+      selectedLabel,
+      sharedPlaybackMode,
+    });
+  }
+
+  function toggleSelection(id: string): void {
+    const isActive = selectedGenreIds.includes(id);
+    const next = isActive
+      ? selectedGenreIds.filter((entry) => entry !== id)
+      : [...selectedGenreIds, id];
+    emitSelection(next.length > 0 ? next : [id]);
   }
 
   function selectAllSharedPlaylists(): void {
@@ -372,29 +402,41 @@ export default function FallbackGenreSelector() {
             Gekozen door: <span className="text-violet-300">{activeGenreBy}</span>
           </p>
         )}
+        <div className="mb-1 rounded-md border border-gray-800 bg-gray-900/70 px-2 py-1 text-[10px] text-gray-300">
+          <span className="font-semibold text-gray-200">Actief nu:</span>{" "}
+          {selectedGenreIds.length > 0
+            ? selectedGenreIds
+              .map((id) => sortedGenres.find((genre) => genre.id === id)?.label ?? id)
+              .slice(0, 4)
+              .join(" · ")
+            : "geen selectie"}
+          {selectedGenreIds.length > 4 ? ` (+${selectedGenreIds.length - 4})` : ""}
+        </div>
         <div className="border-b border-gray-800/80 mb-1" />
         {activeListTab === "local" ? (
           <>
             {localGenres.map((genre) => {
-              const isActive = genre.id === activeGenre;
+              const isActive = selectedGenreIds.includes(genre.id);
               return (
-                <button
+                <label
                   key={genre.id}
-                  type="button"
-                  onClick={() => {
-                    const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
-                    getSocket().emit("fallback:genre:set", { genreId: genre.id, selectedBy });
-                    if (menuRef.current) menuRef.current.open = false;
-                  }}
-                  className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
+                  className={`flex w-full cursor-pointer items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
                     isActive
                       ? "bg-violet-600/25 text-violet-100"
                       : "text-gray-300 hover:bg-gray-800 hover:text-white"
                   }`}
                 >
-                  <span className="truncate">{genre.label}</span>
+                  <span className="mr-2 flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={isActive}
+                      onChange={() => toggleSelection(genre.id)}
+                      className="h-3.5 w-3.5 cursor-pointer accent-violet-500"
+                    />
+                    <span className="truncate">{genre.label}</span>
+                  </span>
                   <span className="ml-2 text-[10px] text-gray-500">{genre.trackCount}</span>
-                </button>
+                </label>
               );
             })}
             {localGenres.length === 0 && (
@@ -406,67 +448,73 @@ export default function FallbackGenreSelector() {
         ) : activeListTab === "auto" ? (
           <>
             {likedAutoGenre && (
-              <button
-                type="button"
-                onClick={() => {
-                  const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
-                  getSocket().emit("fallback:genre:set", { genreId: likedAutoGenre.id, selectedBy });
-                  if (menuRef.current) menuRef.current.open = false;
-                }}
+              <label
                 className={`mb-1 flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs font-semibold transition ${
-                  likedAutoGenre.id === activeGenre
+                  selectedGenreIds.includes(likedAutoGenre.id)
                     ? "bg-fuchsia-600/25 text-fuchsia-100"
                     : "text-fuchsia-200 hover:bg-gray-800 hover:text-white"
                 }`}
               >
-                <span className="truncate">{likedAutoGenre.label}</span>
+                <span className="mr-2 flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={selectedGenreIds.includes(likedAutoGenre.id)}
+                    onChange={() => toggleSelection(likedAutoGenre.id)}
+                    className="h-3.5 w-3.5 cursor-pointer accent-fuchsia-500"
+                  />
+                  <span className="truncate">{likedAutoGenre.label}</span>
+                </span>
                 <span className="ml-2 text-[10px] text-gray-500">AUTO</span>
-              </button>
+              </label>
             )}
             {groupedAutoSections.map((section) => {
               const parentAutoId = `auto:${section.parent.id}`;
-              const parentActive = activeGenre === parentAutoId;
+              const parentActive = selectedGenreIds.includes(parentAutoId);
               return (
                 <div key={section.id} className="mb-1 last:mb-0">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
-                      getSocket().emit("fallback:genre:set", { genreId: parentAutoId, selectedBy });
-                      if (menuRef.current) menuRef.current.open = false;
-                    }}
+                  <label
                     className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs font-semibold transition ${
                       parentActive
                         ? "bg-fuchsia-600/25 text-fuchsia-100"
                         : "text-fuchsia-200 hover:bg-gray-800 hover:text-white"
                     }`}
                   >
-                    <span className="truncate">{section.parent.name}</span>
+                    <span className="mr-2 flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={parentActive}
+                        onChange={() => toggleSelection(parentAutoId)}
+                        className="h-3.5 w-3.5 cursor-pointer accent-fuchsia-500"
+                      />
+                      <span className="truncate">{section.parent.name}</span>
+                    </span>
                     {isGroupedParentGenre(section.parent.id) && (
                       <span className="ml-2 text-[10px] text-gray-500">alles</span>
                     )}
-                  </button>
+                  </label>
                   {section.children.map((genre) => {
                     const childAutoId = `auto:${genre.id}`;
-                    const isActive = activeGenre === childAutoId;
+                    const isActive = selectedGenreIds.includes(childAutoId);
                     return (
-                      <button
+                      <label
                         key={`${section.id}:${genre.id}`}
-                        type="button"
-                        onClick={() => {
-                          const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
-                          getSocket().emit("fallback:genre:set", { genreId: childAutoId, selectedBy });
-                          if (menuRef.current) menuRef.current.open = false;
-                        }}
                         className={`ml-2 mt-0.5 flex w-[calc(100%-0.5rem)] items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
                           isActive
                             ? "bg-violet-600/25 text-violet-100"
                             : "text-gray-300 hover:bg-gray-800 hover:text-white"
                         }`}
                       >
-                        <span className="truncate">- {genre.name}</span>
+                        <span className="mr-2 flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={isActive}
+                            onChange={() => toggleSelection(childAutoId)}
+                            className="h-3.5 w-3.5 cursor-pointer accent-violet-500"
+                          />
+                          <span className="truncate">- {genre.name}</span>
+                        </span>
                         <span className="ml-2 text-[10px] text-gray-500">AUTO</span>
-                      </button>
+                      </label>
                     );
                   })}
                 </div>
@@ -619,7 +667,7 @@ export default function FallbackGenreSelector() {
                                     const safeNext = next.length > 0 ? next : [playlist.id];
                                     emitSharedSelection(safeNext);
                                   }}
-                                  className="h-3.5 w-3.5 rounded border-gray-600 bg-gray-800 text-violet-500 focus:ring-violet-500"
+                                  className="h-3.5 w-3.5 cursor-pointer accent-violet-500"
                                 />
                                 <span className="truncate">{playlist.label.replace(/^Playlist ·\s*/i, "")}</span>
                               </span>

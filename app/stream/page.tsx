@@ -144,6 +144,7 @@ export default function StreamPage() {
   const radioMode = useRadioStore((s) => s.mode);
   const streamOnline = useRadioStore((s) => s.streamOnline);
   const pausedForIdle = useRadioStore((s) => s.pausedForIdle);
+  const skipLocked = useRadioStore((s) => s.skipLocked);
   const store = useRadioStore;
 
   const [suppressFallback, setSuppressFallback] = useState(false);
@@ -182,6 +183,7 @@ export default function StreamPage() {
   const suppressNextQueueBadgeRef = useRef(false);
   const prevVisibleTrackKeyRef = useRef("");
   const mobileHeaderMenuRef = useRef<HTMLDivElement>(null);
+  const skipWaitToastShownRef = useRef(false);
 
   const isStreamUnavailable = radioMode === "dj" ? !twitchLive : (!streamOnline && !pausedForIdle);
   const tabsAllowed = !isStreamUnavailable;
@@ -278,6 +280,20 @@ export default function StreamPage() {
       window.dispatchEvent(new CustomEvent("skip-vote-cast"));
     }
   }
+
+  useEffect(() => {
+    if (skipLocked) {
+      if (!skipWaitToastShownRef.current) {
+        skipWaitToastShownRef.current = true;
+        const waitingTitle = latestUpcomingRef.current?.title ?? null;
+        showInfoToast(waitingTitle
+          ? `Skip aangevraagd. Wachten op: ${waitingTitle}`
+          : "Skip aangevraagd. Volgende nummer wordt voorbereid...");
+      }
+      return;
+    }
+    skipWaitToastShownRef.current = false;
+  }, [skipLocked]);
 
   useEffect(() => {
     if (!showRequests && activeTab === "requests") {

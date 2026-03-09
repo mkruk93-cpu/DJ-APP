@@ -121,17 +121,23 @@ const STREAM_BITRATE_RAW = (process.env.STREAM_BITRATE ?? '256k').trim().toLower
 const STREAM_USE_SOURCE_MODE = STREAM_BITRATE_RAW === 'source' || STREAM_BITRATE_RAW === 'true';
 const STREAM_BITRATE = STREAM_USE_SOURCE_MODE ? '256k' : STREAM_BITRATE_RAW;
 let activeFallbackGenre: string | null = null;
+let activeFallbackGenreIds: string[] = [];
 let activeSharedFallbackPlaylistIds: string[] = [];
 type SharedAutoPlaybackMode = 'random' | 'ordered';
 let activeSharedAutoPlaybackMode: SharedAutoPlaybackMode = 'random';
 const sharedPlaylistOrderCursor = new Map<string, number>();
 const sharedPlaylistRandomPlayedKeys = new Map<string, Set<string>>();
+let mixedAutoSourceCursor = 0;
+let localFallbackCursor = 0;
 
-type ActiveAutoSource =
+type AutoSourceItem =
   | { type: 'genre'; key: string; genreId: string }
   | { type: 'liked'; key: string }
-  | { type: 'shared'; key: string; playlistId: string; playbackMode: SharedAutoPlaybackMode }
-  | { type: 'shared-multi'; key: string; playlistIds: string[]; playbackMode: SharedAutoPlaybackMode };
+  | { type: 'shared'; key: string; playlistId: string; playbackMode: SharedAutoPlaybackMode };
+
+type ActiveAutoSource =
+  | AutoSourceItem
+  | { type: 'mixed'; key: string; items: AutoSourceItem[]; playbackMode: SharedAutoPlaybackMode };
 
 function normalizeSharedAutoPlaybackMode(value: unknown): SharedAutoPlaybackMode {
   if (typeof value !== 'string') return 'random';
@@ -176,46 +182,86 @@ export function setActiveSharedFallbackPlaylists(genreIds: string[] | null | und
   }
 }
 
-function getActiveAutoSource(): ActiveAutoSource | null {
-  if (activeSharedFallbackPlaylistIds.length > 1) {
-    const ids = activeSharedFallbackPlaylistIds.slice();
-    return {
-      type: 'shared-multi',
-      key: `shared:multi:${ids.join(',')}`,
-      playlistIds: ids,
-      playbackMode: activeSharedAutoPlaybackMode,
-    };
+export function setActiveFallbackGenres(genreIds: string[] | null | undefined): void {
+  const nextIds = Array.from(new Set((genreIds ?? []).map((id) => (id ?? '').trim()).filter(Boolean)));
+  const prev = activeFallbackGenreIds;
+  const changed = prev.length !== nextIds.length || prev.some((id, index) => id !== nextIds[index]);
+  activeFallbackGenreIds = nextIds;
+  if (!changed) return;
+  mixedAutoSourceCursor = 0;
+  localFallbackCursor = 0;
+  pendingAutoUpcoming = null;
+  if (autoReadyBuffer.length > 0) {
+    for (const entry of autoReadyBuffer) {
+      if (entry.cleanupAfterUse) cleanupFileIfSafe(entry.audioFile, 'setActiveFallbackGenres:changed:autoReadyBuffer');
+    }
+    autoReadyBuffer = [];
   }
-  if (activeSharedFallbackPlaylistIds.length === 1) {
-    const playlistId = activeSharedFallbackPlaylistIds[0];
-    return {
-      type: 'shared',
-      key: `shared:${playlistId}`,
-      playlistId,
-      playbackMode: activeSharedAutoPlaybackMode,
-    };
+  if (nextReady?.isFallback) {
+    if (nextReady.cleanupAfterUse) cleanupFileIfSafe(nextReady.audioFile, 'setActiveFallbackGenres:changed:nextReady');
+    nextReady = null;
   }
+  lastFallbackFile = null;
+  lastAutoPreloadAttemptAt = 0;
+  broadcastUpcomingTrack();
+}
 
-  const activeAuto = parseAutoFallbackGenreId(activeFallbackGenre);
-  if (activeAuto) {
+function getActiveLocalFallbackGenres(): string[] {
+  const selected = activeFallbackGenreIds.length > 0
+    ? activeFallbackGenreIds
+    : (activeFallbackGenre ? [activeFallbackGenre] : []);
+  return selected.filter((id) => !id.startsWith('auto:') && !id.startsWith('shared:'));
+}
+
+function pickRandomFallbackForActiveSelections(exclude?: string | null): string | null {
+  const localGenres = getActiveLocalFallbackGenres();
+  if (localGenres.length === 0) return pickRandomFallbackForGenre(activeFallbackGenre, exclude ?? null);
+  const start = localFallbackCursor % localGenres.length;
+  for (let attempt = 0; attempt < localGenres.length; attempt += 1) {
+    const idx = (start + attempt) % localGenres.length;
+    const genreId = localGenres[idx];
+    const hit = pickRandomFallbackForGenre(genreId, exclude ?? null);
+    if (hit) {
+      localFallbackCursor = (idx + 1) % localGenres.length;
+      return hit;
+    }
+  }
+  return null;
+}
+
+function getActiveAutoSource(): ActiveAutoSource | null {
+  const selected = activeFallbackGenreIds.length > 0
+    ? activeFallbackGenreIds
+    : (activeFallbackGenre ? [activeFallbackGenre] : []);
+  const items: AutoSourceItem[] = [];
+  for (const id of selected) {
+    const sharedPlaylistId = parseSharedFallbackPlaylistId(id);
+    if (sharedPlaylistId) {
+      items.push({
+        type: 'shared',
+        key: `shared:${sharedPlaylistId}`,
+        playlistId: sharedPlaylistId,
+        playbackMode: activeSharedAutoPlaybackMode,
+      });
+      continue;
+    }
+    const activeAuto = parseAutoFallbackGenreId(id);
+    if (!activeAuto) continue;
     if (activeAuto === LIKED_AUTO_GENRE_ID) {
-      return { type: 'liked', key: `auto:${LIKED_AUTO_GENRE_ID}` };
+      items.push({ type: 'liked', key: `auto:${LIKED_AUTO_GENRE_ID}` });
+      continue;
     }
     const genreId = resolveMergedGenreId(activeAuto);
-    return { type: 'genre', key: `auto:${genreId}`, genreId };
+    items.push({ type: 'genre', key: `auto:${genreId}`, genreId });
   }
-
-  const sharedPlaylistId = parseSharedFallbackPlaylistId(activeFallbackGenre);
-  if (sharedPlaylistId) {
-    return {
-      type: 'shared',
-      key: `shared:${sharedPlaylistId}`,
-      playlistId: sharedPlaylistId,
-      playbackMode: activeSharedAutoPlaybackMode,
-    };
-  }
-
-  return null;
+  if (items.length === 0) return null;
+  if (items.length === 1) return items[0];
+  return {
+    type: 'mixed',
+    key: `mixed:${items.map((item) => item.key).join('|')}`,
+    items,
+    playbackMode: activeSharedAutoPlaybackMode,
+  };
 }
 
 function isAutoSourceStillActive(expectedKey: string): boolean {
@@ -992,10 +1038,10 @@ function shuffleInPlace<T>(items: T[]): T[] {
   return items;
 }
 
-async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack | null> {
+async function prepareAutoFallbackByGenre(genreId: string, expectedSourceKeyOverride?: string): Promise<ReadyTrack | null> {
   try {
     const canonicalGenreId = resolveMergedGenreId(genreId);
-    const expectedSourceKey = `auto:${canonicalGenreId}`;
+    const expectedSourceKey = expectedSourceKeyOverride ?? `auto:${canonicalGenreId}`;
     if (!isAutoSourceStillActive(expectedSourceKey)) return null;
     const mergedGenreTags = getMergedGenreTags(canonicalGenreId);
     await refreshDailyAutoPlayedKeys();
@@ -1341,8 +1387,8 @@ async function prepareAutoFallbackByGenre(genreId: string): Promise<ReadyTrack |
   }
 }
 
-async function prepareLikedAutoFallbackTrack(): Promise<ReadyTrack | null> {
-  const expectedSourceKey = `auto:${LIKED_AUTO_GENRE_ID}`;
+async function prepareLikedAutoFallbackTrack(expectedSourceKeyOverride?: string): Promise<ReadyTrack | null> {
+  const expectedSourceKey = expectedSourceKeyOverride ?? `auto:${LIKED_AUTO_GENRE_ID}`;
   try {
     if (!isAutoSourceStillActive(expectedSourceKey)) return null;
     await refreshDailyAutoPlayedKeys();
@@ -1595,21 +1641,26 @@ async function prepareSharedAutoFallbackTrack(
   }
 }
 
-async function prepareSharedAutoFallbackTrackMulti(
-  playlistIds: string[],
-  playbackMode: SharedAutoPlaybackMode = 'random',
-): Promise<ReadyTrack | null> {
-  const ids = Array.from(new Set(playlistIds.filter((id) => id.trim().length > 0)));
-  if (ids.length === 0) return null;
-  const expectedSourceKey = `shared:multi:${ids.join(',')}`;
-  if (!isAutoSourceStillActive(expectedSourceKey)) return null;
-  const cursor = sharedPlaylistOrderCursor.get(expectedSourceKey) ?? 0;
-  for (let attempt = 0; attempt < ids.length; attempt += 1) {
-    const idx = (cursor + attempt) % ids.length;
-    const playlistId = ids[idx];
-    const ready = await prepareSharedAutoFallbackTrack(playlistId, playbackMode, expectedSourceKey);
+async function prepareAutoSourceTrack(source: ActiveAutoSource): Promise<ReadyTrack | null> {
+  if (source.type === 'liked') return prepareLikedAutoFallbackTrack();
+  if (source.type === 'genre') return prepareAutoFallbackByGenre(source.genreId);
+  if (source.type === 'shared') return prepareSharedAutoFallbackTrack(source.playlistId, source.playbackMode);
+  if (source.items.length === 0) return null;
+
+  const start = mixedAutoSourceCursor % source.items.length;
+  for (let attempt = 0; attempt < source.items.length; attempt += 1) {
+    const idx = (start + attempt) % source.items.length;
+    const item = source.items[idx];
+    let ready: ReadyTrack | null = null;
+    if (item.type === 'liked') {
+      ready = await prepareLikedAutoFallbackTrack(source.key);
+    } else if (item.type === 'genre') {
+      ready = await prepareAutoFallbackByGenre(item.genreId, source.key);
+    } else {
+      ready = await prepareSharedAutoFallbackTrack(item.playlistId, item.playbackMode, source.key);
+    }
     if (ready) {
-      sharedPlaylistOrderCursor.set(expectedSourceKey, (idx + 1) % ids.length);
+      mixedAutoSourceCursor = (idx + 1) % source.items.length;
       return ready;
     }
   }
@@ -2616,13 +2667,7 @@ async function ensureAutoReadyBuffer(sb: SupabaseClient, cacheDir: string, targe
 
   try {
     while (isRunning && getAutoReadyCount() < targetCount && autoReadyBuffer.length < AUTO_READY_MAX) {
-      const ready = autoSource.type === 'liked'
-        ? await prepareLikedAutoFallbackTrack()
-        : autoSource.type === 'shared'
-          ? await prepareSharedAutoFallbackTrack(autoSource.playlistId, autoSource.playbackMode)
-          : autoSource.type === 'shared-multi'
-            ? await prepareSharedAutoFallbackTrackMulti(autoSource.playlistIds, autoSource.playbackMode)
-          : await prepareAutoFallbackByGenre(autoSource.genreId);
+      const ready = await prepareAutoSourceTrack(autoSource);
       if (!ready) break;
       if (!isAutoSourceStillActive(autoSource.key)) {
         if (ready.cleanupAfterUse) cleanupFileIfSafe(ready.audioFile, 'ensureAutoReadyBuffer:genreChanged');
@@ -2688,7 +2733,7 @@ async function playNext(
     let selectedFile: string | null = null;
     let exclude = lastFallbackFile;
     for (let attempt = 0; attempt < 6; attempt++) {
-      const candidate = pickRandomFallbackForGenre(activeFallbackGenre, exclude);
+      const candidate = pickRandomFallbackForActiveSelections(exclude);
       if (!candidate) break;
       const candidateTitle = titleFromFilename(candidate);
       if (isSetLikeAutoTitle(candidateTitle)) {
@@ -2698,7 +2743,7 @@ async function playNext(
       selectedFile = candidate;
       break;
     }
-    const fallbackFile = selectedFile ?? pickRandomFallbackForGenre(activeFallbackGenre, lastFallbackFile);
+    const fallbackFile = selectedFile ?? pickRandomFallbackForActiveSelections(lastFallbackFile);
     if (!fallbackFile) return false;
     audioFile = fallbackFile;
     trackTitle = titleFromFilename(fallbackFile);
@@ -2724,13 +2769,7 @@ async function playNext(
     }
     let ready = takeAutoReadyFromBuffer(currentTrack?.title ?? null);
     if (!ready) {
-      const preparePromise = activeAutoSource.type === 'liked'
-        ? prepareLikedAutoFallbackTrack()
-        : activeAutoSource.type === 'shared'
-          ? prepareSharedAutoFallbackTrack(activeAutoSource.playlistId, activeAutoSource.playbackMode)
-          : activeAutoSource.type === 'shared-multi'
-            ? prepareSharedAutoFallbackTrackMulti(activeAutoSource.playlistIds, activeAutoSource.playbackMode)
-          : prepareAutoFallbackByGenre(activeAutoSource.genreId);
+      const preparePromise = prepareAutoSourceTrack(activeAutoSource);
       if (timeoutMs > 0) {
         ready = await Promise.race([
           preparePromise,
@@ -2771,7 +2810,7 @@ async function playNext(
     isFallback = true;
     trackIsAutoFallback = true;
     trackCleanupAfterUse = ready.cleanupAfterUse;
-    source = (activeAutoSource.type === 'shared' || activeAutoSource.type === 'shared-multi') && activeAutoSource.playbackMode === 'ordered'
+    source = (activeAutoSource.type === 'shared' || activeAutoSource.type === 'mixed') && activeAutoSource.playbackMode === 'ordered'
       ? 'auto/ordered'
       : 'auto/random';
     currentQueueItemId = null;
@@ -3627,15 +3666,7 @@ async function prepareNextTrack(
         return;
       }
       if (activeAutoSource) {
-        const autoReady = takeAutoReadyFromBuffer() ?? (
-          activeAutoSource.type === 'liked'
-            ? await prepareLikedAutoFallbackTrack()
-            : activeAutoSource.type === 'shared'
-              ? await prepareSharedAutoFallbackTrack(activeAutoSource.playlistId, activeAutoSource.playbackMode)
-              : activeAutoSource.type === 'shared-multi'
-                ? await prepareSharedAutoFallbackTrackMulti(activeAutoSource.playlistIds, activeAutoSource.playbackMode)
-              : await prepareAutoFallbackByGenre(activeAutoSource.genreId)
-        );
+        const autoReady = takeAutoReadyFromBuffer() ?? (await prepareAutoSourceTrack(activeAutoSource));
         if (autoReady) {
           nextReady = autoReady;
           console.log(`[prepare] Next ready (auto source): ${autoReady.title ?? activeAutoSource.key}`);
@@ -3647,7 +3678,7 @@ async function prepareNextTrack(
 
       const fallbackFile = activeAutoSource
         ? null
-        : pickRandomFallbackForGenre(activeFallbackGenre, lastFallbackFile);
+        : pickRandomFallbackForActiveSelections(lastFallbackFile);
       if (fallbackFile) {
         const title = titleFromFilename(fallbackFile);
         const duration = await getAudioDuration(fallbackFile);
@@ -3667,15 +3698,7 @@ async function prepareNextTrack(
         console.log(`[prepare] Next ready (random): ${title}`);
         broadcastUpcomingTrack();
       } else if (activeAutoSource) {
-        const autoReady = takeAutoReadyFromBuffer() ?? (
-          activeAutoSource.type === 'liked'
-            ? await prepareLikedAutoFallbackTrack()
-            : activeAutoSource.type === 'shared'
-              ? await prepareSharedAutoFallbackTrack(activeAutoSource.playlistId, activeAutoSource.playbackMode)
-              : activeAutoSource.type === 'shared-multi'
-                ? await prepareSharedAutoFallbackTrackMulti(activeAutoSource.playlistIds, activeAutoSource.playbackMode)
-              : await prepareAutoFallbackByGenre(activeAutoSource.genreId)
-        );
+        const autoReady = takeAutoReadyFromBuffer() ?? (await prepareAutoSourceTrack(activeAutoSource));
         if (autoReady) {
           nextReady = autoReady;
           console.log(`[prepare] Next ready (auto source): ${autoReady.title ?? activeAutoSource.key}`);
