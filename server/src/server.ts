@@ -612,11 +612,19 @@ function parseArtistTitle(input: string): { artist: string | null; title: string
 }
 
 function normalizeSearchText(input: string | null | undefined): string {
-  return (input ?? '')
+  const confusableMap: Record<string, string> = {
+    '\u056c': 'l', // Armenian small letter used in spoofed titles, e.g. S?UT
+  };
+  const withConfusablesFixed = Array.from(input ?? '')
+    .map((char) => confusableMap[char] ?? char)
+    .join('');
+  return withConfusablesFixed
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\*/g, '')
     .replace(/[^\w\s-]/g, ' ')
+    .replace(/-/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -653,6 +661,59 @@ function jaccardTokenSimilarity(a: string[] | Set<string>, b: string[] | Set<str
   const union = setA.size + setB.size - intersection;
   if (union <= 0) return 0;
   return intersection / union;
+}
+
+function tokenContainmentSimilarity(expected: string[] | Set<string>, actual: string[] | Set<string>): number {
+  const expectedSet = expected instanceof Set ? expected : new Set(expected);
+  const actualSet = actual instanceof Set ? actual : new Set(actual);
+  if (expectedSet.size === 0 || actualSet.size === 0) return 0;
+  let matched = 0;
+  for (const token of expectedSet) {
+    if (actualSet.has(token)) matched += 1;
+  }
+  return matched / expectedSet.size;
+}
+
+function isNearTokenMatch(a: string, b: string): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (Math.abs(a.length - b.length) > 1) return false;
+  if (a.length < 4 || b.length < 4) return false;
+
+  let i = 0;
+  let j = 0;
+  let edits = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      i += 1;
+      j += 1;
+      continue;
+    }
+    edits += 1;
+    if (edits > 1) return false;
+    if (a.length > b.length) i += 1;
+    else if (b.length > a.length) j += 1;
+    else {
+      i += 1;
+      j += 1;
+    }
+  }
+  if (i < a.length || j < b.length) edits += 1;
+  return edits <= 1;
+}
+
+function fuzzyTokenCoverage(expected: string[] | Set<string>, actual: string[] | Set<string>): number {
+  const expectedSet = expected instanceof Set ? expected : new Set(expected);
+  const actualSet = actual instanceof Set ? actual : new Set(actual);
+  if (expectedSet.size === 0 || actualSet.size === 0) return 0;
+  const actualTokens = Array.from(actualSet);
+  let matched = 0;
+  for (const token of expectedSet) {
+    if (actualSet.has(token) || actualTokens.some((candidate) => isNearTokenMatch(token, candidate))) {
+      matched += 1;
+    }
+  }
+  return matched / expectedSet.size;
 }
 
 function isVariousArtistsText(input: string | null | undefined): boolean {
@@ -750,6 +811,10 @@ const SEARCH_LIVE_KEYWORDS = [
   'concert',
 ];
 
+const OPTIONAL_TITLE_STYLE_TOKENS = new Set([
+  'hypertechno',
+]);
+
 function isBlockedSearchResult(title: string, channel: string): boolean {
   const haystack = `${title} ${channel}`.toLowerCase();
   return SEARCH_BLOCKED_KEYWORDS.some((keyword) => haystack.includes(keyword));
@@ -804,6 +869,9 @@ function evaluateSearchResultForSubmission(
   const expectedArtistSet = new Set(expectedArtistTokens.flatMap((value) => tokenizeNormalizedText(value)));
   const wantedTitleNorm = normalizeSearchText(expectedTitle);
   const expectedTitleSet = new Set(tokenizeNormalizedText(expectedTitle));
+  const expectedTitleRelaxedSet = new Set(
+    Array.from(expectedTitleSet).filter((token) => !OPTIONAL_TITLE_STYLE_TOKENS.has(token)),
+  );
   const resultTitleSet = new Set(tokenizeNormalizedText(title));
   const resultCombinedSet = new Set(tokenizeNormalizedText(`${title} ${channel}`));
   const expectedIncludesRemixLike = hasUnexpectedKeyword(
@@ -819,17 +887,44 @@ function evaluateSearchResultForSubmission(
   const titleCombinedSimilarity = expectedTitleSet.size > 0
     ? jaccardTokenSimilarity(expectedTitleSet, resultCombinedSet)
     : 1;
+  const titleTokenCoverage = expectedTitleSet.size > 0
+    ? fuzzyTokenCoverage(expectedTitleSet, resultTitleSet)
+    : 1;
+  const titleCombinedCoverage = expectedTitleSet.size > 0
+    ? fuzzyTokenCoverage(expectedTitleSet, resultCombinedSet)
+    : 1;
+  const titleRelaxedCoverage = expectedTitleRelaxedSet.size > 0
+    ? fuzzyTokenCoverage(expectedTitleRelaxedSet, resultTitleSet)
+    : titleTokenCoverage;
+  const titleRelaxedCombinedCoverage = expectedTitleRelaxedSet.size > 0
+    ? fuzzyTokenCoverage(expectedTitleRelaxedSet, resultCombinedSet)
+    : titleCombinedCoverage;
   const titleStrongMatch = titleTokenSimilarity >= 0.8
     || titleCombinedSimilarity >= 0.8
+    || titleTokenCoverage >= 0.8
+    || titleCombinedCoverage >= 0.8
+    || titleRelaxedCoverage >= 0.8
+    || titleRelaxedCombinedCoverage >= 0.8
     || (wantedTitleNorm ? tokenOverlap(expectedTitle ?? '', title) >= 0.85 : true)
     || (wantedTitleNorm ? titleNorm.includes(wantedTitleNorm) : true);
-  const titleNearPerfect = titleTokenSimilarity >= 0.95 || titleCombinedSimilarity >= 0.95;
+  const titleNearPerfect = titleTokenSimilarity >= 0.95
+    || titleCombinedSimilarity >= 0.95
+    || titleTokenCoverage >= 0.95
+    || titleCombinedCoverage >= 0.95
+    || titleRelaxedCoverage >= 0.95
+    || titleRelaxedCombinedCoverage >= 0.95;
 
   const resultArtistSet = new Set(tokenizeNormalizedText(`${title} ${channel}`));
   const artistSimilarity = expectedArtistSet.size > 0
     ? jaccardTokenSimilarity(expectedArtistSet, resultArtistSet)
     : 1;
-  const strictArtistMatch = expectedArtistSet.size > 0 ? artistSimilarity >= 0.65 : true;
+  const artistContainment = expectedArtistSet.size > 0
+    ? tokenContainmentSimilarity(expectedArtistSet, resultArtistSet)
+    : 1;
+  const artistHasSignal = expectedArtistSet.size > 0 ? artistContainment >= 0.34 : true;
+  const strictArtistMatch = expectedArtistSet.size > 0
+    ? (artistSimilarity >= 0.65 || artistContainment >= 0.6)
+    : true;
   const strictTitleMatch = wantedTitleNorm ? titleStrongMatch : true;
   const artistRequirementDisabled = isVariousArtistsText(expectedArtist) && !useParsedArtist;
 
@@ -838,7 +933,7 @@ function evaluateSearchResultForSubmission(
     if (!strictTitleMatch) return { score: -100, reasons: ['metadata-mismatch:title'], isLive: false };
     if (!strictArtistMatch) {
       // Semi-strict bridge pass: keep candidate in play if title is excellent.
-      if (!isSemiStrict || !titleNearPerfect) {
+      if (!isSemiStrict || !titleNearPerfect || !artistHasSignal) {
         return { score: -100, reasons: ['metadata-mismatch:artist'], isLive: false };
       }
       score -= 50;

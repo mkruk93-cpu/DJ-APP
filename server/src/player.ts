@@ -500,11 +500,18 @@ function stripLeadingArtistFromTitle(title: string, artist: string): string {
 }
 
 function normalizeArtistMatchText(text: string): string {
-  return text
+  const confusableMap: Record<string, string> = {
+    '\u056c': 'l', // Armenian small letter used in spoofed titles, e.g. SԼUT
+  };
+  const withConfusablesFixed = Array.from(text ?? '')
+    .map((char) => confusableMap[char] ?? char)
+    .join('');
+  return withConfusablesFixed
     .toLowerCase()
     .trim()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\*/g, '')
     .replace(/[^\w\s&-]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -541,6 +548,55 @@ function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
   const union = a.size + b.size - intersection;
   if (union <= 0) return 0;
   return intersection / union;
+}
+
+function tokenContainmentSimilarity(expected: Set<string>, actual: Set<string>): number {
+  if (expected.size === 0 || actual.size === 0) return 0;
+  let matched = 0;
+  for (const token of expected) {
+    if (actual.has(token)) matched += 1;
+  }
+  return matched / expected.size;
+}
+
+function isNearTokenMatch(a: string, b: string): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (Math.abs(a.length - b.length) > 1) return false;
+  if (a.length < 4 || b.length < 4) return false;
+
+  let i = 0;
+  let j = 0;
+  let edits = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      i += 1;
+      j += 1;
+      continue;
+    }
+    edits += 1;
+    if (edits > 1) return false;
+    if (a.length > b.length) i += 1;
+    else if (b.length > a.length) j += 1;
+    else {
+      i += 1;
+      j += 1;
+    }
+  }
+  if (i < a.length || j < b.length) edits += 1;
+  return edits <= 1;
+}
+
+function fuzzyTokenCoverage(expected: Set<string>, actual: Set<string>): number {
+  if (expected.size === 0 || actual.size === 0) return 0;
+  const actualTokens = Array.from(actual);
+  let matched = 0;
+  for (const token of expected) {
+    if (actual.has(token) || actualTokens.some((candidate) => isNearTokenMatch(token, candidate))) {
+      matched += 1;
+    }
+  }
+  return matched / expected.size;
 }
 
 function isVariousArtistsText(input: string | null | undefined): boolean {
@@ -723,6 +779,10 @@ const STRICT_METADATA_BLOCKED_KEYWORDS = [
   'instrumental',
 ];
 
+const OPTIONAL_TITLE_STYLE_TOKENS = new Set([
+  'hypertechno',
+]);
+
 function hasBlockedAutoKeyword(title: string, channel = ''): boolean {
   const haystack = `${title} ${channel}`.toLowerCase();
   return AUTO_BLOCKED_KEYWORDS.some((keyword) => haystack.includes(keyword));
@@ -776,14 +836,17 @@ async function resolveShortAutoCandidate(
     const expectedArtistNorm = expectedArtistParts.join(' ');
     const expectedTitleNorm = normalizeArtistMatchText(expectedTitleRaw);
     const expectedTitleTokens = new Set(tokenizeArtistText(expectedTitleRaw));
+    const expectedTitleRelaxedTokens = new Set(
+      Array.from(expectedTitleTokens).filter((token) => !OPTIONAL_TITLE_STYLE_TOKENS.has(token)),
+    );
     const artistRequirementDisabled = isVariousArtistsText(options?.expectedArtist);
     const shouldRequireTitleMatch = strictMetadata || (!!expectedArtistRaw && !!expectedTitleRaw);
 
     const hasStrictMetadataMatch = (
       resultTitle: string | null | undefined,
       resultChannel: string | null | undefined,
-    ): { match: boolean; titleNearPerfect: boolean; artistStrong: boolean } => {
-      if (!expectedTitleNorm) return { match: false, titleNearPerfect: false, artistStrong: false };
+    ): { match: boolean; titleNearPerfect: boolean; artistStrong: boolean; artistSignal: boolean } => {
+      if (!expectedTitleNorm) return { match: false, titleNearPerfect: false, artistStrong: false, artistSignal: false };
       const titleNorm = normalizeArtistMatchText(resultTitle || '');
       const channelNorm = normalizeArtistMatchText(resultChannel || '');
       const titleTokens = new Set(tokenizeArtistText(resultTitle || ''));
@@ -795,24 +858,53 @@ async function resolveShortAutoCandidate(
       const combinedTitleSimilarity = expectedTitleTokens.size > 0
         ? jaccardSimilarity(expectedTitleTokens, combinedTokens)
         : 1;
-      const titleNearPerfect = titleSimilarity >= 0.95 || combinedTitleSimilarity >= 0.95;
+      const titleCoverage = expectedTitleTokens.size > 0
+        ? fuzzyTokenCoverage(expectedTitleTokens, titleTokens)
+        : 1;
+      const combinedTitleCoverage = expectedTitleTokens.size > 0
+        ? fuzzyTokenCoverage(expectedTitleTokens, combinedTokens)
+        : 1;
+      const titleRelaxedCoverage = expectedTitleRelaxedTokens.size > 0
+        ? fuzzyTokenCoverage(expectedTitleRelaxedTokens, titleTokens)
+        : titleCoverage;
+      const combinedTitleRelaxedCoverage = expectedTitleRelaxedTokens.size > 0
+        ? fuzzyTokenCoverage(expectedTitleRelaxedTokens, combinedTokens)
+        : combinedTitleCoverage;
+      const titleNearPerfect = titleSimilarity >= 0.95
+        || combinedTitleSimilarity >= 0.95
+        || titleCoverage >= 0.95
+        || combinedTitleCoverage >= 0.95
+        || titleRelaxedCoverage >= 0.95
+        || combinedTitleRelaxedCoverage >= 0.95;
       const titleOk = hasVeryStrictTitleMatch(expectedTitleNorm, titleNorm)
-        || hasStrictTitleMatch(expectedTitleNorm, titleNorm);
-      if (!titleOk) return { match: false, titleNearPerfect, artistStrong: false };
+        || hasStrictTitleMatch(expectedTitleNorm, titleNorm)
+        || titleCoverage >= 0.8
+        || combinedTitleCoverage >= 0.8
+        || titleRelaxedCoverage >= 0.8
+        || combinedTitleRelaxedCoverage >= 0.8;
+      if (!titleOk) return { match: false, titleNearPerfect, artistStrong: false, artistSignal: false };
 
       if (artistRequirementDisabled || expectedArtistParts.length === 0) {
-        return { match: true, titleNearPerfect, artistStrong: true };
+        return { match: true, titleNearPerfect, artistStrong: true, artistSignal: true };
       }
       const expectedArtistTokens = new Set(expectedArtistParts.flatMap((part) => tokenizeArtistText(part)));
       const artistSimilarity = expectedArtistTokens.size > 0
         ? jaccardSimilarity(expectedArtistTokens, combinedTokens)
         : 1;
+      const artistContainment = expectedArtistTokens.size > 0
+        ? tokenContainmentSimilarity(expectedArtistTokens, combinedTokens)
+        : 1;
       const leadingArtistNorm = extractLeadingTitleArtistNormalized(resultTitle || '');
       const leadingArtistStrong = !!leadingArtistNorm && hasLooseArtistMatch(expectedArtistNorm, leadingArtistNorm);
-      const artistStrong = artistSimilarity >= 0.65
+      const artistSignal = artistContainment >= 0.34
+        || hasLooseArtistMatch(expectedArtistNorm, titleNorm)
         || hasLooseArtistMatch(expectedArtistNorm, channelNorm)
         || leadingArtistStrong;
-      return { match: artistStrong && titleOk, titleNearPerfect, artistStrong };
+      const artistStrong = artistSimilarity >= 0.65
+        || artistContainment >= 0.6
+        || hasLooseArtistMatch(expectedArtistNorm, channelNorm)
+        || leadingArtistStrong;
+      return { match: artistStrong && titleOk, titleNearPerfect, artistStrong, artistSignal };
     };
 
     // Try YouTube first with aggressive timeout
@@ -879,7 +971,7 @@ async function resolveShortAutoCandidate(
         const strictMatch = strictEval.match;
         const unexpectedStrictKeyword = hasUnexpectedStrictKeyword(title, channel, expectedTitleNorm);
         if (strictMetadata && unexpectedStrictKeyword) return false;
-        if (strictMetadata && !strictMatch && !strictEval.titleNearPerfect) return false;
+        if (strictMetadata && !strictMatch && !(strictEval.titleNearPerfect && strictEval.artistSignal)) return false;
         if (!strictMatch && badKeywords.some(keyword => title.includes(keyword))) return false;
         if (!strictMatch && hasBlockedAutoKeyword(title, channel)) return false;
 
@@ -960,7 +1052,7 @@ async function resolveShortAutoCandidate(
       const strictEval = hasStrictMetadataMatch(result.title, result.channel || '');
       const strictMatch = strictEval.match;
       if (strictMetadata && hasUnexpectedStrictKeyword(result.title, result.channel || '', expectedTitleNorm)) continue;
-      if (strictMetadata && !strictMatch && !strictEval.titleNearPerfect) continue;
+      if (strictMetadata && !strictMatch && !(strictEval.titleNearPerfect && strictEval.artistSignal)) continue;
       if (!strictMatch && hasBlockedAutoKeyword(result.title, result.channel || '')) continue;
       
       return {
