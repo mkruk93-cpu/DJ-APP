@@ -10,6 +10,13 @@ export interface SearchResult {
   channel: string | null;
 }
 
+interface SpotDlInput {
+  query?: string | null;
+  artist?: string | null;
+  title?: string | null;
+  spotifyUrl?: string | null;
+}
+
 // Cache for search results
 const searchCache = new Map<string, { results: SearchResult[]; ts: number }>();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
@@ -324,4 +331,136 @@ export async function soundcloudSearch(query: string, limit = 12): Promise<Searc
     searchCache.set(cacheKey, { results, ts: Date.now() });
     return results;
   }
+}
+
+function toSpotDlQueries(input: SpotDlInput): string[] {
+  const values: string[] = [];
+  const spotifyUrl = String(input.spotifyUrl ?? '').trim();
+  const artist = String(input.artist ?? '').trim();
+  const title = String(input.title ?? '').trim();
+  const query = String(input.query ?? '').trim();
+  if (spotifyUrl && /open\.spotify\.com\/track\//i.test(spotifyUrl)) values.push(spotifyUrl);
+  if (artist && title) values.push(`${artist} - ${title}`);
+  if (title) values.push(title);
+  if (query) values.push(query);
+
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+  for (const value of values) {
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(value);
+  }
+  return deduped.slice(0, 3);
+}
+
+function normalizeSpotDlDuration(value: unknown): number | null {
+  const asNumber = Number(value);
+  if (!Number.isFinite(asNumber) || asNumber <= 0) return null;
+  // spotDL metadata duration is typically milliseconds.
+  if (asNumber > 5_000) return Math.round(asNumber / 1000);
+  return Math.round(asNumber);
+}
+
+function parseSpotDlResult(raw: Record<string, unknown>): SearchResult | null {
+  const downloadUrl = String(raw.download_url ?? '').trim();
+  if (!downloadUrl) return null;
+  const title = String(raw.name ?? raw.title ?? '').trim() || 'Onbekend';
+  const artists = Array.isArray(raw.artists)
+    ? raw.artists
+      .map((entry) => {
+        if (!entry || typeof entry !== 'object') return '';
+        const item = entry as Record<string, unknown>;
+        return String(item.name ?? '').trim();
+      })
+      .filter(Boolean)
+    : [];
+  const channel = artists.join(', ') || null;
+  const cover = String(raw.cover_url ?? raw.cover ?? '').trim() || null;
+  const id = String(raw.song_id ?? raw.songid ?? raw.url ?? downloadUrl).trim();
+  return {
+    id: id || downloadUrl,
+    title,
+    url: downloadUrl,
+    duration: normalizeSpotDlDuration(raw.duration),
+    thumbnail: cover,
+    channel,
+  };
+}
+
+async function runSpotDlSave(query: string, timeoutMs: number): Promise<SearchResult[]> {
+  return new Promise((resolve) => {
+    const proc = spawn('python', [
+      '-m', 'spotdl',
+      'save',
+      query,
+      '--save-file',
+      '-',
+      '--preload',
+    ], { timeout: timeoutMs });
+
+    let output = '';
+    proc.stdout?.on('data', (chunk: Buffer) => {
+      output += chunk.toString();
+    });
+    proc.stderr?.on('data', () => {});
+
+    proc.on('close', (code) => {
+      if (code !== 0 || !output.trim()) {
+        resolve([]);
+        return;
+      }
+      try {
+        const parsed = JSON.parse(output) as unknown;
+        if (!Array.isArray(parsed)) {
+          resolve([]);
+          return;
+        }
+        const results: SearchResult[] = [];
+        for (const entry of parsed) {
+          if (!entry || typeof entry !== 'object') continue;
+          const normalized = parseSpotDlResult(entry as Record<string, unknown>);
+          if (normalized) results.push(normalized);
+        }
+        resolve(results);
+      } catch {
+        resolve([]);
+      }
+    });
+
+    proc.on('error', () => resolve([]));
+  });
+}
+
+export async function spotdlSearch(input: SpotDlInput, limit = 3): Promise<SearchResult[]> {
+  const queries = toSpotDlQueries(input);
+  if (queries.length === 0) return [];
+  const merged: SearchResult[] = [];
+  const seen = new Set<string>();
+
+  for (const query of queries) {
+    const cacheKey = `spotdl:${query.toLowerCase()}:${limit}`;
+    const cached = searchCache.get(cacheKey);
+    if (cached && Date.now() - cached.ts < CACHE_TTL) {
+      for (const row of cached.results) {
+        const key = `${row.url}|${row.title}`.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        merged.push(row);
+        if (merged.length >= limit) return merged;
+      }
+      continue;
+    }
+    const rows = await runSpotDlSave(query, 12_000);
+    searchCache.set(cacheKey, { results: rows, ts: Date.now() });
+    for (const row of rows) {
+      const key = `${row.url}|${row.title}`.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(row);
+      if (merged.length >= limit) return merged;
+    }
+  }
+  return merged;
 }

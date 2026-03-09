@@ -14,7 +14,7 @@ import { seedSettings, getActiveMode, getActiveFallbackGenre, getModeSettings, g
 import { getQueue, addToQueue, removeFromQueue, reorderQueue, fetchVideoInfo, extractYoutubeId, extractSourceId, isSoundcloudUrl, getThumbnailUrl, encodeLocalFileUrl } from './queue.js';
 import { canPerformAction } from './permissions.js';
 import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, isPlayCycleRunning, playerEvents, setKeepFiles, invalidatePreload, invalidateNextReady, removeQueueItemFromPreload, setActiveFallbackGenre, setSharedAutoPlaybackMode, resetSharedAutoPlaybackCycleForSelection } from './player.js';
-import { youtubeSearch, soundcloudSearch } from './services/search.js';
+import { youtubeSearch, soundcloudSearch, spotdlSearch } from './services/search.js';
 import { startBridge } from './bridge.js';
 import { startNowPlayingWatcher } from './nowPlaying.js';
 import { StreamHub } from './streamHub.js';
@@ -649,25 +649,96 @@ const SEARCH_BLOCKED_KEYWORDS = [
   'talk show',
 ];
 
+const SEARCH_HARD_VARIANT_KEYWORDS = [
+  'cover',
+  'tribute',
+  'karaoke',
+  'remake',
+  'bootleg',
+  'mashup',
+  'nightcore',
+  '8d',
+  'sped up',
+  'slowed',
+  'reverb',
+  'chipmunk',
+  'bass boosted',
+  'fan made',
+  'ai cover',
+];
+
+const SEARCH_SOFT_VARIANT_KEYWORDS = [
+  'acoustic',
+  'demo',
+  'preview',
+  'snippet',
+  'mix',
+  'dj set',
+  'session',
+];
+
+const SEARCH_ALLOW_VERSION_KEYWORDS = [
+  'original mix',
+  'radio edit',
+  'extended mix',
+  'remaster',
+  'official audio',
+  'topic',
+  'hq',
+];
+
+const SEARCH_LIVE_KEYWORDS = [
+  'live',
+  'live at',
+  'live version',
+  'concert',
+];
+
 function isBlockedSearchResult(title: string, channel: string): boolean {
   const haystack = `${title} ${channel}`.toLowerCase();
   return SEARCH_BLOCKED_KEYWORDS.some((keyword) => haystack.includes(keyword));
 }
 
-function scoreSearchResultForSubmission(
+function includesKeywordOutsideExpected(
+  haystackNorm: string,
+  keyword: string,
+  expectedTitleNorm: string,
+): boolean {
+  const keywordNorm = normalizeSearchText(keyword);
+  if (!keywordNorm || !haystackNorm.includes(keywordNorm)) return false;
+  return !expectedTitleNorm.includes(keywordNorm);
+}
+
+function hasUnexpectedKeyword(
+  haystackNorm: string,
+  expectedTitleNorm: string,
+  keywords: string[],
+): boolean {
+  return keywords.some((keyword) => includesKeywordOutsideExpected(haystackNorm, keyword, expectedTitleNorm));
+}
+
+type SearchScoreResult = {
+  score: number;
+  reasons: string[];
+  isLive: boolean;
+};
+
+function evaluateSearchResultForSubmission(
   result: { title?: string | null; channel?: string | null; duration?: number | null },
   expectedArtist: string | null,
   expectedTitle: string | null,
-  options?: { strictMetadata?: boolean },
-): number {
+  options?: { strictMetadata?: boolean; allowLiveFallback?: boolean },
+): SearchScoreResult {
   const title = String(result.title ?? '').trim();
   const channel = String(result.channel ?? '').trim();
-  if (!title) return -100;
+  if (!title) return { score: -100, reasons: ['empty-title'], isLive: false };
   const strictMetadata = options?.strictMetadata === true;
+  const allowLiveFallback = options?.allowLiveFallback === true;
 
   let score = 0;
   const titleNorm = normalizeSearchText(title);
   const channelNorm = normalizeSearchText(channel);
+  const haystackNorm = `${titleNorm} ${channelNorm}`.trim();
   const artistNorm = normalizeSearchText(expectedArtist);
   const wantedTitleNorm = normalizeSearchText(expectedTitle);
   const blocked = isBlockedSearchResult(title, channel);
@@ -680,17 +751,36 @@ function scoreSearchResultForSubmission(
     : true;
   const strictMetadataMatch = strictArtistMatch && strictTitleMatch;
 
-  if (!strictMetadata && blocked) return -100;
+  if (!strictMetadata && blocked) return { score: -100, reasons: ['blocked-keyword'], isLive: false };
+  if (strictMetadata && !strictMetadataMatch) {
+    return { score: -100, reasons: ['metadata-mismatch'], isLive: false };
+  }
+
+  const nonMusicBlocked = hasUnexpectedKeyword(haystackNorm, wantedTitleNorm, SEARCH_BLOCKED_KEYWORDS);
+  if (nonMusicBlocked) {
+    return { score: -100, reasons: ['non-music'], isLive: false };
+  }
+
+  const hardVariantBlocked = hasUnexpectedKeyword(haystackNorm, wantedTitleNorm, SEARCH_HARD_VARIANT_KEYWORDS);
+  if (strictMetadata && hardVariantBlocked) {
+    return { score: -100, reasons: ['wrong-version'], isLive: false };
+  }
+
+  const isLive = hasUnexpectedKeyword(haystackNorm, wantedTitleNorm, SEARCH_LIVE_KEYWORDS);
+  if (strictMetadata && isLive && !allowLiveFallback) {
+    return { score: -100, reasons: ['live-version'], isLive: true };
+  }
+
+  const reasons: string[] = [];
+
   if (strictMetadata) {
-    // For trusted playlist metadata, require artist+title to match strongly.
-    // If that matches, allow terms like "tutorial" that are part of real track names.
-    if (!strictMetadataMatch) return -100;
     score += 24;
   }
 
   if (artistNorm) {
     const artistMatch = titleNorm.includes(artistNorm) || channelNorm.includes(artistNorm);
     score += artistMatch ? 6 : -8;
+    if (!artistMatch) reasons.push('artist-weak');
   }
 
   if (wantedTitleNorm) {
@@ -698,7 +788,23 @@ function scoreSearchResultForSubmission(
     else {
       const overlap = tokenOverlap(expectedTitle ?? '', title);
       score += overlap >= 0.5 ? 5 : -10;
+      if (overlap < 0.5) reasons.push('title-weak');
     }
+  }
+
+  const hasAllowedVersion = SEARCH_ALLOW_VERSION_KEYWORDS
+    .some((keyword) => haystackNorm.includes(normalizeSearchText(keyword)));
+  if (hasAllowedVersion) score += 5;
+
+  const hasSoftVariant = hasUnexpectedKeyword(haystackNorm, wantedTitleNorm, SEARCH_SOFT_VARIANT_KEYWORDS);
+  if (hasSoftVariant) {
+    score -= strictMetadata ? 5 : 8;
+    reasons.push('variant-soft');
+  }
+
+  if (isLive) {
+    score -= allowLiveFallback ? 6 : 12;
+    reasons.push(allowLiveFallback ? 'live-fallback' : 'live');
   }
 
   const duration = result.duration ?? null;
@@ -707,7 +813,16 @@ function scoreSearchResultForSubmission(
     if (duration > 11 * 60) score -= 5;
   }
 
-  return score;
+  return { score, reasons, isLive };
+}
+
+function scoreSearchResultForSubmission(
+  result: { title?: string | null; channel?: string | null; duration?: number | null },
+  expectedArtist: string | null,
+  expectedTitle: string | null,
+  options?: { strictMetadata?: boolean; allowLiveFallback?: boolean },
+): number {
+  return evaluateSearchResultForSubmission(result, expectedArtist, expectedTitle, options).score;
 }
 
 async function resolveActiveFallbackGenre(persistFix = false): Promise<string | null> {
@@ -3371,6 +3486,11 @@ interface QueueAddSubmission {
   source_playlist?: string | null;
 }
 
+type SubmissionCandidate = {
+  row: SearchResult;
+  provider: 'youtube' | 'soundcloud' | 'spotdl';
+};
+
 async function addQueueItemFromSubmission(
   submission: QueueAddSubmission,
   addedBy: string,
@@ -3390,26 +3510,108 @@ async function addQueueItemFromSubmission(
     const searchLimit = sourceType === 'spotify' || sourceType === 'user_playlist' || sourceType === 'shared_playlist'
       ? 10
       : 4;
-    const searchResults = await youtubeSearchLocal(url, searchLimit);
+    const [youtubeResults, soundcloudResults] = await Promise.all([
+      youtubeSearchLocal(url, searchLimit),
+      soundcloudSearchLocal(url, searchLimit),
+    ]);
+    const searchResults: SubmissionCandidate[] = [
+      ...youtubeResults.map((row) => ({ row, provider: 'youtube' as const })),
+      ...soundcloudResults.map((row) => ({ row, provider: 'soundcloud' as const })),
+    ];
     if (searchResults.length === 0) {
       return { item: null, error: `Geen resultaat gevonden voor "${url}"` };
     }
-    const ranked = searchResults
-      .map((row) => ({
-        row,
-        score: scoreSearchResultForSubmission(
-          { title: row.title, channel: row.channel, duration: row.duration ?? null },
+    const rankedStrict = searchResults
+      .map((candidate) => ({
+        ...candidate,
+        evaluation: evaluateSearchResultForSubmission(
+          { title: candidate.row.title, channel: candidate.row.channel, duration: candidate.row.duration ?? null },
           expectedArtist,
           expectedTitle,
-          { strictMetadata },
+          { strictMetadata, allowLiveFallback: false },
         ),
       }))
-      .filter(({ score }) => score > -100)
-      .sort((a, b) => b.score - a.score);
-    const selectedRow = ranked[0]?.row ?? (strictMetadata ? null : searchResults[0]);
-    if (!selectedRow) {
+      .sort((a, b) => b.evaluation.score - a.evaluation.score);
+
+    const ranked = rankedStrict
+      .filter(({ evaluation }) => evaluation.score > -100)
+      .sort((a, b) => b.evaluation.score - a.evaluation.score);
+
+    let selectedCandidate: SubmissionCandidate | null = ranked[0]
+      ? { row: ranked[0].row, provider: ranked[0].provider }
+      : (strictMetadata ? null : searchResults[0]);
+    let selectedByLiveFallback = false;
+
+    if (!selectedCandidate && strictMetadata) {
+      const liveFallback = searchResults
+        .map((candidate) => ({
+          ...candidate,
+          evaluation: evaluateSearchResultForSubmission(
+            { title: candidate.row.title, channel: candidate.row.channel, duration: candidate.row.duration ?? null },
+            expectedArtist,
+            expectedTitle,
+            { strictMetadata: true, allowLiveFallback: true },
+          ),
+        }))
+        .filter(({ evaluation }) => evaluation.score > -100 && evaluation.isLive)
+        .sort((a, b) => b.evaluation.score - a.evaluation.score);
+      if (liveFallback[0]) {
+        selectedCandidate = { row: liveFallback[0].row, provider: liveFallback[0].provider };
+        selectedByLiveFallback = true;
+        console.log(`[queue] Live fallback selected for strict metadata: "${submission.youtube_url}"`);
+      }
+    }
+
+    if (!selectedCandidate && strictMetadata) {
+      const spotdlResults = await spotdlSearch({
+        spotifyUrl: sourceType === 'spotify' ? submission.youtube_url : null,
+        artist: expectedArtist,
+        title: expectedTitle,
+        query: submission.youtube_url,
+      }, 4);
+      if (spotdlResults.length > 0) {
+        const spotdlRanked = spotdlResults
+          .map((row) => ({
+            row,
+            provider: 'spotdl' as const,
+            evaluation: evaluateSearchResultForSubmission(
+              { title: row.title, channel: row.channel, duration: row.duration ?? null },
+              expectedArtist,
+              expectedTitle,
+              { strictMetadata: true, allowLiveFallback: false },
+            ),
+          }))
+          .filter(({ evaluation }) => evaluation.score > -100)
+          .sort((a, b) => b.evaluation.score - a.evaluation.score);
+        if (spotdlRanked[0]) {
+          selectedCandidate = {
+            provider: 'spotdl',
+            row: {
+              id: spotdlRanked[0].row.id || extractSourceId(spotdlRanked[0].row.url) || 'spotdl',
+              title: spotdlRanked[0].row.title || expectedTitle || 'Onbekend',
+              url: spotdlRanked[0].row.url,
+              duration: spotdlRanked[0].row.duration,
+              thumbnail: spotdlRanked[0].row.thumbnail ?? '',
+              channel: spotdlRanked[0].row.channel ?? '',
+            },
+          };
+          console.log(`[queue] spotDL fallback selected: ${selectedCandidate.row.title} (${selectedCandidate.row.url})`);
+        }
+      }
+    }
+
+    if (!selectedCandidate) {
+      const diagnostics = rankedStrict.slice(0, 5).map(({ row, provider, evaluation }) => ({
+        title: row.title,
+        channel: row.channel,
+        provider,
+        score: evaluation.score,
+        reasons: evaluation.reasons.join('|') || 'none',
+      }));
+      console.warn(`[queue] No usable result for "${submission.youtube_url}" strict=${strictMetadata} candidates=${searchResults.length} diagnostics=${JSON.stringify(diagnostics)}`);
       return { item: null, error: `Geen bruikbaar resultaat gevonden voor "${url}"` };
     }
+    const selectedRow = selectedCandidate.row;
     url = selectedRow.url;
     sourceId = extractSourceId(url);
     if (!sourceId) {
@@ -3417,7 +3619,10 @@ async function addQueueItemFromSubmission(
     }
     discoveredTitle = selectedRow.title ?? null;
     discoveredArtist = selectedRow.channel ?? null;
-    console.log(`[queue] Search "${submission.youtube_url}" → ${selectedRow.title} (${url})`);
+    const providerTag = selectedByLiveFallback
+      ? `${selectedCandidate.provider}:live-fallback`
+      : selectedCandidate.provider;
+    console.log(`[queue] Search "${submission.youtube_url}" → ${selectedRow.title} (${url}) [provider=${providerTag}]`);
   }
 
   const ytId = extractYoutubeId(url);

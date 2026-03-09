@@ -129,6 +129,7 @@ export default function StreamPage() {
   const [isHydrated, setIsHydrated] = useState(false);
   const [showLoadingStates, setShowLoadingStates] = useState(true);
   const [radioStateReady, setRadioStateReady] = useState(false);
+  const [offlineUiArmed, setOfflineUiArmed] = useState(false);
   const activeTabRef = useRef<MobileTab>(activeTab);
   activeTabRef.current = activeTab;
   const previousQueueLengthRef = useRef<number>(0);
@@ -781,10 +782,11 @@ export default function StreamPage() {
     !radioConnected &&
     !!tunnelRecoveryUntil &&
     tunnelRecoverySecondsLeft > 0;
-  const showRadioOfflineState =
+  const rawRadioOfflineCandidate =
     mode === "radio" &&
-    radioStateReady &&
     (!radioStreamUrl || (!radioConnected && !showTunnelRecoveryState) || (!isDjModeConnected && radioConnected && !streamOnline && !pausedForIdle));
+  const showRadioOfflineState = rawRadioOfflineCandidate && offlineUiArmed;
+  const showRadioOfflinePendingState = rawRadioOfflineCandidate && !offlineUiArmed && !showTunnelRecoveryState;
   const shouldPollCommunityWidgets = radioMode === "dj" && radioConnected;
   const nextQueueItem = queue[0] ?? null;
   const nextSourceTitle = firstNonEmpty(
@@ -799,6 +801,17 @@ export default function StreamPage() {
   const nextRequestedBy = nextQueueItem?.added_by ?? upcomingTrack?.added_by ?? null;
   const nextIsFallback = !nextQueueItem && !!upcomingTrack?.isFallback;
   const showHeaderNextOnly = mode === "radio" && !showRadioOfflineState && !showTunnelRecoveryState;
+
+  useEffect(() => {
+    if (!rawRadioOfflineCandidate) {
+      setOfflineUiArmed(false);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setOfflineUiArmed(true);
+    }, 2500);
+    return () => window.clearTimeout(timer);
+  }, [rawRadioOfflineCandidate]);
 
   useEffect(() => {
     const visibleTrackKey = syncedCurrentTrack
@@ -1038,13 +1051,23 @@ export default function StreamPage() {
           {mode === "audio" && icecastUrl && (
             <AudioPlayer src={icecastUrl} radioTrack={radioConnected ? radioTrack : undefined} showFallback={!suppressFallback} />
           )}
-          {mode === "radio" && radioStreamUrl && !showRadioOfflineState && !showTunnelRecoveryState && (
+          {mode === "radio" && radioStreamUrl && !rawRadioOfflineCandidate && !showTunnelRecoveryState && (
             <AudioPlayer
               src={radioStreamUrl}
               radioTrack={radioMode === "dj" ? null : radioTrack}
               showFallback={radioMode === "dj" || !radioTrack}
               preferSupabase={radioMode === "dj" || !radioTrack}
             />
+          )}
+          {mode === "radio" && showRadioOfflinePendingState && (
+            <div className="flex items-center justify-center gap-2 rounded-xl border border-gray-800 bg-gray-900 px-4 py-4 shadow-lg shadow-violet-500/5 sm:py-16">
+              <div className="hidden h-10 w-10 items-center justify-center rounded-full bg-gray-800 sm:flex">
+                <svg className="h-5 w-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5.636 18.364a9 9 0 010-12.728m12.728 0a9 9 0 010 12.728M9.172 14.828a4 4 0 010-5.656m5.656 0a4 4 0 010 5.656M12 12h.01" />
+                </svg>
+              </div>
+              <p className="text-sm text-gray-500">Control server verbinden...</p>
+            </div>
           )}
           {mode === "radio" && showTunnelRecoveryState && (
             <div className="relative overflow-hidden rounded-xl border border-amber-900/60 bg-gradient-to-br from-amber-950/30 via-gray-900 to-gray-900 px-4 py-6 shadow-lg shadow-amber-900/20 sm:py-12">
