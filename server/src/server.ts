@@ -621,6 +621,59 @@ function normalizeSearchText(input: string | null | undefined): string {
     .trim();
 }
 
+function tokenizeNormalizedText(input: string | null | undefined): string[] {
+  return normalizeSearchText(input)
+    .split(' ')
+    .filter((part) => part.length > 1);
+}
+
+function normalizeArtistString(artist: string | null | undefined): string[] {
+  const raw = normalizeSearchText(artist);
+  if (!raw) return [];
+  const expanded = raw
+    .replace(/\b(feat|ft|featuring|vs|versus)\b/g, ' & ')
+    .replace(/\bx\b/g, ' & ')
+    .replace(/[;,/|]+/g, ' & ')
+    .replace(/\s*&\s*/g, ' & ');
+  const parts = expanded
+    .split(' & ')
+    .map((part) => normalizeSearchText(part))
+    .filter((part) => part.length > 1);
+  return Array.from(new Set(parts));
+}
+
+function jaccardTokenSimilarity(a: string[] | Set<string>, b: string[] | Set<string>): number {
+  const setA = a instanceof Set ? a : new Set(a);
+  const setB = b instanceof Set ? b : new Set(b);
+  if (setA.size === 0 || setB.size === 0) return 0;
+  let intersection = 0;
+  for (const token of setA) {
+    if (setB.has(token)) intersection += 1;
+  }
+  const union = setA.size + setB.size - intersection;
+  if (union <= 0) return 0;
+  return intersection / union;
+}
+
+function isVariousArtistsText(input: string | null | undefined): boolean {
+  const value = normalizeSearchText(input);
+  return value === 'various artists' || value === 'various artist' || value === 'va';
+}
+
+function parseArtistFromExpectedTitle(input: string | null | undefined): string | null {
+  const raw = String(input ?? '').trim();
+  if (!raw) return null;
+  const separators = [' - ', ' — ', ' – ', ' | '];
+  for (const separator of separators) {
+    const idx = raw.indexOf(separator);
+    if (idx <= 0) continue;
+    const artistPart = raw.slice(0, idx).trim();
+    if (!artistPart) continue;
+    return artistPart;
+  }
+  return null;
+}
+
 function tokenOverlap(a: string, b: string): number {
   const aSet = new Set(normalizeSearchText(a).split(' ').filter((part) => part.length > 1));
   const bSet = new Set(normalizeSearchText(b).split(' ').filter((part) => part.length > 1));
@@ -651,6 +704,7 @@ const SEARCH_BLOCKED_KEYWORDS = [
 ];
 
 const SEARCH_HARD_VARIANT_KEYWORDS = [
+  'remix',
   'cover',
   'tribute',
   'karaoke',
@@ -666,6 +720,7 @@ const SEARCH_HARD_VARIANT_KEYWORDS = [
   'bass boosted',
   'fan made',
   'ai cover',
+  'version',
 ];
 
 const SEARCH_SOFT_VARIANT_KEYWORDS = [
@@ -728,33 +783,68 @@ function evaluateSearchResultForSubmission(
   result: { title?: string | null; channel?: string | null; duration?: number | null },
   expectedArtist: string | null,
   expectedTitle: string | null,
-  options?: { strictMetadata?: boolean; allowLiveFallback?: boolean },
+  options?: { strictMetadata?: boolean; allowLiveFallback?: boolean; matchMode?: 'strict' | 'semi' },
 ): SearchScoreResult {
   const title = String(result.title ?? '').trim();
   const channel = String(result.channel ?? '').trim();
   if (!title) return { score: -100, reasons: ['empty-title'], isLive: false };
   const strictMetadata = options?.strictMetadata === true;
   const allowLiveFallback = options?.allowLiveFallback === true;
+  const matchMode = options?.matchMode ?? 'strict';
+  const isSemiStrict = matchMode === 'semi';
 
   let score = 0;
   const titleNorm = normalizeSearchText(title);
   const channelNorm = normalizeSearchText(channel);
   const haystackNorm = `${titleNorm} ${channelNorm}`.trim();
-  const artistNorm = normalizeSearchText(expectedArtist);
+  const expectedArtistFromTitle = parseArtistFromExpectedTitle(expectedTitle);
+  const useParsedArtist = isVariousArtistsText(expectedArtist) && !!expectedArtistFromTitle;
+  const expectedArtistRaw = useParsedArtist ? expectedArtistFromTitle : expectedArtist;
+  const expectedArtistTokens = normalizeArtistString(expectedArtistRaw);
+  const expectedArtistSet = new Set(expectedArtistTokens.flatMap((value) => tokenizeNormalizedText(value)));
   const wantedTitleNorm = normalizeSearchText(expectedTitle);
+  const expectedTitleSet = new Set(tokenizeNormalizedText(expectedTitle));
+  const resultTitleSet = new Set(tokenizeNormalizedText(title));
+  const resultCombinedSet = new Set(tokenizeNormalizedText(`${title} ${channel}`));
+  const expectedIncludesRemixLike = hasUnexpectedKeyword(
+    wantedTitleNorm,
+    '',
+    ['remix', 'edit', 'bootleg', 'rework', 'version'],
+  );
   const blocked = isBlockedSearchResult(title, channel);
 
-  const strictTitleMatch = wantedTitleNorm
-    ? (titleNorm.includes(wantedTitleNorm) || tokenOverlap(expectedTitle ?? '', title) >= 0.9)
-    : true;
-  const strictArtistMatch = artistNorm
-    ? (titleNorm.includes(artistNorm) || channelNorm.includes(artistNorm))
-    : true;
-  const strictMetadataMatch = strictArtistMatch && strictTitleMatch;
+  const titleTokenSimilarity = expectedTitleSet.size > 0
+    ? jaccardTokenSimilarity(expectedTitleSet, resultTitleSet)
+    : 1;
+  const titleCombinedSimilarity = expectedTitleSet.size > 0
+    ? jaccardTokenSimilarity(expectedTitleSet, resultCombinedSet)
+    : 1;
+  const titleStrongMatch = titleTokenSimilarity >= 0.8
+    || titleCombinedSimilarity >= 0.8
+    || (wantedTitleNorm ? tokenOverlap(expectedTitle ?? '', title) >= 0.85 : true)
+    || (wantedTitleNorm ? titleNorm.includes(wantedTitleNorm) : true);
+  const titleNearPerfect = titleTokenSimilarity >= 0.95 || titleCombinedSimilarity >= 0.95;
+
+  const resultArtistSet = new Set(tokenizeNormalizedText(`${title} ${channel}`));
+  const artistSimilarity = expectedArtistSet.size > 0
+    ? jaccardTokenSimilarity(expectedArtistSet, resultArtistSet)
+    : 1;
+  const strictArtistMatch = expectedArtistSet.size > 0 ? artistSimilarity >= 0.65 : true;
+  const strictTitleMatch = wantedTitleNorm ? titleStrongMatch : true;
+  const artistRequirementDisabled = isVariousArtistsText(expectedArtist) && !useParsedArtist;
 
   if (!strictMetadata && blocked) return { score: -100, reasons: ['blocked-keyword'], isLive: false };
-  if (strictMetadata && !strictMetadataMatch) {
-    return { score: -100, reasons: ['metadata-mismatch'], isLive: false };
+  if (strictMetadata && !artistRequirementDisabled) {
+    if (!strictTitleMatch) return { score: -100, reasons: ['metadata-mismatch:title'], isLive: false };
+    if (!strictArtistMatch) {
+      // Semi-strict bridge pass: keep candidate in play if title is excellent.
+      if (!isSemiStrict || !titleNearPerfect) {
+        return { score: -100, reasons: ['metadata-mismatch:artist'], isLive: false };
+      }
+      score -= 50;
+    }
+  } else if (strictMetadata && !strictTitleMatch) {
+    return { score: -100, reasons: ['metadata-mismatch:title'], isLive: false };
   }
 
   const nonMusicBlocked = hasUnexpectedKeyword(haystackNorm, wantedTitleNorm, SEARCH_BLOCKED_KEYWORDS);
@@ -762,7 +852,10 @@ function evaluateSearchResultForSubmission(
     return { score: -100, reasons: ['non-music'], isLive: false };
   }
 
-  const hardVariantBlocked = hasUnexpectedKeyword(haystackNorm, wantedTitleNorm, SEARCH_HARD_VARIANT_KEYWORDS);
+  const hardVariantKeywords = expectedIncludesRemixLike
+    ? SEARCH_HARD_VARIANT_KEYWORDS.filter((keyword) => !['remix', 'edit', 'bootleg', 'rework', 'version'].includes(keyword))
+    : SEARCH_HARD_VARIANT_KEYWORDS;
+  const hardVariantBlocked = hasUnexpectedKeyword(haystackNorm, wantedTitleNorm, hardVariantKeywords);
   if (strictMetadata && hardVariantBlocked) {
     return { score: -100, reasons: ['wrong-version'], isLive: false };
   }
@@ -776,20 +869,27 @@ function evaluateSearchResultForSubmission(
 
   if (strictMetadata) {
     score += 24;
+    if (artistRequirementDisabled) score += 4;
   }
 
-  if (artistNorm) {
-    const artistMatch = titleNorm.includes(artistNorm) || channelNorm.includes(artistNorm);
-    score += artistMatch ? 6 : -8;
-    if (!artistMatch) reasons.push('artist-weak');
+  if (expectedArtistSet.size > 0 && !artistRequirementDisabled) {
+    if (strictArtistMatch) score += 6;
+    else if (titleNearPerfect) {
+      // Relax uploader/artist requirement for niche uploads with near-perfect title.
+      score -= isSemiStrict ? 4 : 8;
+      reasons.push('artist-relaxed-high-title');
+    } else {
+      score -= 8;
+      reasons.push('artist-weak');
+    }
   }
 
-  if (wantedTitleNorm) {
-    if (titleNorm.includes(wantedTitleNorm)) score += 10;
+  if (wantedTitleNorm && expectedTitleSet.size > 0) {
+    if (titleNearPerfect) score += 16;
+    else if (titleStrongMatch) score += 10;
     else {
-      const overlap = tokenOverlap(expectedTitle ?? '', title);
-      score += overlap >= 0.5 ? 5 : -10;
-      if (overlap < 0.5) reasons.push('title-weak');
+      score -= 10;
+      reasons.push('title-weak');
     }
   }
 
@@ -821,7 +921,7 @@ function scoreSearchResultForSubmission(
   result: { title?: string | null; channel?: string | null; duration?: number | null },
   expectedArtist: string | null,
   expectedTitle: string | null,
-  options?: { strictMetadata?: boolean; allowLiveFallback?: boolean },
+  options?: { strictMetadata?: boolean; allowLiveFallback?: boolean; matchMode?: 'strict' | 'semi' },
 ): number {
   return evaluateSearchResultForSubmission(result, expectedArtist, expectedTitle, options).score;
 }
@@ -3602,6 +3702,27 @@ async function addQueueItemFromSubmission(
       ? { row: ranked[0].row, provider: ranked[0].provider }
       : (strictMetadata ? null : searchResults[0]);
     let selectedByLiveFallback = false;
+    let selectedBySemiStrict = false;
+
+    if (!selectedCandidate && strictMetadata) {
+      const semiStrict = searchResults
+        .map((candidate) => ({
+          ...candidate,
+          evaluation: evaluateSearchResultForSubmission(
+            { title: candidate.row.title, channel: candidate.row.channel, duration: candidate.row.duration ?? null },
+            expectedArtist,
+            expectedTitle,
+            { strictMetadata: true, allowLiveFallback: false, matchMode: 'semi' },
+          ),
+        }))
+        .filter(({ evaluation }) => evaluation.score > -100)
+        .sort((a, b) => b.evaluation.score - a.evaluation.score);
+      if (semiStrict[0]) {
+        selectedCandidate = { row: semiStrict[0].row, provider: semiStrict[0].provider };
+        selectedBySemiStrict = true;
+        console.log(`[queue] Semi-strict fallback selected for "${submission.youtube_url}"`);
+      }
+    }
 
     if (!selectedCandidate && strictMetadata) {
       const liveFallback = searchResults
@@ -3691,6 +3812,8 @@ async function addQueueItemFromSubmission(
     discoveredArtist = selectedRow.channel ?? null;
     const providerTag = selectedByLiveFallback
       ? `${selectedCandidate.provider}:live-fallback`
+      : selectedBySemiStrict
+        ? `${selectedCandidate.provider}:semi-strict`
       : selectedCandidate.provider;
     console.log(`[queue] Search "${submission.youtube_url}" → ${selectedRow.title} (${url}) [provider=${providerTag}]`);
   }

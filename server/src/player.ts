@@ -510,6 +510,44 @@ function normalizeArtistMatchText(text: string): string {
     .trim();
 }
 
+function tokenizeArtistText(text: string): string[] {
+  return normalizeArtistMatchText(text)
+    .split(' ')
+    .map((part) => part.trim())
+    .filter((part) => part.length > 1);
+}
+
+function normalizeArtistString(artist: string | null | undefined): string[] {
+  const raw = normalizeArtistMatchText(artist ?? '');
+  if (!raw) return [];
+  const expanded = raw
+    .replace(/\b(feat|ft|featuring|vs|versus)\b/g, ' & ')
+    .replace(/\bx\b/g, ' & ')
+    .replace(/[;,/|]+/g, ' & ')
+    .replace(/\s*&\s*/g, ' & ');
+  const parts = expanded
+    .split(' & ')
+    .map((part) => normalizeArtistMatchText(part))
+    .filter((part) => part.length > 1);
+  return Array.from(new Set(parts));
+}
+
+function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+  let intersection = 0;
+  for (const token of a) {
+    if (b.has(token)) intersection += 1;
+  }
+  const union = a.size + b.size - intersection;
+  if (union <= 0) return 0;
+  return intersection / union;
+}
+
+function isVariousArtistsText(input: string | null | undefined): boolean {
+  const normalized = normalizeArtistMatchText(input ?? '');
+  return normalized === 'various artists' || normalized === 'various artist' || normalized === 'va';
+}
+
 function extractLeadingTitleArtistNormalized(title: string): string | null {
   const raw = sanitizeDisplayText(title);
   if (!raw) return null;
@@ -725,28 +763,56 @@ async function resolveShortAutoCandidate(
     // Keep the original query for better artist matching
     const searchQuery = sanitizeDisplayText(query);
     const parsedQuery = parseDisplayArtistTitle(searchQuery);
-    const expectedArtistRaw = options?.expectedArtist?.trim() || parsedQuery.artist || '';
+    let expectedArtistRaw = options?.expectedArtist?.trim() || parsedQuery.artist || '';
     const expectedTitleRaw = options?.expectedTitle?.trim() || parsedQuery.title || '';
+    if (isVariousArtistsText(expectedArtistRaw)) {
+      const parsedFromTitle = parseDisplayArtistTitle(expectedTitleRaw).artist;
+      if (parsedFromTitle) {
+        expectedArtistRaw = parsedFromTitle;
+      }
+    }
     const strictMetadata = options?.strictMetadata === true;
-    const expectedArtistNorm = expectedArtistRaw
-      ? normalizeArtistMatchText(expectedArtistRaw)
-      : '';
+    const expectedArtistParts = normalizeArtistString(expectedArtistRaw);
+    const expectedArtistNorm = expectedArtistParts.join(' ');
     const expectedTitleNorm = normalizeArtistMatchText(expectedTitleRaw);
+    const expectedTitleTokens = new Set(tokenizeArtistText(expectedTitleRaw));
+    const artistRequirementDisabled = isVariousArtistsText(options?.expectedArtist);
     const shouldRequireTitleMatch = strictMetadata || (!!expectedArtistRaw && !!expectedTitleRaw);
 
-    const hasStrictMetadataMatch = (resultTitle: string | null | undefined, resultChannel: string | null | undefined): boolean => {
-      if (!expectedArtistNorm || !expectedTitleNorm) return false;
+    const hasStrictMetadataMatch = (
+      resultTitle: string | null | undefined,
+      resultChannel: string | null | undefined,
+    ): { match: boolean; titleNearPerfect: boolean; artistStrong: boolean } => {
+      if (!expectedTitleNorm) return { match: false, titleNearPerfect: false, artistStrong: false };
       const titleNorm = normalizeArtistMatchText(resultTitle || '');
       const channelNorm = normalizeArtistMatchText(resultChannel || '');
-      const leadingArtistNorm = extractLeadingTitleArtistNormalized(resultTitle || '');
-      const artistOk = (
-        (!!leadingArtistNorm && hasVeryStrictArtistMatch(expectedArtistNorm, leadingArtistNorm))
-        || hasVeryStrictArtistMatch(expectedArtistNorm, channelNorm)
-      );
-      if (!artistOk) return false;
+      const titleTokens = new Set(tokenizeArtistText(resultTitle || ''));
+      const channelTokens = new Set(tokenizeArtistText(resultChannel || ''));
+      const combinedTokens = new Set<string>([...titleTokens, ...channelTokens]);
+      const titleSimilarity = expectedTitleTokens.size > 0
+        ? jaccardSimilarity(expectedTitleTokens, titleTokens)
+        : 1;
+      const combinedTitleSimilarity = expectedTitleTokens.size > 0
+        ? jaccardSimilarity(expectedTitleTokens, combinedTokens)
+        : 1;
+      const titleNearPerfect = titleSimilarity >= 0.95 || combinedTitleSimilarity >= 0.95;
       const titleOk = hasVeryStrictTitleMatch(expectedTitleNorm, titleNorm)
         || hasStrictTitleMatch(expectedTitleNorm, titleNorm);
-      return artistOk && titleOk;
+      if (!titleOk) return { match: false, titleNearPerfect, artistStrong: false };
+
+      if (artistRequirementDisabled || expectedArtistParts.length === 0) {
+        return { match: true, titleNearPerfect, artistStrong: true };
+      }
+      const expectedArtistTokens = new Set(expectedArtistParts.flatMap((part) => tokenizeArtistText(part)));
+      const artistSimilarity = expectedArtistTokens.size > 0
+        ? jaccardSimilarity(expectedArtistTokens, combinedTokens)
+        : 1;
+      const leadingArtistNorm = extractLeadingTitleArtistNormalized(resultTitle || '');
+      const leadingArtistStrong = !!leadingArtistNorm && hasLooseArtistMatch(expectedArtistNorm, leadingArtistNorm);
+      const artistStrong = artistSimilarity >= 0.65
+        || hasLooseArtistMatch(expectedArtistNorm, channelNorm)
+        || leadingArtistStrong;
+      return { match: artistStrong && titleOk, titleNearPerfect, artistStrong };
     };
 
     // Try YouTube first with aggressive timeout
@@ -809,9 +875,11 @@ async function resolveShortAutoCandidate(
           'trailer', 'teaser', 'sample', 'scene', 'movie clip', 'official trailer',
           'piano', 'piano tutorial', 'piano cover', 'sheet music', 'midi'
         ];
-        const strictMatch = hasStrictMetadataMatch(result.title, result.channel);
-        if (strictMetadata && !strictMatch) return false;
-        if (strictMetadata && hasUnexpectedStrictKeyword(title, channel, expectedTitleNorm)) return false;
+        const strictEval = hasStrictMetadataMatch(result.title, result.channel);
+        const strictMatch = strictEval.match;
+        const unexpectedStrictKeyword = hasUnexpectedStrictKeyword(title, channel, expectedTitleNorm);
+        if (strictMetadata && unexpectedStrictKeyword) return false;
+        if (strictMetadata && !strictMatch && !strictEval.titleNearPerfect) return false;
         if (!strictMatch && badKeywords.some(keyword => title.includes(keyword))) return false;
         if (!strictMatch && hasBlockedAutoKeyword(title, channel)) return false;
 
@@ -843,6 +911,10 @@ async function resolveShortAutoCandidate(
           const titleNorm = normalizeArtistMatchText(result.title || '');
           const channelNorm = normalizeArtistMatchText(result.channel || '');
           const leadingArtistNorm = extractLeadingTitleArtistNormalized(result.title || '');
+          const titleTokenSet = new Set(tokenizeArtistText(result.title || ''));
+          const expectedTitleSet = new Set(tokenizeArtistText(expectedTitleRaw));
+          const nearPerfectTitleMatch = expectedTitleSet.size > 0
+            && jaccardSimilarity(expectedTitleSet, titleTokenSet) >= 0.95;
           const leadingArtistMatches = !!leadingArtistNorm && (
             hasLooseArtistMatch(expectedArtistNorm, leadingArtistNorm)
           );
@@ -852,8 +924,8 @@ async function resolveShortAutoCandidate(
 
           // Uploader can differ, but if title has "Artist - Title" and leading artist mismatches,
           // only allow explicit remix/feat credit for expected artist.
-          if (leadingArtistNorm && !leadingArtistMatches && !creditedInTitle) return false;
-          if (!leadingArtistNorm && !artistAnywhereMatch && !creditedInTitle) return false;
+          if (leadingArtistNorm && !leadingArtistMatches && !creditedInTitle && !nearPerfectTitleMatch) return false;
+          if (!leadingArtistNorm && !artistAnywhereMatch && !creditedInTitle && !nearPerfectTitleMatch) return false;
           if (shouldRequireTitleMatch && !hasSufficientTitleMatch(expectedTitleNorm, titleNorm)) return false;
         }
         
@@ -885,9 +957,10 @@ async function resolveShortAutoCandidate(
     for (const result of scResults) {
       if (!result.title || isSetLikeAutoTitle(result.title)) continue;
       if (!result.duration || result.duration < 120 || result.duration > AUTO_MAX_DURATION_SECONDS) continue;
-      const strictMatch = hasStrictMetadataMatch(result.title, result.channel || '');
-      if (strictMetadata && !strictMatch) continue;
+      const strictEval = hasStrictMetadataMatch(result.title, result.channel || '');
+      const strictMatch = strictEval.match;
       if (strictMetadata && hasUnexpectedStrictKeyword(result.title, result.channel || '', expectedTitleNorm)) continue;
+      if (strictMetadata && !strictMatch && !strictEval.titleNearPerfect) continue;
       if (!strictMatch && hasBlockedAutoKeyword(result.title, result.channel || '')) continue;
       
       return {
