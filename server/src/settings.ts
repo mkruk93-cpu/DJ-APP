@@ -10,6 +10,7 @@ const DEFAULTS: Record<string, unknown> = {
   fallback_active_genre_by: null,
   jingle_enable: true,
   jingle_every_tracks: 4,
+  jingle_selected_keys: [],
   democracy_threshold: 51,
   democracy_timer: 15,
   jukebox_max_per_user: 5,

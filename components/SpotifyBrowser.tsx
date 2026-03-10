@@ -35,7 +35,7 @@ interface SpotifyBrowserProps {
     sourceType?: string | null;
     sourceGenre?: string | null;
     sourcePlaylist?: string | null;
-  }) => void;
+  }) => Promise<"added" | "manual_select" | "error">;
   submitting: boolean;
   mode?: "all" | "playlistsOnly" | "spotifyOnly";
 }
@@ -673,31 +673,32 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
     await loadLikedSongs(false);
   }
 
-  function handleAddTrack(track: SpotifyTrackItem) {
+  async function handleAddTrack(track: SpotifyTrackItem) {
     try {
       const artists = track.artists?.map((a) => a?.name).filter(Boolean).join(", ") || "Unknown";
       const query = `${artists} - ${track.name ?? "Unknown"}`;
-      setAddedTrackId(track.id);
-      onAddTrack({
+      const result = await onAddTrack({
         id: track.id ?? undefined,
         query,
         artist: artists,
         title: track.name ?? null,
         sourceType: "spotify",
       });
-      setTimeout(() => setAddedTrackId(null), 3000);
+      if (result === "added") {
+        setAddedTrackId(track.id);
+        setTimeout(() => setAddedTrackId(null), 3000);
+      }
     } catch {}
   }
 
-  function handleAddSavedTrack(track: UserPlaylistTrack) {
+  async function handleAddSavedTrack(track: UserPlaylistTrack) {
     const artist = (track.artist ?? "").trim();
     const title = (track.title ?? "").trim();
     const query = artist ? `${artist} - ${title}` : title;
-    setAddedTrackId(track.id);
     const playlistMeta = view === "sharedTracks" ? selectedSharedPlaylist : selectedSavedPlaylist;
     const sourceType = view === "sharedTracks" ? "shared_playlist" : "user_playlist";
     const sourceGenre = [playlistMeta?.genre_group, playlistMeta?.subgenre].filter(Boolean).join(" / ") || null;
-    onAddTrack({
+    const result = await onAddTrack({
       query,
       artist: artist || null,
       title: title || null,
@@ -705,7 +706,10 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
       sourceGenre,
       sourcePlaylist: playlistMeta?.name ?? null,
     });
-    setTimeout(() => setAddedTrackId(null), 3000);
+    if (result === "added") {
+      setAddedTrackId(track.id);
+      setTimeout(() => setAddedTrackId(null), 3000);
+    }
   }
 
   function handleDisconnect() {

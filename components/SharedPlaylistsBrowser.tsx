@@ -21,7 +21,7 @@ interface SharedPlaylistsBrowserProps {
     sourceType?: string | null;
     sourceGenre?: string | null;
     sourcePlaylist?: string | null;
-  }) => void;
+  }) => Promise<"added" | "manual_select" | "error">;
   submitting: boolean;
 }
 
@@ -371,15 +371,14 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
     }
   }
 
-  function handleAddTrack(track: UserPlaylistTrack) {
+  async function handleAddTrack(track: UserPlaylistTrack) {
     const artist = (track.artist ?? "").trim();
     const title = (track.title ?? "").trim();
     const query = artist ? `${artist} - ${title}` : title;
     const sourceGenre = selectedPlaylist
       ? [selectedPlaylist.genre_group, selectedPlaylist.subgenre].filter(Boolean).join(" / ") || null
       : null;
-    setAddedTrackId(track.id);
-    onAddTrack({
+    const result = await onAddTrack({
       id: track.id,
       query,
       artist: artist || null,
@@ -388,7 +387,10 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
       sourceGenre,
       sourcePlaylist: selectedPlaylist?.name ?? null,
     });
-    setTimeout(() => setAddedTrackId(null), 3000);
+    if (result === "added") {
+      setAddedTrackId(track.id);
+      setTimeout(() => setAddedTrackId(null), 3000);
+    }
   }
 
   function setAsAutoplayFallback(playlist: SharedPlaylist) {

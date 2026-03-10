@@ -433,11 +433,16 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
   }
 
   async function handleSpotifyAdd(track: { query: string; artist?: string | null; title?: string | null }) {
-    await submitRequest(track.query, "youtube", {
-      source: "spotify",
-      artist: track.artist ?? null,
-      title: track.title ?? null,
-    });
+    try {
+      await submitRequest(track.query, "youtube", {
+        source: "spotify",
+        artist: track.artist ?? null,
+        title: track.title ?? null,
+      });
+      return "added" as const;
+    } catch {
+      return "error" as const;
+    }
   }
 
   return (

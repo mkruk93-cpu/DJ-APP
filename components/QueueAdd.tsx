@@ -112,6 +112,8 @@ interface QueueAddResponse {
   candidates?: QueueAddManualCandidate[];
 }
 
+type AddTrackResult = "added" | "manual_select" | "error";
+
 interface RecentAddState {
   key: string;
   url: string;
@@ -1013,7 +1015,7 @@ export default function QueueAdd() {
     sourceType?: string | null;
     sourceGenre?: string | null;
     sourcePlaylist?: string | null;
-  }) {
+  }): Promise<AddTrackResult> {
     const spotifyKey = track.id ? `spotify:${track.id}` : `spotify:${Date.now()}`;
     setResultStatus((prev) => ({ ...prev, [spotifyKey]: "pending" }));
     const response = await submitUrl(track.query, undefined, track.title ?? null, track.artist ?? null, {
@@ -1036,11 +1038,11 @@ export default function QueueAdd() {
         msg: response.message ?? "Geen exacte hit. Kies handmatig een resultaat.",
         ok: false,
       });
-      return;
+      return "manual_select";
     }
     if (!response.ok) {
       setResultStatus((prev) => ({ ...prev, [spotifyKey]: "idle" }));
-      return;
+      return "error";
     }
     setResultStatus((prev) => ({ ...prev, [spotifyKey]: "added" }));
     setTimeout(() => {
@@ -1052,16 +1054,15 @@ export default function QueueAdd() {
       (track.title ?? track.query).trim(),
       track.artist ?? null,
     );
+    return "added";
   }
 
   async function chooseManualCandidate(candidate: QueueAddManualCandidate) {
     if (!pendingManualSelection) return;
     const sourceKey = pendingManualSelection.sourceKey;
     const manualState = pendingManualSelection;
-    // Close immediately and show optimistic added-state to avoid UI freeze feeling.
+    // Close immediately so UI responds instantly while submit continues.
     setPendingManualSelection(null);
-    setResultStatus((prev) => ({ ...prev, [sourceKey]: "added" }));
-    setFeedback({ msg: "Toegevoegd aan wachtrij...", ok: true });
 
     const result = await submitUrl(
       candidate.url,
@@ -1078,6 +1079,7 @@ export default function QueueAdd() {
       setResultStatus((prev) => ({ ...prev, [sourceKey]: "idle" }));
       return;
     }
+    setResultStatus((prev) => ({ ...prev, [sourceKey]: "added" }));
     startRecentAdd(
       `manual:${Date.now()}`,
       candidate.url,
@@ -1621,7 +1623,16 @@ export default function QueueAdd() {
         <div className="absolute inset-0 z-[120] flex items-center justify-center bg-black/70 p-2">
           <div className="max-h-[75dvh] w-full max-w-2xl overflow-hidden rounded-xl border border-violet-700/70 bg-gray-950 shadow-2xl shadow-black/60">
             <div className="border-b border-gray-800 px-4 py-3">
-              <p className="text-sm font-semibold text-white">Geen exacte hit gevonden</p>
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-sm font-semibold text-white">Geen exacte hit gevonden</p>
+                <button
+                  type="button"
+                  onClick={() => setPendingManualSelection(null)}
+                  className="rounded border border-gray-700 px-2 py-1 text-[11px] font-semibold text-gray-200 transition hover:border-gray-500 hover:text-white"
+                >
+                  Annuleren
+                </button>
+              </div>
               <p className="mt-1 text-xs text-gray-300">
                 Kies handmatig het juiste resultaat voor{" "}
                 <span className="font-semibold text-violet-200">

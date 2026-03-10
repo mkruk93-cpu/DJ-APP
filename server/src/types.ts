@@ -114,6 +114,7 @@ export interface ServerState {
   queue: QueueItem[];
   jingleEnabled: boolean;
   jingleEveryTracks: number;
+  jingleSelectedKeys: string[];
   mode: Mode;
   modeSettings: ModeSettings;
   fallbackGenres: FallbackGenre[];

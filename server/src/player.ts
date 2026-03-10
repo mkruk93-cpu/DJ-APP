@@ -2373,6 +2373,10 @@ const PREPARE_FAIL_MAX = 3;
 let tracksSinceLastJingle = 0;
 let lastJinglePath: string | null = null;
 const channelRepairCache = new Map<string, boolean>();
+const localAudioValidationCache = new Map<string, { mtimeMs: number; ok: boolean; checkedAt: number }>();
+const localAudioBlockedUntil = new Map<string, number>();
+const LOCAL_AUDIO_VALIDATION_TTL_MS = 30 * 60_000;
+const LOCAL_AUDIO_BLOCK_MS = 30 * 60_000;
 
 function listJingleFiles(): string[] {
   if (!JINGLE_DIR) return [];
@@ -2391,15 +2395,59 @@ function normalizeJingleKey(value: string): string {
   return path.basename(value).trim().toLowerCase();
 }
 
+function isLocalAudioBlocked(filePath: string): boolean {
+  const until = localAudioBlockedUntil.get(filePath) ?? 0;
+  if (until > Date.now()) return true;
+  if (until > 0) localAudioBlockedUntil.delete(filePath);
+  return false;
+}
+
+function blockLocalAudioFile(filePath: string, reason: string): void {
+  localAudioBlockedUntil.set(filePath, Date.now() + LOCAL_AUDIO_BLOCK_MS);
+  localAudioValidationCache.delete(filePath);
+  console.warn(`[local-audio] blocked for ${Math.round(LOCAL_AUDIO_BLOCK_MS / 60000)}m: ${path.basename(filePath)} (${reason})`);
+}
+
+async function validateLocalAudioFile(filePath: string): Promise<boolean> {
+  if (isLocalAudioBlocked(filePath)) return false;
+  try {
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile() || stat.size < 4096) {
+      blockLocalAudioFile(filePath, 'file missing/too small');
+      return false;
+    }
+    const cached = localAudioValidationCache.get(filePath);
+    if (
+      cached
+      && cached.mtimeMs === stat.mtimeMs
+      && (Date.now() - cached.checkedAt) < LOCAL_AUDIO_VALIDATION_TTL_MS
+    ) {
+      return cached.ok;
+    }
+    const duration = await getAudioDuration(filePath);
+    const ok = duration !== null && duration >= 6;
+    localAudioValidationCache.set(filePath, { mtimeMs: stat.mtimeMs, ok, checkedAt: Date.now() });
+    if (!ok) {
+      blockLocalAudioFile(filePath, 'invalid duration');
+      return false;
+    }
+    return true;
+  } catch {
+    blockLocalAudioFile(filePath, 'stat failed');
+    return false;
+  }
+}
+
 function pickJingleFile(): string | null {
   const allFiles = listJingleFiles();
   const files = selectedJingleKeys.size > 0
     ? allFiles.filter((fullPath) => selectedJingleKeys.has(normalizeJingleKey(fullPath)))
     : allFiles;
-  if (files.length === 0) return null;
-  if (files.length === 1) return files[0] ?? null;
-  const pool = files.filter((fullPath) => fullPath !== lastJinglePath);
-  const pickedPool = pool.length > 0 ? pool : files;
+  const eligible = files.filter((fullPath) => !isLocalAudioBlocked(fullPath));
+  if (eligible.length === 0) return null;
+  if (eligible.length === 1) return eligible[0] ?? null;
+  const pool = eligible.filter((fullPath) => fullPath !== lastJinglePath);
+  const pickedPool = pool.length > 0 ? pool : eligible;
   const picked = pickedPool[Math.floor(Math.random() * pickedPool.length)] ?? null;
   return picked;
 }
@@ -3392,15 +3440,23 @@ async function playNext(
     for (let attempt = 0; attempt < 6; attempt++) {
       const candidate = pickRandomFallbackForActiveSelections(exclude);
       if (!candidate) break;
+      if (isLocalAudioBlocked(candidate)) {
+        exclude = candidate;
+        continue;
+      }
       const candidateTitle = titleFromFilename(candidate);
       if (isSetLikeAutoTitle(candidateTitle)) {
+        exclude = candidate;
+        continue;
+      }
+      if (!(await validateLocalAudioFile(candidate))) {
         exclude = candidate;
         continue;
       }
       selectedFile = candidate;
       break;
     }
-    const fallbackFile = selectedFile ?? pickRandomFallbackForActiveSelections(lastFallbackFile);
+    const fallbackFile = selectedFile;
     if (!fallbackFile) return false;
     audioFile = fallbackFile;
     trackTitle = titleFromFilename(fallbackFile);
@@ -3490,7 +3546,14 @@ async function playNext(
     if (!jingleEnabled) return false;
     if ((currentTrack?.youtube_id ?? '') === 'jingle') return false;
     if (tracksSinceLastJingle < jingleEveryTracks) return false;
-    const jingleFile = pickJingleFile();
+    let jingleFile: string | null = null;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const candidate = pickJingleFile();
+      if (!candidate) break;
+      if (!(await validateLocalAudioFile(candidate))) continue;
+      jingleFile = candidate;
+      break;
+    }
     if (!jingleFile) return false;
 
     audioFile = jingleFile;
@@ -3804,6 +3867,9 @@ async function playNext(
     const encoderStdinUnavailable = !encoder?.stdin || encoder.stdin.destroyed || !encoder.stdin.writable;
     const isEncoderCrash = !encoder || encoder.killed || encoder.exitCode !== null || encoderStdinUnavailable || /encoder stdin not available/i.test(message);
       if (/decoder stalled/i.test(message)) {
+        if (audioFile && (trackYoutubeId === 'local' || trackYoutubeId === 'jingle')) {
+          blockLocalAudioFile(audioFile, 'decoder stalled');
+        }
         triggerSelfHeal(`decoder stalled (${Math.round(DECODER_CHUNK_TIMEOUT_MS / 1000)}s no chunks)`);
       }
 
