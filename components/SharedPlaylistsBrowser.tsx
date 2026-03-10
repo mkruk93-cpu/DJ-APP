@@ -128,6 +128,7 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
   const [importCoverUrl, setImportCoverUrl] = useState("");
   const [importAutoCover, setImportAutoCover] = useState(true);
   const [addedTrackId, setAddedTrackId] = useState<string | null>(null);
+  const [pendingTrackId, setPendingTrackId] = useState<string | null>(null);
   const [sharedPlaylists, setSharedPlaylists] = useState<SharedPlaylist[]>([]);
   const [sharedUsage, setSharedUsage] = useState<{ playlists: number; tracks: number } | null>(null);
   const [selectedPlaylist, setSelectedPlaylist] = useState<SharedPlaylist | null>(null);
@@ -372,24 +373,34 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
   }
 
   async function handleAddTrack(track: UserPlaylistTrack) {
+    if (pendingTrackId === track.id || addedTrackId === track.id) return;
+    setPendingTrackId(track.id);
+    setAddedTrackId(track.id);
     const artist = (track.artist ?? "").trim();
     const title = (track.title ?? "").trim();
     const query = artist ? `${artist} - ${title}` : title;
     const sourceGenre = selectedPlaylist
       ? [selectedPlaylist.genre_group, selectedPlaylist.subgenre].filter(Boolean).join(" / ") || null
       : null;
-    const result = await onAddTrack({
-      id: track.id,
-      query,
-      artist: artist || null,
-      title: title || null,
-      sourceType: "shared_playlist",
-      sourceGenre,
-      sourcePlaylist: selectedPlaylist?.name ?? null,
-    });
-    if (result === "added") {
-      setAddedTrackId(track.id);
-      setTimeout(() => setAddedTrackId(null), 3000);
+    try {
+      const result = await onAddTrack({
+        id: track.id,
+        query,
+        artist: artist || null,
+        title: title || null,
+        sourceType: "shared_playlist",
+        sourceGenre,
+        sourcePlaylist: selectedPlaylist?.name ?? null,
+      });
+      if (result === "added") {
+        setTimeout(() => setAddedTrackId(null), 3000);
+      } else {
+        setAddedTrackId(null);
+      }
+    } catch {
+      setAddedTrackId(null);
+    } finally {
+      setPendingTrackId(null);
     }
   }
 
@@ -672,6 +683,7 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
         <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto pb-14 sm:pb-2">
           {filteredTracks.map((track) => {
             const isAdded = addedTrackId === track.id;
+            const isPending = pendingTrackId === track.id;
             const spotifyUrl = (track.spotify_url ?? "").trim();
             const thumb = spotifyUrl ? thumbs[spotifyUrl] : "";
             return (
@@ -679,7 +691,7 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                 key={track.id}
                 type="button"
                 onClick={() => handleAddTrack(track)}
-                disabled={submitting || isAdded}
+                disabled={submitting || isAdded || isPending}
                 className={`flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition ${
                   isAdded ? "bg-green-500/10" : "hover:bg-gray-800/80"
                 } disabled:opacity-60`}
@@ -696,6 +708,10 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                 {isAdded ? (
                   <span className="rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
                     Toegevoegd
+                  </span>
+                ) : isPending ? (
+                  <span className="rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200">
+                    Bezig...
                   </span>
                 ) : (
                   <svg className="h-3.5 w-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

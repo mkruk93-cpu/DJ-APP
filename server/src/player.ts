@@ -2818,7 +2818,10 @@ function runSelfHealChecks(): void {
 
 function beginSeamlessSwap(ready: ReadyTrack): void {
   const newDecoder = spawn('ffmpeg', [
-    '-hide_banner', '-re',
+    '-hide_banner',
+    '-re',
+    '-fflags', '+discardcorrupt',
+    '-err_detect', 'ignore_err',
     '-i', ready.audioFile,
     ...getDecoderFilterArgs(ready.forceDualMono),
     '-vn', '-f', 's16le', '-ar', '44100', '-ac', '2',
@@ -3948,6 +3951,8 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess, forceDualMono = f
     const decoder = spawn('ffmpeg', [
       '-hide_banner',
       '-re',
+      '-fflags', '+discardcorrupt',
+      '-err_detect', 'ignore_err',
       '-i', audioFile,
       ...getDecoderFilterArgs(forceDualMono),
       '-vn',

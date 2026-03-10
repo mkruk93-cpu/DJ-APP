@@ -149,6 +149,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
   const [loadingMore, setLoadingMore] = useState(false);
   const [filter, setFilter] = useState("");
   const [addedTrackId, setAddedTrackId] = useState<string | null>(null);
+  const [pendingTrackId, setPendingTrackId] = useState<string | null>(null);
   const [trackError, setTrackError] = useState<string | null>(null);
   const [authStatus, setAuthStatus] = useState<string | null>(null);
   const [playlistsNext, setPlaylistsNext] = useState<string | null>(null);
@@ -674,6 +675,10 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
   }
 
   async function handleAddTrack(track: SpotifyTrackItem) {
+    const trackKey = track.id ?? `${track.name ?? "unknown"}:${track.artists?.map((a) => a?.name).join(",") ?? "unknown"}`;
+    if (pendingTrackId === trackKey || addedTrackId === trackKey) return;
+    setPendingTrackId(trackKey);
+    setAddedTrackId(trackKey);
     try {
       const artists = track.artists?.map((a) => a?.name).filter(Boolean).join(", ") || "Unknown";
       const query = `${artists} - ${track.name ?? "Unknown"}`;
@@ -685,30 +690,45 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
         sourceType: "spotify",
       });
       if (result === "added") {
-        setAddedTrackId(track.id);
         setTimeout(() => setAddedTrackId(null), 3000);
+      } else {
+        setAddedTrackId(null);
       }
-    } catch {}
+    } catch {
+      setAddedTrackId(null);
+    } finally {
+      setPendingTrackId(null);
+    }
   }
 
   async function handleAddSavedTrack(track: UserPlaylistTrack) {
-    const artist = (track.artist ?? "").trim();
-    const title = (track.title ?? "").trim();
-    const query = artist ? `${artist} - ${title}` : title;
-    const playlistMeta = view === "sharedTracks" ? selectedSharedPlaylist : selectedSavedPlaylist;
-    const sourceType = view === "sharedTracks" ? "shared_playlist" : "user_playlist";
-    const sourceGenre = [playlistMeta?.genre_group, playlistMeta?.subgenre].filter(Boolean).join(" / ") || null;
-    const result = await onAddTrack({
-      query,
-      artist: artist || null,
-      title: title || null,
-      sourceType,
-      sourceGenre,
-      sourcePlaylist: playlistMeta?.name ?? null,
-    });
-    if (result === "added") {
-      setAddedTrackId(track.id);
-      setTimeout(() => setAddedTrackId(null), 3000);
+    if (pendingTrackId === track.id || addedTrackId === track.id) return;
+    setPendingTrackId(track.id);
+    setAddedTrackId(track.id);
+    try {
+      const artist = (track.artist ?? "").trim();
+      const title = (track.title ?? "").trim();
+      const query = artist ? `${artist} - ${title}` : title;
+      const playlistMeta = view === "sharedTracks" ? selectedSharedPlaylist : selectedSavedPlaylist;
+      const sourceType = view === "sharedTracks" ? "shared_playlist" : "user_playlist";
+      const sourceGenre = [playlistMeta?.genre_group, playlistMeta?.subgenre].filter(Boolean).join(" / ") || null;
+      const result = await onAddTrack({
+        query,
+        artist: artist || null,
+        title: title || null,
+        sourceType,
+        sourceGenre,
+        sourcePlaylist: playlistMeta?.name ?? null,
+      });
+      if (result === "added") {
+        setTimeout(() => setAddedTrackId(null), 3000);
+      } else {
+        setAddedTrackId(null);
+      }
+    } catch {
+      setAddedTrackId(null);
+    } finally {
+      setPendingTrackId(null);
     }
   }
 
@@ -1385,17 +1405,19 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
       {view === "tracks" && spotifyEnabled && !loading && (
         <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto pb-14 sm:pb-2">
           {filteredTracks.map((track) => {
+            const trackKey = track.id ?? `${track.name ?? "unknown"}:${track.artists?.map((a) => a?.name).join(",") ?? "unknown"}`;
             const artists = track.artists?.map((a) => a?.name).filter(Boolean).join(", ") || "";
             const imgs = track.album?.images;
             const albumImg = imgs?.[0]?.url ?? imgs?.[imgs.length - 1]?.url;
-            const isAdded = addedTrackId === track.id;
+            const isAdded = addedTrackId === trackKey;
+            const isPending = pendingTrackId === trackKey;
 
             return (
               <button
                 type="button"
                 key={track.id}
                 onClick={() => handleAddTrack(track)}
-                disabled={submitting || isAdded}
+                disabled={submitting || isAdded || isPending}
                 className={`flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition ${
                   isAdded
                     ? "bg-green-500/10"
@@ -1422,6 +1444,10 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                   {isAdded ? (
                     <span className="rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
                       Toegevoegd
+                    </span>
+                  ) : isPending ? (
+                    <span className="rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200">
+                      Bezig...
                     </span>
                   ) : (
                     <svg className="h-3.5 w-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -1451,6 +1477,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
         <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto pb-14 sm:pb-2">
           {filteredSavedTracks.map((track) => {
             const isAdded = addedTrackId === track.id;
+            const isPending = pendingTrackId === track.id;
             const spotifyUrl = (track.spotify_url ?? "").trim();
             const thumb = spotifyUrl ? savedTrackThumbs[spotifyUrl] : "";
             return (
@@ -1458,7 +1485,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                 type="button"
                 key={track.id}
                 onClick={() => handleAddSavedTrack(track)}
-                disabled={submitting || isAdded}
+                disabled={submitting || isAdded || isPending}
                 className={`flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition ${
                   isAdded ? "bg-green-500/10" : "hover:bg-gray-800/80"
                 } disabled:opacity-60`}
@@ -1483,6 +1510,10 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                 {isAdded ? (
                   <span className="rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
                     Toegevoegd
+                  </span>
+                ) : isPending ? (
+                  <span className="rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200">
+                    Bezig...
                   </span>
                 ) : (
                   <svg className="h-3.5 w-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -1511,6 +1542,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
         <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto pb-14 sm:pb-2">
           {filteredSharedTracks.map((track) => {
             const isAdded = addedTrackId === track.id;
+            const isPending = pendingTrackId === track.id;
             const spotifyUrl = (track.spotify_url ?? "").trim();
             const thumb = spotifyUrl ? savedTrackThumbs[spotifyUrl] : "";
             return (
@@ -1518,7 +1550,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                 type="button"
                 key={track.id}
                 onClick={() => handleAddSavedTrack(track)}
-                disabled={submitting || isAdded}
+                disabled={submitting || isAdded || isPending}
                 className={`flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition ${
                   isAdded ? "bg-green-500/10" : "hover:bg-gray-800/80"
                 } disabled:opacity-60`}
@@ -1543,6 +1575,10 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                 {isAdded ? (
                   <span className="rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
                     Toegevoegd
+                  </span>
+                ) : isPending ? (
+                  <span className="rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200">
+                    Bezig...
                   </span>
                 ) : (
                   <svg className="h-3.5 w-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
