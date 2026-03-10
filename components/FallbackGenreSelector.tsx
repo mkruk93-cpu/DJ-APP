@@ -125,6 +125,8 @@ export default function FallbackGenreSelector() {
   const [collapsedSubgenres, setCollapsedSubgenres] = useState<string[]>([]);
   const [hasStoredCollapseState, setHasStoredCollapseState] = useState(false);
   const [showFallbackHelp, setShowFallbackHelp] = useState(false);
+  const [showSinglePlaylistChoice, setShowSinglePlaylistChoice] = useState(false);
+  const [singlePlaylistChoice, setSinglePlaylistChoice] = useState<string>("");
 
   const sortedGenres = useMemo(
     () => [...genres].sort((a, b) => a.label.localeCompare(b.label, "nl")),
@@ -290,10 +292,17 @@ export default function FallbackGenreSelector() {
     emitSharedSelection(all);
   }
 
-  function clearSharedPlaylistsWithSafeDefault(): void {
-    const fallback = sortedSharedPlaylists[0]?.id;
-    if (!fallback) return;
-    emitSharedSelection([fallback]);
+  function openSinglePlaylistChoice(): void {
+    const initial = selectedSharedGenres[0] ?? sortedSharedPlaylists[0]?.id ?? "";
+    if (!initial) return;
+    setSinglePlaylistChoice(initial);
+    setShowSinglePlaylistChoice(true);
+  }
+
+  function confirmSinglePlaylistChoice(): void {
+    if (!singlePlaylistChoice) return;
+    emitSharedSelection([singlePlaylistChoice]);
+    setShowSinglePlaylistChoice(false);
   }
 
   useEffect(() => {
@@ -557,13 +566,47 @@ export default function FallbackGenreSelector() {
                 </button>
                 <button
                   type="button"
-                  onClick={clearSharedPlaylistsWithSafeDefault}
+                  onClick={openSinglePlaylistChoice}
                   className="rounded border border-gray-700 px-2 py-1 text-[11px] font-semibold text-gray-200 transition hover:bg-gray-800"
                 >
                   Alles uit
                 </button>
               </div>
             </div>
+            {showSinglePlaylistChoice && (
+              <div className="mb-1 rounded-md border border-violet-700/50 bg-gray-900/95 p-2">
+                <p className="mb-1 text-[11px] font-semibold text-violet-100">
+                  Kies 1 playlist die actief blijft
+                </p>
+                <select
+                  value={singlePlaylistChoice}
+                  onChange={(e) => setSinglePlaylistChoice(e.target.value)}
+                  className="mb-2 w-full rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[11px] text-white"
+                >
+                  {sortedSharedPlaylists.map((playlist) => (
+                    <option key={playlist.id} value={playlist.id}>
+                      {playlist.label.replace(/^Playlist ·\s*/i, "")}
+                    </option>
+                  ))}
+                </select>
+                <div className="grid grid-cols-2 gap-1">
+                  <button
+                    type="button"
+                    onClick={confirmSinglePlaylistChoice}
+                    className="rounded border border-violet-600/70 bg-violet-700/20 px-2 py-1 text-[11px] font-semibold text-violet-100 transition hover:bg-violet-700/30"
+                  >
+                    Toepassen
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowSinglePlaylistChoice(false)}
+                    className="rounded border border-gray-700 px-2 py-1 text-[11px] font-semibold text-gray-200 transition hover:bg-gray-800"
+                  >
+                    Annuleren
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="mb-1 rounded-md border border-gray-800 bg-gray-900/70 p-1">
               <p className="mb-1 px-1 text-[10px] text-gray-400">Afspeelvolgorde</p>
               <div className="grid grid-cols-2 gap-1">

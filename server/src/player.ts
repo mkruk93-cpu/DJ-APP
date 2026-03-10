@@ -139,6 +139,32 @@ type ActiveAutoSource =
   | AutoSourceItem
   | { type: 'mixed'; key: string; items: AutoSourceItem[]; playbackMode: SharedAutoPlaybackMode };
 
+type SelectionTab = 'queue' | 'local' | 'online' | 'playlists' | 'mixed';
+
+type QueueSelectionMeta = {
+  selectionLabel?: string | null;
+  selectionPlaylist?: string | null;
+  selectionTab?: SelectionTab | null;
+  selectionKey?: string | null;
+};
+
+const queueSelectionMetaByItemId = new Map<string, QueueSelectionMeta>();
+
+export function setQueueItemSelectionMeta(itemId: string, meta: QueueSelectionMeta | null | undefined): void {
+  const id = itemId.trim();
+  if (!id) return;
+  if (!meta) {
+    queueSelectionMetaByItemId.delete(id);
+    return;
+  }
+  queueSelectionMetaByItemId.set(id, {
+    selectionLabel: meta.selectionLabel ?? null,
+    selectionPlaylist: meta.selectionPlaylist ?? null,
+    selectionTab: meta.selectionTab ?? null,
+    selectionKey: meta.selectionKey ?? null,
+  });
+}
+
 function normalizeSharedAutoPlaybackMode(value: unknown): SharedAutoPlaybackMode {
   if (typeof value !== 'string') return 'random';
   const normalized = value.trim().toLowerCase();
@@ -783,6 +809,256 @@ const OPTIONAL_TITLE_STYLE_TOKENS = new Set([
   'hypertechno',
 ]);
 
+const SEARCH_HARD_VARIANT_KEYWORDS = [
+  'remix',
+  'cover',
+  'tribute',
+  'karaoke',
+  'remake',
+  'bootleg',
+  'mashup',
+  'nightcore',
+  '8d',
+  'sped up',
+  'slowed',
+  'reverb',
+  'chipmunk',
+  'bass boosted',
+  'fan made',
+  'ai cover',
+  'version',
+];
+
+const SEARCH_SOFT_VARIANT_KEYWORDS = [
+  'acoustic',
+  'demo',
+  'preview',
+  'snippet',
+  'mix',
+  'dj set',
+  'session',
+];
+
+const SEARCH_ALLOW_VERSION_KEYWORDS = [
+  'original mix',
+  'radio edit',
+  'extended mix',
+  'remaster',
+  'official audio',
+  'topic',
+  'hq',
+];
+
+const SEARCH_LIVE_KEYWORDS = [
+  'live',
+  'live at',
+  'live version',
+  'concert',
+];
+
+type AutoSearchScoreResult = {
+  score: number;
+  reasons: string[];
+  isLive: boolean;
+};
+
+function includesKeywordOutsideExpected(
+  haystackNorm: string,
+  keyword: string,
+  expectedTitleNorm: string,
+): boolean {
+  const keywordNorm = normalizeArtistMatchText(keyword);
+  if (!keywordNorm || !haystackNorm.includes(keywordNorm)) return false;
+  return !expectedTitleNorm.includes(keywordNorm);
+}
+
+function hasUnexpectedKeyword(
+  haystackNorm: string,
+  expectedTitleNorm: string,
+  keywords: string[],
+): boolean {
+  return keywords.some((keyword) => includesKeywordOutsideExpected(haystackNorm, keyword, expectedTitleNorm));
+}
+
+function tokenOverlap(a: string, b: string): number {
+  const aSet = new Set(tokenizeArtistText(a));
+  const bSet = new Set(tokenizeArtistText(b));
+  if (aSet.size === 0 || bSet.size === 0) return 0;
+  let matches = 0;
+  for (const token of aSet) {
+    if (bSet.has(token)) matches += 1;
+  }
+  return matches / Math.max(aSet.size, bSet.size);
+}
+
+function evaluateSearchResultForAutoSubmission(
+  result: { title?: string | null; channel?: string | null; duration?: number | null },
+  expectedArtist: string | null,
+  expectedTitle: string | null,
+  options?: { strictMetadata?: boolean; allowLiveFallback?: boolean; matchMode?: 'strict' | 'semi' },
+): AutoSearchScoreResult {
+  const title = String(result.title ?? '').trim();
+  const channel = String(result.channel ?? '').trim();
+  if (!title) return { score: -100, reasons: ['empty-title'], isLive: false };
+  const strictMetadata = options?.strictMetadata === true;
+  const allowLiveFallback = options?.allowLiveFallback === true;
+  const matchMode = options?.matchMode ?? 'strict';
+  const isSemiStrict = matchMode === 'semi';
+
+  let score = 0;
+  const titleNorm = normalizeArtistMatchText(title);
+  const channelNorm = normalizeArtistMatchText(channel);
+  const haystackNorm = `${titleNorm} ${channelNorm}`.trim();
+  const expectedArtistFromTitle = isVariousArtistsText(expectedArtist)
+    ? parseDisplayArtistTitle(expectedTitle ?? '').artist
+    : null;
+  const useParsedArtist = isVariousArtistsText(expectedArtist) && !!expectedArtistFromTitle;
+  const expectedArtistRaw = useParsedArtist ? expectedArtistFromTitle : expectedArtist;
+  const expectedArtistTokens = normalizeArtistString(expectedArtistRaw);
+  const expectedArtistSet = new Set(expectedArtistTokens.flatMap((value) => tokenizeArtistText(value)));
+  const wantedTitleNorm = normalizeArtistMatchText(expectedTitle ?? '');
+  const expectedTitleSet = new Set(tokenizeArtistText(expectedTitle ?? ''));
+  const expectedTitleRelaxedSet = new Set(
+    Array.from(expectedTitleSet).filter((token) => !OPTIONAL_TITLE_STYLE_TOKENS.has(token)),
+  );
+  const resultTitleSet = new Set(tokenizeArtistText(title));
+  const resultCombinedSet = new Set(tokenizeArtistText(`${title} ${channel}`));
+  const expectedIncludesRemixLike = hasUnexpectedKeyword(
+    wantedTitleNorm,
+    '',
+    ['remix', 'edit', 'bootleg', 'rework', 'version'],
+  );
+  const blocked = hasBlockedAutoKeyword(titleNorm, channelNorm);
+
+  const titleTokenSimilarity = expectedTitleSet.size > 0
+    ? jaccardSimilarity(expectedTitleSet, resultTitleSet)
+    : 1;
+  const titleCombinedSimilarity = expectedTitleSet.size > 0
+    ? jaccardSimilarity(expectedTitleSet, resultCombinedSet)
+    : 1;
+  const titleCoverage = expectedTitleSet.size > 0
+    ? fuzzyTokenCoverage(expectedTitleSet, resultTitleSet)
+    : 1;
+  const combinedTitleCoverage = expectedTitleSet.size > 0
+    ? fuzzyTokenCoverage(expectedTitleSet, resultCombinedSet)
+    : 1;
+  const titleRelaxedCoverage = expectedTitleRelaxedSet.size > 0
+    ? fuzzyTokenCoverage(expectedTitleRelaxedSet, resultTitleSet)
+    : titleCoverage;
+  const combinedTitleRelaxedCoverage = expectedTitleRelaxedSet.size > 0
+    ? fuzzyTokenCoverage(expectedTitleRelaxedSet, resultCombinedSet)
+    : combinedTitleCoverage;
+  const titleStrongMatch = titleTokenSimilarity >= 0.8
+    || titleCombinedSimilarity >= 0.8
+    || titleCoverage >= 0.8
+    || combinedTitleCoverage >= 0.8
+    || titleRelaxedCoverage >= 0.8
+    || combinedTitleRelaxedCoverage >= 0.8
+    || (wantedTitleNorm ? tokenOverlap(expectedTitle ?? '', title) >= 0.85 : true)
+    || (wantedTitleNorm ? titleNorm.includes(wantedTitleNorm) : true);
+  const titleNearPerfect = titleTokenSimilarity >= 0.95
+    || titleCombinedSimilarity >= 0.95
+    || titleCoverage >= 0.95
+    || combinedTitleCoverage >= 0.95
+    || titleRelaxedCoverage >= 0.95
+    || combinedTitleRelaxedCoverage >= 0.95;
+
+  const resultArtistSet = new Set(tokenizeArtistText(`${title} ${channel}`));
+  const artistSimilarity = expectedArtistSet.size > 0
+    ? jaccardSimilarity(expectedArtistSet, resultArtistSet)
+    : 1;
+  const artistContainment = expectedArtistSet.size > 0
+    ? tokenContainmentSimilarity(expectedArtistSet, resultArtistSet)
+    : 1;
+  const artistHasSignal = expectedArtistSet.size > 0 ? artistContainment >= 0.34 : true;
+  const strictArtistMatch = expectedArtistSet.size > 0
+    ? (artistSimilarity >= 0.65 || artistContainment >= 0.6)
+    : true;
+  const strictTitleMatch = wantedTitleNorm ? titleStrongMatch : true;
+  const artistRequirementDisabled = isVariousArtistsText(expectedArtist) && !useParsedArtist;
+
+  if (!strictMetadata && blocked) return { score: -100, reasons: ['blocked-keyword'], isLive: false };
+  if (strictMetadata && !artistRequirementDisabled) {
+    if (!strictTitleMatch) return { score: -100, reasons: ['metadata-mismatch:title'], isLive: false };
+    if (!strictArtistMatch) {
+      if (!isSemiStrict || !titleNearPerfect || !artistHasSignal) {
+        return { score: -100, reasons: ['metadata-mismatch:artist'], isLive: false };
+      }
+      score -= 50;
+    }
+  } else if (strictMetadata && !strictTitleMatch) {
+    return { score: -100, reasons: ['metadata-mismatch:title'], isLive: false };
+  }
+
+  const nonMusicBlocked = hasUnexpectedKeyword(haystackNorm, wantedTitleNorm, STRICT_METADATA_BLOCKED_KEYWORDS);
+  if (nonMusicBlocked) {
+    return { score: -100, reasons: ['non-music'], isLive: false };
+  }
+
+  const hardVariantKeywords = expectedIncludesRemixLike
+    ? SEARCH_HARD_VARIANT_KEYWORDS.filter((keyword) => !['remix', 'edit', 'bootleg', 'rework', 'version'].includes(keyword))
+    : SEARCH_HARD_VARIANT_KEYWORDS;
+  const hardVariantBlocked = hasUnexpectedKeyword(haystackNorm, wantedTitleNorm, hardVariantKeywords);
+  if (strictMetadata && hardVariantBlocked) {
+    return { score: -100, reasons: ['wrong-version'], isLive: false };
+  }
+
+  const isLive = hasUnexpectedKeyword(haystackNorm, wantedTitleNorm, SEARCH_LIVE_KEYWORDS);
+  if (strictMetadata && isLive && !allowLiveFallback) {
+    return { score: -100, reasons: ['live-version'], isLive: true };
+  }
+
+  const reasons: string[] = [];
+
+  if (strictMetadata) {
+    score += 24;
+    if (artistRequirementDisabled) score += 4;
+  }
+
+  if (expectedArtistSet.size > 0 && !artistRequirementDisabled) {
+    if (strictArtistMatch) score += 6;
+    else if (titleNearPerfect) {
+      score -= isSemiStrict ? 4 : 8;
+      reasons.push('artist-relaxed-high-title');
+    } else {
+      score -= 8;
+      reasons.push('artist-weak');
+    }
+  }
+
+  if (wantedTitleNorm && expectedTitleSet.size > 0) {
+    if (titleNearPerfect) score += 16;
+    else if (titleStrongMatch) score += 10;
+    else {
+      score -= 10;
+      reasons.push('title-weak');
+    }
+  }
+
+  const hasAllowedVersion = SEARCH_ALLOW_VERSION_KEYWORDS
+    .some((keyword) => haystackNorm.includes(normalizeArtistMatchText(keyword)));
+  if (hasAllowedVersion) score += 5;
+
+  const hasSoftVariant = hasUnexpectedKeyword(haystackNorm, wantedTitleNorm, SEARCH_SOFT_VARIANT_KEYWORDS);
+  if (hasSoftVariant) {
+    score -= strictMetadata ? 5 : 8;
+    reasons.push('variant-soft');
+  }
+
+  if (isLive) {
+    score -= allowLiveFallback ? 6 : 12;
+    reasons.push(allowLiveFallback ? 'live-fallback' : 'live');
+  }
+
+  const duration = result.duration ?? null;
+  if (duration !== null) {
+    if (duration < 95) score -= 4;
+    if (duration > 11 * 60) score -= 5;
+  }
+
+  return { score, reasons, isLive };
+}
+
 function hasBlockedAutoKeyword(title: string, channel = ''): boolean {
   const haystack = `${title} ${channel}`.toLowerCase();
   return AUTO_BLOCKED_KEYWORDS.some((keyword) => haystack.includes(keyword));
@@ -804,12 +1080,9 @@ async function resolveShortAutoCandidate(
   genreId?: string,
   options?: AutoCandidateMatchOptions,
 ): Promise<AutoSearchCandidate | null> {
-  // Use the same fast API-based search as genre hits instead of yt-dlp processes
   try {
-    // Import search functions from the search service
-    const { youtubeSearch, soundcloudSearch } = await import('./services/search.js');
-    
-    // Get genre-specific filtering rules if genreId is provided
+    const { youtubeSearch, soundcloudSearch, spotdlSearch } = await import('./services/search.js');
+
     let genreHints: any = null;
     if (genreId) {
       try {
@@ -820,251 +1093,167 @@ async function resolveShortAutoCandidate(
       }
     }
 
-    // Keep the original query for better artist matching
     const searchQuery = sanitizeDisplayText(query);
     const parsedQuery = parseDisplayArtistTitle(searchQuery);
     let expectedArtistRaw = options?.expectedArtist?.trim() || parsedQuery.artist || '';
     const expectedTitleRaw = options?.expectedTitle?.trim() || parsedQuery.title || '';
     if (isVariousArtistsText(expectedArtistRaw)) {
       const parsedFromTitle = parseDisplayArtistTitle(expectedTitleRaw).artist;
-      if (parsedFromTitle) {
-        expectedArtistRaw = parsedFromTitle;
-      }
+      if (parsedFromTitle) expectedArtistRaw = parsedFromTitle;
     }
     const strictMetadata = options?.strictMetadata === true;
-    const expectedArtistParts = normalizeArtistString(expectedArtistRaw);
-    const expectedArtistNorm = expectedArtistParts.join(' ');
-    const expectedTitleNorm = normalizeArtistMatchText(expectedTitleRaw);
-    const expectedTitleTokens = new Set(tokenizeArtistText(expectedTitleRaw));
-    const expectedTitleRelaxedTokens = new Set(
-      Array.from(expectedTitleTokens).filter((token) => !OPTIONAL_TITLE_STYLE_TOKENS.has(token)),
-    );
-    const artistRequirementDisabled = isVariousArtistsText(options?.expectedArtist);
-    const shouldRequireTitleMatch = strictMetadata || (!!expectedArtistRaw && !!expectedTitleRaw);
 
-    const hasStrictMetadataMatch = (
-      resultTitle: string | null | undefined,
-      resultChannel: string | null | undefined,
-    ): { match: boolean; titleNearPerfect: boolean; artistStrong: boolean; artistSignal: boolean } => {
-      if (!expectedTitleNorm) return { match: false, titleNearPerfect: false, artistStrong: false, artistSignal: false };
-      const titleNorm = normalizeArtistMatchText(resultTitle || '');
-      const channelNorm = normalizeArtistMatchText(resultChannel || '');
-      const titleTokens = new Set(tokenizeArtistText(resultTitle || ''));
-      const channelTokens = new Set(tokenizeArtistText(resultChannel || ''));
-      const combinedTokens = new Set<string>([...titleTokens, ...channelTokens]);
-      const titleSimilarity = expectedTitleTokens.size > 0
-        ? jaccardSimilarity(expectedTitleTokens, titleTokens)
-        : 1;
-      const combinedTitleSimilarity = expectedTitleTokens.size > 0
-        ? jaccardSimilarity(expectedTitleTokens, combinedTokens)
-        : 1;
-      const titleCoverage = expectedTitleTokens.size > 0
-        ? fuzzyTokenCoverage(expectedTitleTokens, titleTokens)
-        : 1;
-      const combinedTitleCoverage = expectedTitleTokens.size > 0
-        ? fuzzyTokenCoverage(expectedTitleTokens, combinedTokens)
-        : 1;
-      const titleRelaxedCoverage = expectedTitleRelaxedTokens.size > 0
-        ? fuzzyTokenCoverage(expectedTitleRelaxedTokens, titleTokens)
-        : titleCoverage;
-      const combinedTitleRelaxedCoverage = expectedTitleRelaxedTokens.size > 0
-        ? fuzzyTokenCoverage(expectedTitleRelaxedTokens, combinedTokens)
-        : combinedTitleCoverage;
-      const titleNearPerfect = titleSimilarity >= 0.95
-        || combinedTitleSimilarity >= 0.95
-        || titleCoverage >= 0.95
-        || combinedTitleCoverage >= 0.95
-        || titleRelaxedCoverage >= 0.95
-        || combinedTitleRelaxedCoverage >= 0.95;
-      const titleOk = hasVeryStrictTitleMatch(expectedTitleNorm, titleNorm)
-        || hasStrictTitleMatch(expectedTitleNorm, titleNorm)
-        || titleCoverage >= 0.8
-        || combinedTitleCoverage >= 0.8
-        || titleRelaxedCoverage >= 0.8
-        || combinedTitleRelaxedCoverage >= 0.8;
-      if (!titleOk) return { match: false, titleNearPerfect, artistStrong: false, artistSignal: false };
-
-      if (artistRequirementDisabled || expectedArtistParts.length === 0) {
-        return { match: true, titleNearPerfect, artistStrong: true, artistSignal: true };
+    const hasGenreHintBlock = (resultTitle: string, resultChannel: string): boolean => {
+      if (!genreHints) return false;
+      const title = resultTitle.toLowerCase();
+      const channel = resultChannel.toLowerCase();
+      const artistTitle = `${channel} - ${resultTitle}`.toLowerCase();
+      if (genreHints.blockedTracks) {
+        const blockedTracks = genreHints.blockedTracks.map((track: string) => track.toLowerCase());
+        for (const blockedTrack of blockedTracks) {
+          if (blockedTrack && (title.includes(blockedTrack) || artistTitle.includes(blockedTrack))) return true;
+        }
       }
-      const expectedArtistTokens = new Set(expectedArtistParts.flatMap((part) => tokenizeArtistText(part)));
-      const artistSimilarity = expectedArtistTokens.size > 0
-        ? jaccardSimilarity(expectedArtistTokens, combinedTokens)
-        : 1;
-      const artistContainment = expectedArtistTokens.size > 0
-        ? tokenContainmentSimilarity(expectedArtistTokens, combinedTokens)
-        : 1;
-      const leadingArtistNorm = extractLeadingTitleArtistNormalized(resultTitle || '');
-      const leadingArtistStrong = !!leadingArtistNorm && hasLooseArtistMatch(expectedArtistNorm, leadingArtistNorm);
-      const artistSignal = artistContainment >= 0.34
-        || hasLooseArtistMatch(expectedArtistNorm, titleNorm)
-        || hasLooseArtistMatch(expectedArtistNorm, channelNorm)
-        || leadingArtistStrong;
-      const artistStrong = artistSimilarity >= 0.65
-        || artistContainment >= 0.6
-        || hasLooseArtistMatch(expectedArtistNorm, channelNorm)
-        || leadingArtistStrong;
-      return { match: artistStrong && titleOk, titleNearPerfect, artistStrong, artistSignal };
+      if (genreHints.blockedTokens) {
+        const blockedTokens = genreHints.blockedTokens.map((token: string) => token.toLowerCase());
+        for (const token of blockedTokens) {
+          if (token && (title.includes(token) || channel.includes(token) || artistTitle.includes(token))) return true;
+        }
+      }
+      if (genreHints.blockedArtists) {
+        const blockedArtists = genreHints.blockedArtists.map((artist: string) => artist.toLowerCase());
+        for (const blockedArtist of blockedArtists) {
+          if (blockedArtist && channel.includes(blockedArtist)) return true;
+        }
+      }
+      return false;
     };
 
-    // Try YouTube first with aggressive timeout
-    const ytResults = await Promise.race([
-      youtubeSearch(searchQuery, 8), // Increased limit for better selection
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000)) // Slightly longer timeout
-    ]).catch(() => []);
+    const [ytResults, scResults] = await Promise.all([
+      Promise.race([
+        youtubeSearch(searchQuery, strictMetadata ? 10 : 8),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500)),
+      ]).catch(() => []),
+      Promise.race([
+        soundcloudSearch(searchQuery, strictMetadata ? 10 : 6),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000)),
+      ]).catch(() => []),
+    ]);
 
-    // Find first suitable YouTube result - prefer shorter tracks
-    const sortedResults = ytResults
-      .filter(result => {
-        if (!result.title || isSetLikeAutoTitle(result.title)) return false;
-        if (!result.duration || result.duration < 120 || result.duration > AUTO_MAX_DURATION_SECONDS) return false;
-        
-        // Filter out obvious non-music content
-        const title = result.title.toLowerCase();
-        const channel = (result.channel || '').toLowerCase();
-        const artistTitle = `${channel} - ${result.title}`.toLowerCase();
+    const baseCandidates = [
+      ...ytResults.map((row) => ({ row, provider: 'youtube' as const })),
+      ...scResults.map((row) => ({ row, provider: 'soundcloud' as const })),
+    ].filter(({ row }) => {
+      if (!row.title || isSetLikeAutoTitle(row.title)) return false;
+      if (!row.duration || row.duration < 120 || row.duration > AUTO_MAX_DURATION_SECONDS) return false;
+      if (hasGenreHintBlock(row.title, row.channel || '')) return false;
+      return true;
+    });
 
-        // Apply genre-specific blocked tracks filtering
-        if (genreHints?.blockedTracks) {
-          const blockedTracks = genreHints.blockedTracks.map((track: string) => track.toLowerCase());
-          for (const blockedTrack of blockedTracks) {
-            if (blockedTrack && (title.includes(blockedTrack) || artistTitle.includes(blockedTrack))) {
-              console.log(`[auto-filter] Blocked by genre rule (${genreId}): ${result.title} (blocked: ${blockedTrack})`);
-              return false;
-            }
-          }
-        }
+    if (baseCandidates.length === 0) return null;
 
-        // Apply genre-specific blocked tokens filtering
-        if (genreHints?.blockedTokens) {
-          const blockedTokens = genreHints.blockedTokens.map((token: string) => token.toLowerCase());
-          for (const token of blockedTokens) {
-            if (token && (title.includes(token) || channel.includes(token) || artistTitle.includes(token))) {
-              console.log(`[auto-filter] Blocked by genre token (${genreId}): ${result.title} (token: ${token})`);
-              return false;
-            }
-          }
-        }
-
-        // Apply genre-specific blocked artists filtering
-        if (genreHints?.blockedArtists) {
-          const blockedArtists = genreHints.blockedArtists.map((artist: string) => artist.toLowerCase());
-          for (const blockedArtist of blockedArtists) {
-            if (blockedArtist && channel.includes(blockedArtist)) {
-              console.log(`[auto-filter] Blocked by genre artist rule (${genreId}): ${result.title} (artist: ${blockedArtist})`);
-              return false;
-            }
-          }
-        }
-
-        // Strict bad keywords filtering
-        const badKeywords = [
-          'tutorial', 'how to', 'review', 'interview', 'documentary', 'news', 'podcast',
-          'lesson', 'course', 'expert', 'spreekt over', 'cyberaanval', 'cybersecurity',
-          'iran', 'politics', 'nieuws', 'talk', 'discussion', 'analysis', 'explained',
-          'features you might not know', 'cool features', 'tips', 'tricks', 'guide',
-          'acoustic live', 'cover', 'live at', 'southampton', 'concert', 'performance',
-          'trailer', 'teaser', 'sample', 'scene', 'movie clip', 'official trailer',
-          'piano', 'piano tutorial', 'piano cover', 'sheet music', 'midi'
-        ];
-        const strictEval = hasStrictMetadataMatch(result.title, result.channel);
-        const strictMatch = strictEval.match;
-        const unexpectedStrictKeyword = hasUnexpectedStrictKeyword(title, channel, expectedTitleNorm);
-        if (strictMetadata && unexpectedStrictKeyword) return false;
-        if (strictMetadata && !strictMatch && !(strictEval.titleNearPerfect && strictEval.artistSignal)) return false;
-        if (!strictMatch && badKeywords.some(keyword => title.includes(keyword))) return false;
-        if (!strictMatch && hasBlockedAutoKeyword(title, channel)) return false;
-
-        if (!strictMetadata) {
-          // Filter out software/plugin content for loose discovery mode only.
-          const softwareKeywords = ['sylenth1', 'vst', 'plugin', 'ableton', 'fl studio', 'logic pro'];
-          if (softwareKeywords.some(keyword => title.includes(keyword))) return false;
-
-          // Heuristic genre/indicator gates are useful for generic search, but too strict for
-          // trusted playlist metadata where artist+title is already validated.
-          const requiredGenreKeywords = ['hardstyle', 'euphoric', 'trance', 'techno', 'electronic', 'edm'];
-          const hasGenre = requiredGenreKeywords.some(keyword => title.includes(keyword));
-          const musicIndicators = [
-            'audio', 'remix', 'edit', 'mix',
-            'rip', 'hq', '4k', 'visualizer', 'music', 'track', 'anthem'
-          ];
-          const hasIndicator = musicIndicators.some(keyword => title.includes(keyword));
-          const hasArtistTitleFormat = hasDisplayArtistSeparator(result.title || '');
-          if (!hasGenre && !hasIndicator && !hasArtistTitleFormat) return false;
-        }
-        
-        // Extract artist name from query and ensure it's in title or channel
-        const queryWords = searchQuery.toLowerCase().split(/[\s\-]+/).filter(word => word.length > 2);
-        const hasArtistMatch = queryWords.some(word => 
-          title.includes(word) || channel.includes(word)
-        );
-
-        if (expectedArtistNorm) {
-          const titleNorm = normalizeArtistMatchText(result.title || '');
-          const channelNorm = normalizeArtistMatchText(result.channel || '');
-          const leadingArtistNorm = extractLeadingTitleArtistNormalized(result.title || '');
-          const titleTokenSet = new Set(tokenizeArtistText(result.title || ''));
-          const expectedTitleSet = new Set(tokenizeArtistText(expectedTitleRaw));
-          const nearPerfectTitleMatch = expectedTitleSet.size > 0
-            && jaccardSimilarity(expectedTitleSet, titleTokenSet) >= 0.95;
-          const leadingArtistMatches = !!leadingArtistNorm && (
-            hasLooseArtistMatch(expectedArtistNorm, leadingArtistNorm)
-          );
-          const creditedInTitle = hasArtistCreditInTitleNormalized(titleNorm, expectedArtistNorm);
-          const artistAnywhereMatch = hasLooseArtistMatch(expectedArtistNorm, titleNorm)
-            || hasLooseArtistMatch(expectedArtistNorm, channelNorm);
-
-          // Uploader can differ, but if title has "Artist - Title" and leading artist mismatches,
-          // only allow explicit remix/feat credit for expected artist.
-          if (leadingArtistNorm && !leadingArtistMatches && !creditedInTitle && !nearPerfectTitleMatch) return false;
-          if (!leadingArtistNorm && !artistAnywhereMatch && !creditedInTitle && !nearPerfectTitleMatch) return false;
-          if (shouldRequireTitleMatch && !hasSufficientTitleMatch(expectedTitleNorm, titleNorm)) return false;
-        }
-        
-        // For euphoric hardstyle, be extra strict about artist matching
-        if (!strictMetadata && searchQuery.toLowerCase().includes('euphoric') && !hasArtistMatch) return false;
-        
-        return true;
-      })
-      .sort((a, b) => (a.duration || 0) - (b.duration || 0)); // Prefer shorter tracks
-
-    if (sortedResults.length > 0) {
-      const result = sortedResults[0];
+    if (!strictMetadata) {
+      const fallback = baseCandidates
+        .filter(({ row }) => !hasBlockedAutoKeyword((row.title || '').toLowerCase(), (row.channel || '').toLowerCase()))
+        .sort((a, b) => (a.row.duration || 0) - (b.row.duration || 0))[0];
+      if (!fallback) return null;
       return {
-        url: result.url,
-        title: result.title,
-        duration: result.duration,
-        thumbnail: result.thumbnail,
-        source: 'youtube' as const,
+        url: fallback.row.url,
+        title: fallback.row.title,
+        duration: fallback.row.duration,
+        thumbnail: fallback.row.thumbnail,
+        source: fallback.provider,
       };
     }
 
-    // Try SoundCloud as fallback with aggressive timeout
-    const scResults = await Promise.race([
-      soundcloudSearch(searchQuery, 5),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 1500))
-    ]).catch(() => []);
-    
-    // Find first suitable SoundCloud result
-    for (const result of scResults) {
-      if (!result.title || isSetLikeAutoTitle(result.title)) continue;
-      if (!result.duration || result.duration < 120 || result.duration > AUTO_MAX_DURATION_SECONDS) continue;
-      const strictEval = hasStrictMetadataMatch(result.title, result.channel || '');
-      const strictMatch = strictEval.match;
-      if (strictMetadata && hasUnexpectedStrictKeyword(result.title, result.channel || '', expectedTitleNorm)) continue;
-      if (strictMetadata && !strictMatch && !(strictEval.titleNearPerfect && strictEval.artistSignal)) continue;
-      if (!strictMatch && hasBlockedAutoKeyword(result.title, result.channel || '')) continue;
-      
-      return {
-        url: result.url,
-        title: result.title,
-        duration: result.duration,
-        thumbnail: result.thumbnail,
-        source: 'soundcloud' as const,
-      };
+    const strictRanked = baseCandidates
+      .map((candidate) => ({
+        ...candidate,
+        evaluation: evaluateSearchResultForAutoSubmission(
+          { title: candidate.row.title, channel: candidate.row.channel, duration: candidate.row.duration ?? null },
+          expectedArtistRaw || null,
+          expectedTitleRaw || null,
+          { strictMetadata: true, allowLiveFallback: false },
+        ),
+      }))
+      .filter(({ evaluation }) => evaluation.score > -100)
+      .sort((a, b) => b.evaluation.score - a.evaluation.score);
+
+    let selected = strictRanked[0] ?? null;
+
+    if (!selected) {
+      const semiRanked = baseCandidates
+        .map((candidate) => ({
+          ...candidate,
+          evaluation: evaluateSearchResultForAutoSubmission(
+            { title: candidate.row.title, channel: candidate.row.channel, duration: candidate.row.duration ?? null },
+            expectedArtistRaw || null,
+            expectedTitleRaw || null,
+            { strictMetadata: true, allowLiveFallback: false, matchMode: 'semi' },
+          ),
+        }))
+        .filter(({ evaluation }) => evaluation.score > -100)
+        .sort((a, b) => b.evaluation.score - a.evaluation.score);
+      selected = semiRanked[0] ?? null;
     }
-    
-    return null;
+
+    if (!selected) {
+      const liveRanked = baseCandidates
+        .map((candidate) => ({
+          ...candidate,
+          evaluation: evaluateSearchResultForAutoSubmission(
+            { title: candidate.row.title, channel: candidate.row.channel, duration: candidate.row.duration ?? null },
+            expectedArtistRaw || null,
+            expectedTitleRaw || null,
+            { strictMetadata: true, allowLiveFallback: true },
+          ),
+        }))
+        .filter(({ evaluation }) => evaluation.score > -100 && evaluation.isLive)
+        .sort((a, b) => b.evaluation.score - a.evaluation.score);
+      selected = liveRanked[0] ?? null;
+    }
+
+    if (!selected) {
+      const spotdlResults = await spotdlSearch({
+        artist: expectedArtistRaw || null,
+        title: expectedTitleRaw || null,
+        query: searchQuery,
+        spotifyUrl: null,
+      }, 4);
+      const spotdlRanked = spotdlResults
+        .map((row) => ({
+          row,
+          provider: 'youtube' as const,
+          evaluation: evaluateSearchResultForAutoSubmission(
+            { title: row.title, channel: row.channel, duration: row.duration ?? null },
+            expectedArtistRaw || null,
+            expectedTitleRaw || null,
+            { strictMetadata: true, allowLiveFallback: false },
+          ),
+        }))
+        .filter(({ evaluation }) => evaluation.score > -100)
+        .sort((a, b) => b.evaluation.score - a.evaluation.score);
+      const bestSpotdl = spotdlRanked[0];
+      if (bestSpotdl) {
+        return {
+          url: bestSpotdl.row.url,
+          title: bestSpotdl.row.title,
+          duration: bestSpotdl.row.duration,
+          thumbnail: bestSpotdl.row.thumbnail,
+          source: 'youtube',
+        };
+      }
+    }
+
+    if (!selected) return null;
+
+    return {
+      url: selected.row.url,
+      title: selected.row.title,
+      duration: selected.row.duration,
+      thumbnail: selected.row.thumbnail,
+      source: selected.provider,
+    };
   } catch (error) {
     console.warn('[auto-download] Fast search failed, no fallback available:', (error as Error).message);
     return null;
@@ -1491,6 +1680,10 @@ async function prepareAutoFallbackByGenre(genreId: string, expectedSourceKeyOver
             duration: hintedDuration,
             added_by: null,
             isFallback: true,
+            selection_label: `Autoplay online (${genreId})`,
+            selection_playlist: null,
+            selection_tab: 'online',
+            selection_key: `auto:${genreId}`,
           };
           broadcastUpcomingTrack();
           try {
@@ -1604,6 +1797,10 @@ async function prepareLikedAutoFallbackTrack(expectedSourceKeyOverride?: string)
       duration: hintedDuration,
       added_by: null,
       isFallback: true,
+      selection_label: 'Autoplay online (liked)',
+      selection_playlist: null,
+      selection_tab: 'online',
+      selection_key: `auto:${LIKED_AUTO_GENRE_ID}`,
     };
     broadcastUpcomingTrack();
     const audioFile = await downloadAudio(selectedPseudo, _cacheDir);
@@ -1751,6 +1948,10 @@ async function prepareSharedAutoFallbackTrack(
       duration: hintedDuration,
       added_by: null,
       isFallback: true,
+      selection_label: 'Autoplay playlist',
+      selection_playlist: null,
+      selection_tab: 'playlists',
+      selection_key: `shared:${playlistId}`,
     };
     broadcastUpcomingTrack();
 
@@ -2142,6 +2343,10 @@ export function getUpcomingTrack(): UpcomingTrack | null {
       duration: nextReady.duration,
       added_by: nextReady.addedBy,
       isFallback: nextReady.isFallback,
+      selection_label: null,
+      selection_playlist: null,
+      selection_tab: null,
+      selection_key: null,
     };
   }
   if (preloadBuffer.length > 0) {
@@ -2153,6 +2358,10 @@ export function getUpcomingTrack(): UpcomingTrack | null {
       duration: first.duration,
       added_by: first.item.added_by ?? null,
       isFallback: false,
+      selection_label: queueSelectionMetaByItemId.get(first.item.id)?.selectionLabel ?? null,
+      selection_playlist: queueSelectionMetaByItemId.get(first.item.id)?.selectionPlaylist ?? null,
+      selection_tab: queueSelectionMetaByItemId.get(first.item.id)?.selectionTab ?? 'queue',
+      selection_key: queueSelectionMetaByItemId.get(first.item.id)?.selectionKey ?? null,
     };
   }
   if (pendingQueueUpcoming) {
@@ -2167,6 +2376,10 @@ export function getUpcomingTrack(): UpcomingTrack | null {
       duration: first.duration,
       added_by: first.addedBy,
       isFallback: first.isFallback,
+      selection_label: null,
+      selection_playlist: null,
+      selection_tab: null,
+      selection_key: null,
     };
   }
   if (pendingAutoUpcoming) {
@@ -2191,6 +2404,10 @@ async function refreshPendingQueueUpcoming(sb: SupabaseClient, currentItemId: st
       duration: null,
       added_by: next.added_by ?? null,
       isFallback: false,
+      selection_label: queueSelectionMetaByItemId.get(next.id)?.selectionLabel ?? null,
+      selection_playlist: queueSelectionMetaByItemId.get(next.id)?.selectionPlaylist ?? null,
+      selection_tab: queueSelectionMetaByItemId.get(next.id)?.selectionTab ?? 'queue',
+      selection_key: queueSelectionMetaByItemId.get(next.id)?.selectionKey ?? null,
     };
     broadcastUpcomingTrack();
   } catch {
@@ -2872,6 +3089,10 @@ async function playNext(
   let isFallback = false;
   let trackIsAutoFallback = false;
   let trackCleanupAfterUse = false;
+  let selectionLabel: string | null = null;
+  let selectionPlaylist: string | null = null;
+  let selectionTab: SelectionTab | null = null;
+  let selectionKey: string | null = null;
   let source = '';
   const activeAutoSource = getActiveAutoSource();
 
@@ -2919,6 +3140,10 @@ async function playNext(
     isFallback = true;
     trackIsAutoFallback = false;
     trackCleanupAfterUse = false;
+    selectionLabel = 'Lokale random fallback';
+    selectionPlaylist = null;
+    selectionTab = 'local';
+    selectionKey = activeFallbackGenre;
     source = quickMeta ? 'random/gap-guard' : 'random';
     if (activeAutoSource && allowWhenAuto) {
       console.warn(`[player] Emergency local fallback while auto "${activeAutoSource.key}" is buffering`);
@@ -2975,6 +3200,24 @@ async function playNext(
     isFallback = true;
     trackIsAutoFallback = true;
     trackCleanupAfterUse = ready.cleanupAfterUse;
+    selectionPlaylist = null;
+    if (activeAutoSource?.type === 'shared') {
+      selectionLabel = 'Autoplay playlist';
+      selectionTab = 'playlists';
+      selectionKey = `shared:${activeAutoSource.playlistId}`;
+    } else if (activeAutoSource?.type === 'liked') {
+      selectionLabel = 'Autoplay online (liked)';
+      selectionTab = 'online';
+      selectionKey = `auto:${LIKED_AUTO_GENRE_ID}`;
+    } else if (activeAutoSource?.type === 'genre') {
+      selectionLabel = `Autoplay online (${activeAutoSource.genreId})`;
+      selectionTab = 'online';
+      selectionKey = `auto:${activeAutoSource.genreId}`;
+    } else {
+      selectionLabel = 'Autoplay mix';
+      selectionTab = 'mixed';
+      selectionKey = activeAutoSource?.key ?? null;
+    }
     source = (activeAutoSource.type === 'shared' || activeAutoSource.type === 'mixed') && activeAutoSource.playbackMode === 'ordered'
       ? 'auto/ordered'
       : 'auto/random';
@@ -3012,6 +3255,13 @@ async function playNext(
     isFallback = ready.isFallback;
     trackIsAutoFallback = ready.isAutoFallback;
     trackCleanupAfterUse = ready.cleanupAfterUse;
+    if (trackQueueId) {
+      const meta = queueSelectionMetaByItemId.get(trackQueueId);
+      selectionLabel = meta?.selectionLabel ?? 'Wachtrij';
+      selectionPlaylist = meta?.selectionPlaylist ?? null;
+      selectionTab = meta?.selectionTab ?? 'queue';
+      selectionKey = meta?.selectionKey ?? null;
+    }
     source = isFallback ? 'ready/random' : 'ready/preloaded';
     currentQueueItemId = trackQueueId;
     broadcastUpcomingTrack();
@@ -3054,6 +3304,11 @@ async function playNext(
         currentQueueItemId = trackQueueId;
         trackCleanupAfterUse = true;
         trackIsAutoFallback = false;
+        const meta = queueSelectionMetaByItemId.get(item.id);
+        selectionLabel = meta?.selectionLabel ?? 'Wachtrij';
+        selectionPlaylist = meta?.selectionPlaylist ?? null;
+        selectionTab = meta?.selectionTab ?? 'queue';
+        selectionKey = meta?.selectionKey ?? null;
         source = 'preloaded';
       } else {
         // Gap guard: never block transition on download preparation.
@@ -3126,7 +3381,12 @@ async function playNext(
       added_by: trackAddedBy,
       duration: trackDuration,
       started_at: Date.now() + STREAM_DELAY_MS,
+      selection_label: selectionLabel,
+      selection_playlist: selectionPlaylist,
+      selection_tab: selectionTab,
+      selection_key: selectionKey,
     };
+    if (trackQueueId) queueSelectionMetaByItemId.delete(trackQueueId);
     pendingQueueUpcoming = null;
     pendingAutoUpcoming = null;
     io.emit('track:change', currentTrack);
@@ -3178,6 +3438,40 @@ async function playNext(
       isFallback = swap.ready.isFallback;
       trackIsAutoFallback = swap.ready.isAutoFallback;
       trackCleanupAfterUse = swap.ready.cleanupAfterUse;
+      if (trackQueueId) {
+        const meta = queueSelectionMetaByItemId.get(trackQueueId);
+        selectionLabel = meta?.selectionLabel ?? 'Wachtrij';
+        selectionPlaylist = meta?.selectionPlaylist ?? null;
+        selectionTab = meta?.selectionTab ?? 'queue';
+        selectionKey = meta?.selectionKey ?? null;
+      } else if (trackIsAutoFallback) {
+        if (activeAutoSource?.type === 'shared') {
+          selectionLabel = 'Autoplay playlist';
+          selectionPlaylist = null;
+          selectionTab = 'playlists';
+          selectionKey = `shared:${activeAutoSource.playlistId}`;
+        } else if (activeAutoSource?.type === 'liked') {
+          selectionLabel = 'Autoplay online (liked)';
+          selectionPlaylist = null;
+          selectionTab = 'online';
+          selectionKey = `auto:${LIKED_AUTO_GENRE_ID}`;
+        } else if (activeAutoSource?.type === 'genre') {
+          selectionLabel = `Autoplay online (${activeAutoSource.genreId})`;
+          selectionPlaylist = null;
+          selectionTab = 'online';
+          selectionKey = `auto:${activeAutoSource.genreId}`;
+        } else {
+          selectionLabel = 'Autoplay mix';
+          selectionPlaylist = null;
+          selectionTab = 'mixed';
+          selectionKey = activeAutoSource?.key ?? null;
+        }
+      } else if (isFallback) {
+        selectionLabel = 'Lokale random fallback';
+        selectionPlaylist = null;
+        selectionTab = 'local';
+        selectionKey = activeFallbackGenre;
+      }
 
       const swapTrackId = trackQueueId ?? `fallback_${Date.now()}`;
       const durStr = trackDuration
@@ -3192,7 +3486,12 @@ async function playNext(
         added_by: trackAddedBy,
         duration: trackDuration,
         started_at: Date.now() + STREAM_DELAY_MS,
+        selection_label: selectionLabel,
+        selection_playlist: selectionPlaylist,
+        selection_tab: selectionTab,
+        selection_key: selectionKey,
       };
+      if (trackQueueId) queueSelectionMetaByItemId.delete(trackQueueId);
       io.emit('track:change', currentTrack);
       lastTrackAnnouncedAt = Date.now();
       if (isFallback) {

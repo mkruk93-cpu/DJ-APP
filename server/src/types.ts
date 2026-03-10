@@ -11,6 +11,10 @@ export interface QueueItem {
   added_by: string;
   position: number;
   created_at: string;
+  selection_label?: string | null;
+  selection_playlist?: string | null;
+  selection_tab?: 'queue' | 'local' | 'online' | 'playlists' | 'mixed' | null;
+  selection_key?: string | null;
 }
 
 export interface Track {
@@ -21,6 +25,10 @@ export interface Track {
   duration: number | null;
   added_by: string | null;
   started_at: number;
+  selection_label?: string | null;
+  selection_playlist?: string | null;
+  selection_tab?: 'queue' | 'local' | 'online' | 'playlists' | 'mixed' | null;
+  selection_key?: string | null;
 }
 
 export interface UpcomingTrack {
@@ -30,6 +38,10 @@ export interface UpcomingTrack {
   duration: number | null;
   added_by: string | null;
   isFallback: boolean;
+  selection_label?: string | null;
+  selection_playlist?: string | null;
+  selection_tab?: 'queue' | 'local' | 'online' | 'playlists' | 'mixed' | null;
+  selection_key?: string | null;
 }
 
 export interface FallbackGenre {

@@ -13,7 +13,7 @@ import { initCache } from './cleanup.js';
 import { seedSettings, getActiveMode, getActiveFallbackGenre, getModeSettings, getSetting, setSetting } from './settings.js';
 import { getQueue, addToQueue, removeFromQueue, reorderQueue, fetchVideoInfo, extractYoutubeId, extractSourceId, isSoundcloudUrl, getThumbnailUrl, encodeLocalFileUrl } from './queue.js';
 import { canPerformAction } from './permissions.js';
-import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, isPlayCycleRunning, playerEvents, setKeepFiles, invalidatePreload, invalidateNextReady, removeQueueItemFromPreload, setActiveFallbackGenre, setActiveFallbackGenres, setActiveSharedFallbackPlaylists, setSharedAutoPlaybackMode, resetSharedAutoPlaybackCycleForSelection } from './player.js';
+import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, isPlayCycleRunning, playerEvents, setKeepFiles, invalidatePreload, invalidateNextReady, removeQueueItemFromPreload, setActiveFallbackGenre, setActiveFallbackGenres, setActiveSharedFallbackPlaylists, setSharedAutoPlaybackMode, resetSharedAutoPlaybackCycleForSelection, setQueueItemSelectionMeta } from './player.js';
 import { youtubeSearch, soundcloudSearch, spotdlSearch } from './services/search.js';
 import { startBridge } from './bridge.js';
 import { startNowPlayingWatcher } from './nowPlaying.js';
@@ -3126,15 +3126,9 @@ app.post('/api/genre-curation/block-artist', async (req, res) => {
 });
 
 app.post('/api/genre-curation/like-current', async (req, res) => {
-  const activeGenreId = await resolveActiveFallbackGenre();
-  const autoGenre = parseAutoFallbackGenreId(activeGenreId);
-  if (!autoGenre) {
-    return res.status(409).json({ error: 'Auto playlist is niet actief' });
-  }
-
   const current = getCurrentTrack();
-  if (!current || current.youtube_id !== 'local' || !current.title) {
-    return res.status(409).json({ error: 'Er speelt geen auto playlist track' });
+  if (!current || !current.title) {
+    return res.status(409).json({ error: 'Er speelt geen track om te liken' });
   }
 
   const rawArtist = String(req.body?.artist ?? '').trim();
@@ -3147,17 +3141,26 @@ app.post('/api/genre-curation/like-current', async (req, res) => {
   }
 
   try {
-    const artistRule = addPriorityArtistForGenre(autoGenre, artist, autoGenre);
-    addPriorityTrackForGenre(autoGenre, title, autoGenre);
+    const currentAutoGenre = parseAutoFallbackGenreId(current.selection_key ?? null);
+    const canApplyOnlineAutoRule = current.youtube_id === 'local'
+      && current.selection_tab === 'online'
+      && !!currentAutoGenre;
+    const artistRule = canApplyOnlineAutoRule
+      ? addPriorityArtistForGenre(currentAutoGenre!, artist, currentAutoGenre!)
+      : null;
+    if (canApplyOnlineAutoRule) {
+      addPriorityTrackForGenre(currentAutoGenre!, title, currentAutoGenre!);
+    }
     addLikedPlaylistTrack(`${artist} - ${title}`);
     clearGenreHitsCache();
     genreCache.clear();
     return res.json({
       ok: true,
-      genre: autoGenre,
+      genre: canApplyOnlineAutoRule ? currentAutoGenre : null,
       artist,
       title,
-      artistCount: artistRule.priorityArtists?.length ?? 0,
+      artistCount: artistRule?.priorityArtists?.length ?? 0,
+      appliedTo: canApplyOnlineAutoRule ? 'online-auto-and-liked' : 'liked-only',
     });
   } catch (err) {
     console.error('[rest] /api/genre-curation/like-current error:', err);
@@ -3166,15 +3169,16 @@ app.post('/api/genre-curation/like-current', async (req, res) => {
 });
 
 app.post('/api/genre-curation/dislike-current', async (req, res) => {
-  const activeGenreId = await resolveActiveFallbackGenre();
-  const autoGenre = parseAutoFallbackGenreId(activeGenreId);
-  if (!autoGenre || autoGenre === LIKED_AUTO_GENRE_ID) {
-    return res.status(409).json({ error: 'Genre auto playlist is niet actief' });
-  }
-
   const current = getCurrentTrack();
-  if (!current || current.youtube_id !== 'local' || !current.title) {
-    return res.status(409).json({ error: 'Er speelt geen auto playlist track' });
+  if (!current || !current.title || current.youtube_id !== 'local' || current.selection_tab !== 'online') {
+    return res.status(409).json({ error: 'Dislike kan alleen bij autoplay uit Online' });
+  }
+  const activeGenreId = await resolveActiveFallbackGenre();
+  const currentAutoGenre = parseAutoFallbackGenreId(current.selection_key ?? null);
+  const fallbackAutoGenre = parseAutoFallbackGenreId(activeGenreId);
+  const autoGenre = currentAutoGenre ?? fallbackAutoGenre;
+  if (!autoGenre || autoGenre === LIKED_AUTO_GENRE_ID) {
+    return res.status(409).json({ error: 'Dislike kan niet op deze autoplay bron' });
   }
 
   const rawArtist = String(req.body?.artist ?? '').trim();
@@ -3750,7 +3754,16 @@ type SubmissionCandidate = {
 async function addQueueItemFromSubmission(
   submission: QueueAddSubmission,
   addedBy: string,
-): Promise<{ item: Awaited<ReturnType<typeof addToQueue>> | null; error: string | null }> {
+): Promise<{
+  item: Awaited<ReturnType<typeof addToQueue>> | null;
+  error: string | null;
+  selectionMeta: {
+    selectionLabel: string | null;
+    selectionPlaylist: string | null;
+    selectionTab: 'queue' | 'online' | 'playlists' | null;
+    selectionKey: string | null;
+  } | null;
+}> {
   const sourceType = (submission.source_type ?? '').trim().toLowerCase();
   const expectedArtist = (submission.artist ?? '').trim() || null;
   const expectedTitle = (submission.title ?? '').trim() || null;
@@ -3775,7 +3788,7 @@ async function addQueueItemFromSubmission(
       ...soundcloudResults.map((row) => ({ row, provider: 'soundcloud' as const })),
     ];
     if (searchResults.length === 0) {
-      return { item: null, error: `Geen resultaat gevonden voor "${url}"` };
+      return { item: null, error: `Geen resultaat gevonden voor "${url}"`, selectionMeta: null };
     }
     const rankedStrict = searchResults
       .map((candidate) => ({
@@ -3895,13 +3908,13 @@ async function addQueueItemFromSubmission(
         diagnostics,
       });
       console.warn(`[queue] No usable result for "${submission.youtube_url}" strict=${strictMetadata} candidates=${searchResults.length} diagnostics=${JSON.stringify(diagnostics)}`);
-      return { item: null, error: `Geen bruikbaar resultaat gevonden voor "${url}"` };
+      return { item: null, error: `Geen bruikbaar resultaat gevonden voor "${url}"`, selectionMeta: null };
     }
     const selectedRow = selectedCandidate.row;
     url = selectedRow.url;
     sourceId = extractSourceId(url);
     if (!sourceId) {
-      return { item: null, error: 'Kon geen geldig nummer vinden' };
+      return { item: null, error: 'Kon geen geldig nummer vinden', selectionMeta: null };
     }
     discoveredTitle = selectedRow.title ?? null;
     discoveredArtist = selectedRow.channel ?? null;
@@ -3924,6 +3937,7 @@ async function addQueueItemFromSubmission(
     return {
       item: null,
       error: `Dit nummer is te lang (${Math.floor(info.duration / 60)}:${String(Math.round(info.duration % 60)).padStart(2, '0')}). Maximum is 65 minuten.`,
+      selectionMeta: null,
     };
   }
 
@@ -3967,7 +3981,26 @@ async function addQueueItemFromSubmission(
     );
 
   const item = await addToQueue(sb, url, addedBy, mergedTitle, thumbForQueue);
-  return { item, error: null };
+  const sourceTypeNorm = (submission.source_type ?? '').trim().toLowerCase();
+  const sourcePlaylistNorm = (submission.source_playlist ?? '').trim() || null;
+  const sourceGenreNorm = (submission.source_genre ?? '').trim() || null;
+  const fromPlaylist = sourceTypeNorm === 'shared_playlist' || sourceTypeNorm === 'user_playlist' || !!sourcePlaylistNorm;
+  const sourceLabel = fromPlaylist
+    ? 'Wachtrij vanuit playlist'
+    : sourceTypeNorm === 'spotify'
+      ? 'Wachtrij via Spotify'
+      : 'Wachtrij';
+  const selectionMeta = {
+    selectionLabel: sourceLabel,
+    selectionPlaylist: sourcePlaylistNorm,
+    selectionTab: (fromPlaylist
+      ? 'playlists'
+      : sourceTypeNorm === 'spotify'
+        ? 'online'
+        : 'queue') as 'queue' | 'online' | 'playlists',
+    selectionKey: sourceGenreNorm,
+  };
+  return { item, error: null, selectionMeta };
 }
 
 async function promoteOneDeferredQueueItem(reason: 'track-ended' | 'manual'): Promise<void> {
@@ -3976,11 +4009,12 @@ async function promoteOneDeferredQueueItem(reason: 'track-ended' | 'manual'): Pr
 
   const { addedBy, item } = next;
   try {
-    const { item: created, error } = await addQueueItemFromSubmission(item, addedBy);
+    const { item: created, error, selectionMeta } = await addQueueItemFromSubmission(item, addedBy);
     if (!created) {
       io.emit('info:toast', { message: `Uitgestelde aanvraag van ${addedBy} kon niet worden toegevoegd: ${error ?? 'onbekende fout'}` });
       return;
     }
+    setQueueItemSelectionMeta(created.id, selectionMeta);
     const queue = await getQueue(sb);
     io.emit('queue:added', { id: created.id, title: created.title ?? created.youtube_id, added_by: created.added_by ?? addedBy });
     io.emit('queue:update', { items: queue });
@@ -4088,11 +4122,12 @@ io.on('connection', (socket) => {
         }
       }
 
-      const { item, error } = await addQueueItemFromSubmission(submission, addedBy);
+      const { item, error, selectionMeta } = await addQueueItemFromSubmission(submission, addedBy);
       if (!item) {
         socket.emit('error:toast', { message: error ?? 'Kon nummer niet toevoegen' });
         return;
       }
+      setQueueItemSelectionMeta(item.id, selectionMeta);
       const queue = await getQueue(sb);
       io.emit('queue:added', { id: item.id, title: item.title ?? item.youtube_id, added_by: item.added_by ?? addedBy ?? 'onbekend' });
       io.emit('queue:update', { items: queue });

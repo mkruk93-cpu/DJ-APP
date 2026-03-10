@@ -165,6 +165,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
 
   const syncedRadioTrack = useSyncedTrack(radioTrack);
   const activeFallbackGenre = useRadioStore((s) => s.activeFallbackGenre);
+  const fallbackGenres = useRadioStore((s) => s.fallbackGenres);
 
   useEffect(() => {
     if (audioRef.current) audioRef.current.volume = volume;
@@ -285,15 +286,27 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const radioArtist = parsedRadio.artist;
   const radioRequestedBy = syncedRadioTrack?.added_by ?? null;
   const radioIsRandom = syncedRadioTrack?.youtube_id === "local";
-  const autoPlaylistActive = (activeFallbackGenre ?? "").startsWith("auto:");
   const autoGenreIsLikedPlaylist = (activeFallbackGenre ?? "").toLowerCase() === "auto:liked";
+  const selectionLabel = syncedRadioTrack?.selection_label ?? null;
+  const selectionTab = syncedRadioTrack?.selection_tab ?? null;
+  const selectionKey = syncedRadioTrack?.selection_key ?? null;
+  const sharedSelectionLabel = selectionKey?.startsWith("shared:")
+    ? (fallbackGenres.find((genre) => genre.id === selectionKey)?.label ?? null)
+    : null;
+  const selectionPlaylistLabel = syncedRadioTrack?.selection_playlist ?? sharedSelectionLabel ?? null;
   const displayTitle = syncedRadioTrack ? radioTitle : (showSupabaseData ? track.title : null);
   const displayArtist = syncedRadioTrack ? radioArtist : (showSupabaseData ? track.artist : null);
   const displayArtwork = syncedRadioTrack?.thumbnail ?? (showSupabaseData ? track.artwork_url : null);
   const hasTrack = displayTitle || displayArtist;
   const currentLikeKey = `${syncedRadioTrack?.id ?? ""}|${displayTitle ?? ""}|${displayArtist ?? ""}`;
-  const canRateAutoTrack = !!(syncedRadioTrack && radioIsRandom && autoPlaylistActive && (displayTitle || displayArtist));
-  const canDislikeAutoTrack = canRateAutoTrack && !autoGenreIsLikedPlaylist;
+  const canLikeTrack = !!(isRadioMode && (displayTitle || displayArtist));
+  const canDislikeAutoTrack = !!(
+    syncedRadioTrack
+    && radioIsRandom
+    && selectionTab === "online"
+    && !autoGenreIsLikedPlaylist
+    && (displayTitle || displayArtist)
+  );
   const backgroundArtBaseOpacity = 0.15;
 
   useEffect(() => {
@@ -303,7 +316,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   }, [feedbackMessage]);
 
   async function likeTrack() {
-    if (!canRateAutoTrack || feedbackSaving) return;
+    if (!canLikeTrack || feedbackSaving) return;
     const artist = displayArtist ?? null;
     const title = displayTitle ?? null;
     if (!artist && !title) return;
@@ -312,7 +325,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
       await likeCurrentAutoTrack(artist, title);
       setLikedTrackKey(currentLikeKey);
       setDislikedTrackKey(null);
-      setFeedbackMessage("Geliked voor genres + playlist");
+      setFeedbackMessage("Nummer geliked");
     } catch {
       setFeedbackMessage("Like opslaan mislukt");
     } finally {
@@ -711,14 +724,29 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
                 {displayArtist && <p className="truncate text-xs text-violet-400">{displayArtist}</p>}
                 {isRadioMode && (radioRequestedBy || syncedRadioTrack) && (
                   <p className="truncate text-[10px] text-gray-500">
-                    {radioIsRandom ? (
-                      <>Bron: <span className="text-gray-300">Random selectie</span></>
+                    {selectionLabel ? (
+                      <>
+                        Keuze: <span className="text-gray-300">{selectionLabel}</span>
+                        {selectionPlaylistLabel ? (
+                          <>
+                            {" "}
+                            · playlist <span className="text-violet-300">{selectionPlaylistLabel.replace(/^Playlist ·\s*/i, "")}</span>
+                          </>
+                        ) : null}
+                      </>
+                    ) : radioIsRandom ? (
+                      <>Keuze: <span className="text-gray-300">Random selectie</span></>
                     ) : (
-                      <>Aangevraagd door <span className="text-violet-300">{radioRequestedBy ?? "onbekend"}</span></>
+                      <>Keuze: <span className="text-gray-300">Wachtrij</span></>
                     )}
+                    {radioRequestedBy ? (
+                      <>
+                        {" "}· door <span className="text-violet-300">{radioRequestedBy}</span>
+                      </>
+                    ) : null}
                   </p>
                 )}
-                {canRateAutoTrack && (
+                {canLikeTrack && (
                   <div className="mt-0.5 flex items-center gap-1.5">
                     <button
                       type="button"
@@ -900,14 +928,29 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
               {displayArtist && <p className="truncate text-xs text-violet-400">{displayArtist}</p>}
               {isRadioMode && (radioRequestedBy || syncedRadioTrack) && (
                 <p className="truncate text-[11px] text-gray-500">
-                  {radioIsRandom ? (
-                    <>Bron: <span className="text-gray-300">Random selectie</span></>
+                  {selectionLabel ? (
+                    <>
+                      Keuze: <span className="text-gray-300">{selectionLabel}</span>
+                      {selectionPlaylistLabel ? (
+                        <>
+                          {" "}
+                          · playlist <span className="text-violet-300">{selectionPlaylistLabel.replace(/^Playlist ·\s*/i, "")}</span>
+                        </>
+                      ) : null}
+                    </>
+                  ) : radioIsRandom ? (
+                    <>Keuze: <span className="text-gray-300">Random selectie</span></>
                   ) : (
-                    <>Aangevraagd door <span className="text-violet-300">{radioRequestedBy ?? "onbekend"}</span></>
+                    <>Keuze: <span className="text-gray-300">Wachtrij</span></>
                   )}
+                  {radioRequestedBy ? (
+                    <>
+                      {" "}· door <span className="text-violet-300">{radioRequestedBy}</span>
+                    </>
+                  ) : null}
                 </p>
               )}
-              {canRateAutoTrack && (
+              {canLikeTrack && (
                 <div className="mt-1 flex items-center gap-2">
                   <button
                     type="button"
