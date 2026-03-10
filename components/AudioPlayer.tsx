@@ -164,6 +164,10 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   }, [playing]);
 
   const syncedRadioTrack = useSyncedTrack(radioTrack);
+  const isJingleTrack = !!syncedRadioTrack && (
+    syncedRadioTrack.youtube_id === "jingle"
+    || (syncedRadioTrack.selection_key ?? "").toLowerCase().startsWith("jingle:")
+  );
   const activeFallbackGenre = useRadioStore((s) => s.activeFallbackGenre);
   const fallbackGenres = useRadioStore((s) => s.fallbackGenres);
 
@@ -282,24 +286,24 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const radioHasMetadata = !!(syncedRadioTrack?.title || syncedRadioTrack?.thumbnail);
   const showSupabaseData = (showFallback && (!connected || preferSupabase)) || !radioHasMetadata;
   const parsedRadio = parseTrackDisplay(syncedRadioTrack?.title);
-  const radioTitle = parsedRadio.title ?? syncedRadioTrack?.title ?? null;
-  const radioArtist = parsedRadio.artist;
-  const radioRequestedBy = syncedRadioTrack?.added_by ?? null;
+  const radioTitle = isJingleTrack ? null : (parsedRadio.title ?? syncedRadioTrack?.title ?? null);
+  const radioArtist = isJingleTrack ? null : parsedRadio.artist;
+  const radioRequestedBy = isJingleTrack ? null : (syncedRadioTrack?.added_by ?? null);
   const radioIsRandom = syncedRadioTrack?.youtube_id === "local";
   const autoGenreIsLikedPlaylist = (activeFallbackGenre ?? "").toLowerCase() === "auto:liked";
-  const selectionLabel = syncedRadioTrack?.selection_label ?? null;
-  const selectionTab = syncedRadioTrack?.selection_tab ?? null;
-  const selectionKey = syncedRadioTrack?.selection_key ?? null;
+  const selectionLabel = isJingleTrack ? null : (syncedRadioTrack?.selection_label ?? null);
+  const selectionTab = isJingleTrack ? null : (syncedRadioTrack?.selection_tab ?? null);
+  const selectionKey = isJingleTrack ? null : (syncedRadioTrack?.selection_key ?? null);
   const sharedSelectionLabel = selectionKey?.startsWith("shared:")
     ? (fallbackGenres.find((genre) => genre.id === selectionKey)?.label ?? null)
     : null;
   const selectionPlaylistLabel = syncedRadioTrack?.selection_playlist ?? sharedSelectionLabel ?? null;
   const displayTitle = syncedRadioTrack ? radioTitle : (showSupabaseData ? track.title : null);
   const displayArtist = syncedRadioTrack ? radioArtist : (showSupabaseData ? track.artist : null);
-  const displayArtwork = syncedRadioTrack?.thumbnail ?? (showSupabaseData ? track.artwork_url : null);
+  const displayArtwork = isJingleTrack ? null : (syncedRadioTrack?.thumbnail ?? (showSupabaseData ? track.artwork_url : null));
   const hasTrack = displayTitle || displayArtist;
   const currentLikeKey = `${syncedRadioTrack?.id ?? ""}|${displayTitle ?? ""}|${displayArtist ?? ""}`;
-  const canLikeTrack = !!(isRadioMode && (displayTitle || displayArtist));
+  const canLikeTrack = !!(isRadioMode && !isJingleTrack && (displayTitle || displayArtist));
   const canDislikeAutoTrack = !!(
     syncedRadioTrack
     && radioIsRandom
@@ -520,7 +524,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     };
   }, []);
 
-  const duration = syncedRadioTrack?.duration ?? null;
+  const duration = isJingleTrack ? null : (syncedRadioTrack?.duration ?? null);
   const progress = duration && duration > 0 ? Math.min(elapsed / duration, 1) : 0;
   const durationLabel = duration && duration > 0 ? formatTime(duration) : "--:--";
 

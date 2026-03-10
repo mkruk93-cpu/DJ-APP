@@ -134,9 +134,11 @@ const STREAM_CHANNEL_REPAIR_SILENT_DB = Math.min(-35, parseFloat(process.env.STR
 const STREAM_CHANNEL_REPAIR_FILTER =
   (process.env.STREAM_CHANNEL_REPAIR_FILTER ?? '').trim()
   || 'pan=stereo|c0=0.5*c0+0.5*c1|c1=0.5*c0+0.5*c1';
-const JINGLE_ENABLE = String(process.env.JINGLE_ENABLE ?? 'true').toLowerCase() !== 'false';
+const JINGLE_ENABLE_DEFAULT = String(process.env.JINGLE_ENABLE ?? 'true').toLowerCase() !== 'false';
 const JINGLE_DIR = (process.env.JINGLE_DIR ?? path.join(process.cwd(), 'data', 'jingles')).trim();
-const JINGLE_EVERY_TRACKS = Math.max(1, parseInt(process.env.JINGLE_EVERY_TRACKS ?? '4', 10) || 4);
+const JINGLE_EVERY_TRACKS_DEFAULT = Math.max(1, parseInt(process.env.JINGLE_EVERY_TRACKS ?? '4', 10) || 4);
+let jingleEnabled = JINGLE_ENABLE_DEFAULT;
+let jingleEveryTracks = JINGLE_EVERY_TRACKS_DEFAULT;
 let activeFallbackGenre: string | null = null;
 let activeFallbackGenreIds: string[] = [];
 let activeSharedFallbackPlaylistIds: string[] = [];
@@ -2332,7 +2334,7 @@ let lastJinglePath: string | null = null;
 const channelRepairCache = new Map<string, boolean>();
 
 function listJingleFiles(): string[] {
-  if (!JINGLE_ENABLE || !JINGLE_DIR) return [];
+  if (!jingleEnabled || !JINGLE_DIR) return [];
   try {
     const entries = fs.readdirSync(JINGLE_DIR, { withFileTypes: true });
     return entries
@@ -2746,6 +2748,22 @@ export function skipCurrentTrack(): void {
 
 export function setKeepFiles(keep: boolean): void {
   keepFiles = keep;
+}
+
+export function setJingleSettings(input: { enabled?: boolean; everyTracks?: number }): void {
+  if (typeof input.enabled === 'boolean') {
+    jingleEnabled = input.enabled;
+  }
+  if (typeof input.everyTracks === 'number' && Number.isFinite(input.everyTracks)) {
+    jingleEveryTracks = Math.max(1, Math.round(input.everyTracks));
+  }
+}
+
+export function getJingleSettings(): { enabled: boolean; everyTracks: number } {
+  return {
+    enabled: jingleEnabled,
+    everyTracks: jingleEveryTracks,
+  };
 }
 
 export function invalidatePreload(): void {
@@ -3376,9 +3394,9 @@ async function playNext(
   }
 
   async function pickJingleBreak(): Promise<boolean> {
-    if (!JINGLE_ENABLE) return false;
+    if (!jingleEnabled) return false;
     if ((currentTrack?.youtube_id ?? '') === 'jingle') return false;
-    if (tracksSinceLastJingle < JINGLE_EVERY_TRACKS) return false;
+    if (tracksSinceLastJingle < jingleEveryTracks) return false;
     const jingleFile = pickJingleFile();
     if (!jingleFile) return false;
 

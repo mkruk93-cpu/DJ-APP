@@ -103,30 +103,40 @@ export default function NowPlaying({ radioTrack, showFallback = false, preferSup
 
   const hasUpcomingTrack = !!upcomingTrack || queue.length > 0;
   const isRadioMode = !!syncedRadioTrack || connected || hasUpcomingTrack;
+  const isJingleTrack = !!syncedRadioTrack && (
+    syncedRadioTrack.youtube_id === "jingle"
+    || (syncedRadioTrack.selection_key ?? "").toLowerCase().startsWith("jingle:")
+  );
   const isLoading = !!syncedRadioTrack && syncedRadioTrack.started_at === 0;
   const radioHasMetadata = !!(syncedRadioTrack?.title || syncedRadioTrack?.thumbnail);
   const showSupabaseData = (showFallback && (!connected || preferSupabase)) || !radioHasMetadata;
   const parsedRadio = parseTrackDisplay(syncedRadioTrack?.title);
-  const radioTitle = parsedRadio.title ?? syncedRadioTrack?.title ?? null;
-  const radioArtist = parsedRadio.artist;
-  const currentRequestedBy = syncedRadioTrack?.added_by ?? null;
+  const radioTitle = isJingleTrack ? null : (parsedRadio.title ?? syncedRadioTrack?.title ?? null);
+  const radioArtist = isJingleTrack ? null : parsedRadio.artist;
+  const currentRequestedBy = isJingleTrack ? null : (syncedRadioTrack?.added_by ?? null);
   const currentIsRandom = syncedRadioTrack?.youtube_id === "local";
   const displayTitle = syncedRadioTrack ? radioTitle : (showSupabaseData ? track.title : null);
   const displayArtist = syncedRadioTrack ? radioArtist : (showSupabaseData ? track.artist : null);
-  const displayArtwork = syncedRadioTrack?.thumbnail ?? (showSupabaseData ? track.artwork_url : null);
+  const displayArtwork = isJingleTrack ? null : (syncedRadioTrack?.thumbnail ?? (showSupabaseData ? track.artwork_url : null));
   const hasData = displayTitle || displayArtist;
-  const nextQueueItem = queue[0] ?? null;
+  const nextQueueItem = (queue.find((item) => {
+    const key = (item.selection_key ?? "").toLowerCase();
+    return item.youtube_id !== "jingle" && !key.startsWith("jingle:");
+  }) ?? null);
+  const visibleUpcomingTrack = (upcomingTrack && upcomingTrack.youtube_id !== "jingle" && !((upcomingTrack.selection_key ?? "").toLowerCase().startsWith("jingle:")))
+    ? upcomingTrack
+    : null;
   const nextSourceTitle = firstNonEmpty(
     nextQueueItem?.title,
-    upcomingTrack?.title,
+    visibleUpcomingTrack?.title,
     nextQueueItem?.youtube_id,
-    upcomingTrack?.youtube_id,
+    visibleUpcomingTrack?.youtube_id,
   );
   const parsedNext = parseTrackDisplay(nextSourceTitle);
   const nextTitle = parsedNext.title ?? nextSourceTitle;
   const nextArtist = parsedNext.artist;
-  const nextRequestedBy = nextQueueItem?.added_by ?? upcomingTrack?.added_by ?? null;
-  const nextIsFallback = (!nextQueueItem && !!upcomingTrack?.isFallback) || false;
+  const nextRequestedBy = nextQueueItem?.added_by ?? visibleUpcomingTrack?.added_by ?? null;
+  const nextIsFallback = (!nextQueueItem && !!visibleUpcomingTrack?.isFallback) || false;
 
   useEffect(() => {
     const currentTrackKey = syncedRadioTrack
@@ -169,7 +179,7 @@ export default function NowPlaying({ radioTrack, showFallback = false, preferSup
   // Always show in radio mode, even when loading
   if (!hasData && !isRadioMode && !connected) return null;
 
-  const duration = syncedRadioTrack?.duration ?? null;
+  const duration = isJingleTrack ? null : (syncedRadioTrack?.duration ?? null);
   const progress = !isLoading && duration && duration > 0 ? Math.min(elapsed / duration, 1) : 0;
 
   return (

@@ -13,7 +13,7 @@ import { initCache } from './cleanup.js';
 import { seedSettings, getActiveMode, getActiveFallbackGenre, getModeSettings, getSetting, setSetting } from './settings.js';
 import { getQueue, addToQueue, removeFromQueue, reorderQueue, fetchVideoInfo, extractYoutubeId, extractSourceId, isSoundcloudUrl, getThumbnailUrl, encodeLocalFileUrl } from './queue.js';
 import { canPerformAction } from './permissions.js';
-import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, isPlayCycleRunning, playerEvents, setKeepFiles, invalidatePreload, invalidateNextReady, removeQueueItemFromPreload, setActiveFallbackGenre, setActiveFallbackGenres, setActiveSharedFallbackPlaylists, setSharedAutoPlaybackMode, resetSharedAutoPlaybackCycleForSelection, setQueueItemSelectionMeta } from './player.js';
+import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, isPlayCycleRunning, playerEvents, setKeepFiles, getJingleSettings, setJingleSettings, invalidatePreload, invalidateNextReady, removeQueueItemFromPreload, setActiveFallbackGenre, setActiveFallbackGenres, setActiveSharedFallbackPlaylists, setSharedAutoPlaybackMode, resetSharedAutoPlaybackCycleForSelection, setQueueItemSelectionMeta } from './player.js';
 import { youtubeSearch, soundcloudSearch, spotdlSearch } from './services/search.js';
 import { startBridge } from './bridge.js';
 import { startNowPlayingWatcher } from './nowPlaying.js';
@@ -1343,10 +1343,13 @@ async function getServerState(): Promise<ServerState> {
   ]));
   const activeFallbackGenres = await resolveActiveFallbackGenres(activeFallbackGenre, true);
 
+  const jingleSettings = getJingleSettings();
   return {
     currentTrack: getCurrentTrack(),
     upcomingTrack: getUpcomingTrack(),
     queue,
+    jingleEnabled: jingleSettings.enabled,
+    jingleEveryTracks: jingleSettings.everyTracks,
     mode,
     modeSettings,
     fallbackGenres,
@@ -1380,10 +1383,13 @@ async function getServerState(): Promise<ServerState> {
 
 function buildDegradedServerState(): ServerState {
   if (lastGoodServerState) {
+    const jingleSettings = getJingleSettings();
     return {
       ...lastGoodServerState,
       currentTrack: getCurrentTrack(),
       upcomingTrack: getUpcomingTrack(),
+      jingleEnabled: jingleSettings.enabled,
+      jingleEveryTracks: jingleSettings.everyTracks,
       listenerCount: getEffectiveListenerCount(),
       streamOnline: getCurrentTrack() !== null,
       pausedForIdle: playbackPausedForIdle,
@@ -1406,10 +1412,13 @@ function buildDegradedServerState(): ServerState {
         : null,
     };
   }
+  const jingleSettings = getJingleSettings();
   return {
     currentTrack: getCurrentTrack(),
     upcomingTrack: getUpcomingTrack(),
     queue: [],
+    jingleEnabled: jingleSettings.enabled,
+    jingleEveryTracks: jingleSettings.everyTracks,
     mode: 'radio',
     modeSettings: {
       democracy_threshold: 60,
@@ -3334,6 +3343,24 @@ app.post('/api/settings', async (req, res) => {
       console.log(`[rest] Setting updated: ${key}=${nextMode}`);
       return res.json({ ok: true });
     }
+    if (key === 'jingle_enable') {
+      const enabled = value !== false;
+      await setSetting(sb, key, enabled);
+      setJingleSettings({ enabled });
+      const jingle = getJingleSettings();
+      io.emit('settings:jingleChanged', jingle);
+      console.log(`[rest] Setting updated: ${key}=${enabled}`);
+      return res.json({ ok: true, jingle });
+    }
+    if (key === 'jingle_every_tracks') {
+      const parsed = Math.max(1, Math.round(Number(value) || 4));
+      await setSetting(sb, key, parsed);
+      setJingleSettings({ everyTracks: parsed });
+      const jingle = getJingleSettings();
+      io.emit('settings:jingleChanged', jingle);
+      console.log(`[rest] Setting updated: ${key}=${parsed}`);
+      return res.json({ ok: true, jingle });
+    }
 
     await setSetting(sb, key, value);
     const modeSettings = await getModeSettings(sb);
@@ -4405,6 +4432,22 @@ io.on('connection', (socket) => {
         console.log(`[settings] Updated: ${data.key}=${nextMode}`);
         return;
       }
+      if (data.key === 'jingle_enable') {
+        const enabled = data.value !== false;
+        await setSetting(sb, data.key, enabled);
+        setJingleSettings({ enabled });
+        io.emit('settings:jingleChanged', getJingleSettings());
+        console.log(`[settings] Updated: ${data.key}=${enabled}`);
+        return;
+      }
+      if (data.key === 'jingle_every_tracks') {
+        const parsed = Math.max(1, Math.round(Number(data.value) || 4));
+        await setSetting(sb, data.key, parsed);
+        setJingleSettings({ everyTracks: parsed });
+        io.emit('settings:jingleChanged', getJingleSettings());
+        console.log(`[settings] Updated: ${data.key}=${parsed}`);
+        return;
+      }
 
       await setSetting(sb, data.key, data.value);
       const modeSettings = await getModeSettings(sb);
@@ -4579,6 +4622,14 @@ async function main(): Promise<void> {
 
   setKeepFiles(KEEP_FILES);
   console.log(`[server] Keep files after streaming: ${KEEP_FILES}`);
+  const startupJingleEnabled = await getSetting<boolean>(sb, 'jingle_enable');
+  const startupJingleEveryTracks = await getSetting<number>(sb, 'jingle_every_tracks');
+  setJingleSettings({
+    enabled: startupJingleEnabled ?? undefined,
+    everyTracks: startupJingleEveryTracks ?? undefined,
+  });
+  const jingleState = getJingleSettings();
+  console.log(`[server] Jingle config: enabled=${jingleState.enabled}, every=${jingleState.everyTracks} tracks`);
 
   const initialMode = await getActiveMode(sb);
   console.log(`[mode] Initial mode: ${initialMode}`);

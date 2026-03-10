@@ -807,18 +807,24 @@ export default function StreamPage() {
   const showRadioOfflineState = rawRadioOfflineCandidate && offlineUiArmed;
   const showRadioOfflinePendingState = rawRadioOfflineCandidate && !offlineUiArmed && !showTunnelRecoveryState;
   const shouldPollCommunityWidgets = radioMode === "dj" && radioConnected;
-  const nextQueueItem = queue[0] ?? null;
+  const nextQueueItem = (queue.find((item) => {
+    const key = (item.selection_key ?? "").toLowerCase();
+    return item.youtube_id !== "jingle" && !key.startsWith("jingle:");
+  }) ?? null);
+  const visibleUpcomingTrack = (upcomingTrack && upcomingTrack.youtube_id !== "jingle" && !((upcomingTrack.selection_key ?? "").toLowerCase().startsWith("jingle:")))
+    ? upcomingTrack
+    : null;
   const nextSourceTitle = firstNonEmpty(
     nextQueueItem?.title,
-    upcomingTrack?.title,
+    visibleUpcomingTrack?.title,
     nextQueueItem?.youtube_id,
-    upcomingTrack?.youtube_id,
+    visibleUpcomingTrack?.youtube_id,
   );
   const parsedNext = parseTrackDisplay(nextSourceTitle);
   const nextTitle = parsedNext.title ?? nextSourceTitle;
   const nextArtist = parsedNext.artist;
-  const nextRequestedBy = nextQueueItem?.added_by ?? upcomingTrack?.added_by ?? null;
-  const nextIsFallback = !nextQueueItem && !!upcomingTrack?.isFallback;
+  const nextRequestedBy = nextQueueItem?.added_by ?? visibleUpcomingTrack?.added_by ?? null;
+  const nextIsFallback = !nextQueueItem && !!visibleUpcomingTrack?.isFallback;
   const showHeaderNextOnly = mode === "radio" && !showRadioOfflineState && !showTunnelRecoveryState;
 
   useEffect(() => {

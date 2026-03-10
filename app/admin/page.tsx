@@ -5,7 +5,7 @@ import { getSupabase } from "@/lib/supabaseClient";
 import { connectSocket, disconnectSocket, getSocket } from "@/lib/socket";
 import { useRadioStore } from "@/lib/radioStore";
 import { getRadioToken, setRadioToken, clearRadioToken } from "@/lib/auth";
-import { skipTrack as apiSkipTrack, setKeepFiles as apiSetKeepFiles } from "@/lib/radioApi";
+import { skipTrack as apiSkipTrack, setKeepFiles as apiSetKeepFiles, updateSetting as apiUpdateSetting } from "@/lib/radioApi";
 import ModeSelector from "@/components/admin/ModeSelector";
 import ModeSettings from "@/components/admin/ModeSettings";
 import QueueManager from "@/components/admin/QueueManager";
@@ -34,6 +34,8 @@ export default function AdminPage() {
   const [radioAuthError, setRadioAuthError] = useState("");
   const [radioAuthed, setRadioAuthed] = useState(false);
   const [keepFiles, setKeepFiles] = useState(false);
+  const [jingleEnabled, setJingleEnabled] = useState(true);
+  const [jingleEveryTracks, setJingleEveryTracks] = useState(4);
 
   const radioConnected = useRadioStore((s) => s.connected);
   const radioTrack = useRadioStore((s) => s.currentTrack);
@@ -84,6 +86,12 @@ export default function AdminPage() {
             pausedForIdle: state.pausedForIdle ?? false,
             durationVote: state.durationVote ?? null,
           });
+          if (typeof state.jingleEnabled === "boolean") {
+            setJingleEnabled(state.jingleEnabled);
+          }
+          if (typeof state.jingleEveryTracks === "number" && Number.isFinite(state.jingleEveryTracks)) {
+            setJingleEveryTracks(Math.max(1, Math.round(state.jingleEveryTracks)));
+          }
         })
         .catch((err) => {
           console.warn("[radio] Failed to fetch state:", err.message);
@@ -114,6 +122,10 @@ export default function AdminPage() {
     });
     socket.on("settings:keepFilesChanged", (data: { keep: boolean }) => {
       setKeepFiles(data.keep);
+    });
+    socket.on("settings:jingleChanged", (data: { enabled: boolean; everyTracks: number }) => {
+      setJingleEnabled(!!data.enabled);
+      setJingleEveryTracks(Math.max(1, Math.round(Number(data.everyTracks) || 4)));
     });
     socket.on("durationVote:update", (data: DurationVote & { voters: string[] }) => {
       const voted = data.voters?.includes(socket.id ?? "") ?? false;
@@ -408,6 +420,55 @@ export default function AdminPage() {
                       {keepFiles ? "BEWAREN" : "VERWIJDEREN"}
                     </span>
                   </button>
+                </div>
+                <div className="space-y-3 rounded-xl border border-gray-800 bg-gray-900 p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-white">Jingles</p>
+                      <p className="text-xs text-gray-500">
+                        1 jingle na elke {jingleEveryTracks} tracks
+                      </p>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        const next = !jingleEnabled;
+                        setJingleEnabled(next);
+                        try {
+                          await apiUpdateSetting("jingle_enable", next);
+                        } catch (err) {
+                          console.warn("[admin] jingle_enable failed:", err);
+                        }
+                      }}
+                      className="flex items-center gap-2 rounded-lg border border-gray-700 px-3 py-1.5 text-sm transition hover:border-gray-600"
+                    >
+                      <span
+                        className={`inline-block h-3 w-3 rounded-full ${jingleEnabled ? "bg-green-400 shadow-sm shadow-green-400/50" : "bg-gray-600"}`}
+                      />
+                      <span className={jingleEnabled ? "font-semibold text-green-400" : "text-gray-400"}>
+                        {jingleEnabled ? "AAN" : "UIT"}
+                      </span>
+                    </button>
+                  </div>
+                  <div>
+                    <label className="mb-1.5 flex items-center justify-between text-sm text-gray-300">
+                      <span>Na hoeveel tracks</span>
+                      <span className="font-semibold text-violet-400">{jingleEveryTracks}</span>
+                    </label>
+                    <input
+                      type="range"
+                      min={1}
+                      max={20}
+                      value={jingleEveryTracks}
+                      onChange={(e) => {
+                        const next = Math.max(1, Number(e.target.value) || 1);
+                        setJingleEveryTracks(next);
+                        void apiUpdateSetting("jingle_every_tracks", next).catch((err) => {
+                          console.warn("[admin] jingle_every_tracks failed:", err);
+                        });
+                      }}
+                      className="violet-slider h-1.5 w-full cursor-pointer appearance-none rounded-full bg-gray-700 accent-violet-500"
+                    />
+                  </div>
                 </div>
                 <ModeSelector />
                 <ModeSettings />

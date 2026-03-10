@@ -112,6 +112,8 @@ export interface ServerState {
   currentTrack: Track | null;
   upcomingTrack: UpcomingTrack | null;
   queue: QueueItem[];
+  jingleEnabled: boolean;
+  jingleEveryTracks: number;
   mode: Mode;
   modeSettings: ModeSettings;
   fallbackGenres: FallbackGenre[];

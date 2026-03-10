@@ -8,6 +8,8 @@ const DEFAULTS: Record<string, unknown> = {
   fallback_active_genre: null,
   fallback_active_shared_playlist_ids: [],
   fallback_active_genre_by: null,
+  jingle_enable: true,
+  jingle_every_tracks: 4,
   democracy_threshold: 51,
   democracy_timer: 15,
   jukebox_max_per_user: 5,
