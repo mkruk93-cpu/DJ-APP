@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { getSupabase } from "@/lib/supabaseClient";
 import { useRadioStore } from "@/lib/radioStore";
 import AudioVisualizer from "@/components/AudioVisualizer";
@@ -102,10 +102,10 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const userPaused = useRef(false);
   const playingRef = useRef(false);
   const reconnectAttemptRef = useRef(0);
-  const stallWatchdogRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const lastProgressTimeRef = useRef(0);
-  const lastProgressStampRef = useRef(0);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const waitingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const waitingSinceRef = useRef(0);
+  const lastReconnectAtRef = useRef(0);
   const nicknameRef = useRef<string>("anonymous");
   const connected = useRadioStore((s) => s.connected);
 
@@ -189,6 +189,54 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     localStorage.setItem(VOLUME_STORAGE_KEY_BASE, value);
   }, [volume]);
 
+  const clearReconnectTimer = useCallback(() => {
+    if (reconnectTimer.current) {
+      clearTimeout(reconnectTimer.current);
+      reconnectTimer.current = null;
+    }
+  }, []);
+
+  const clearWaitingTimer = useCallback(() => {
+    if (waitingTimerRef.current) {
+      clearTimeout(waitingTimerRef.current);
+      waitingTimerRef.current = null;
+    }
+  }, []);
+
+  const attemptRecover = useCallback((baseDelayMs: number, options?: { forceReload?: boolean; minIntervalMs?: number }) => {
+    if (!src || userPaused.current) return;
+    const minIntervalMs = options?.minIntervalMs ?? 6500;
+    const now = Date.now();
+    if (now - lastReconnectAtRef.current < minIntervalMs) return;
+
+    clearReconnectTimer();
+    const forceReload = !!options?.forceReload;
+    const delay = baseDelayMs + reconnectAttemptRef.current * 300;
+    reconnectTimer.current = setTimeout(() => {
+      const audio = audioRef.current;
+      if (!audio || userPaused.current || !src) return;
+
+      lastReconnectAtRef.current = Date.now();
+      reconnectAttemptRef.current = Math.min(reconnectAttemptRef.current + 1, 8);
+      if (forceReload) {
+        audio.src = `${src}${src.includes("?") ? "&" : "?"}r=${Date.now()}`;
+      } else if (!audio.src) {
+        audio.src = src;
+      }
+
+      audio.play()
+        .then(() => {
+          reconnectAttemptRef.current = 0;
+          waitingSinceRef.current = 0;
+          setAutoplayBlocked(false);
+          setPlaying(true);
+        })
+        .catch(() => {
+          setAutoplayBlocked(true);
+        });
+    }, delay);
+  }, [clearReconnectTimer, src]);
+
   // Autoplay when stream source becomes available
   useEffect(() => {
     if (!src || userPaused.current || playing) return;
@@ -238,129 +286,52 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   }, [autoplayBlocked, src]);
 
   useEffect(() => {
-    function clearReconnectTimer() {
-      if (reconnectTimer.current) {
-        clearTimeout(reconnectTimer.current);
-        reconnectTimer.current = null;
-      }
-    }
-
-    function scheduleReconnect(delayMs: number) {
-      if (!src || userPaused.current) return;
-      clearReconnectTimer();
-      reconnectTimer.current = setTimeout(() => {
-        const audio = audioRef.current;
-        if (!audio || userPaused.current || !src) return;
-
-        const attempt = Math.min(reconnectAttemptRef.current + 1, 8);
-        reconnectAttemptRef.current = attempt;
-        const cacheBust = `${src}${src.includes("?") ? "&" : "?"}r=${Date.now()}`;
-        if (audio.src !== cacheBust) {
-          audio.src = cacheBust;
-        }
-        audio.play()
-          .then(() => {
-            reconnectAttemptRef.current = 0;
-            setAutoplayBlocked(false);
-            setPlaying(true);
-          })
-          .catch(() => {
-            setAutoplayBlocked(true);
-          });
-      }, delayMs);
-    }
-
-    const audio = audioRef.current;
-    if (!audio) return;
-    if (!playing || userPaused.current || !src) {
-      if (stallWatchdogRef.current) {
-        clearInterval(stallWatchdogRef.current);
-        stallWatchdogRef.current = null;
-      }
-      return;
-    }
-
-    lastProgressTimeRef.current = audio.currentTime;
-    lastProgressStampRef.current = Date.now();
-    if (stallWatchdogRef.current) clearInterval(stallWatchdogRef.current);
-    stallWatchdogRef.current = setInterval(() => {
-      const currentAudio = audioRef.current;
-      if (!currentAudio || userPaused.current || !src) return;
-
-      const now = Date.now();
-      const progress = currentAudio.currentTime;
-      if (progress > lastProgressTimeRef.current + 0.2) {
-        lastProgressTimeRef.current = progress;
-        lastProgressStampRef.current = now;
-        return;
-      }
-
-      const silentForMs = now - lastProgressStampRef.current;
-      const noDataLikely = currentAudio.readyState < 2 || currentAudio.networkState === HTMLMediaElement.NETWORK_NO_SOURCE;
-      if (silentForMs >= 15000 || noDataLikely) {
-        scheduleReconnect(1200);
-      }
-    }, 5000);
-
-    return () => {
-      if (stallWatchdogRef.current) {
-        clearInterval(stallWatchdogRef.current);
-        stallWatchdogRef.current = null;
-      }
-    };
-  }, [playing, src]);
-
-  useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
 
-    function clearReconnectTimer() {
-      if (reconnectTimer.current) {
-        clearTimeout(reconnectTimer.current);
-        reconnectTimer.current = null;
-      }
-    }
-
-    function scheduleReconnect(delayMs: number) {
-      if (!src || userPaused.current) return;
-      clearReconnectTimer();
-      reconnectTimer.current = setTimeout(() => {
-        const current = audioRef.current;
-        if (!current || userPaused.current || !src) return;
-        const attempt = Math.min(reconnectAttemptRef.current + 1, 8);
-        reconnectAttemptRef.current = attempt;
-        const cacheBust = `${src}${src.includes("?") ? "&" : "?"}r=${Date.now()}`;
-        if (current.src !== cacheBust) current.src = cacheBust;
-        current.play()
-          .then(() => {
-            reconnectAttemptRef.current = 0;
-            setPlaying(true);
-            setAutoplayBlocked(false);
-          })
-          .catch(() => setAutoplayBlocked(true));
-      }, delayMs);
-    }
-
-    function recoverIfNeeded(baseDelayMs: number) {
-      if (!playingRef.current || userPaused.current || !src) return;
-      scheduleReconnect(baseDelayMs + reconnectAttemptRef.current * 350);
+    function markHealthyPlayback() {
+      waitingSinceRef.current = 0;
+      clearWaitingTimer();
+      reconnectAttemptRef.current = 0;
+      setAutoplayBlocked(false);
     }
 
     function onWaiting() {
-      recoverIfNeeded(900);
+      if (!playingRef.current || userPaused.current || !src) return;
+      if (!waitingSinceRef.current) waitingSinceRef.current = Date.now();
+      clearWaitingTimer();
+      waitingTimerRef.current = setTimeout(() => {
+        const current = audioRef.current;
+        if (!current || !playingRef.current || userPaused.current || !src) return;
+        const waitingForMs = Date.now() - waitingSinceRef.current;
+        const stillNoData = current.readyState < 3 || current.networkState === HTMLMediaElement.NETWORK_LOADING;
+        if (waitingForMs >= 4000 && stillNoData) {
+          attemptRecover(1100, { forceReload: true, minIntervalMs: 7000 });
+        }
+      }, 4200);
     }
 
-    function onSuspend() {
-      recoverIfNeeded(1300);
+    function onCanPlay() {
+      markHealthyPlayback();
+    }
+
+    function onPlaying() {
+      markHealthyPlayback();
+      setPlaying(true);
+    }
+
+    function onTimeUpdate() {
+      markHealthyPlayback();
     }
 
     function onEnded() {
-      recoverIfNeeded(500);
+      if (!playingRef.current || userPaused.current) return;
+      attemptRecover(500, { forceReload: true, minIntervalMs: 7000 });
     }
 
     function onVisibilityOrFocus() {
       if (document.visibilityState === "hidden") return;
-      if (!src || userPaused.current) return;
+      if (!src || userPaused.current || !playingRef.current) return;
       const current = audioRef.current;
       if (!current) return;
       if (current.paused) {
@@ -375,19 +346,26 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     }
 
     audio.addEventListener("waiting", onWaiting);
-    audio.addEventListener("suspend", onSuspend);
+    audio.addEventListener("canplay", onCanPlay);
+    audio.addEventListener("playing", onPlaying);
+    audio.addEventListener("timeupdate", onTimeUpdate);
     audio.addEventListener("ended", onEnded);
     document.addEventListener("visibilitychange", onVisibilityOrFocus);
     window.addEventListener("focus", onVisibilityOrFocus);
+    window.addEventListener("pageshow", onVisibilityOrFocus);
 
     return () => {
+      clearWaitingTimer();
       audio.removeEventListener("waiting", onWaiting);
-      audio.removeEventListener("suspend", onSuspend);
+      audio.removeEventListener("canplay", onCanPlay);
+      audio.removeEventListener("playing", onPlaying);
+      audio.removeEventListener("timeupdate", onTimeUpdate);
       audio.removeEventListener("ended", onEnded);
       document.removeEventListener("visibilitychange", onVisibilityOrFocus);
       window.removeEventListener("focus", onVisibilityOrFocus);
+      window.removeEventListener("pageshow", onVisibilityOrFocus);
     };
-  }, [src]);
+  }, [attemptRecover, clearWaitingTimer, src]);
 
   useEffect(() => {
     if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
@@ -396,10 +374,8 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
       const audio = audioRef.current;
       if (!audio) return;
       userPaused.current = true;
-      if (reconnectTimer.current) {
-        clearTimeout(reconnectTimer.current);
-        reconnectTimer.current = null;
-      }
+      clearReconnectTimer();
+      clearWaitingTimer();
       audio.pause();
       setPlaying(false);
     });
@@ -414,6 +390,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
       audio.play()
         .then(() => {
           reconnectAttemptRef.current = 0;
+          waitingSinceRef.current = 0;
           setPlaying(true);
           setAutoplayBlocked(false);
         })
@@ -428,20 +405,14 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
         // Ignore Media Session cleanup failures on unsupported browsers.
       }
     };
-  }, [src]);
+  }, [clearReconnectTimer, clearWaitingTimer, src]);
 
   useEffect(() => {
     return () => {
-      if (reconnectTimer.current) {
-        clearTimeout(reconnectTimer.current);
-        reconnectTimer.current = null;
-      }
-      if (stallWatchdogRef.current) {
-        clearInterval(stallWatchdogRef.current);
-        stallWatchdogRef.current = null;
-      }
+      clearReconnectTimer();
+      clearWaitingTimer();
     };
-  }, []);
+  }, [clearReconnectTimer, clearWaitingTimer]);
 
   useEffect(() => {
     const sb = getSupabase();
@@ -484,19 +455,23 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     if (!audio) return;
 
     if (playing) {
-      if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+      clearReconnectTimer();
+      clearWaitingTimer();
       reconnectAttemptRef.current = 0;
       userPaused.current = true;
       audio.pause();
-      audio.src = "";
       setPlaying(false);
       setAutoplayBlocked(false);
     } else {
+      if (!src) return;
       userPaused.current = false;
-      audio.src = src;
+      if (audio.src !== src) {
+        audio.src = src;
+      }
       audio.play()
         .then(() => {
           reconnectAttemptRef.current = 0;
+          waitingSinceRef.current = 0;
           setPlaying(true);
           setAutoplayBlocked(false);
         })
@@ -836,38 +811,14 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
         onPause={() => setPlaying(false)}
         onError={() => {
           if (playingRef.current && !userPaused.current && src) {
-            if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
-            reconnectTimer.current = setTimeout(() => {
-              const audio = audioRef.current;
-              if (!audio || userPaused.current) return;
-              const cacheBust = `${src}${src.includes("?") ? "&" : "?"}r=${Date.now()}`;
-              audio.src = cacheBust;
-              audio.play()
-                .then(() => {
-                  reconnectAttemptRef.current = 0;
-                  setAutoplayBlocked(false);
-                })
-                .catch(() => setAutoplayBlocked(true));
-            }, 2000);
+            attemptRecover(1300, { forceReload: true, minIntervalMs: 7000 });
           } else {
             setPlaying(false);
           }
         }}
         onStalled={() => {
           if (playingRef.current && !userPaused.current && src) {
-            if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
-            reconnectTimer.current = setTimeout(() => {
-              const audio = audioRef.current;
-              if (!audio || userPaused.current || !audio.paused) return;
-              const cacheBust = `${src}${src.includes("?") ? "&" : "?"}r=${Date.now()}`;
-              audio.src = cacheBust;
-              audio.play()
-                .then(() => {
-                  reconnectAttemptRef.current = 0;
-                  setAutoplayBlocked(false);
-                })
-                .catch(() => setAutoplayBlocked(true));
-            }, 3000);
+            attemptRecover(1500, { forceReload: true, minIntervalMs: 7000 });
           }
         }}
       />

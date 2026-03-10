@@ -65,7 +65,15 @@ const SELF_HEAL_DURATION_GRACE_SECONDS = Math.max(30, parseInt(process.env.SELF_
 const SELF_HEAL_DURATION_DYNAMIC_RATIO = Math.min(0.6, Math.max(0.1, parseFloat(process.env.SELF_HEAL_DURATION_DYNAMIC_RATIO ?? '0.35') || 0.35));
 const SELF_HEAL_DURATION_DYNAMIC_MAX_SECONDS = Math.max(60, parseInt(process.env.SELF_HEAL_DURATION_DYNAMIC_MAX_SECONDS ?? '240', 10) || 240);
 const SELF_HEAL_START_GRACE_MS = Math.max(5_000, parseInt(process.env.SELF_HEAL_START_GRACE_MS ?? '25000', 10) || 25_000);
-const DECODER_CHUNK_TIMEOUT_MS = Math.max(6_000, parseInt(process.env.DECODER_CHUNK_TIMEOUT_MS ?? '12000', 10) || 12_000);
+const DECODER_CHUNK_TIMEOUT_MS = Math.max(8_000, parseInt(process.env.DECODER_CHUNK_TIMEOUT_MS ?? '18000', 10) || 18_000);
+const DECODER_STARTUP_TIMEOUT_MS = Math.max(
+  DECODER_CHUNK_TIMEOUT_MS + 8_000,
+  parseInt(process.env.DECODER_STARTUP_TIMEOUT_MS ?? '24000', 10) || 24_000,
+);
+const DECODER_DRAIN_TIMEOUT_MS = Math.max(
+  DECODER_CHUNK_TIMEOUT_MS + 20_000,
+  parseInt(process.env.DECODER_DRAIN_TIMEOUT_MS ?? '45000', 10) || 45_000,
+);
 const KEEP_FILES_MAX_COUNT = Math.max(8, parseInt(process.env.KEEP_FILES_MAX_COUNT ?? '24', 10) || 24);
 const KEEP_FILES_MAX_AGE_MS = Math.max(5 * 60_000, parseInt(process.env.KEEP_FILES_MAX_AGE_MS ?? String(6 * 60 * 60_000), 10) || (6 * 60 * 60_000));
 const KEEP_FILES_PRUNE_INTERVAL_MS = Math.max(30_000, parseInt(process.env.KEEP_FILES_PRUNE_INTERVAL_MS ?? '120000', 10) || 120_000);
@@ -3954,15 +3962,19 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess, forceDualMono = f
     let pipeError = false;
     let settled = false;
     let chunkWatchdog: ReturnType<typeof setTimeout> | null = null;
+    let waitingForDrain = false;
+    let chunkTimeoutMs = DECODER_STARTUP_TIMEOUT_MS;
 
-    function resetChunkWatchdog() {
+    function resetChunkWatchdog(timeoutMs = DECODER_CHUNK_TIMEOUT_MS) {
       if (chunkWatchdog) clearTimeout(chunkWatchdog);
+      chunkTimeoutMs = timeoutMs;
       chunkWatchdog = setTimeout(() => {
         if (settled || pipeError) return;
         pipeError = true;
         killDecoderProcess(decoder);
-        finish(new Error(`decoder stalled: no PCM chunk for ${Math.round(DECODER_CHUNK_TIMEOUT_MS / 1000)}s`));
-      }, DECODER_CHUNK_TIMEOUT_MS);
+        const reason = waitingForDrain ? 'encoder backpressure' : 'no PCM chunk';
+        finish(new Error(`decoder stalled: ${reason} for ${Math.round(chunkTimeoutMs / 1000)}s`));
+      }, timeoutMs);
     }
 
     function finish(err?: Error) {
@@ -3999,6 +4011,7 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess, forceDualMono = f
       if (settled || pipeError) return;
       resetChunkWatchdog();
       markAudioProgress();
+      waitingForDrain = false;
 
       // ── Check for seamless swap ──
       if (pendingSwap?.firstChunk) {
@@ -4034,8 +4047,15 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess, forceDualMono = f
           const ok = enc.stdin.write(chunk);
           markAudioProgress();
           if (!ok) {
+            waitingForDrain = true;
+            resetChunkWatchdog(DECODER_DRAIN_TIMEOUT_MS);
             decoder.stdout?.pause();
-            enc.stdin.once('drain', () => decoder.stdout?.resume());
+            enc.stdin.once('drain', () => {
+              if (settled || pipeError) return;
+              waitingForDrain = false;
+              resetChunkWatchdog();
+              decoder.stdout?.resume();
+            });
           }
         } catch (err) {
           pipeError = true;
@@ -4072,7 +4092,7 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess, forceDualMono = f
     decoder.on('error', (err) => {
       finish(new Error(`Failed to start decoder: ${err.message}`));
     });
-    resetChunkWatchdog();
+    resetChunkWatchdog(DECODER_STARTUP_TIMEOUT_MS);
   });
 }
 
@@ -4086,15 +4106,19 @@ function pipeRunningDecoder(decoder: ChildProcess, enc: ChildProcess): Promise<v
     let settled = false;
     let pipeError = false;
     let chunkWatchdog: ReturnType<typeof setTimeout> | null = null;
+    let waitingForDrain = false;
+    let chunkTimeoutMs = DECODER_CHUNK_TIMEOUT_MS;
 
-    function resetChunkWatchdog() {
+    function resetChunkWatchdog(timeoutMs = DECODER_CHUNK_TIMEOUT_MS) {
       if (chunkWatchdog) clearTimeout(chunkWatchdog);
+      chunkTimeoutMs = timeoutMs;
       chunkWatchdog = setTimeout(() => {
         if (settled || pipeError) return;
         pipeError = true;
         killDecoderProcess(decoder);
-        finish(new Error(`decoder stalled: no PCM chunk for ${Math.round(DECODER_CHUNK_TIMEOUT_MS / 1000)}s`));
-      }, DECODER_CHUNK_TIMEOUT_MS);
+        const reason = waitingForDrain ? 'encoder backpressure' : 'no PCM chunk';
+        finish(new Error(`decoder stalled: ${reason} for ${Math.round(chunkTimeoutMs / 1000)}s`));
+      }, timeoutMs);
     }
 
     function finish(err?: Error) {
@@ -4138,6 +4162,7 @@ function pipeRunningDecoder(decoder: ChildProcess, enc: ChildProcess): Promise<v
       if (settled || pipeError) return;
       resetChunkWatchdog();
       markAudioProgress();
+      waitingForDrain = false;
 
       // Support chained skips during the swapped track
       if (pendingSwap?.firstChunk) {
@@ -4163,8 +4188,15 @@ function pipeRunningDecoder(decoder: ChildProcess, enc: ChildProcess): Promise<v
           const ok = enc.stdin.write(chunk);
           markAudioProgress();
           if (!ok) {
+            waitingForDrain = true;
+            resetChunkWatchdog(DECODER_DRAIN_TIMEOUT_MS);
             decoder.stdout?.pause();
-            enc.stdin.once('drain', () => decoder.stdout?.resume());
+            enc.stdin.once('drain', () => {
+              if (settled || pipeError) return;
+              waitingForDrain = false;
+              resetChunkWatchdog();
+              decoder.stdout?.resume();
+            });
           }
         } catch {
           pipeError = true;
@@ -4179,7 +4211,7 @@ function pipeRunningDecoder(decoder: ChildProcess, enc: ChildProcess): Promise<v
 
     // Resume the paused stdout (it was paused after firstChunk capture)
     decoder.stdout?.resume();
-    resetChunkWatchdog();
+    resetChunkWatchdog(DECODER_STARTUP_TIMEOUT_MS);
   });
 }
 
