@@ -25,8 +25,19 @@ let scClientId: string | null = null;
 let scClientIdFailures = 0;
 let scClientIdLastAttempt = 0;
 const SC_RETRY_DELAY = 30 * 60 * 1000; // 30 minutes between retry attempts
+let scEnvNoticeShown = false;
 
 async function getSoundCloudClientId(): Promise<string | null> {
+  const envClientId = String(process.env.SOUNDCLOUD_CLIENT_ID ?? '').trim();
+  if (envClientId.length >= 16) {
+    if (!scEnvNoticeShown) {
+      scEnvNoticeShown = true;
+      console.log('[soundcloud] Using SOUNDCLOUD_CLIENT_ID from environment');
+    }
+    scClientId = envClientId;
+    scClientIdFailures = 0;
+    return scClientId;
+  }
   if (scClientId) return scClientId;
   
   // Rate limit retry attempts to avoid log spam
@@ -49,10 +60,10 @@ async function getSoundCloudClientId(): Promise<string | null> {
     });
     const html = await mainRes.text();
     
-    // Extract script URLs
-    const scriptMatches = html.match(/<script[^>]+src="([^"]*app[^"]*\.js[^"]*)"/g);
+    // Extract script URLs (broader than only "app*.js")
+    const scriptMatches = html.match(/<script[^>]+src="([^"]+\.js[^"]*)"/g);
     if (scriptMatches) {
-      for (const scriptMatch of scriptMatches.slice(0, 3)) { // Try first 3 app scripts
+      for (const scriptMatch of scriptMatches.slice(0, 12)) { // Try more bundles for client_id
         const urlMatch = scriptMatch.match(/src="([^"]+)"/);
         if (!urlMatch) continue;
         
@@ -71,6 +82,7 @@ async function getSoundCloudClientId(): Promise<string | null> {
             /"client_id":"([a-zA-Z0-9_-]{32,})"/,
             /client_id[=:]\s*['"]([a-zA-Z0-9_-]{32,})['"]/,
             /clientId[=:]\s*['"]([a-zA-Z0-9_-]{32,})['"]/,
+            /client_id\\u003d([a-zA-Z0-9_-]{32,})/,
           ];
           
           for (const pattern of patterns) {

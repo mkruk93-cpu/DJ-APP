@@ -120,6 +120,23 @@ const STREAM_DELAY_MS = parseInt(process.env.STREAM_DELAY_MS ?? '8000', 10);
 const STREAM_BITRATE_RAW = (process.env.STREAM_BITRATE ?? '256k').trim().toLowerCase();
 const STREAM_USE_SOURCE_MODE = STREAM_BITRATE_RAW === 'source' || STREAM_BITRATE_RAW === 'true';
 const STREAM_BITRATE = STREAM_USE_SOURCE_MODE ? '256k' : STREAM_BITRATE_RAW;
+const STREAM_NORMALIZE = String(process.env.STREAM_NORMALIZE ?? 'true').toLowerCase() !== 'false';
+const STREAM_AUDIO_FILTER =
+  (process.env.STREAM_AUDIO_FILTER ?? '').trim()
+  || 'acompressor=threshold=-18dB:ratio=3.0:attack=8:release=140:makeup=4,alimiter=limit=0.95';
+const STREAM_TRIM_SILENCE = String(process.env.STREAM_TRIM_SILENCE ?? 'true').toLowerCase() !== 'false';
+const STREAM_SILENCE_FILTER =
+  (process.env.STREAM_SILENCE_FILTER ?? '').trim()
+  || 'silenceremove=start_periods=1:start_duration=0.25:start_threshold=-42dB:stop_periods=1:stop_duration=0.35:stop_threshold=-42dB';
+const STREAM_CHANNEL_REPAIR_ENABLE = String(process.env.STREAM_CHANNEL_REPAIR_ENABLE ?? 'true').toLowerCase() !== 'false';
+const STREAM_CHANNEL_REPAIR_DIFF_DB = Math.max(10, parseFloat(process.env.STREAM_CHANNEL_REPAIR_DIFF_DB ?? '16') || 16);
+const STREAM_CHANNEL_REPAIR_SILENT_DB = Math.min(-35, parseFloat(process.env.STREAM_CHANNEL_REPAIR_SILENT_DB ?? '-55') || -55);
+const STREAM_CHANNEL_REPAIR_FILTER =
+  (process.env.STREAM_CHANNEL_REPAIR_FILTER ?? '').trim()
+  || 'pan=stereo|c0=0.5*c0+0.5*c1|c1=0.5*c0+0.5*c1';
+const JINGLE_ENABLE = String(process.env.JINGLE_ENABLE ?? 'true').toLowerCase() !== 'false';
+const JINGLE_DIR = (process.env.JINGLE_DIR ?? path.join(process.cwd(), 'data', 'jingles')).trim();
+const JINGLE_EVERY_TRACKS = Math.max(1, parseInt(process.env.JINGLE_EVERY_TRACKS ?? '4', 10) || 4);
 let activeFallbackGenre: string | null = null;
 let activeFallbackGenreIds: string[] = [];
 let activeSharedFallbackPlaylistIds: string[] = [];
@@ -300,6 +317,24 @@ function getEncoderRateArgs(): string[] {
   // "source"/"true": use high-quality VBR instead of fixed CBR cap.
   if (STREAM_USE_SOURCE_MODE) return ['-q:a', '0'];
   return ['-b:a', STREAM_BITRATE];
+}
+
+function getEncoderFilterArgs(): string[] {
+  if (!STREAM_NORMALIZE) return [];
+  if (!STREAM_AUDIO_FILTER) return [];
+  return ['-af', STREAM_AUDIO_FILTER];
+}
+
+function getDecoderFilterArgs(forceDualMono = false): string[] {
+  const filters: string[] = [];
+  if (STREAM_TRIM_SILENCE && STREAM_SILENCE_FILTER) {
+    filters.push(STREAM_SILENCE_FILTER);
+  }
+  if (forceDualMono && STREAM_CHANNEL_REPAIR_FILTER) {
+    filters.push(STREAM_CHANNEL_REPAIR_FILTER);
+  }
+  if (filters.length === 0) return [];
+  return ['-af', filters.join(',')];
 }
 
 export function setActiveFallbackGenre(genreId: string | null): void {
@@ -757,6 +792,7 @@ const AUTO_BLOCKED_KEYWORDS = [
   'ad break',
   'sponsored',
   'sponsor',
+  'vlog',
   'promo code',
   'trailer',
   'teaser',
@@ -775,6 +811,7 @@ const STRICT_METADATA_BLOCKED_KEYWORDS = [
   'advertisement',
   'ad break',
   'sponsored',
+  'vlog',
   'promo code',
   'trailer',
   'teaser',
@@ -1712,6 +1749,7 @@ async function prepareAutoFallbackByGenre(genreId: string, expectedSourceKeyOver
             }
             rememberAutoTrack(choice.artist, choice.title);
             pendingAutoUpcoming = null;
+            const forceDualMono = await shouldForceDualMono(audioFile);
             console.log(`[auto-download] Ready (${genreId}): ${resolvedTitle} (${finalDuration}s)`);
             return {
               audioFile,
@@ -1724,6 +1762,7 @@ async function prepareAutoFallbackByGenre(genreId: string, expectedSourceKeyOver
               isFallback: true,
               isAutoFallback: true,
               cleanupAfterUse: true,
+              forceDualMono,
               selectionLabel: `Autoplay online (${genreId})`,
               selectionPlaylist: null,
               selectionTab: 'online',
@@ -1832,6 +1871,7 @@ async function prepareLikedAutoFallbackTrack(expectedSourceKeyOverride?: string)
     }
     rememberAutoTrackKey(choice);
     pendingAutoUpcoming = null;
+    const forceDualMono = await shouldForceDualMono(audioFile);
     console.log(`[auto-download] Ready (liked): ${resolvedTitle} (${finalDuration}s)`);
     return {
       audioFile,
@@ -1844,6 +1884,7 @@ async function prepareLikedAutoFallbackTrack(expectedSourceKeyOverride?: string)
       isFallback: true,
       isAutoFallback: true,
       cleanupAfterUse: true,
+      forceDualMono,
       selectionLabel: 'Autoplay online (liked)',
       selectionPlaylist: null,
       selectionTab: 'online',
@@ -1994,6 +2035,7 @@ async function prepareSharedAutoFallbackTrack(
     sharedPlaylistRandomPlayedKeys.set(playlistId, playedSet);
     rememberAutoTrackKey(choice.recentKey);
     pendingAutoUpcoming = null;
+    const forceDualMono = await shouldForceDualMono(audioFile);
     console.log(`[auto-download] Ready (shared:${playlistId}): ${resolvedTitle} (${finalDuration}s)`);
     return {
       audioFile,
@@ -2006,6 +2048,7 @@ async function prepareSharedAutoFallbackTrack(
       isFallback: true,
       isAutoFallback: true,
       cleanupAfterUse: true,
+      forceDualMono,
       selectionLabel: 'Autoplay playlist',
       selectionPlaylist: null,
       selectionTab: 'playlists',
@@ -2243,6 +2286,7 @@ interface PreloadedTrack {
   item: QueueItem;
   audioFile: string;
   duration: number | null;
+  forceDualMono: boolean;
 }
 
 let preloadBuffer: PreloadedTrack[] = [];
@@ -2263,6 +2307,7 @@ interface ReadyTrack {
   isFallback: boolean;
   isAutoFallback: boolean;
   cleanupAfterUse: boolean;
+  forceDualMono: boolean;
   selectionLabel: string | null;
   selectionPlaylist: string | null;
   selectionTab: SelectionTab | null;
@@ -2282,6 +2327,101 @@ let pendingAutoUpcoming: UpcomingTrack | null = null;
 let autoReadyBuffer: ReadyTrack[] = [];
 const prepareFailCounts = new Map<string, number>();
 const PREPARE_FAIL_MAX = 3;
+let tracksSinceLastJingle = 0;
+let lastJinglePath: string | null = null;
+const channelRepairCache = new Map<string, boolean>();
+
+function listJingleFiles(): string[] {
+  if (!JINGLE_ENABLE || !JINGLE_DIR) return [];
+  try {
+    const entries = fs.readdirSync(JINGLE_DIR, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile())
+      .map((entry) => path.join(JINGLE_DIR, entry.name))
+      .filter((fullPath) => /\.(mp3|wav|m4a|aac|ogg|flac)$/i.test(fullPath));
+  } catch {
+    return [];
+  }
+}
+
+function pickJingleFile(): string | null {
+  const files = listJingleFiles();
+  if (files.length === 0) return null;
+  if (files.length === 1) return files[0] ?? null;
+  const pool = files.filter((fullPath) => fullPath !== lastJinglePath);
+  const pickedPool = pool.length > 0 ? pool : files;
+  const picked = pickedPool[Math.floor(Math.random() * pickedPool.length)] ?? null;
+  return picked;
+}
+
+function average(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sum = values.reduce((acc, value) => acc + value, 0);
+  return sum / values.length;
+}
+
+async function shouldForceDualMono(audioFile: string): Promise<boolean> {
+  if (!STREAM_CHANNEL_REPAIR_ENABLE) return false;
+  const cached = channelRepairCache.get(audioFile);
+  if (cached !== undefined) return cached;
+
+  const decision = await new Promise<boolean>((resolve) => {
+    const probe = spawn('ffmpeg', [
+      '-hide_banner',
+      '-t', '12',
+      '-i', audioFile,
+      '-vn',
+      '-af', 'astats=metadata=1:reset=1',
+      '-f', 'null',
+      '-',
+    ], { timeout: 12_000 });
+
+    let stderr = '';
+    probe.stderr?.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+      if (stderr.length > 300_000) stderr = stderr.slice(-300_000);
+    });
+
+    probe.on('close', () => {
+      const left: number[] = [];
+      const right: number[] = [];
+      let channel = 0;
+      for (const rawLine of stderr.split(/\r?\n/)) {
+        const line = rawLine.trim();
+        const channelMatch = line.match(/Channel:\s*([12])/i);
+        if (channelMatch?.[1]) {
+          channel = Number.parseInt(channelMatch[1], 10);
+          continue;
+        }
+        const rmsMatch = line.match(/RMS level dB:\s*(-?[\d.]+|-\s*inf)/i);
+        if (!rmsMatch?.[1] || (channel !== 1 && channel !== 2)) continue;
+        const token = rmsMatch[1].replace(/\s+/g, '').toLowerCase();
+        const value = token.includes('inf') ? -120 : Number.parseFloat(token);
+        if (!Number.isFinite(value)) continue;
+        if (channel === 1) left.push(value);
+        else right.push(value);
+      }
+
+      const leftAvg = average(left);
+      const rightAvg = average(right);
+      if (leftAvg === null || rightAvg === null) {
+        resolve(false);
+        return;
+      }
+      const weaker = Math.min(leftAvg, rightAvg);
+      const diff = Math.abs(leftAvg - rightAvg);
+      resolve(weaker <= STREAM_CHANNEL_REPAIR_SILENT_DB && diff >= STREAM_CHANNEL_REPAIR_DIFF_DB);
+    });
+
+    probe.on('error', () => resolve(false));
+  });
+
+  channelRepairCache.set(audioFile, decision);
+  if (decision) {
+    console.warn(`[audio] Channel repair enabled for ${path.basename(audioFile)} (likely one-sided source)`);
+  }
+  return decision;
+}
 
 function isProtectedPlaybackFile(filePath: string): boolean {
   if (!filePath) return false;
@@ -2557,6 +2697,7 @@ function beginSeamlessSwap(ready: ReadyTrack): void {
   const newDecoder = spawn('ffmpeg', [
     '-hide_banner', '-re',
     '-i', ready.audioFile,
+    ...getDecoderFilterArgs(ready.forceDualMono),
     '-vn', '-f', 's16le', '-ar', '44100', '-ac', '2',
     'pipe:1',
   ]);
@@ -2787,6 +2928,7 @@ function ensureEncoder(): ChildProcess {
       '-ar', '44100',
       '-ac', '2',
       '-i', 'pipe:0',
+      ...getEncoderFilterArgs(),
       '-acodec', 'libmp3lame',
       ...getEncoderRateArgs(),
       '-f', 'mp3',
@@ -2802,6 +2944,7 @@ function ensureEncoder(): ChildProcess {
       '-ar', '44100',
       '-ac', '2',
       '-i', 'pipe:0',
+      ...getEncoderFilterArgs(),
       '-acodec', 'libmp3lame',
       ...getEncoderRateArgs(),
       '-f', 'mp3',
@@ -3015,7 +3158,7 @@ async function fillPreloadBuffer(sb: SupabaseClient, cacheDir: string, currentId
 
       try {
         console.log(`[preload] Downloading (${preloadBuffer.length + 1}/${MAX_PRELOAD}): ${next.title ?? next.youtube_id}`);
-        const { info, audioFile } = await downloadQueueItemShared(next, cacheDir);
+        const { info, audioFile, forceDualMono } = await downloadQueueItemShared(next, cacheDir);
 
         const freshQueue = await getQueue(sb);
         if (!freshQueue.some((q) => q.id === next.id)) {
@@ -3035,7 +3178,7 @@ async function fillPreloadBuffer(sb: SupabaseClient, cacheDir: string, currentId
           continue;
         }
 
-        preloadBuffer.push({ item: next, audioFile, duration: info.duration });
+        preloadBuffer.push({ item: next, audioFile, duration: info.duration, forceDualMono });
         console.log(`[preload] Ready (${preloadBuffer.length}/${MAX_PRELOAD}): ${next.title ?? next.youtube_id}`);
         broadcastUpcomingTrack();
       } catch (err) {
@@ -3105,6 +3248,7 @@ async function playNext(
   let isFallback = false;
   let trackIsAutoFallback = false;
   let trackCleanupAfterUse = false;
+  let trackForceDualMono = false;
   let selectionLabel: string | null = null;
   let selectionPlaylist: string | null = null;
   let selectionTab: SelectionTab | null = null;
@@ -3156,6 +3300,7 @@ async function playNext(
     isFallback = true;
     trackIsAutoFallback = false;
     trackCleanupAfterUse = false;
+    trackForceDualMono = false;
     selectionLabel = 'Lokale random fallback';
     selectionPlaylist = null;
     selectionTab = 'local';
@@ -3216,6 +3361,7 @@ async function playNext(
     isFallback = true;
     trackIsAutoFallback = true;
     trackCleanupAfterUse = ready.cleanupAfterUse;
+    trackForceDualMono = ready.forceDualMono;
     selectionLabel = ready.selectionLabel;
     selectionPlaylist = ready.selectionPlaylist;
     selectionTab = ready.selectionTab;
@@ -3229,6 +3375,35 @@ async function playNext(
     return true;
   }
 
+  async function pickJingleBreak(): Promise<boolean> {
+    if (!JINGLE_ENABLE) return false;
+    if ((currentTrack?.youtube_id ?? '') === 'jingle') return false;
+    if (tracksSinceLastJingle < JINGLE_EVERY_TRACKS) return false;
+    const jingleFile = pickJingleFile();
+    if (!jingleFile) return false;
+
+    audioFile = jingleFile;
+    trackTitle = titleFromFilename(jingleFile) || 'Jingle';
+    trackThumbnail = null;
+    trackYoutubeId = 'jingle';
+    trackDuration = await getAudioDuration(jingleFile);
+    trackAddedBy = null;
+    trackQueueId = null;
+    isFallback = true;
+    trackIsAutoFallback = false;
+    trackCleanupAfterUse = false;
+    selectionLabel = 'Jingle';
+    selectionPlaylist = null;
+    selectionTab = null;
+    selectionKey = `jingle:${path.basename(jingleFile)}`;
+    source = 'jingle';
+    currentQueueItemId = null;
+    lastJinglePath = jingleFile;
+    return true;
+  }
+
+  const jinglePicked = await pickJingleBreak();
+  if (!jinglePicked) {
   // ── FAST PATH: use pre-prepared track (instant, no DB call) ──
   // Guard against stale prepare races where "next" accidentally equals current.
   if (nextReady?.queueItemId && !nextReady.isFallback) {
@@ -3257,6 +3432,7 @@ async function playNext(
     isFallback = ready.isFallback;
     trackIsAutoFallback = ready.isAutoFallback;
     trackCleanupAfterUse = ready.cleanupAfterUse;
+    trackForceDualMono = ready.forceDualMono;
     if (trackQueueId) {
       const meta = queueSelectionMetaByItemId.get(trackQueueId);
       selectionLabel = meta?.selectionLabel ?? 'Wachtrij';
@@ -3311,6 +3487,7 @@ async function playNext(
         currentQueueItemId = trackQueueId;
         trackCleanupAfterUse = true;
         trackIsAutoFallback = false;
+        trackForceDualMono = buffered.forceDualMono;
         const meta = queueSelectionMetaByItemId.get(item.id);
         selectionLabel = meta?.selectionLabel ?? 'Wachtrij';
         selectionPlaylist = meta?.selectionPlaylist ?? null;
@@ -3355,6 +3532,7 @@ async function playNext(
       }
     }
   }
+  }
 
   if (!audioFile) return;
 
@@ -3393,6 +3571,8 @@ async function playNext(
       selection_tab: selectionTab,
       selection_key: selectionKey,
     };
+    if (trackYoutubeId === 'jingle') tracksSinceLastJingle = 0;
+    else tracksSinceLastJingle += 1;
     if (trackQueueId) queueSelectionMetaByItemId.delete(trackQueueId);
     pendingQueueUpcoming = null;
     pendingAutoUpcoming = null;
@@ -3420,7 +3600,7 @@ async function playNext(
     void ensureAutoReadyBuffer(sb, cacheDir);
 
     activePlaybackFile = audioFile;
-    await decodeToEncoder(audioFile, enc);
+    await decodeToEncoder(audioFile, enc, trackForceDualMono);
 
     // ── Handle seamless swap chain ──
     // After decodeToEncoder resolves (either track finished or swap happened),
@@ -3445,6 +3625,7 @@ async function playNext(
       isFallback = swap.ready.isFallback;
       trackIsAutoFallback = swap.ready.isAutoFallback;
       trackCleanupAfterUse = swap.ready.cleanupAfterUse;
+      trackForceDualMono = swap.ready.forceDualMono;
       if (trackQueueId) {
         const meta = queueSelectionMetaByItemId.get(trackQueueId);
         selectionLabel = meta?.selectionLabel ?? 'Wachtrij';
@@ -3481,6 +3662,8 @@ async function playNext(
         selection_tab: selectionTab,
         selection_key: selectionKey,
       };
+      if (trackYoutubeId === 'jingle') tracksSinceLastJingle = 0;
+      else tracksSinceLastJingle += 1;
       if (trackQueueId) queueSelectionMetaByItemId.delete(trackQueueId);
       io.emit('track:change', currentTrack);
       lastTrackAnnouncedAt = Date.now();
@@ -3547,7 +3730,7 @@ async function playNext(
  * decoder, and resolve — the old track's audio plays right up to the
  * switch point with zero silence.
  */
-function decodeToEncoder(audioFile: string, enc: ChildProcess): Promise<void> {
+function decodeToEncoder(audioFile: string, enc: ChildProcess, forceDualMono = false): Promise<void> {
   return new Promise((resolve, reject) => {
     if (!enc.stdin || enc.stdin.destroyed) {
       reject(new Error('Encoder stdin not available'));
@@ -3578,6 +3761,7 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess): Promise<void> {
       '-hide_banner',
       '-re',
       '-i', audioFile,
+      ...getDecoderFilterArgs(forceDualMono),
       '-vn',
       '-f', 's16le',
       '-ar', '44100',
@@ -3782,7 +3966,7 @@ function pipeRunningDecoder(decoder: ChildProcess, enc: ChildProcess): Promise<v
 }
 
 let downloadCounter = 0;
-const queueDownloadInFlight = new Map<string, Promise<{ audioFile: string; info: { title: string | null; duration: number | null; thumbnail: string | null } }>>();
+const queueDownloadInFlight = new Map<string, Promise<{ audioFile: string; info: { title: string | null; duration: number | null; thumbnail: string | null }; forceDualMono: boolean }>>();
 
 function describeError(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -3797,7 +3981,7 @@ function describeError(err: unknown): string {
 function downloadQueueItemShared(
   item: QueueItem,
   cacheDir: string,
-): Promise<{ audioFile: string; info: { title: string | null; duration: number | null; thumbnail: string | null } }> {
+): Promise<{ audioFile: string; info: { title: string | null; duration: number | null; thumbnail: string | null }; forceDualMono: boolean }> {
   const key = item.id;
   const existing = queueDownloadInFlight.get(key);
   if (existing) return existing;
@@ -3810,6 +3994,7 @@ function downloadQueueItemShared(
     if (baseInfo.title && !item.title) item.title = baseInfo.title;
     const audioFile = await downloadAudio(item, cacheDir);
     const measuredDuration = baseInfo.duration ?? (localSource ? await getAudioDuration(audioFile) : null);
+    const forceDualMono = await shouldForceDualMono(audioFile);
     return {
       audioFile,
       info: {
@@ -3817,6 +4002,7 @@ function downloadQueueItemShared(
         duration: measuredDuration,
         thumbnail: baseInfo.thumbnail,
       },
+      forceDualMono,
     };
   })();
 
@@ -4051,6 +4237,7 @@ async function prepareNextTrack(
           isFallback: false,
           isAutoFallback: false,
           cleanupAfterUse: true,
+          forceDualMono: buffered.forceDualMono,
           selectionLabel: null,
           selectionPlaylist: null,
           selectionTab: null,
@@ -4067,7 +4254,7 @@ async function prepareNextTrack(
         if (!item) throw new Error('Queue item missing during prepare');
         const itemSafe = item;
         console.log(`[prepare] Downloading next: ${item.title ?? item.youtube_id}`);
-        const { info, audioFile } = await downloadQueueItemShared(itemSafe, cacheDir);
+        const { info, audioFile, forceDualMono } = await downloadQueueItemShared(itemSafe, cacheDir);
         const freshQueue = await getQueue(sb);
         if (!freshQueue.some((q) => q.id === itemSafe.id)) {
           if (!keepFiles) cleanupFile(audioFile);
@@ -4087,6 +4274,7 @@ async function prepareNextTrack(
           isFallback: false,
           isAutoFallback: false,
           cleanupAfterUse: true,
+          forceDualMono,
           selectionLabel: null,
           selectionPlaylist: null,
           selectionTab: null,
@@ -4156,6 +4344,7 @@ async function prepareNextTrack(
           isFallback: true,
           isAutoFallback: false,
           cleanupAfterUse: false,
+          forceDualMono: false,
           selectionLabel: 'Lokale random fallback',
           selectionPlaylist: null,
           selectionTab: 'local',
