@@ -1724,6 +1724,10 @@ async function prepareAutoFallbackByGenre(genreId: string, expectedSourceKeyOver
               isFallback: true,
               isAutoFallback: true,
               cleanupAfterUse: true,
+              selectionLabel: `Autoplay online (${genreId})`,
+              selectionPlaylist: null,
+              selectionTab: 'online',
+              selectionKey: `auto:${genreId}`,
             };
           } catch {
             pendingAutoUpcoming = null;
@@ -1840,6 +1844,10 @@ async function prepareLikedAutoFallbackTrack(expectedSourceKeyOverride?: string)
       isFallback: true,
       isAutoFallback: true,
       cleanupAfterUse: true,
+      selectionLabel: 'Autoplay online (liked)',
+      selectionPlaylist: null,
+      selectionTab: 'online',
+      selectionKey: `auto:${LIKED_AUTO_GENRE_ID}`,
     };
   } catch (err) {
     pendingAutoUpcoming = null;
@@ -1998,6 +2006,10 @@ async function prepareSharedAutoFallbackTrack(
       isFallback: true,
       isAutoFallback: true,
       cleanupAfterUse: true,
+      selectionLabel: 'Autoplay playlist',
+      selectionPlaylist: null,
+      selectionTab: 'playlists',
+      selectionKey: `shared:${playlistId}`,
     };
   } catch (err) {
     pendingAutoUpcoming = null;
@@ -2251,6 +2263,10 @@ interface ReadyTrack {
   isFallback: boolean;
   isAutoFallback: boolean;
   cleanupAfterUse: boolean;
+  selectionLabel: string | null;
+  selectionPlaylist: string | null;
+  selectionTab: SelectionTab | null;
+  selectionKey: string | null;
 }
 
 let nextReady: ReadyTrack | null = null;
@@ -3200,24 +3216,10 @@ async function playNext(
     isFallback = true;
     trackIsAutoFallback = true;
     trackCleanupAfterUse = ready.cleanupAfterUse;
-    selectionPlaylist = null;
-    if (activeAutoSource?.type === 'shared') {
-      selectionLabel = 'Autoplay playlist';
-      selectionTab = 'playlists';
-      selectionKey = `shared:${activeAutoSource.playlistId}`;
-    } else if (activeAutoSource?.type === 'liked') {
-      selectionLabel = 'Autoplay online (liked)';
-      selectionTab = 'online';
-      selectionKey = `auto:${LIKED_AUTO_GENRE_ID}`;
-    } else if (activeAutoSource?.type === 'genre') {
-      selectionLabel = `Autoplay online (${activeAutoSource.genreId})`;
-      selectionTab = 'online';
-      selectionKey = `auto:${activeAutoSource.genreId}`;
-    } else {
-      selectionLabel = 'Autoplay mix';
-      selectionTab = 'mixed';
-      selectionKey = activeAutoSource?.key ?? null;
-    }
+    selectionLabel = ready.selectionLabel;
+    selectionPlaylist = ready.selectionPlaylist;
+    selectionTab = ready.selectionTab;
+    selectionKey = ready.selectionKey;
     source = (activeAutoSource.type === 'shared' || activeAutoSource.type === 'mixed') && activeAutoSource.playbackMode === 'ordered'
       ? 'auto/ordered'
       : 'auto/random';
@@ -3261,6 +3263,11 @@ async function playNext(
       selectionPlaylist = meta?.selectionPlaylist ?? null;
       selectionTab = meta?.selectionTab ?? 'queue';
       selectionKey = meta?.selectionKey ?? null;
+    } else {
+      selectionLabel = ready.selectionLabel;
+      selectionPlaylist = ready.selectionPlaylist;
+      selectionTab = ready.selectionTab;
+      selectionKey = ready.selectionKey;
     }
     source = isFallback ? 'ready/random' : 'ready/preloaded';
     currentQueueItemId = trackQueueId;
@@ -3445,27 +3452,10 @@ async function playNext(
         selectionTab = meta?.selectionTab ?? 'queue';
         selectionKey = meta?.selectionKey ?? null;
       } else if (trackIsAutoFallback) {
-        if (activeAutoSource?.type === 'shared') {
-          selectionLabel = 'Autoplay playlist';
-          selectionPlaylist = null;
-          selectionTab = 'playlists';
-          selectionKey = `shared:${activeAutoSource.playlistId}`;
-        } else if (activeAutoSource?.type === 'liked') {
-          selectionLabel = 'Autoplay online (liked)';
-          selectionPlaylist = null;
-          selectionTab = 'online';
-          selectionKey = `auto:${LIKED_AUTO_GENRE_ID}`;
-        } else if (activeAutoSource?.type === 'genre') {
-          selectionLabel = `Autoplay online (${activeAutoSource.genreId})`;
-          selectionPlaylist = null;
-          selectionTab = 'online';
-          selectionKey = `auto:${activeAutoSource.genreId}`;
-        } else {
-          selectionLabel = 'Autoplay mix';
-          selectionPlaylist = null;
-          selectionTab = 'mixed';
-          selectionKey = activeAutoSource?.key ?? null;
-        }
+        selectionLabel = swap.ready.selectionLabel;
+        selectionPlaylist = swap.ready.selectionPlaylist;
+        selectionTab = swap.ready.selectionTab;
+        selectionKey = swap.ready.selectionKey;
       } else if (isFallback) {
         selectionLabel = 'Lokale random fallback';
         selectionPlaylist = null;
@@ -4061,6 +4051,10 @@ async function prepareNextTrack(
           isFallback: false,
           isAutoFallback: false,
           cleanupAfterUse: true,
+          selectionLabel: null,
+          selectionPlaylist: null,
+          selectionTab: null,
+          selectionKey: null,
         };
         pendingQueueUpcoming = null;
         console.log(`[prepare] Next ready (preloaded): ${item.title ?? item.youtube_id}`);
@@ -4093,6 +4087,10 @@ async function prepareNextTrack(
           isFallback: false,
           isAutoFallback: false,
           cleanupAfterUse: true,
+          selectionLabel: null,
+          selectionPlaylist: null,
+          selectionTab: null,
+          selectionKey: null,
         };
         const duplicateBuffered = preloadBuffer.filter((p) => p.item.id === itemSafe.id);
         if (duplicateBuffered.length > 0) {
@@ -4158,6 +4156,10 @@ async function prepareNextTrack(
           isFallback: true,
           isAutoFallback: false,
           cleanupAfterUse: false,
+          selectionLabel: 'Lokale random fallback',
+          selectionPlaylist: null,
+          selectionTab: 'local',
+          selectionKey: activeFallbackGenre,
         };
         console.log(`[prepare] Next ready (random): ${title}`);
         broadcastUpcomingTrack();
