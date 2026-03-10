@@ -134,9 +134,12 @@ export default function AdminPage() {
     socket.on("queue:update", (data: { items: QueueItem[] }) => store.getState().setQueue(data.items));
     socket.on("mode:change", (data: { mode: Mode; settings: ModeSettingsType }) => store.getState().setMode(data.mode, data.settings));
     socket.on("vote:update", (data: VoteState | null) => store.getState().setVoteState(data));
-    socket.on("stream:status", (data: { online: boolean; listeners: number }) => {
+    socket.on("stream:status", (data: { online: boolean; listeners: number; pausedForIdle?: boolean }) => {
       store.getState().setStreamOnline(data.online);
       store.getState().setListenerCount(data.listeners);
+      if (typeof data.pausedForIdle === "boolean") {
+        store.getState().setPausedForIdle(data.pausedForIdle);
+      }
     });
     socket.on("error:toast", (data: { message: string }) => {
       console.warn("[radio admin]", data.message);

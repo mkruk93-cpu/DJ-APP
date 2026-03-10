@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { getSupabase } from "@/lib/supabaseClient";
 import { useRadioStore } from "@/lib/radioStore";
 import AudioVisualizer from "@/components/AudioVisualizer";
@@ -108,6 +108,10 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const lastReconnectAtRef = useRef(0);
   const nicknameRef = useRef<string>("anonymous");
   const connected = useRadioStore((s) => s.connected);
+  const buildFreshStreamUrl = useCallback((baseUrl: string): string => {
+    const separator = baseUrl.includes("?") ? "&" : "?";
+    return `${baseUrl}${separator}live=${Date.now()}`;
+  }, []);
 
   function getVolumeStorageKey(): string {
     if (typeof window === "undefined") return VOLUME_STORAGE_KEY_BASE;
@@ -384,9 +388,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
       const audio = audioRef.current;
       if (!audio || !src) return;
       userPaused.current = false;
-      if (audio.src !== src) {
-        audio.src = src;
-      }
+      audio.src = buildFreshStreamUrl(src);
       audio.play()
         .then(() => {
           reconnectAttemptRef.current = 0;
@@ -405,7 +407,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
         // Ignore Media Session cleanup failures on unsupported browsers.
       }
     };
-  }, [clearReconnectTimer, clearWaitingTimer, src]);
+  }, [buildFreshStreamUrl, clearReconnectTimer, clearWaitingTimer, src]);
 
   useEffect(() => {
     return () => {
@@ -465,9 +467,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     } else {
       if (!src) return;
       userPaused.current = false;
-      if (audio.src !== src) {
-        audio.src = src;
-      }
+      audio.src = buildFreshStreamUrl(src);
       audio.play()
         .then(() => {
           reconnectAttemptRef.current = 0;
@@ -502,6 +502,14 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const displayTitle = syncedRadioTrack ? radioTitle : (showSupabaseData ? track.title : null);
   const displayArtist = syncedRadioTrack ? radioArtist : (showSupabaseData ? track.artist : null);
   const displayArtwork = isJingleTrack ? null : (syncedRadioTrack?.thumbnail ?? (showSupabaseData ? track.artwork_url : null));
+  const artworkVersion = syncedRadioTrack
+    ? `${syncedRadioTrack.id}|${syncedRadioTrack.started_at}`
+    : `${displayTitle ?? ""}|${displayArtist ?? ""}`;
+  const displayArtworkSrc = useMemo(() => {
+    if (!displayArtwork) return null;
+    const separator = displayArtwork.includes("?") ? "&" : "?";
+    return `${displayArtwork}${separator}v=${encodeURIComponent(artworkVersion)}`;
+  }, [displayArtwork, artworkVersion]);
   const hasTrack = displayTitle || displayArtist;
   const currentLikeKey = `${syncedRadioTrack?.id ?? ""}|${displayTitle ?? ""}|${displayArtist ?? ""}`;
   const canLikeTrack = !!(isRadioMode && !isJingleTrack && (displayTitle || displayArtist));
@@ -608,7 +616,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
       animateTintTo({ r: 139, g: 92, b: 246, vr: 196, vg: 181, vb: 253 });
     }
 
-    if (!displayArtwork) {
+    if (!displayArtworkSrc) {
       setDefaultTint();
       return;
     }
@@ -667,7 +675,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
       }
     };
     img.onerror = setDefaultTint;
-    img.src = displayArtwork;
+    img.src = displayArtworkSrc;
 
     return () => {
       cancelled = true;
@@ -676,7 +684,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
         tintAnimRafRef.current = null;
       }
     };
-  }, [displayArtwork]);
+  }, [displayArtworkSrc]);
 
   useEffect(() => {
     if (artSwapTimerRef.current) {
@@ -688,7 +696,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
       artSwapRafRef.current = null;
     }
 
-    if (!displayArtwork) {
+    if (!displayArtworkSrc) {
       setCurrentArtwork(null);
       setIncomingArtwork(null);
       setIncomingArtworkVisible(false);
@@ -696,26 +704,26 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     }
 
     if (!currentArtwork) {
-      setCurrentArtwork(displayArtwork);
+      setCurrentArtwork(displayArtworkSrc);
       setIncomingArtwork(null);
       setIncomingArtworkVisible(false);
       return;
     }
 
-    if (displayArtwork === currentArtwork || displayArtwork === incomingArtwork) {
+    if (displayArtworkSrc === currentArtwork || displayArtworkSrc === incomingArtwork) {
       return;
     }
 
-    setIncomingArtwork(displayArtwork);
+    setIncomingArtwork(displayArtworkSrc);
     setIncomingArtworkVisible(false);
     artSwapRafRef.current = requestAnimationFrame(() => setIncomingArtworkVisible(true));
     artSwapTimerRef.current = setTimeout(() => {
-      setCurrentArtwork(displayArtwork);
+      setCurrentArtwork(displayArtworkSrc);
       setIncomingArtwork(null);
       setIncomingArtworkVisible(false);
       artSwapTimerRef.current = null;
     }, 700);
-  }, [displayArtwork, currentArtwork, incomingArtwork]);
+  }, [displayArtworkSrc, currentArtwork, incomingArtwork]);
 
   useEffect(() => {
     return () => {

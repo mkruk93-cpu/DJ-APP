@@ -179,6 +179,20 @@ const listenerPresenceBySocket = new Map<string, ListenerPresenceState>();
 let idleNoListenerSince: number | null = null;
 let playbackPausedForIdle = false;
 
+function isStreamOnlineForStatus(): boolean {
+  if (getCurrentTrack() !== null) return true;
+  if (playbackPausedForIdle) return false;
+  return isPlayCycleRunning() && getEffectiveListenerCount() > 0;
+}
+
+function emitStreamStatus(): void {
+  io.emit('stream:status', {
+    online: isStreamOnlineForStatus(),
+    listeners: getEffectiveListenerCount(),
+    pausedForIdle: playbackPausedForIdle,
+  });
+}
+
 function applyPlaybackForMode(mode: Mode): void {
   if (appliedPlaybackMode === mode && (mode === 'dj' || isPlayCycleRunning())) return;
   appliedPlaybackMode = mode;
@@ -206,7 +220,7 @@ function evaluateIdlePlayback(mode: Mode): void {
     if (playbackPausedForIdle) {
       playbackPausedForIdle = false;
       applyPlaybackForMode(mode);
-      io.emit('stream:status', { online: getCurrentTrack() !== null, listeners });
+      emitStreamStatus();
       console.log('[player] Resumed play cycle: listeners detected');
     }
     return;
@@ -219,7 +233,7 @@ function evaluateIdlePlayback(mode: Mode): void {
   if (Date.now() - idleNoListenerSince < AUTO_PAUSE_IDLE_GRACE_MS) return;
   stopPlayCycle({ preserveCurrentTrack: true });
   playbackPausedForIdle = true;
-  io.emit('stream:status', { online: false, listeners: 0 });
+  emitStreamStatus();
   console.log(`[player] Auto-paused play cycle: no listeners for ${Math.round(AUTO_PAUSE_IDLE_GRACE_MS / 1000)}s`);
 }
 
@@ -1359,7 +1373,7 @@ async function getServerState(): Promise<ServerState> {
     activeFallbackGenreBy: normalizeNickname(activeFallbackGenreBy),
     activeFallbackSharedMode,
     listenerCount: getEffectiveListenerCount(),
-    streamOnline: getCurrentTrack() !== null,
+    streamOnline: isStreamOnlineForStatus(),
     pausedForIdle: playbackPausedForIdle,
     voteState: null,
     durationVote: activeDurationVote,
@@ -1393,7 +1407,7 @@ function buildDegradedServerState(): ServerState {
       jingleEveryTracks: jingleSettings.everyTracks,
       jingleSelectedKeys: getJingleSelection(),
       listenerCount: getEffectiveListenerCount(),
-      streamOnline: getCurrentTrack() !== null,
+      streamOnline: isStreamOnlineForStatus(),
       pausedForIdle: playbackPausedForIdle,
       queuePushLocked,
       skipLocked: isSkipLocked(),
@@ -1450,7 +1464,7 @@ function buildDegradedServerState(): ServerState {
     activeFallbackGenreBy: null,
     activeFallbackSharedMode: 'random',
     listenerCount: getEffectiveListenerCount(),
-    streamOnline: getCurrentTrack() !== null,
+    streamOnline: isStreamOnlineForStatus(),
     pausedForIdle: playbackPausedForIdle,
     voteState: null,
     durationVote: activeDurationVote,
@@ -2088,7 +2102,7 @@ app.get('/health', (_req, res) => {
 app.get('/api/stream-health', async (_req, res) => {
   const mode = await getActiveMode(sb).catch(() => 'radio' as Mode);
   const listeners = getEffectiveListenerCount();
-  const streamOnline = getCurrentTrack() !== null;
+  const streamOnline = isStreamOnlineForStatus();
   const shouldAlert = mode !== 'dj' && listeners > 0 && !streamOnline && !playbackPausedForIdle;
   const idleForSeconds = idleNoListenerSince ? Math.max(0, Math.floor((Date.now() - idleNoListenerSince) / 1000)) : 0;
   const payload = {
@@ -4134,7 +4148,7 @@ io.on('connection', (socket) => {
     updatedAt: Date.now(),
   });
   getActiveMode(sb).then((mode) => evaluateIdlePlayback(mode)).catch(() => {});
-  io.emit('stream:status', { online: getCurrentTrack() !== null, listeners: getEffectiveListenerCount() });
+  emitStreamStatus();
   void emitSkipVoteState();
   socket.emit('upcoming:update', getUpcomingTrack());
   void emitFallbackGenreUpdate(socket);
@@ -4158,7 +4172,7 @@ io.on('connection', (socket) => {
       listening,
       updatedAt: Date.now(),
     });
-    io.emit('stream:status', { online: getCurrentTrack() !== null, listeners: getEffectiveListenerCount() });
+    emitStreamStatus();
     getActiveMode(sb).then((mode) => evaluateIdlePlayback(mode)).catch(() => {});
     void emitSkipVoteState();
   });
@@ -4691,7 +4705,7 @@ io.on('connection', (socket) => {
     listenerPresenceBySocket.delete(socket.id);
     socketNicknameById.delete(socket.id);
     voteSkipSet.delete(socket.id);
-    io.emit('stream:status', { online: getCurrentTrack() !== null, listeners: getEffectiveListenerCount() });
+    emitStreamStatus();
     getActiveMode(sb).then((mode) => evaluateIdlePlayback(mode)).catch(() => {});
     void emitSkipVoteState();
   });
