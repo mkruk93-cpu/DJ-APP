@@ -21,6 +21,21 @@ import type { Track, QueueItem, Mode, ModeSettings as ModeSettingsType, VoteStat
 
 const ADMIN_PASSWORD = process.env.NEXT_PUBLIC_ADMIN_PASSWORD;
 
+interface AdminJingleItem {
+  key: string;
+  name: string;
+  title: string;
+  duration: number | null;
+  selected: boolean;
+}
+
+function formatDuration(seconds: number | null): string {
+  if (!seconds || seconds <= 0) return "--:--";
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
 export default function AdminPage() {
   const [authenticated, setAuthenticated] = useState(false);
   const [password, setPassword] = useState("");
@@ -36,6 +51,8 @@ export default function AdminPage() {
   const [keepFiles, setKeepFiles] = useState(false);
   const [jingleEnabled, setJingleEnabled] = useState(true);
   const [jingleEveryTracks, setJingleEveryTracks] = useState(4);
+  const [jingleItems, setJingleItems] = useState<AdminJingleItem[]>([]);
+  const [jingleLoading, setJingleLoading] = useState(false);
 
   const radioConnected = useRadioStore((s) => s.connected);
   const radioTrack = useRadioStore((s) => s.currentTrack);
@@ -92,6 +109,10 @@ export default function AdminPage() {
           if (typeof state.jingleEveryTracks === "number" && Number.isFinite(state.jingleEveryTracks)) {
             setJingleEveryTracks(Math.max(1, Math.round(state.jingleEveryTracks)));
           }
+          if (Array.isArray(state.jingleSelectedKeys)) {
+            const selected = new Set(state.jingleSelectedKeys.map((entry: unknown) => String(entry).toLowerCase()));
+            setJingleItems((prev) => prev.map((item) => ({ ...item, selected: selected.size === 0 ? true : selected.has(item.key.toLowerCase()) })));
+          }
         })
         .catch((err) => {
           console.warn("[radio] Failed to fetch state:", err.message);
@@ -123,9 +144,13 @@ export default function AdminPage() {
     socket.on("settings:keepFilesChanged", (data: { keep: boolean }) => {
       setKeepFiles(data.keep);
     });
-    socket.on("settings:jingleChanged", (data: { enabled: boolean; everyTracks: number }) => {
+    socket.on("settings:jingleChanged", (data: { enabled: boolean; everyTracks: number; selectedKeys?: string[] }) => {
       setJingleEnabled(!!data.enabled);
       setJingleEveryTracks(Math.max(1, Math.round(Number(data.everyTracks) || 4)));
+      if (Array.isArray(data.selectedKeys)) {
+        const selected = new Set(data.selectedKeys.map((entry) => String(entry).toLowerCase()));
+        setJingleItems((prev) => prev.map((item) => ({ ...item, selected: selected.size === 0 ? true : selected.has(item.key.toLowerCase()) })));
+      }
     });
     socket.on("durationVote:update", (data: DurationVote & { voters: string[] }) => {
       const voted = data.voters?.includes(socket.id ?? "") ?? false;
@@ -168,6 +193,33 @@ export default function AdminPage() {
     }
   }, []);
 
+  const loadJingles = useCallback(async () => {
+    if (!effectiveServerUrl || !radioAuthed) return;
+    const token = getRadioToken();
+    if (!token) return;
+    setJingleLoading(true);
+    try {
+      const res = await fetch(`${effectiveServerUrl}/api/jingles?token=${encodeURIComponent(token)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const payload = (await res.json()) as {
+        items?: AdminJingleItem[];
+        selectedKeys?: string[];
+        everyTracks?: number;
+        enabled?: boolean;
+      };
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      setJingleItems(items);
+      if (typeof payload.enabled === "boolean") setJingleEnabled(payload.enabled);
+      if (typeof payload.everyTracks === "number" && Number.isFinite(payload.everyTracks)) {
+        setJingleEveryTracks(Math.max(1, Math.round(payload.everyTracks)));
+      }
+    } catch (err) {
+      console.warn("[admin] loadJingles failed:", err);
+    } finally {
+      setJingleLoading(false);
+    }
+  }, [effectiveServerUrl, radioAuthed]);
+
   useEffect(() => {
     if (!authenticated) return;
     loadSettings();
@@ -178,6 +230,13 @@ export default function AdminPage() {
       clearInterval(settingsInterval);
     };
   }, [authenticated, loadSettings]);
+
+  useEffect(() => {
+    if (!authenticated || !radioAuthed) return;
+    void loadJingles();
+    const timer = setInterval(() => { void loadJingles(); }, 20_000);
+    return () => clearInterval(timer);
+  }, [authenticated, radioAuthed, loadJingles]);
 
   function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -345,7 +404,7 @@ export default function AdminPage() {
         </details>
 
           {/* Radio admin auth */}
-        {radioConnected && !radioAuthed && (
+        {!radioAuthed && (
           <details open className="overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
             <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-semibold text-white transition hover:bg-gray-800/60">
               Radio admin authenticatie
@@ -374,8 +433,13 @@ export default function AdminPage() {
         )}
 
           {/* Radio admin controls */}
-        {radioConnected && radioAuthed && (
+        {radioAuthed && (
           <>
+            {!radioConnected && (
+              <div className="rounded-xl border border-amber-700/50 bg-amber-950/30 px-4 py-3 text-xs text-amber-200">
+                Radio server is nu niet live verbonden; instellingen (zoals jingles) blijven wel beschikbaar via de control API.
+              </div>
+            )}
             <details open className="overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
               <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-semibold text-white transition hover:bg-gray-800/60">
                 Live status
@@ -468,6 +532,51 @@ export default function AdminPage() {
                       }}
                       className="violet-slider h-1.5 w-full cursor-pointer appearance-none rounded-full bg-gray-700 accent-violet-500"
                     />
+                  </div>
+                  <div className="rounded-lg border border-gray-800 bg-gray-950/60 p-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Kies jingles</p>
+                      <button
+                        type="button"
+                        onClick={() => { void loadJingles(); }}
+                        className="rounded border border-gray-700 px-2 py-1 text-[11px] text-gray-300 transition hover:border-gray-600 hover:text-white"
+                      >
+                        Ververs
+                      </button>
+                    </div>
+                    {jingleLoading ? (
+                      <p className="text-xs text-gray-500">Jingles laden...</p>
+                    ) : jingleItems.length === 0 ? (
+                      <p className="text-xs text-gray-500">Geen jingle-bestanden gevonden in de jingle map.</p>
+                    ) : (
+                      <div className="max-h-48 space-y-1 overflow-y-auto pr-1">
+                        {jingleItems.map((item) => (
+                          <label
+                            key={item.key}
+                            className="flex cursor-pointer items-center justify-between rounded-md border border-gray-800 bg-gray-900/70 px-2 py-1.5 text-xs text-gray-200"
+                          >
+                            <span className="min-w-0 flex-1 truncate">
+                              {item.title || item.name}
+                              <span className="ml-1 text-gray-500">({formatDuration(item.duration)})</span>
+                            </span>
+                            <input
+                              type="checkbox"
+                              checked={item.selected}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                const nextItems = jingleItems.map((row) => row.key === item.key ? { ...row, selected: checked } : row);
+                                setJingleItems(nextItems);
+                                const selectedKeys = nextItems.filter((row) => row.selected).map((row) => row.key);
+                                void apiUpdateSetting("jingle_selected_keys", selectedKeys).catch((err) => {
+                                  console.warn("[admin] jingle_selected_keys failed:", err);
+                                });
+                              }}
+                              className="h-4 w-4 accent-violet-500"
+                            />
+                          </label>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
                 <ModeSelector />
