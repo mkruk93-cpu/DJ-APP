@@ -13,7 +13,7 @@ import { initCache } from './cleanup.js';
 import { seedSettings, getActiveMode, getActiveFallbackGenre, getModeSettings, getSetting, setSetting } from './settings.js';
 import { getQueue, addToQueue, removeFromQueue, reorderQueue, fetchVideoInfo, extractYoutubeId, extractSourceId, isSoundcloudUrl, getThumbnailUrl, encodeLocalFileUrl } from './queue.js';
 import { canPerformAction } from './permissions.js';
-import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, isPlayCycleRunning, playerEvents, setKeepFiles, getJingleSettings, setJingleSettings, invalidatePreload, invalidateNextReady, removeQueueItemFromPreload, setActiveFallbackGenre, setActiveFallbackGenres, setActiveSharedFallbackPlaylists, setSharedAutoPlaybackMode, resetSharedAutoPlaybackCycleForSelection, setQueueItemSelectionMeta } from './player.js';
+import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, isPlayCycleRunning, playerEvents, setKeepFiles, getJingleSettings, setJingleSettings, getJingleSelection, setJingleSelection, getJingleCatalog, invalidatePreload, invalidateNextReady, removeQueueItemFromPreload, setActiveFallbackGenre, setActiveFallbackGenres, setActiveSharedFallbackPlaylists, setSharedAutoPlaybackMode, resetSharedAutoPlaybackCycleForSelection, setQueueItemSelectionMeta } from './player.js';
 import { youtubeSearch, soundcloudSearch, spotdlSearch } from './services/search.js';
 import { startBridge } from './bridge.js';
 import { startNowPlayingWatcher } from './nowPlaying.js';
@@ -1350,6 +1350,7 @@ async function getServerState(): Promise<ServerState> {
     queue,
     jingleEnabled: jingleSettings.enabled,
     jingleEveryTracks: jingleSettings.everyTracks,
+    jingleSelectedKeys: getJingleSelection(),
     mode,
     modeSettings,
     fallbackGenres,
@@ -1390,6 +1391,7 @@ function buildDegradedServerState(): ServerState {
       upcomingTrack: getUpcomingTrack(),
       jingleEnabled: jingleSettings.enabled,
       jingleEveryTracks: jingleSettings.everyTracks,
+      jingleSelectedKeys: getJingleSelection(),
       listenerCount: getEffectiveListenerCount(),
       streamOnline: getCurrentTrack() !== null,
       pausedForIdle: playbackPausedForIdle,
@@ -1419,6 +1421,7 @@ function buildDegradedServerState(): ServerState {
     queue: [],
     jingleEnabled: jingleSettings.enabled,
     jingleEveryTracks: jingleSettings.everyTracks,
+    jingleSelectedKeys: getJingleSelection(),
     mode: 'radio',
     modeSettings: {
       democracy_threshold: 60,
@@ -3347,7 +3350,7 @@ app.post('/api/settings', async (req, res) => {
       const enabled = value !== false;
       await setSetting(sb, key, enabled);
       setJingleSettings({ enabled });
-      const jingle = getJingleSettings();
+      const jingle = { ...getJingleSettings(), selectedKeys: getJingleSelection() };
       io.emit('settings:jingleChanged', jingle);
       console.log(`[rest] Setting updated: ${key}=${enabled}`);
       return res.json({ ok: true, jingle });
@@ -3356,9 +3359,20 @@ app.post('/api/settings', async (req, res) => {
       const parsed = Math.max(1, Math.round(Number(value) || 4));
       await setSetting(sb, key, parsed);
       setJingleSettings({ everyTracks: parsed });
-      const jingle = getJingleSettings();
+      const jingle = { ...getJingleSettings(), selectedKeys: getJingleSelection() };
       io.emit('settings:jingleChanged', jingle);
       console.log(`[rest] Setting updated: ${key}=${parsed}`);
+      return res.json({ ok: true, jingle });
+    }
+    if (key === 'jingle_selected_keys') {
+      const selectedKeys = Array.isArray(value)
+        ? value.map((entry) => String(entry))
+        : [];
+      await setSetting(sb, key, selectedKeys);
+      setJingleSelection(selectedKeys);
+      const jingle = { ...getJingleSettings(), selectedKeys: getJingleSelection() };
+      io.emit('settings:jingleChanged', jingle);
+      console.log(`[rest] Setting updated: ${key} (${selectedKeys.length} selected)`);
       return res.json({ ok: true, jingle });
     }
 
@@ -3371,6 +3385,25 @@ app.post('/api/settings', async (req, res) => {
   } catch (err) {
     console.error('[rest] settings error:', err);
     res.status(500).json({ error: 'Failed to update setting' });
+  }
+});
+
+app.get('/api/jingles', async (req, res) => {
+  const token = typeof req.query.token === 'string' ? req.query.token : '';
+  if (!isAdmin(token)) return res.status(403).json({ error: 'Unauthorized' });
+  try {
+    const catalog = await getJingleCatalog();
+    const selected = new Set(getJingleSelection());
+    const jingleSettings = getJingleSettings();
+    const items = catalog.map((item) => ({
+      ...item,
+      selected: selected.size === 0 ? true : selected.has(item.key),
+      enabled: jingleSettings.enabled,
+    }));
+    res.json({ items, selectedKeys: Array.from(selected), everyTracks: jingleSettings.everyTracks, enabled: jingleSettings.enabled });
+  } catch (err) {
+    console.error('[rest] jingles list error:', err);
+    res.status(500).json({ error: 'Failed to list jingles' });
   }
 });
 
@@ -3778,12 +3811,24 @@ type SubmissionCandidate = {
   provider: 'youtube' | 'soundcloud' | 'spotdl';
 };
 
+type SubmissionManualCandidate = {
+  provider: 'youtube' | 'soundcloud' | 'spotdl';
+  url: string;
+  title: string;
+  channel: string;
+  duration: number | null;
+  thumbnail: string | null;
+  score: number;
+  reasons: string[];
+};
+
 async function addQueueItemFromSubmission(
   submission: QueueAddSubmission,
   addedBy: string,
 ): Promise<{
   item: Awaited<ReturnType<typeof addToQueue>> | null;
   error: string | null;
+  manualCandidates: SubmissionManualCandidate[] | null;
   selectionMeta: {
     selectionLabel: string | null;
     selectionPlaylist: string | null;
@@ -3815,7 +3860,7 @@ async function addQueueItemFromSubmission(
       ...soundcloudResults.map((row) => ({ row, provider: 'soundcloud' as const })),
     ];
     if (searchResults.length === 0) {
-      return { item: null, error: `Geen resultaat gevonden voor "${url}"`, selectionMeta: null };
+      return { item: null, error: `Geen resultaat gevonden voor "${url}"`, manualCandidates: null, selectionMeta: null };
     }
     const rankedStrict = searchResults
       .map((candidate) => ({
@@ -3935,13 +3980,37 @@ async function addQueueItemFromSubmission(
         diagnostics,
       });
       console.warn(`[queue] No usable result for "${submission.youtube_url}" strict=${strictMetadata} candidates=${searchResults.length} diagnostics=${JSON.stringify(diagnostics)}`);
-      return { item: null, error: `Geen bruikbaar resultaat gevonden voor "${url}"`, selectionMeta: null };
+      const canPromptManualPick =
+        sourceType === 'spotify'
+        || sourceType === 'user_playlist'
+        || sourceType === 'shared_playlist';
+      const manualCandidates: SubmissionManualCandidate[] | null = canPromptManualPick
+        ? rankedStrict
+          .slice(0, 8)
+          .map(({ row, provider, evaluation }) => ({
+            provider,
+            url: row.url,
+            title: row.title ?? 'Onbekend',
+            channel: row.channel ?? '',
+            duration: row.duration ?? null,
+            thumbnail: row.thumbnail ?? null,
+            score: evaluation.score,
+            reasons: evaluation.reasons,
+          }))
+          .filter((entry) => !!entry.url && !!entry.title)
+        : null;
+      return {
+        item: null,
+        error: `Geen bruikbaar resultaat gevonden voor "${url}"`,
+        manualCandidates: manualCandidates && manualCandidates.length > 0 ? manualCandidates : null,
+        selectionMeta: null,
+      };
     }
     const selectedRow = selectedCandidate.row;
     url = selectedRow.url;
     sourceId = extractSourceId(url);
     if (!sourceId) {
-      return { item: null, error: 'Kon geen geldig nummer vinden', selectionMeta: null };
+      return { item: null, error: 'Kon geen geldig nummer vinden', manualCandidates: null, selectionMeta: null };
     }
     discoveredTitle = selectedRow.title ?? null;
     discoveredArtist = selectedRow.channel ?? null;
@@ -3964,6 +4033,7 @@ async function addQueueItemFromSubmission(
     return {
       item: null,
       error: `Dit nummer is te lang (${Math.floor(info.duration / 60)}:${String(Math.round(info.duration % 60)).padStart(2, '0')}). Maximum is 65 minuten.`,
+      manualCandidates: null,
       selectionMeta: null,
     };
   }
@@ -4027,7 +4097,7 @@ async function addQueueItemFromSubmission(
         : 'queue') as 'queue' | 'online' | 'playlists',
     selectionKey: sourceGenreNorm,
   };
-  return { item, error: null, selectionMeta };
+  return { item, error: null, manualCandidates: null, selectionMeta };
 }
 
 async function promoteOneDeferredQueueItem(reason: 'track-ended' | 'manual'): Promise<void> {
@@ -4104,12 +4174,28 @@ io.on('connection', (socket) => {
     source_type?: string;
     source_genre?: string;
     source_playlist?: string;
-  }) => {
+  }, ack?: (payload: {
+    ok: boolean;
+    status?: 'added' | 'manual_select';
+    error?: string;
+    message?: string;
+    candidates?: Array<{
+      provider: 'youtube' | 'soundcloud' | 'spotdl';
+      url: string;
+      title: string;
+      channel: string;
+      duration: number | null;
+      thumbnail: string | null;
+      score: number;
+      reasons: string[];
+    }>;
+  }) => void) => {
     try {
       const mode = await getActiveMode(sb);
       const admin = isAdmin(data.token);
       if (!canPerformAction(mode, 'add_to_queue', admin)) {
         socket.emit('error:toast', { message: 'Je mag geen nummers toevoegen in deze modus' });
+        ack?.({ ok: false, error: 'Je mag geen nummers toevoegen in deze modus' });
         return;
       }
       const addedBy = normalizeQueueUser(data.added_by);
@@ -4145,13 +4231,24 @@ io.on('connection', (socket) => {
           socket.emit('info:toast', {
             message: `Hoofdwachtrij vol (${queuedByUser}/${dynamicLimit}). Toegevoegd aan je eigen wachtrij (${deferredTotal}).`,
           });
+          ack?.({ ok: true, status: 'added' });
           return;
         }
       }
 
-      const { item, error, selectionMeta } = await addQueueItemFromSubmission(submission, addedBy);
+      const { item, error, manualCandidates, selectionMeta } = await addQueueItemFromSubmission(submission, addedBy);
       if (!item) {
-        socket.emit('error:toast', { message: error ?? 'Kon nummer niet toevoegen' });
+        if (manualCandidates && manualCandidates.length > 0) {
+          ack?.({
+            ok: true,
+            status: 'manual_select',
+            message: 'Geen exacte match gevonden. Kies handmatig een resultaat.',
+            candidates: manualCandidates,
+          });
+        } else {
+          socket.emit('error:toast', { message: error ?? 'Kon nummer niet toevoegen' });
+          ack?.({ ok: false, error: error ?? 'Kon nummer niet toevoegen' });
+        }
         return;
       }
       setQueueItemSelectionMeta(item.id, selectionMeta);
@@ -4168,9 +4265,11 @@ io.on('connection', (socket) => {
       });
       playerEvents.emit('queue:add');
       console.log(`[queue] Added: ${item.youtube_id} by ${addedBy}`);
+      ack?.({ ok: true, status: 'added' });
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Kon nummer niet toevoegen';
       socket.emit('error:toast', { message: msg });
+      ack?.({ ok: false, error: msg });
     }
   });
 
@@ -4436,7 +4535,7 @@ io.on('connection', (socket) => {
         const enabled = data.value !== false;
         await setSetting(sb, data.key, enabled);
         setJingleSettings({ enabled });
-        io.emit('settings:jingleChanged', getJingleSettings());
+        io.emit('settings:jingleChanged', { ...getJingleSettings(), selectedKeys: getJingleSelection() });
         console.log(`[settings] Updated: ${data.key}=${enabled}`);
         return;
       }
@@ -4444,8 +4543,18 @@ io.on('connection', (socket) => {
         const parsed = Math.max(1, Math.round(Number(data.value) || 4));
         await setSetting(sb, data.key, parsed);
         setJingleSettings({ everyTracks: parsed });
-        io.emit('settings:jingleChanged', getJingleSettings());
+        io.emit('settings:jingleChanged', { ...getJingleSettings(), selectedKeys: getJingleSelection() });
         console.log(`[settings] Updated: ${data.key}=${parsed}`);
+        return;
+      }
+      if (data.key === 'jingle_selected_keys') {
+        const selectedKeys = Array.isArray(data.value)
+          ? data.value.map((entry) => String(entry))
+          : [];
+        await setSetting(sb, data.key, selectedKeys);
+        setJingleSelection(selectedKeys);
+        io.emit('settings:jingleChanged', { ...getJingleSettings(), selectedKeys: getJingleSelection() });
+        console.log(`[settings] Updated: ${data.key} (${selectedKeys.length} selected)`);
         return;
       }
 
@@ -4624,12 +4733,14 @@ async function main(): Promise<void> {
   console.log(`[server] Keep files after streaming: ${KEEP_FILES}`);
   const startupJingleEnabled = await getSetting<boolean>(sb, 'jingle_enable');
   const startupJingleEveryTracks = await getSetting<number>(sb, 'jingle_every_tracks');
+  const startupJingleSelectedKeys = await getSetting<string[]>(sb, 'jingle_selected_keys');
   setJingleSettings({
     enabled: startupJingleEnabled ?? undefined,
     everyTracks: startupJingleEveryTracks ?? undefined,
   });
+  setJingleSelection(startupJingleSelectedKeys ?? []);
   const jingleState = getJingleSettings();
-  console.log(`[server] Jingle config: enabled=${jingleState.enabled}, every=${jingleState.everyTracks} tracks`);
+  console.log(`[server] Jingle config: enabled=${jingleState.enabled}, every=${jingleState.everyTracks} tracks, selected=${getJingleSelection().length}`);
 
   const initialMode = await getActiveMode(sb);
   console.log(`[mode] Initial mode: ${initialMode}`);

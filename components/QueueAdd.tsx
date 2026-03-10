@@ -93,6 +93,25 @@ interface GenreHitRow extends GenreHit {
   query: string;
 }
 
+interface QueueAddManualCandidate {
+  provider: "youtube" | "soundcloud" | "spotdl";
+  url: string;
+  title: string;
+  channel: string;
+  duration: number | null;
+  thumbnail: string | null;
+  score: number;
+  reasons: string[];
+}
+
+interface QueueAddResponse {
+  ok: boolean;
+  status?: "added" | "manual_select";
+  error?: string;
+  message?: string;
+  candidates?: QueueAddManualCandidate[];
+}
+
 interface RecentAddState {
   key: string;
   url: string;
@@ -110,6 +129,15 @@ interface PendingUndoState {
   artist?: string | null;
   addedBy: string;
   requestedAt: number;
+}
+
+interface PendingManualSelection {
+  title: string;
+  artist: string | null;
+  sourceType: string | null;
+  sourceGenre: string | null;
+  sourcePlaylist: string | null;
+  candidates: QueueAddManualCandidate[];
 }
 
 const FALLBACK_GENRES: GenreOption[] = GENRE_FALLBACK_OPTIONS;
@@ -167,6 +195,7 @@ export default function QueueAdd() {
   const [genreBlockSaved, setGenreBlockSaved] = useState<Record<string, boolean>>({});
   const [activeGenre, setActiveGenre] = useState<string | null>(null);
   const [genreError, setGenreError] = useState<string | null>(null);
+  const [pendingManualSelection, setPendingManualSelection] = useState<PendingManualSelection | null>(null);
   const [isMobile, setIsMobile] = useState(false);
   const [mobileGenreMenuTop, setMobileGenreMenuTop] = useState<number | null>(null);
   const mode = useRadioStore((s) => s.mode);
@@ -807,7 +836,8 @@ export default function QueueAdd() {
       sourceGenre?: string | null;
       sourcePlaylist?: string | null;
     },
-  ) {
+  ): Promise<QueueAddResponse> {
+    return new Promise((resolve) => {
     setSubmitting(true);
     if (!options?.keepResults) setShowResults(false);
 
@@ -823,6 +853,7 @@ export default function QueueAdd() {
       if (!options?.keepInput) setInput("");
       options?.onError?.();
       cleanup();
+      resolve({ ok: false, error: data.message });
     }
 
     function cleanup() {
@@ -841,6 +872,15 @@ export default function QueueAdd() {
       ...(options?.sourceType ? { source_type: options.sourceType } : {}),
       ...(options?.sourceGenre ? { source_genre: options.sourceGenre } : {}),
       ...(options?.sourcePlaylist ? { source_playlist: options.sourcePlaylist } : {}),
+    }, (response?: QueueAddResponse) => {
+      if (response) {
+        if (!response.ok && response.error) {
+          showFeedback(response.error, false);
+        }
+        resolve(response);
+        return;
+      }
+      resolve({ ok: true, status: "added" });
     });
 
     // Do not block consecutive submissions while server validates this one.
@@ -850,6 +890,7 @@ export default function QueueAdd() {
     setTimeout(() => {
       cleanup();
     }, 10_000);
+    });
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -963,7 +1004,7 @@ export default function QueueAdd() {
     }
   }
 
-  function handleSpotifyAdd(track: {
+  async function handleSpotifyAdd(track: {
     id?: string;
     query: string;
     artist?: string | null;
@@ -973,6 +1014,32 @@ export default function QueueAdd() {
     sourcePlaylist?: string | null;
   }) {
     const spotifyKey = track.id ? `spotify:${track.id}` : `spotify:${Date.now()}`;
+    setResultStatus((prev) => ({ ...prev, [spotifyKey]: "pending" }));
+    const response = await submitUrl(track.query, undefined, track.title ?? null, track.artist ?? null, {
+      sourceType: track.sourceType ?? source,
+      sourceGenre: track.sourceGenre ?? null,
+      sourcePlaylist: track.sourcePlaylist ?? null,
+    });
+    if (response.status === "manual_select" && response.candidates && response.candidates.length > 0) {
+      setResultStatus((prev) => ({ ...prev, [spotifyKey]: "idle" }));
+      setPendingManualSelection({
+        title: (track.title ?? track.query).trim(),
+        artist: track.artist ?? null,
+        sourceType: track.sourceType ?? source,
+        sourceGenre: track.sourceGenre ?? null,
+        sourcePlaylist: track.sourcePlaylist ?? null,
+        candidates: response.candidates,
+      });
+      setFeedback({
+        msg: response.message ?? "Geen exacte hit. Kies handmatig een resultaat.",
+        ok: false,
+      });
+      return;
+    }
+    if (!response.ok) {
+      setResultStatus((prev) => ({ ...prev, [spotifyKey]: "idle" }));
+      return;
+    }
     setResultStatus((prev) => ({ ...prev, [spotifyKey]: "added" }));
     setTimeout(() => {
       setResultStatus((prev) => ({ ...prev, [spotifyKey]: "idle" }));
@@ -983,11 +1050,30 @@ export default function QueueAdd() {
       (track.title ?? track.query).trim(),
       track.artist ?? null,
     );
-    submitUrl(track.query, undefined, track.title ?? null, track.artist ?? null, {
-      sourceType: track.sourceType ?? source,
-      sourceGenre: track.sourceGenre ?? null,
-      sourcePlaylist: track.sourcePlaylist ?? null,
-    });
+  }
+
+  async function chooseManualCandidate(candidate: QueueAddManualCandidate) {
+    if (!pendingManualSelection) return;
+    const result = await submitUrl(
+      candidate.url,
+      candidate.thumbnail ?? undefined,
+      pendingManualSelection.title,
+      pendingManualSelection.artist,
+      {
+        sourceType: pendingManualSelection.sourceType,
+        sourceGenre: pendingManualSelection.sourceGenre,
+        sourcePlaylist: pendingManualSelection.sourcePlaylist,
+      },
+    );
+    if (!result.ok) return;
+    startRecentAdd(
+      `manual:${Date.now()}`,
+      candidate.url,
+      pendingManualSelection.title,
+      pendingManualSelection.artist,
+    );
+    setPendingManualSelection(null);
+    setFeedback({ msg: "Handmatige keuze toegevoegd aan de wachtrij.", ok: true });
   }
 
   async function prioritizeGenreArtist(item: GenreHitRow) {
@@ -1516,6 +1602,64 @@ export default function QueueAdd() {
           </p>
         )}
       </form>
+
+      {pendingManualSelection && (
+        <div className="absolute inset-0 z-[120] flex items-center justify-center bg-black/70 p-2">
+          <div className="max-h-[75dvh] w-full max-w-2xl overflow-hidden rounded-xl border border-violet-700/70 bg-gray-950 shadow-2xl shadow-black/60">
+            <div className="border-b border-gray-800 px-4 py-3">
+              <p className="text-sm font-semibold text-white">Geen exacte hit gevonden</p>
+              <p className="mt-1 text-xs text-gray-300">
+                Kies handmatig het juiste resultaat voor{" "}
+                <span className="font-semibold text-violet-200">
+                  {pendingManualSelection.artist
+                    ? `${pendingManualSelection.artist} - ${pendingManualSelection.title}`
+                    : pendingManualSelection.title}
+                </span>
+                .
+              </p>
+            </div>
+            <div className="max-h-[52dvh] overflow-y-auto">
+              {pendingManualSelection.candidates.map((candidate) => (
+                <button
+                  key={`${candidate.provider}:${candidate.url}`}
+                  type="button"
+                  onClick={() => { void chooseManualCandidate(candidate); }}
+                  className="flex w-full items-center gap-2 border-b border-gray-900 px-3 py-2 text-left transition hover:bg-gray-900/80"
+                >
+                  {candidate.thumbnail ? (
+                    <img src={candidate.thumbnail} alt="" className="h-10 w-12 shrink-0 rounded object-cover" />
+                  ) : (
+                    <div className="h-10 w-12 shrink-0 rounded bg-gray-800" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm text-white">{candidate.title}</p>
+                    <p className="truncate text-xs text-gray-400">{candidate.channel || "Onbekende uploader"}</p>
+                  </div>
+                  <div className="flex shrink-0 flex-col items-end gap-1">
+                    <span className="rounded bg-gray-800 px-1.5 py-0.5 text-[10px] uppercase text-gray-300">
+                      {candidate.provider}
+                    </span>
+                    {candidate.duration !== null && (
+                      <span className="text-[11px] tabular-nums text-gray-400">
+                        {formatDuration(candidate.duration)}
+                      </span>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+            <div className="flex justify-end border-t border-gray-800 px-3 py-2">
+              <button
+                type="button"
+                onClick={() => setPendingManualSelection(null)}
+                className="rounded-md border border-gray-700 px-3 py-1 text-xs font-semibold text-gray-200 transition hover:border-gray-500 hover:text-white"
+              >
+                Annuleren
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {recentAdd && (
         <div className="pointer-events-none absolute left-0 right-0 top-2 z-[70] px-2">

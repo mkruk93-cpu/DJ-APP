@@ -127,7 +127,9 @@ const STREAM_AUDIO_FILTER =
 const STREAM_TRIM_SILENCE = String(process.env.STREAM_TRIM_SILENCE ?? 'true').toLowerCase() !== 'false';
 const STREAM_SILENCE_FILTER =
   (process.env.STREAM_SILENCE_FILTER ?? '').trim()
-  || 'silenceremove=start_periods=1:start_duration=0.25:start_threshold=-42dB:stop_periods=1:stop_duration=0.35:stop_threshold=-42dB';
+  // Conservative trim: only remove longer near-silence and keep a small pad
+  // so track intros/outros do not get clipped too aggressively.
+  || 'silenceremove=start_periods=1:start_duration=1.0:start_threshold=-50dB:start_silence=0.8:stop_periods=1:stop_duration=1.0:stop_threshold=-50dB:stop_silence=0.8';
 const STREAM_CHANNEL_REPAIR_ENABLE = String(process.env.STREAM_CHANNEL_REPAIR_ENABLE ?? 'true').toLowerCase() !== 'false';
 const STREAM_CHANNEL_REPAIR_DIFF_DB = Math.max(10, parseFloat(process.env.STREAM_CHANNEL_REPAIR_DIFF_DB ?? '16') || 16);
 const STREAM_CHANNEL_REPAIR_SILENT_DB = Math.min(-35, parseFloat(process.env.STREAM_CHANNEL_REPAIR_SILENT_DB ?? '-55') || -55);
@@ -139,6 +141,7 @@ const JINGLE_DIR = (process.env.JINGLE_DIR ?? path.join(process.cwd(), 'data', '
 const JINGLE_EVERY_TRACKS_DEFAULT = Math.max(1, parseInt(process.env.JINGLE_EVERY_TRACKS ?? '4', 10) || 4);
 let jingleEnabled = JINGLE_ENABLE_DEFAULT;
 let jingleEveryTracks = JINGLE_EVERY_TRACKS_DEFAULT;
+let selectedJingleKeys = new Set<string>();
 let activeFallbackGenre: string | null = null;
 let activeFallbackGenreIds: string[] = [];
 let activeSharedFallbackPlaylistIds: string[] = [];
@@ -787,6 +790,8 @@ interface AutoCandidateMatchOptions {
   expectedArtist?: string | null;
   expectedTitle?: string | null;
   strictMetadata?: boolean;
+  minDurationSeconds?: number;
+  maxDurationSeconds?: number;
 }
 
 const AUTO_BLOCKED_KEYWORDS = [
@@ -965,7 +970,7 @@ function evaluateSearchResultForAutoSubmission(
   const expectedIncludesRemixLike = hasUnexpectedKeyword(
     wantedTitleNorm,
     '',
-    ['remix', 'edit', 'bootleg', 'rework', 'version'],
+    ['remix', 'edit', 'bootleg', 'rework', 'version', 'cover'],
   );
   const blocked = hasBlockedAutoKeyword(titleNorm, channelNorm);
 
@@ -1009,7 +1014,12 @@ function evaluateSearchResultForAutoSubmission(
   const artistContainment = expectedArtistSet.size > 0
     ? tokenContainmentSimilarity(expectedArtistSet, resultArtistSet)
     : 1;
-  const artistHasSignal = expectedArtistSet.size > 0 ? artistContainment >= 0.34 : true;
+  const artistSignalThreshold = expectedArtistSet.size >= 8
+    ? 0.16
+    : expectedArtistSet.size >= 5
+      ? 0.22
+      : 0.34;
+  const artistHasSignal = expectedArtistSet.size > 0 ? artistContainment >= artistSignalThreshold : true;
   const strictArtistMatch = expectedArtistSet.size > 0
     ? (artistSimilarity >= 0.65 || artistContainment >= 0.6)
     : true;
@@ -1141,6 +1151,8 @@ async function resolveShortAutoCandidate(
       if (parsedFromTitle) expectedArtistRaw = parsedFromTitle;
     }
     const strictMetadata = options?.strictMetadata === true;
+    const minDurationSeconds = Math.max(60, Math.round(options?.minDurationSeconds ?? AUTO_MIN_DURATION_SECONDS));
+    const maxDurationSeconds = Math.max(minDurationSeconds, Math.round(options?.maxDurationSeconds ?? AUTO_MAX_DURATION_SECONDS));
 
     const hasGenreHintBlock = (resultTitle: string, resultChannel: string): boolean => {
       if (!genreHints) return false;
@@ -1184,7 +1196,7 @@ async function resolveShortAutoCandidate(
       ...scResults.map((row) => ({ row, provider: 'soundcloud' as const })),
     ].filter(({ row }) => {
       if (!row.title || isSetLikeAutoTitle(row.title)) return false;
-      if (!row.duration || row.duration < 120 || row.duration > AUTO_MAX_DURATION_SECONDS) return false;
+      if (!row.duration || row.duration < minDurationSeconds || row.duration > maxDurationSeconds) return false;
       if (hasGenreHintBlock(row.title, row.channel || '')) return false;
       return true;
     });
@@ -1300,7 +1312,10 @@ async function resolveShortAutoCandidate(
 }
 
 const AUTO_RECENT_WINDOW = 60;
+const AUTO_MIN_DURATION_SECONDS = 120;
 const AUTO_MAX_DURATION_SECONDS = 7 * 60;
+const AUTO_SHARED_MIN_DURATION_SECONDS = 105;
+const AUTO_SHARED_MAX_DURATION_SECONDS = 11 * 60;
 const recentAutoTrackKeys: string[] = [];
 const inFlightAutoTrackKeys = new Set<string>();
 const DAILY_AUTO_HISTORY_REFRESH_MS = 60_000;
@@ -1314,9 +1329,18 @@ function isSetLikeAutoTitle(title: string): boolean {
 }
 
 function isAllowedAutoTrack(title: string, duration: number | null): boolean {
+  return isAllowedAutoTrackWithDurationBounds(title, duration, AUTO_MIN_DURATION_SECONDS, AUTO_MAX_DURATION_SECONDS);
+}
+
+function isAllowedAutoTrackWithDurationBounds(
+  title: string,
+  duration: number | null,
+  minDurationSeconds: number,
+  maxDurationSeconds: number,
+): boolean {
   if (!title.trim()) return false;
   if (isSetLikeAutoTitle(title)) return false;
-  if (duration !== null && (duration < 120 || duration > AUTO_MAX_DURATION_SECONDS)) return false;
+  if (duration !== null && (duration < minDurationSeconds || duration > maxDurationSeconds)) return false;
   return true;
 }
 
@@ -1959,6 +1983,8 @@ async function prepareSharedAutoFallbackTrack(
       expectedArtist: choice.artist,
       expectedTitle: choice.title,
       strictMetadata: true,
+      minDurationSeconds: AUTO_SHARED_MIN_DURATION_SECONDS,
+      maxDurationSeconds: AUTO_SHARED_MAX_DURATION_SECONDS,
     });
     if (!selected && choice.title) {
       // Retry with a looser query to handle edge-cases where artist-prefix blocks discovery.
@@ -1966,6 +1992,8 @@ async function prepareSharedAutoFallbackTrack(
         expectedArtist: choice.artist,
         expectedTitle: choice.title,
         strictMetadata: true,
+        minDurationSeconds: AUTO_SHARED_MIN_DURATION_SECONDS,
+        maxDurationSeconds: AUTO_SHARED_MAX_DURATION_SECONDS,
       });
     }
     if (!isAutoSourceStillActive(expectedSourceKey)) return null;
@@ -1988,7 +2016,12 @@ async function prepareSharedAutoFallbackTrack(
     };
     const resolvedTitle = buildAutoDisplayTitle(selected.title, choice.artist, choice.title);
     const hintedDuration = selected.duration;
-    if (!isAllowedAutoTrack(resolvedTitle, hintedDuration)) {
+    if (!isAllowedAutoTrackWithDurationBounds(
+      resolvedTitle,
+      hintedDuration,
+      AUTO_SHARED_MIN_DURATION_SECONDS,
+      AUTO_SHARED_MAX_DURATION_SECONDS,
+    )) {
       return null;
     }
 
@@ -2024,7 +2057,12 @@ async function prepareSharedAutoFallbackTrack(
     }
 
     const finalDuration = hintedDuration ?? fileDuration;
-    if (!isAllowedAutoTrack(resolvedTitle, finalDuration)) {
+    if (!isAllowedAutoTrackWithDurationBounds(
+      resolvedTitle,
+      finalDuration,
+      AUTO_SHARED_MIN_DURATION_SECONDS,
+      AUTO_SHARED_MAX_DURATION_SECONDS,
+    )) {
       if (!keepFiles) cleanupFile(audioFile);
       pendingAutoUpcoming = null;
       broadcastUpcomingTrack();
@@ -2334,7 +2372,7 @@ let lastJinglePath: string | null = null;
 const channelRepairCache = new Map<string, boolean>();
 
 function listJingleFiles(): string[] {
-  if (!jingleEnabled || !JINGLE_DIR) return [];
+  if (!JINGLE_DIR) return [];
   try {
     const entries = fs.readdirSync(JINGLE_DIR, { withFileTypes: true });
     return entries
@@ -2346,8 +2384,15 @@ function listJingleFiles(): string[] {
   }
 }
 
+function normalizeJingleKey(value: string): string {
+  return path.basename(value).trim().toLowerCase();
+}
+
 function pickJingleFile(): string | null {
-  const files = listJingleFiles();
+  const allFiles = listJingleFiles();
+  const files = selectedJingleKeys.size > 0
+    ? allFiles.filter((fullPath) => selectedJingleKeys.has(normalizeJingleKey(fullPath)))
+    : allFiles;
   if (files.length === 0) return null;
   if (files.length === 1) return files[0] ?? null;
   const pool = files.filter((fullPath) => fullPath !== lastJinglePath);
@@ -2764,6 +2809,34 @@ export function getJingleSettings(): { enabled: boolean; everyTracks: number } {
     enabled: jingleEnabled,
     everyTracks: jingleEveryTracks,
   };
+}
+
+export function setJingleSelection(keys: string[] | null | undefined): void {
+  if (!Array.isArray(keys)) {
+    selectedJingleKeys = new Set<string>();
+    return;
+  }
+  selectedJingleKeys = new Set(
+    keys
+      .map((value) => normalizeJingleKey(String(value)))
+      .filter((value) => value.length > 0),
+  );
+}
+
+export function getJingleSelection(): string[] {
+  return Array.from(selectedJingleKeys.values());
+}
+
+export async function getJingleCatalog(): Promise<Array<{ key: string; name: string; title: string; duration: number | null }>> {
+  const files = listJingleFiles();
+  const rows = await Promise.all(files.map(async (fullPath) => ({
+    key: normalizeJingleKey(fullPath),
+    name: path.basename(fullPath),
+    title: titleFromFilename(fullPath),
+    duration: await getAudioDuration(fullPath),
+  })));
+  rows.sort((a, b) => a.name.localeCompare(b.name));
+  return rows;
 }
 
 export function invalidatePreload(): void {
