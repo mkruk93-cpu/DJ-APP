@@ -132,6 +132,7 @@ interface PendingUndoState {
 }
 
 interface PendingManualSelection {
+  sourceKey: string;
   title: string;
   artist: string | null;
   sourceType: string | null;
@@ -1023,6 +1024,7 @@ export default function QueueAdd() {
     if (response.status === "manual_select" && response.candidates && response.candidates.length > 0) {
       setResultStatus((prev) => ({ ...prev, [spotifyKey]: "idle" }));
       setPendingManualSelection({
+        sourceKey: spotifyKey,
         title: (track.title ?? track.query).trim(),
         artist: track.artist ?? null,
         sourceType: track.sourceType ?? source,
@@ -1054,25 +1056,37 @@ export default function QueueAdd() {
 
   async function chooseManualCandidate(candidate: QueueAddManualCandidate) {
     if (!pendingManualSelection) return;
+    const sourceKey = pendingManualSelection.sourceKey;
+    const manualState = pendingManualSelection;
+    // Close immediately and show optimistic added-state to avoid UI freeze feeling.
+    setPendingManualSelection(null);
+    setResultStatus((prev) => ({ ...prev, [sourceKey]: "added" }));
+    setFeedback({ msg: "Toegevoegd aan wachtrij...", ok: true });
+
     const result = await submitUrl(
       candidate.url,
       candidate.thumbnail ?? undefined,
-      pendingManualSelection.title,
-      pendingManualSelection.artist,
+      manualState.title,
+      manualState.artist,
       {
-        sourceType: pendingManualSelection.sourceType,
-        sourceGenre: pendingManualSelection.sourceGenre,
-        sourcePlaylist: pendingManualSelection.sourcePlaylist,
+        sourceType: manualState.sourceType,
+        sourceGenre: manualState.sourceGenre,
+        sourcePlaylist: manualState.sourcePlaylist,
       },
     );
-    if (!result.ok) return;
+    if (!result.ok) {
+      setResultStatus((prev) => ({ ...prev, [sourceKey]: "idle" }));
+      return;
+    }
     startRecentAdd(
       `manual:${Date.now()}`,
       candidate.url,
-      pendingManualSelection.title,
-      pendingManualSelection.artist,
+      manualState.title,
+      manualState.artist,
     );
-    setPendingManualSelection(null);
+    setTimeout(() => {
+      setResultStatus((prev) => ({ ...prev, [sourceKey]: "idle" }));
+    }, 4000);
     setFeedback({ msg: "Handmatige keuze toegevoegd aan de wachtrij.", ok: true });
   }
 
