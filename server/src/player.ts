@@ -59,10 +59,13 @@ let _io: IOServer | null = null;
 
 const SELF_HEAL_CHECK_MS = 5_000;
 const SELF_HEAL_COOLDOWN_MS = 6_000;
-const SELF_HEAL_STALL_MS = Math.max(20_000, parseInt(process.env.SELF_HEAL_STALL_MS ?? '55000', 10) || 55_000);
-const SELF_HEAL_STALL_CONFIRM_CHECKS = Math.max(1, parseInt(process.env.SELF_HEAL_STALL_CONFIRM_CHECKS ?? '2', 10) || 2);
-const SELF_HEAL_DURATION_GRACE_SECONDS = 45;
+const SELF_HEAL_STALL_MS = Math.max(12_000, parseInt(process.env.SELF_HEAL_STALL_MS ?? '22000', 10) || 22_000);
+const SELF_HEAL_STALL_CONFIRM_CHECKS = Math.max(1, parseInt(process.env.SELF_HEAL_STALL_CONFIRM_CHECKS ?? '1', 10) || 1);
+const SELF_HEAL_DURATION_GRACE_SECONDS = Math.max(30, parseInt(process.env.SELF_HEAL_DURATION_GRACE_SECONDS ?? '90', 10) || 90);
+const SELF_HEAL_DURATION_DYNAMIC_RATIO = Math.min(0.6, Math.max(0.1, parseFloat(process.env.SELF_HEAL_DURATION_DYNAMIC_RATIO ?? '0.35') || 0.35));
+const SELF_HEAL_DURATION_DYNAMIC_MAX_SECONDS = Math.max(60, parseInt(process.env.SELF_HEAL_DURATION_DYNAMIC_MAX_SECONDS ?? '240', 10) || 240);
 const SELF_HEAL_START_GRACE_MS = Math.max(5_000, parseInt(process.env.SELF_HEAL_START_GRACE_MS ?? '25000', 10) || 25_000);
+const DECODER_CHUNK_TIMEOUT_MS = Math.max(6_000, parseInt(process.env.DECODER_CHUNK_TIMEOUT_MS ?? '12000', 10) || 12_000);
 const KEEP_FILES_MAX_COUNT = Math.max(8, parseInt(process.env.KEEP_FILES_MAX_COUNT ?? '24', 10) || 24);
 const KEEP_FILES_MAX_AGE_MS = Math.max(5 * 60_000, parseInt(process.env.KEEP_FILES_MAX_AGE_MS ?? String(6 * 60 * 60_000), 10) || (6 * 60 * 60_000));
 const KEEP_FILES_PRUNE_INTERVAL_MS = Math.max(30_000, parseInt(process.env.KEEP_FILES_PRUNE_INTERVAL_MS ?? '120000', 10) || 120_000);
@@ -2661,6 +2664,11 @@ function triggerSelfHeal(reason: string): void {
   if (now - lastSelfHealAt < SELF_HEAL_COOLDOWN_MS) return;
   lastSelfHealAt = now;
   console.warn(`[self-heal] ${reason}`);
+  const preferSoftHeal =
+    reason.startsWith('track runtime exceeded')
+    || reason.startsWith('audio stalled')
+    || reason.startsWith('decoder stalled');
+  const encoderWritable = !!encoder?.stdin && !encoder.stdin.destroyed && encoder.stdin.writable;
 
   if (pendingSwap) {
     killDecoderProcess(pendingSwap.newDecoder);
@@ -2670,22 +2678,29 @@ function triggerSelfHeal(reason: string): void {
   skipWhenReady = false;
   setSkipLock(false);
 
-  if (nextReady?.cleanupAfterUse) {
-    cleanupFileIfSafe(nextReady.audioFile, 'triggerSelfHeal:nextReady');
+  // Soft-heal keeps nextReady to reduce silence between recovery and next track.
+  if (!preferSoftHeal || !encoderWritable) {
+    if (nextReady?.cleanupAfterUse) {
+      cleanupFileIfSafe(nextReady.audioFile, 'triggerSelfHeal:nextReady');
+    }
+    nextReady = null;
+    pendingQueueUpcoming = null;
+    pendingAutoUpcoming = null;
+    broadcastUpcomingTrack();
+  } else {
+    selfHealGraceUntil = Date.now() + 10_000;
   }
-  nextReady = null;
-  pendingQueueUpcoming = null;
-  pendingAutoUpcoming = null;
-  broadcastUpcomingTrack();
 
   killDecoderProcess(currentDecoder);
   currentDecoder = null;
 
-  if (encoder?.stdin && !encoder.stdin.destroyed) {
-    try { encoder.stdin.end(); } catch {}
+  if (!preferSoftHeal || !encoderWritable) {
+    if (encoder?.stdin && !encoder.stdin.destroyed) {
+      try { encoder.stdin.end(); } catch {}
+    }
+    killEncoderProcess(encoder);
+    encoder = null;
   }
-  killEncoderProcess(encoder);
-  encoder = null;
 
   if (_sb && isRunning) {
     lastPrepareKickAt = Date.now();
@@ -2710,7 +2725,12 @@ function runSelfHealChecks(): void {
   if (!inStartupGrace && currentTrack?.duration && Number.isFinite(currentTrack.duration) && currentTrack.duration > 0) {
     const startedAt = currentTrack.started_at - STREAM_DELAY_MS;
     const elapsedMs = now - startedAt;
-    const maxExpectedMs = (currentTrack.duration + SELF_HEAL_DURATION_GRACE_SECONDS) * 1000;
+    // Duration metadata can be off for some remote files; allow a dynamic overrun window.
+    const dynamicGraceSeconds = Math.min(
+      SELF_HEAL_DURATION_DYNAMIC_MAX_SECONDS,
+      Math.round(currentTrack.duration * SELF_HEAL_DURATION_DYNAMIC_RATIO),
+    );
+    const maxExpectedMs = (currentTrack.duration + Math.max(SELF_HEAL_DURATION_GRACE_SECONDS, dynamicGraceSeconds)) * 1000;
     if (elapsedMs > maxExpectedMs) {
       triggerSelfHeal(`track runtime exceeded (${Math.round(elapsedMs / 1000)}s)`);
       return;
@@ -3779,10 +3799,13 @@ async function playNext(
 
       await pipeRunningDecoder(swap.decoder, ensureEncoder());
     }
-  } catch (err) {
+    } catch (err) {
     const message = err instanceof Error ? err.message : 'Onbekende fout';
     const encoderStdinUnavailable = !encoder?.stdin || encoder.stdin.destroyed || !encoder.stdin.writable;
     const isEncoderCrash = !encoder || encoder.killed || encoder.exitCode !== null || encoderStdinUnavailable || /encoder stdin not available/i.test(message);
+      if (/decoder stalled/i.test(message)) {
+        triggerSelfHeal(`decoder stalled (${Math.round(DECODER_CHUNK_TIMEOUT_MS / 1000)}s no chunks)`);
+      }
 
     if (isEncoderCrash) {
       console.warn(`[player] Encoder crashed during ${trackTitle ?? trackYoutubeId} — restarting encoder (not counting as track failure)`);
@@ -3864,10 +3887,25 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess, forceDualMono = f
     currentDecoder = decoder;
     let pipeError = false;
     let settled = false;
+    let chunkWatchdog: ReturnType<typeof setTimeout> | null = null;
+
+    function resetChunkWatchdog() {
+      if (chunkWatchdog) clearTimeout(chunkWatchdog);
+      chunkWatchdog = setTimeout(() => {
+        if (settled || pipeError) return;
+        pipeError = true;
+        killDecoderProcess(decoder);
+        finish(new Error(`decoder stalled: no PCM chunk for ${Math.round(DECODER_CHUNK_TIMEOUT_MS / 1000)}s`));
+      }, DECODER_CHUNK_TIMEOUT_MS);
+    }
 
     function finish(err?: Error) {
       if (settled) return;
       settled = true;
+      if (chunkWatchdog) {
+        clearTimeout(chunkWatchdog);
+        chunkWatchdog = null;
+      }
       currentDecoder = null;
       enc.stdin?.removeListener('error', onStdinError);
       enc.removeListener('close', onEncClose);
@@ -3893,6 +3931,7 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess, forceDualMono = f
 
     decoder.stdout?.on('data', (chunk: Buffer) => {
       if (settled || pipeError) return;
+      resetChunkWatchdog();
       markAudioProgress();
 
       // ── Check for seamless swap ──
@@ -3967,6 +4006,7 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess, forceDualMono = f
     decoder.on('error', (err) => {
       finish(new Error(`Failed to start decoder: ${err.message}`));
     });
+    resetChunkWatchdog();
   });
 }
 
@@ -3975,17 +4015,36 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess, forceDualMono = f
  * Also supports chained skips — the same swap logic applies.
  */
 function pipeRunningDecoder(decoder: ChildProcess, enc: ChildProcess): Promise<void> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     currentDecoder = decoder;
     let settled = false;
     let pipeError = false;
+    let chunkWatchdog: ReturnType<typeof setTimeout> | null = null;
 
-    function finish() {
+    function resetChunkWatchdog() {
+      if (chunkWatchdog) clearTimeout(chunkWatchdog);
+      chunkWatchdog = setTimeout(() => {
+        if (settled || pipeError) return;
+        pipeError = true;
+        killDecoderProcess(decoder);
+        finish(new Error(`decoder stalled: no PCM chunk for ${Math.round(DECODER_CHUNK_TIMEOUT_MS / 1000)}s`));
+      }, DECODER_CHUNK_TIMEOUT_MS);
+    }
+
+    function finish(err?: Error) {
       if (settled) return;
       settled = true;
+      if (chunkWatchdog) {
+        clearTimeout(chunkWatchdog);
+        chunkWatchdog = null;
+      }
       currentDecoder = null;
       enc.stdin?.removeListener('error', onStdinError);
       enc.removeListener('close', onEncClose);
+      if (err) {
+        reject(err);
+        return;
+      }
       resolve();
     }
 
@@ -4011,6 +4070,7 @@ function pipeRunningDecoder(decoder: ChildProcess, enc: ChildProcess): Promise<v
 
     decoder.stdout?.on('data', (chunk: Buffer) => {
       if (settled || pipeError) return;
+      resetChunkWatchdog();
       markAudioProgress();
 
       // Support chained skips during the swapped track
@@ -4043,16 +4103,17 @@ function pipeRunningDecoder(decoder: ChildProcess, enc: ChildProcess): Promise<v
         } catch {
           pipeError = true;
           killDecoderProcess(decoder);
-          finish();
+          finish(new Error('encoder write failed during chained decode'));
         }
       }
     });
 
     decoder.on('close', () => finish());
-    decoder.on('error', () => finish());
+    decoder.on('error', (err) => finish(new Error(`running decoder failed: ${err.message}`)));
 
     // Resume the paused stdout (it was paused after firstChunk capture)
     decoder.stdout?.resume();
+    resetChunkWatchdog();
   });
 }
 
