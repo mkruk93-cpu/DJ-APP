@@ -50,6 +50,7 @@ function formatDuration(ms: number): string {
 type View = "playlists" | "tracks" | "importedTracks" | "sharedTracks";
 type TrackSource = "liked" | "playlist" | null;
 type PlaylistSortMode = "name_asc" | "name_desc" | "tracks_desc" | "newest";
+type PlaylistViewMode = "grouped" | "all";
 const IMPORTED_TRACK_PAGE_SIZE = 120;
 const PLAYLIST_GENRE_GROUPS = [
   "Hard Dance",
@@ -162,6 +163,8 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
   const [showHelp, setShowHelp] = useState(false);
   const [savedSortMode, setSavedSortMode] = useState<PlaylistSortMode>("name_asc");
   const [sharedSortMode, setSharedSortMode] = useState<PlaylistSortMode>("name_asc");
+  const [savedPlaylistViewMode, setSavedPlaylistViewMode] = useState<PlaylistViewMode>("grouped");
+  const [sharedPlaylistViewMode, setSharedPlaylistViewMode] = useState<PlaylistViewMode>("grouped");
   const [collapsedSavedGenres, setCollapsedSavedGenres] = useState<string[]>([]);
   const [collapsedSavedSubgenres, setCollapsedSavedSubgenres] = useState<string[]>([]);
   const [collapsedSharedGenres, setCollapsedSharedGenres] = useState<string[]>([]);
@@ -280,6 +283,8 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
         showHelp: boolean;
         savedSortMode: PlaylistSortMode;
         sharedSortMode: PlaylistSortMode;
+        savedPlaylistViewMode: PlaylistViewMode;
+        sharedPlaylistViewMode: PlaylistViewMode;
         collapsedSavedGenres: string[];
         collapsedSavedSubgenres: string[];
         collapsedSharedGenres: string[];
@@ -289,6 +294,8 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
       if (typeof parsed.showHelp === "boolean") setShowHelp(parsed.showHelp);
       if (parsed.savedSortMode) setSavedSortMode(parsed.savedSortMode);
       if (parsed.sharedSortMode) setSharedSortMode(parsed.sharedSortMode);
+      if (parsed.savedPlaylistViewMode) setSavedPlaylistViewMode(parsed.savedPlaylistViewMode);
+      if (parsed.sharedPlaylistViewMode) setSharedPlaylistViewMode(parsed.sharedPlaylistViewMode);
       if (Array.isArray(parsed.collapsedSavedGenres)) setCollapsedSavedGenres(parsed.collapsedSavedGenres);
       if (Array.isArray(parsed.collapsedSavedSubgenres)) setCollapsedSavedSubgenres(parsed.collapsedSavedSubgenres);
       if (Array.isArray(parsed.collapsedSharedGenres)) setCollapsedSharedGenres(parsed.collapsedSharedGenres);
@@ -306,6 +313,8 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
       showHelp,
       savedSortMode,
       sharedSortMode,
+      savedPlaylistViewMode,
+      sharedPlaylistViewMode,
       collapsedSavedGenres,
       collapsedSavedSubgenres,
       collapsedSharedGenres,
@@ -318,6 +327,8 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
     showHelp,
     savedSortMode,
     sharedSortMode,
+    savedPlaylistViewMode,
+    sharedPlaylistViewMode,
     collapsedSavedGenres,
     collapsedSavedSubgenres,
     collapsedSharedGenres,
@@ -1013,10 +1024,34 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
               <option value="tracks_desc">Sortering: Meeste tracks</option>
               <option value="newest">Sortering: Nieuwste import</option>
             </select>
+            <div className="mb-1 grid grid-cols-2 gap-1">
+              <button
+                type="button"
+                onClick={() => setSavedPlaylistViewMode("grouped")}
+                className={`rounded px-2 py-1 text-[10px] font-semibold transition ${
+                  savedPlaylistViewMode === "grouped"
+                    ? "bg-violet-600/30 text-violet-100"
+                    : "text-gray-300 hover:bg-gray-800"
+                }`}
+              >
+                Op genre
+              </button>
+              <button
+                type="button"
+                onClick={() => setSavedPlaylistViewMode("all")}
+                className={`rounded px-2 py-1 text-[10px] font-semibold transition ${
+                  savedPlaylistViewMode === "all"
+                    ? "bg-violet-600/30 text-violet-100"
+                    : "text-gray-300 hover:bg-gray-800"
+                }`}
+              >
+                Alles onder elkaar
+              </button>
+            </div>
             {groupedSavedPlaylists.length === 0 && !savedPlaylistsLoading && (
               <p className="text-[10px] text-gray-500">Nog geen geïmporteerde playlists.</p>
             )}
-            {groupedSavedPlaylists.map((genreGroup) => (
+            {savedPlaylistViewMode === "grouped" ? groupedSavedPlaylists.map((genreGroup) => (
               <details
                 key={`saved-genre:${genreGroup.genreLabel}`}
                 open={hasStoredCollapseState ? !collapsedSavedGenres.includes(genreGroup.genreLabel) : false}
@@ -1091,6 +1126,36 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                   ))}
                 </div>
               </details>
+            )) : sortedSavedPlaylists.map((playlist) => (
+              <div key={playlist.id} className="mt-1 flex items-center justify-between rounded-lg border border-gray-800 bg-gray-900/70 px-2.5 py-1.5">
+                {playlist.cover_url ? (
+                  <img
+                    src={playlist.cover_url}
+                    alt=""
+                    className="mr-2 h-8 w-8 shrink-0 rounded object-cover"
+                  />
+                ) : (
+                  <div className="mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded bg-gray-800">
+                    <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V4.5A2.25 2.25 0 0016.5 2.25h-1.875a2.25 2.25 0 00-2.25 2.25v13.5m0 0a2.25 2.25 0 01-2.25 2.25H8.25a2.25 2.25 0 01-2.25-2.25V6.75" />
+                    </svg>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => { void openSavedPlaylist(playlist); }}
+                  className="min-w-0 flex-1 truncate text-left text-[11px] font-semibold text-white transition hover:text-violet-300"
+                >
+                  {playlist.name}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { void removeSavedPlaylist(playlist); }}
+                  className="ml-2 text-[10px] text-red-300 transition hover:text-red-200"
+                >
+                  Verwijder
+                </button>
+              </div>
             ))}
           </div>
           )}
@@ -1118,6 +1183,30 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
               <option value="tracks_desc">Sortering: Meeste tracks</option>
               <option value="newest">Sortering: Nieuwste import</option>
             </select>
+            <div className="mb-1 grid grid-cols-2 gap-1">
+              <button
+                type="button"
+                onClick={() => setSharedPlaylistViewMode("grouped")}
+                className={`rounded px-2 py-1 text-[10px] font-semibold transition ${
+                  sharedPlaylistViewMode === "grouped"
+                    ? "bg-blue-700/35 text-blue-100"
+                    : "text-gray-300 hover:bg-gray-800"
+                }`}
+              >
+                Op genre
+              </button>
+              <button
+                type="button"
+                onClick={() => setSharedPlaylistViewMode("all")}
+                className={`rounded px-2 py-1 text-[10px] font-semibold transition ${
+                  sharedPlaylistViewMode === "all"
+                    ? "bg-blue-700/35 text-blue-100"
+                    : "text-gray-300 hover:bg-gray-800"
+                }`}
+              >
+                Alles onder elkaar
+              </button>
+            </div>
             {sharedUsage && (
               <p className="mb-1 text-[10px] text-blue-300/80">
                 Pool: {sharedUsage.playlists} playlists · {sharedUsage.tracks} tracks
@@ -1126,7 +1215,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
             {groupedSharedPlaylists.length === 0 && !sharedPlaylistsLoading && (
               <p className="text-[10px] text-gray-400">Nog geen gedeelde playlists beschikbaar.</p>
             )}
-            {groupedSharedPlaylists.map((genreGroup) => (
+            {sharedPlaylistViewMode === "grouped" ? groupedSharedPlaylists.map((genreGroup) => (
               <details
                 key={`shared-genre:${genreGroup.genreLabel}`}
                 open={hasStoredCollapseState ? !collapsedSharedGenres.includes(genreGroup.genreLabel) : false}
@@ -1197,6 +1286,32 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                   ))}
                 </div>
               </details>
+            )) : sortedSharedPlaylists.map((playlist) => (
+              <div key={playlist.id} className="mt-1 flex items-center justify-between rounded-lg border border-gray-800 bg-gray-900/70 px-2.5 py-1.5">
+                {playlist.cover_url ? (
+                  <img
+                    src={playlist.cover_url}
+                    alt=""
+                    className="mr-2 h-8 w-8 shrink-0 rounded object-cover"
+                  />
+                ) : (
+                  <div className="mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded bg-gray-800">
+                    <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V4.5A2.25 2.25 0 0016.5 2.25h-1.875a2.25 2.25 0 00-2.25 2.25v13.5m0 0a2.25 2.25 0 01-2.25 2.25H8.25a2.25 2.25 0 01-2.25-2.25V6.75" />
+                    </svg>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => { void openSharedPlaylist(playlist); }}
+                  className="min-w-0 flex-1 truncate text-left text-[11px] font-semibold text-white transition hover:text-blue-300"
+                >
+                  {playlist.name}
+                </button>
+                <span className="ml-2 shrink-0 text-[10px] text-gray-400">
+                  {playlist.track_count} tracks
+                </span>
+              </div>
             ))}
           </div>
           )}

@@ -129,14 +129,9 @@ export default function FallbackGenreSelector() {
   const summaryRef = useRef<HTMLElement | null>(null);
   const [isMobile, setIsMobile] = useState(false);
   const [mobileMenuTop, setMobileMenuTop] = useState<number | null>(null);
-  const [openSections, setOpenSections] = useState<Record<FallbackSection, boolean>>({
-    local: true,
-    auto: false,
-    playlists: false,
-  });
+  const [activeSection, setActiveSection] = useState<FallbackSection>("local");
   const [playlistSortMode, setPlaylistSortMode] = useState<PlaylistSortMode>("name_asc");
   const [playlistViewMode, setPlaylistViewMode] = useState<PlaylistViewMode>("grouped");
-  const [showFallbackHelp, setShowFallbackHelp] = useState(false);
   const [presets, setPresets] = useState<SharedFallbackPreset[]>([]);
   const [presetName, setPresetName] = useState("");
 
@@ -282,18 +277,6 @@ export default function FallbackGenreSelector() {
     emitSelection(next.length > 0 ? next : [id]);
   }
 
-  function setSectionOpen(section: FallbackSection): void {
-    setOpenSections((prev) => {
-      const shouldOpen = !prev[section];
-      return {
-        local: false,
-        auto: false,
-        playlists: false,
-        [section]: shouldOpen,
-      };
-    });
-  }
-
   function setAllForSection(section: FallbackSection, enabled: boolean): void {
     const sectionIds = (
       section === "local"
@@ -348,12 +331,17 @@ export default function FallbackGenreSelector() {
       const parsed = JSON.parse(raw) as Partial<{
         playlistSortMode: PlaylistSortMode;
         playlistViewMode: PlaylistViewMode;
+        activeSection: FallbackSection;
         openSections: Record<FallbackSection, boolean>;
       }>;
       if (parsed.playlistSortMode) setPlaylistSortMode(parsed.playlistSortMode);
       if (parsed.playlistViewMode) setPlaylistViewMode(parsed.playlistViewMode);
-      if (parsed.openSections) {
-        setOpenSections((prev) => ({ ...prev, ...parsed.openSections }));
+      if (parsed.activeSection) {
+        setActiveSection(parsed.activeSection);
+      } else if (parsed.openSections) {
+        if (parsed.openSections.playlists) setActiveSection("playlists");
+        else if (parsed.openSections.auto) setActiveSection("auto");
+        else setActiveSection("local");
       }
     } catch {
       // Ignore invalid preferences.
@@ -365,11 +353,11 @@ export default function FallbackGenreSelector() {
     const payload = JSON.stringify({
       playlistSortMode,
       playlistViewMode,
-      openSections,
+      activeSection,
     });
     localStorage.setItem(getStorageKey(), payload);
     localStorage.setItem(getLegacyStorageKey(), payload);
-  }, [playlistSortMode, playlistViewMode, openSections]);
+  }, [playlistSortMode, playlistViewMode, activeSection]);
 
   useEffect(() => {
     const socket = getSocket();
@@ -413,16 +401,8 @@ export default function FallbackGenreSelector() {
             : undefined
         }
       >
-        <p className="mb-1 rounded-md bg-gray-800/70 px-2 py-1.5 text-[11px] leading-snug text-gray-300">
-          Kies bronnen voor autoplay als de wachtrij leeg is. Gebruik presets om complete sets op te slaan voor iedereen.
-        </p>
-        {activeGenreBy && (
-          <p className="mb-1 px-2 py-1 text-[10px] text-gray-400">
-            Gekozen door: <span className="text-violet-300">{activeGenreBy}</span>
-          </p>
-        )}
         <div className="mb-1 rounded-md border border-gray-800 bg-gray-900/70 px-2 py-1 text-[10px] text-gray-300">
-          <span className="font-semibold text-gray-200">Actief nu:</span>{" "}
+          <span className="font-semibold text-gray-200">Actief:</span>{" "}
           {selectedGenreIds.length > 0
             ? selectedGenreIds
               .map((id) => sortedGenres.find((genre) => genre.id === id)?.label ?? id)
@@ -431,7 +411,309 @@ export default function FallbackGenreSelector() {
             : "geen selectie"}
           {selectedGenreIds.length > 4 ? ` (+${selectedGenreIds.length - 4})` : ""}
         </div>
-        <div className="mb-1 rounded-md border border-gray-800 bg-gray-900/70 p-1.5">
+        {activeGenreBy && (
+          <p className="mb-1 px-2 py-0.5 text-[10px] text-gray-400">
+            Gekozen door: <span className="text-violet-300">{activeGenreBy}</span>
+          </p>
+        )}
+        <div className="mb-1 grid grid-cols-3 gap-1 rounded-md bg-gray-800/60 p-1">
+          <button
+            type="button"
+            onClick={() => setActiveSection("local")}
+            className={`rounded-md px-2 py-1 text-[10px] font-semibold uppercase tracking-wider transition ${
+              activeSection === "local" ? "bg-violet-600 text-white shadow-sm" : "text-gray-400 hover:text-white"
+            }`}
+          >
+            Lokaal ({localGenres.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveSection("auto")}
+            className={`rounded-md px-2 py-1 text-[10px] font-semibold uppercase tracking-wider transition ${
+              activeSection === "auto" ? "bg-violet-600 text-white shadow-sm" : "text-gray-400 hover:text-white"
+            }`}
+          >
+            Online ({autoGenreCanonicalCount + (likedAutoGenre ? 1 : 0)})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveSection("playlists")}
+            className={`rounded-md px-2 py-1 text-[10px] font-semibold uppercase tracking-wider transition ${
+              activeSection === "playlists" ? "bg-violet-600 text-white shadow-sm" : "text-gray-400 hover:text-white"
+            }`}
+          >
+            Playlists ({sharedPlaylists.length})
+          </button>
+        </div>
+        <div className="rounded-md border border-gray-800 bg-gray-900/70 p-1">
+          <div className="mb-1 grid grid-cols-2 gap-1">
+            <button type="button" onClick={() => setAllForSection(activeSection, true)} className="rounded border border-gray-700 px-2 py-1 text-[10px] font-semibold text-gray-200 transition hover:bg-gray-800">Alles aan</button>
+            <button type="button" onClick={() => setAllForSection(activeSection, false)} className="rounded border border-gray-700 px-2 py-1 text-[10px] font-semibold text-gray-200 transition hover:bg-gray-800">Alles uit</button>
+          </div>
+          {activeSection === "local" && (
+            <>
+              {localGenres.map((genre) => {
+                const isActive = selectedGenreIds.includes(genre.id);
+                return (
+                  <label
+                    key={genre.id}
+                    className={`mb-0.5 flex w-full cursor-pointer items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
+                      isActive
+                        ? "bg-violet-600/25 text-violet-100"
+                        : "text-gray-300 hover:bg-gray-800 hover:text-white"
+                    }`}
+                  >
+                    <span className="mr-2 flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={isActive}
+                        onChange={() => toggleSelection(genre.id)}
+                        className="h-3.5 w-3.5 cursor-pointer accent-violet-500"
+                      />
+                      <span className="truncate">{genre.label}</span>
+                    </span>
+                    <span className="ml-2 text-[10px] text-gray-500">{genre.trackCount}</span>
+                  </label>
+                );
+              })}
+              {localGenres.length === 0 && (
+                <p className="px-2 py-2 text-[11px] text-gray-400">Geen genres beschikbaar in Lokaal.</p>
+              )}
+            </>
+          )}
+          {activeSection === "auto" && (
+            <>
+              {likedAutoGenre && (
+                <label
+                  className={`mb-0.5 flex w-full cursor-pointer items-center justify-between rounded-md px-2 py-1.5 text-left text-xs font-semibold transition ${
+                    selectedGenreIds.includes(likedAutoGenre.id)
+                      ? "bg-fuchsia-600/25 text-fuchsia-100"
+                      : "text-fuchsia-200 hover:bg-gray-800 hover:text-white"
+                  }`}
+                >
+                  <span className="mr-2 flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={selectedGenreIds.includes(likedAutoGenre.id)}
+                      onChange={() => toggleSelection(likedAutoGenre.id)}
+                      className="h-3.5 w-3.5 cursor-pointer accent-fuchsia-500"
+                    />
+                    <span className="truncate">{likedAutoGenre.label}</span>
+                  </span>
+                  <span className="ml-2 text-[10px] text-gray-500">AUTO</span>
+                </label>
+              )}
+              {groupedAutoSections.map((section) => {
+                const parentAutoId = `auto:${section.parent.id}`;
+                const parentActive = selectedGenreIds.includes(parentAutoId);
+                return (
+                  <div key={section.id} className="mb-1 last:mb-0">
+                    <label
+                      className={`flex w-full cursor-pointer items-center justify-between rounded-md px-2 py-1.5 text-left text-xs font-semibold transition ${
+                        parentActive
+                          ? "bg-fuchsia-600/25 text-fuchsia-100"
+                          : "text-fuchsia-200 hover:bg-gray-800 hover:text-white"
+                      }`}
+                    >
+                      <span className="mr-2 flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={parentActive}
+                          onChange={() => toggleSelection(parentAutoId)}
+                          className="h-3.5 w-3.5 cursor-pointer accent-fuchsia-500"
+                        />
+                        <span className="truncate">{section.parent.name}</span>
+                      </span>
+                      {isGroupedParentGenre(section.parent.id) && (
+                        <span className="ml-2 text-[10px] text-gray-500">alles</span>
+                      )}
+                    </label>
+                    {section.children.map((genre) => {
+                      const childAutoId = `auto:${genre.id}`;
+                      const isActive = selectedGenreIds.includes(childAutoId);
+                      return (
+                        <label
+                          key={`${section.id}:${genre.id}`}
+                          className={`ml-2 mt-0.5 flex w-[calc(100%-0.5rem)] cursor-pointer items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
+                            isActive
+                              ? "bg-violet-600/25 text-violet-100"
+                              : "text-gray-300 hover:bg-gray-800 hover:text-white"
+                          }`}
+                        >
+                          <span className="mr-2 flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={isActive}
+                              onChange={() => toggleSelection(childAutoId)}
+                              className="h-3.5 w-3.5 cursor-pointer accent-violet-500"
+                            />
+                            <span className="truncate">- {genre.name}</span>
+                          </span>
+                          <span className="ml-2 text-[10px] text-gray-500">AUTO</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+              {groupedAutoSections.length === 0 && !likedAutoGenre && (
+                <p className="px-2 py-2 text-[11px] text-gray-400">Geen genres beschikbaar in Online.</p>
+              )}
+            </>
+          )}
+          {activeSection === "playlists" && (
+            <>
+              <p className="mb-1 px-0.5 text-[10px] text-gray-400">Weergave playlists</p>
+              <div className="mb-1 grid grid-cols-2 gap-1">
+                <button
+                  type="button"
+                  onClick={() => setPlaylistViewMode("grouped")}
+                  className={`rounded px-2 py-1 text-[10px] font-semibold transition ${
+                    playlistViewMode === "grouped" ? "bg-violet-600/30 text-violet-100" : "text-gray-300 hover:bg-gray-800"
+                  }`}
+                >
+                  Op genre
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPlaylistViewMode("all")}
+                  className={`rounded px-2 py-1 text-[10px] font-semibold transition ${
+                    playlistViewMode === "all" ? "bg-violet-600/30 text-violet-100" : "text-gray-300 hover:bg-gray-800"
+                  }`}
+                >
+                  Losse lijst
+                </button>
+              </div>
+              <div className="mb-1 grid grid-cols-2 gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
+                    getSocket().emit("fallback:shared:mode:set", { mode: "random", selectedBy });
+                  }}
+                  className={`rounded px-2 py-1 text-[10px] font-semibold transition ${
+                    sharedPlaybackMode === "random"
+                      ? "bg-violet-600/30 text-violet-100"
+                      : "text-gray-300 hover:bg-gray-800"
+                  }`}
+                >
+                  Random
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
+                    getSocket().emit("fallback:shared:mode:set", { mode: "ordered", selectedBy });
+                  }}
+                  className={`rounded px-2 py-1 text-[10px] font-semibold transition ${
+                    sharedPlaybackMode === "ordered"
+                      ? "bg-violet-600/30 text-violet-100"
+                      : "text-gray-300 hover:bg-gray-800"
+                  }`}
+                >
+                  Op volgorde
+                </button>
+              </div>
+              <select
+                value={playlistSortMode}
+                onChange={(e) => setPlaylistSortMode(e.target.value as PlaylistSortMode)}
+                className="mb-1 w-full rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white"
+              >
+                <option value="name_asc">Sortering: Naam A-Z</option>
+                <option value="name_desc">Sortering: Naam Z-A</option>
+                <option value="tracks_desc">Sortering: Meeste tracks</option>
+              </select>
+              {playlistViewMode === "grouped" ? groupedSharedPlaylists.map((genreGroup) => (
+                <div key={`genre:${genreGroup.genreLabel}`} className="mb-1 rounded border border-gray-800 bg-gray-900/50 p-1">
+                  <p className="px-1 py-0.5 text-[11px] font-semibold text-violet-100">
+                    {genreGroup.genreLabel} ({genreGroup.subgroups.reduce((acc, subgroup) => acc + subgroup.items.length, 0)})
+                  </p>
+                  <div className="mt-1 space-y-1">
+                    {genreGroup.subgroups.map((subgroup) => (
+                      <div key={`sub:${genreGroup.genreLabel}:${subgroup.subgenreLabel}`} className="rounded border border-gray-800/80 bg-gray-900/40 p-1">
+                        <p className="text-[10px] font-semibold text-gray-300">
+                          {subgroup.subgenreLabel} ({subgroup.items.length})
+                        </p>
+                        <div className="mt-1 space-y-0.5">
+                          {subgroup.items.map((playlist) => {
+                            const isActive = selectedSharedGenres.includes(playlist.id);
+                            return (
+                              <label
+                                key={playlist.id}
+                                className={`flex w-full cursor-pointer items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
+                                  isActive
+                                    ? "bg-violet-600/25 text-violet-100"
+                                    : "text-gray-300 hover:bg-gray-800 hover:text-white"
+                                }`}
+                              >
+                                <span className="mr-2 flex items-center gap-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={isActive}
+                                    onChange={() => {
+                                      const next = isActive
+                                        ? selectedSharedGenres.filter((id) => id !== playlist.id)
+                                        : [...selectedSharedGenres, playlist.id];
+                                      const safeNext = next.length > 0 ? next : [playlist.id];
+                                      emitSharedSelection(safeNext);
+                                    }}
+                                    className="h-3.5 w-3.5 cursor-pointer accent-violet-500"
+                                  />
+                                  <span className="truncate">{playlist.label.replace(/^Playlist ·\s*/i, "")}</span>
+                                </span>
+                                <span className="ml-2 text-[10px] text-gray-500">{playlist.trackCount}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )) : sortedSharedPlaylists.map((playlist) => {
+                const isActive = selectedSharedGenres.includes(playlist.id);
+                return (
+                  <label
+                    key={playlist.id}
+                    className={`mb-0.5 flex w-full cursor-pointer items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
+                      isActive
+                        ? "bg-violet-600/25 text-violet-100"
+                        : "text-gray-300 hover:bg-gray-800 hover:text-white"
+                    }`}
+                  >
+                    <span className="mr-2 flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={isActive}
+                        onChange={() => {
+                          const next = isActive
+                            ? selectedSharedGenres.filter((id) => id !== playlist.id)
+                            : [...selectedSharedGenres, playlist.id];
+                          const safeNext = next.length > 0 ? next : [playlist.id];
+                          emitSharedSelection(safeNext);
+                        }}
+                        className="h-3.5 w-3.5 cursor-pointer accent-violet-500"
+                      />
+                      <span className="truncate">{playlist.label.replace(/^Playlist ·\s*/i, "")}</span>
+                    </span>
+                    <span className="ml-2 text-[10px] text-gray-500">{playlist.trackCount}</span>
+                  </label>
+                );
+              })}
+              {selectedSharedGenres.length > 1 && (
+                <div className="mt-1 rounded-md border border-violet-700/40 bg-violet-900/20 px-2 py-1 text-[10px] text-violet-100">
+                  Mix actief: {selectedSharedGenres.length} playlists
+                </div>
+              )}
+              {sharedPlaylists.length === 0 && (
+                <p className="px-2 py-2 text-[11px] text-gray-400">
+                  Geen publieke playlists beschikbaar.
+                </p>
+              )}
+            </>
+          )}
+        </div>
+        <div className="mt-1 rounded-md border border-gray-800 bg-gray-900/70 p-1.5">
           <p className="mb-1 text-[10px] font-semibold text-gray-300">Presets (gedeeld)</p>
           <div className="mb-1 flex gap-1">
             <input
@@ -448,9 +730,9 @@ export default function FallbackGenreSelector() {
               Opslaan
             </button>
           </div>
-          <div className="max-h-24 space-y-1 overflow-y-auto pr-1">
+          <div className="max-h-20 space-y-1 overflow-y-auto pr-1">
             {presets.length === 0 ? (
-              <p className="text-[10px] text-gray-500">Nog geen presets opgeslagen.</p>
+              <p className="text-[10px] text-gray-500">Nog geen presets.</p>
             ) : (
               presets.map((preset) => (
                 <button
@@ -463,355 +745,6 @@ export default function FallbackGenreSelector() {
                   <span className="ml-2 text-gray-500">{preset.genreIds.length}</span>
                 </button>
               ))
-            )}
-          </div>
-        </div>
-        <div className="border-b border-gray-800/80 mb-1" />
-        <div className="space-y-1">
-          <div className="rounded-md border border-gray-800 bg-gray-900/70">
-            <button
-              type="button"
-              onClick={() => setSectionOpen("local")}
-              className="flex w-full items-center justify-between px-2 py-1.5 text-left text-[11px] font-semibold text-gray-200"
-            >
-              <span>Lokaal ({localGenres.length})</span>
-              <span>{openSections.local ? "▾" : "▸"}</span>
-            </button>
-            {openSections.local && (
-              <div className="border-t border-gray-800 px-1 pb-1">
-                <div className="mb-1 mt-1 grid grid-cols-2 gap-1">
-                  <button type="button" onClick={() => setAllForSection("local", true)} className="rounded border border-gray-700 px-2 py-1 text-[10px] text-gray-200 hover:bg-gray-800">Alles aan</button>
-                  <button type="button" onClick={() => setAllForSection("local", false)} className="rounded border border-gray-700 px-2 py-1 text-[10px] text-gray-200 hover:bg-gray-800">Alles uit</button>
-                </div>
-                <>
-            {localGenres.map((genre) => {
-              const isActive = selectedGenreIds.includes(genre.id);
-              return (
-                <label
-                  key={genre.id}
-                  className={`flex w-full cursor-pointer items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
-                    isActive
-                      ? "bg-violet-600/25 text-violet-100"
-                      : "text-gray-300 hover:bg-gray-800 hover:text-white"
-                  }`}
-                >
-                  <span className="mr-2 flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={isActive}
-                      onChange={() => toggleSelection(genre.id)}
-                      className="h-3.5 w-3.5 cursor-pointer accent-violet-500"
-                    />
-                    <span className="truncate">{genre.label}</span>
-                  </span>
-                  <span className="ml-2 text-[10px] text-gray-500">{genre.trackCount}</span>
-                </label>
-              );
-            })}
-            {localGenres.length === 0 && (
-              <p className="px-2 py-2 text-[11px] text-gray-400">
-                Geen genres beschikbaar in de Lokale lijst.
-              </p>
-            )}
-                </>
-              </div>
-            )}
-          </div>
-          <div className="rounded-md border border-gray-800 bg-gray-900/70">
-            <button
-              type="button"
-              onClick={() => setSectionOpen("auto")}
-              className="flex w-full items-center justify-between px-2 py-1.5 text-left text-[11px] font-semibold text-gray-200"
-            >
-              <span>Online ({autoGenreCanonicalCount + (likedAutoGenre ? 1 : 0)})</span>
-              <span>{openSections.auto ? "▾" : "▸"}</span>
-            </button>
-            {openSections.auto && (
-              <div className="border-t border-gray-800 px-1 pb-1">
-                <div className="mb-1 mt-1 grid grid-cols-2 gap-1">
-                  <button type="button" onClick={() => setAllForSection("auto", true)} className="rounded border border-gray-700 px-2 py-1 text-[10px] text-gray-200 hover:bg-gray-800">Alles aan</button>
-                  <button type="button" onClick={() => setAllForSection("auto", false)} className="rounded border border-gray-700 px-2 py-1 text-[10px] text-gray-200 hover:bg-gray-800">Alles uit</button>
-                </div>
-                <>
-            {likedAutoGenre && (
-              <label
-                className={`mb-1 flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs font-semibold transition ${
-                  selectedGenreIds.includes(likedAutoGenre.id)
-                    ? "bg-fuchsia-600/25 text-fuchsia-100"
-                    : "text-fuchsia-200 hover:bg-gray-800 hover:text-white"
-                }`}
-              >
-                <span className="mr-2 flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={selectedGenreIds.includes(likedAutoGenre.id)}
-                    onChange={() => toggleSelection(likedAutoGenre.id)}
-                    className="h-3.5 w-3.5 cursor-pointer accent-fuchsia-500"
-                  />
-                  <span className="truncate">{likedAutoGenre.label}</span>
-                </span>
-                <span className="ml-2 text-[10px] text-gray-500">AUTO</span>
-              </label>
-            )}
-            {groupedAutoSections.map((section) => {
-              const parentAutoId = `auto:${section.parent.id}`;
-              const parentActive = selectedGenreIds.includes(parentAutoId);
-              return (
-                <div key={section.id} className="mb-1 last:mb-0">
-                  <label
-                    className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs font-semibold transition ${
-                      parentActive
-                        ? "bg-fuchsia-600/25 text-fuchsia-100"
-                        : "text-fuchsia-200 hover:bg-gray-800 hover:text-white"
-                    }`}
-                  >
-                    <span className="mr-2 flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={parentActive}
-                        onChange={() => toggleSelection(parentAutoId)}
-                        className="h-3.5 w-3.5 cursor-pointer accent-fuchsia-500"
-                      />
-                      <span className="truncate">{section.parent.name}</span>
-                    </span>
-                    {isGroupedParentGenre(section.parent.id) && (
-                      <span className="ml-2 text-[10px] text-gray-500">alles</span>
-                    )}
-                  </label>
-                  {section.children.map((genre) => {
-                    const childAutoId = `auto:${genre.id}`;
-                    const isActive = selectedGenreIds.includes(childAutoId);
-                    return (
-                      <label
-                        key={`${section.id}:${genre.id}`}
-                        className={`ml-2 mt-0.5 flex w-[calc(100%-0.5rem)] items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
-                          isActive
-                            ? "bg-violet-600/25 text-violet-100"
-                            : "text-gray-300 hover:bg-gray-800 hover:text-white"
-                        }`}
-                      >
-                        <span className="mr-2 flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={isActive}
-                            onChange={() => toggleSelection(childAutoId)}
-                            className="h-3.5 w-3.5 cursor-pointer accent-violet-500"
-                          />
-                          <span className="truncate">- {genre.name}</span>
-                        </span>
-                        <span className="ml-2 text-[10px] text-gray-500">AUTO</span>
-                      </label>
-                    );
-                  })}
-                </div>
-              );
-            })}
-            {groupedAutoSections.length === 0 && !likedAutoGenre && (
-              <p className="px-2 py-2 text-[11px] text-gray-400">
-                Geen genres beschikbaar in de Online lijst.
-              </p>
-            )}
-                </>
-              </div>
-            )}
-          </div>
-          <div className="rounded-md border border-gray-800 bg-gray-900/70">
-            <button
-              type="button"
-              onClick={() => setSectionOpen("playlists")}
-              className="flex w-full items-center justify-between px-2 py-1.5 text-left text-[11px] font-semibold text-gray-200"
-            >
-              <span>Playlists ({sharedPlaylists.length})</span>
-              <span>{openSections.playlists ? "▾" : "▸"}</span>
-            </button>
-            {openSections.playlists && (
-              <div className="border-t border-gray-800 px-1 pb-1">
-            <div className="mb-1 rounded-md border border-gray-800 bg-gray-900/70 p-1.5">
-              <div className="mb-1 flex items-center justify-between gap-2">
-                <p className="text-[10px] font-semibold text-gray-300">Playlist selectie</p>
-                <button
-                  type="button"
-                  onClick={() => setShowFallbackHelp((prev) => !prev)}
-                  className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-gray-700 text-[10px] text-gray-300 transition hover:border-violet-500 hover:text-white"
-                  aria-label="Hoe werkt autoplay fallback?"
-                  title="Hoe werkt autoplay fallback?"
-                >
-                  ?
-                </button>
-              </div>
-              {showFallbackHelp && (
-                <div className="mb-1 rounded border border-violet-700/40 bg-violet-900/20 px-2 py-1 text-[10px] leading-relaxed text-violet-100">
-                  Vink meerdere playlists aan voor een mix. De speler verdeelt tracks netjes over de geselecteerde playlists.
-                  Als een track niet gevonden wordt, probeert hij de volgende kandidaat automatisch.
-                </div>
-              )}
-              <div className="grid grid-cols-2 gap-1">
-                <button
-                  type="button"
-                  onClick={() => setAllForSection("playlists", true)}
-                  className="rounded border border-gray-700 px-2 py-1 text-[11px] font-semibold text-gray-200 transition hover:bg-gray-800"
-                >
-                  Alles aan
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAllForSection("playlists", false)}
-                  className="rounded border border-gray-700 px-2 py-1 text-[11px] font-semibold text-gray-200 transition hover:bg-gray-800"
-                >
-                  Alles uit
-                </button>
-              </div>
-            </div>
-            <div className="mb-1 rounded-md border border-gray-800 bg-gray-900/70 p-1">
-              <p className="mb-1 px-1 text-[10px] text-gray-400">Afspeelvolgorde</p>
-              <div className="grid grid-cols-2 gap-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
-                    getSocket().emit("fallback:shared:mode:set", { mode: "random", selectedBy });
-                  }}
-                  className={`rounded px-2 py-1 text-[11px] font-semibold transition ${
-                    sharedPlaybackMode === "random"
-                      ? "bg-violet-600/30 text-violet-100"
-                      : "text-gray-300 hover:bg-gray-800"
-                  }`}
-                >
-                  Random
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
-                    getSocket().emit("fallback:shared:mode:set", { mode: "ordered", selectedBy });
-                  }}
-                  className={`rounded px-2 py-1 text-[11px] font-semibold transition ${
-                    sharedPlaybackMode === "ordered"
-                      ? "bg-violet-600/30 text-violet-100"
-                      : "text-gray-300 hover:bg-gray-800"
-                  }`}
-                >
-                  Op volgorde
-                </button>
-              </div>
-            </div>
-            <select
-              value={playlistSortMode}
-              onChange={(e) => setPlaylistSortMode(e.target.value as PlaylistSortMode)}
-              className="mb-1 w-full rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white"
-            >
-              <option value="name_asc">Sortering: Naam A-Z</option>
-              <option value="name_desc">Sortering: Naam Z-A</option>
-              <option value="tracks_desc">Sortering: Meeste tracks</option>
-            </select>
-            <div className="mb-1 grid grid-cols-2 gap-1">
-              <button
-                type="button"
-                onClick={() => setPlaylistViewMode("grouped")}
-                className={`rounded px-2 py-1 text-[10px] font-semibold transition ${
-                  playlistViewMode === "grouped" ? "bg-violet-600/30 text-violet-100" : "text-gray-300 hover:bg-gray-800"
-                }`}
-              >
-                Op genre
-              </button>
-              <button
-                type="button"
-                onClick={() => setPlaylistViewMode("all")}
-                className={`rounded px-2 py-1 text-[10px] font-semibold transition ${
-                  playlistViewMode === "all" ? "bg-violet-600/30 text-violet-100" : "text-gray-300 hover:bg-gray-800"
-                }`}
-              >
-                Alle playlists
-              </button>
-            </div>
-            {playlistViewMode === "grouped" ? groupedSharedPlaylists.map((genreGroup) => (
-              <div key={`genre:${genreGroup.genreLabel}`} className="mb-1 rounded border border-gray-800 bg-gray-900/50 p-1">
-                <p className="px-1 py-0.5 text-[11px] font-semibold text-violet-100">
-                  {genreGroup.genreLabel} ({genreGroup.subgroups.reduce((acc, subgroup) => acc + subgroup.items.length, 0)})
-                </p>
-                <div className="mt-1 space-y-1">
-                  {genreGroup.subgroups.map((subgroup) => (
-                    <div key={`sub:${genreGroup.genreLabel}:${subgroup.subgenreLabel}`} className="rounded border border-gray-800/80 bg-gray-900/40 p-1">
-                      <p className="text-[10px] font-semibold text-gray-300">
-                        {subgroup.subgenreLabel} ({subgroup.items.length})
-                      </p>
-                      <div className="mt-1 space-y-0.5">
-                        {subgroup.items.map((playlist) => {
-                          const isActive = selectedSharedGenres.includes(playlist.id);
-                          return (
-                            <label
-                              key={playlist.id}
-                              className={`flex w-full cursor-pointer items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
-                                isActive
-                                  ? "bg-violet-600/25 text-violet-100"
-                                  : "text-gray-300 hover:bg-gray-800 hover:text-white"
-                              }`}
-                            >
-                              <span className="mr-2 flex items-center gap-2">
-                                <input
-                                  type="checkbox"
-                                  checked={isActive}
-                                  onChange={() => {
-                                    const next = isActive
-                                      ? selectedSharedGenres.filter((id) => id !== playlist.id)
-                                      : [...selectedSharedGenres, playlist.id];
-                                    const safeNext = next.length > 0 ? next : [playlist.id];
-                                    emitSharedSelection(safeNext);
-                                  }}
-                                  className="h-3.5 w-3.5 cursor-pointer accent-violet-500"
-                                />
-                                <span className="truncate">{playlist.label.replace(/^Playlist ·\s*/i, "")}</span>
-                              </span>
-                              <span className="ml-2 text-[10px] text-gray-500">{playlist.trackCount}</span>
-                            </label>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )) : sortedSharedPlaylists.map((playlist) => {
-              const isActive = selectedSharedGenres.includes(playlist.id);
-              return (
-                <label
-                  key={playlist.id}
-                  className={`mb-0.5 flex w-full cursor-pointer items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
-                    isActive
-                      ? "bg-violet-600/25 text-violet-100"
-                      : "text-gray-300 hover:bg-gray-800 hover:text-white"
-                  }`}
-                >
-                  <span className="mr-2 flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={isActive}
-                      onChange={() => {
-                        const next = isActive
-                          ? selectedSharedGenres.filter((id) => id !== playlist.id)
-                          : [...selectedSharedGenres, playlist.id];
-                        const safeNext = next.length > 0 ? next : [playlist.id];
-                        emitSharedSelection(safeNext);
-                      }}
-                      className="h-3.5 w-3.5 cursor-pointer accent-violet-500"
-                    />
-                    <span className="truncate">{playlist.label.replace(/^Playlist ·\s*/i, "")}</span>
-                  </span>
-                  <span className="ml-2 text-[10px] text-gray-500">{playlist.trackCount}</span>
-                </label>
-              );
-            })}
-            {selectedSharedGenres.length > 1 && (
-              <div className="mb-1 rounded-md border border-violet-700/40 bg-violet-900/20 px-2 py-1 text-[10px] text-violet-100">
-                Mix actief: {selectedSharedGenres.length} playlists
-              </div>
-            )}
-            {sharedPlaylists.length === 0 && (
-              <p className="px-2 py-2 text-[11px] text-gray-400">
-                Geen publieke playlists beschikbaar.
-              </p>
-            )}
-              </div>
             )}
           </div>
         </div>

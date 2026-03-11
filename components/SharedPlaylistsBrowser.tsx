@@ -27,6 +27,7 @@ interface SharedPlaylistsBrowserProps {
 
 type View = "playlists" | "tracks";
 type PlaylistSortMode = "name_asc" | "name_desc" | "tracks_desc" | "newest";
+type PlaylistViewMode = "grouped" | "all";
 const TRACK_PAGE_SIZE = 120;
 const PLAYLIST_GENRE_GROUPS = [
   "Hard Dance",
@@ -120,6 +121,7 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
   const [importName, setImportName] = useState("");
   const [showHelp, setShowHelp] = useState(false);
   const [playlistSortMode, setPlaylistSortMode] = useState<PlaylistSortMode>("name_asc");
+  const [playlistViewMode, setPlaylistViewMode] = useState<PlaylistViewMode>("grouped");
   const [collapsedGenres, setCollapsedGenres] = useState<string[]>([]);
   const [collapsedSubgenres, setCollapsedSubgenres] = useState<string[]>([]);
   const [hasStoredCollapseState, setHasStoredCollapseState] = useState(false);
@@ -194,12 +196,14 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
       if (!raw) return;
       const parsed = JSON.parse(raw) as Partial<{
         sortMode: PlaylistSortMode;
+        playlistViewMode: PlaylistViewMode;
         showHelp: boolean;
         collapsedGenres: string[];
         collapsedSubgenres: string[];
         hasStoredCollapseState: boolean;
       }>;
       if (parsed.sortMode) setPlaylistSortMode(parsed.sortMode);
+      if (parsed.playlistViewMode) setPlaylistViewMode(parsed.playlistViewMode);
       if (typeof parsed.showHelp === "boolean") setShowHelp(parsed.showHelp);
       if (Array.isArray(parsed.collapsedGenres)) setCollapsedGenres(parsed.collapsedGenres);
       if (Array.isArray(parsed.collapsedSubgenres)) setCollapsedSubgenres(parsed.collapsedSubgenres);
@@ -214,6 +218,7 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
     if (typeof window === "undefined") return;
     const payload = JSON.stringify({
       sortMode: playlistSortMode,
+      playlistViewMode,
       showHelp,
       collapsedGenres,
       collapsedSubgenres,
@@ -221,7 +226,7 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
     });
     localStorage.setItem(getStorageKey(), payload);
     localStorage.setItem(getLegacyStorageKey(), payload);
-  }, [playlistSortMode, showHelp, collapsedGenres, collapsedSubgenres, hasStoredCollapseState]);
+  }, [playlistSortMode, playlistViewMode, showHelp, collapsedGenres, collapsedSubgenres, hasStoredCollapseState]);
 
   const loadTracksPage = useCallback(async (playlistId: string, append: boolean) => {
     if (append) setLoadingMoreTracks(true);
@@ -517,10 +522,34 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
               <option value="tracks_desc">Sortering: Meeste tracks</option>
               <option value="newest">Sortering: Nieuwste import</option>
             </select>
+            <div className="mb-1 grid grid-cols-2 gap-1">
+              <button
+                type="button"
+                onClick={() => setPlaylistViewMode("grouped")}
+                className={`rounded px-2 py-1 text-[10px] font-semibold transition ${
+                  playlistViewMode === "grouped"
+                    ? "bg-blue-700/35 text-blue-100"
+                    : "text-gray-300 hover:bg-gray-800"
+                }`}
+              >
+                Op genre
+              </button>
+              <button
+                type="button"
+                onClick={() => setPlaylistViewMode("all")}
+                className={`rounded px-2 py-1 text-[10px] font-semibold transition ${
+                  playlistViewMode === "all"
+                    ? "bg-blue-700/35 text-blue-100"
+                    : "text-gray-300 hover:bg-gray-800"
+                }`}
+              >
+                Alles onder elkaar
+              </button>
+            </div>
             {groupedPlaylists.length === 0 && (
               <p className="text-[10px] text-gray-400">Nog geen publieke playlists beschikbaar.</p>
             )}
-            {groupedPlaylists.map((genreGroup) => (
+            {playlistViewMode === "grouped" ? groupedPlaylists.map((genreGroup) => (
               <details
                 key={`genre:${genreGroup.genreLabel}`}
                 open={hasStoredCollapseState ? !collapsedGenres.includes(genreGroup.genreLabel) : false}
@@ -598,6 +627,39 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                   ))}
                 </div>
               </details>
+            )) : sortedPlaylists.map((playlist) => (
+              <div
+                key={playlist.id}
+                className="mt-1 flex w-full items-center gap-2 rounded-lg border border-gray-800 bg-gray-900/70 px-2.5 py-1.5 text-left transition hover:border-blue-700/60 hover:bg-gray-800/80"
+              >
+                {playlist.cover_url ? (
+                  <img src={playlist.cover_url} alt="" className="h-8 w-8 shrink-0 rounded object-cover" />
+                ) : (
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-blue-500/15">
+                    <svg className="h-4 w-4 text-blue-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <path d="M8 6h12M8 12h12M8 18h12M3 6h.01M3 12h.01M3 18h.01" />
+                    </svg>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => { void openPlaylist(playlist); }}
+                  className="min-w-0 flex-1 truncate text-left text-[11px] font-semibold text-white"
+                >
+                  {playlist.name}
+                </button>
+                <span className="ml-2 shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-300">
+                  {playlist.track_count}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setAsAutoplayFallback(playlist)}
+                  className="ml-1 shrink-0 rounded border border-violet-700/80 bg-violet-900/30 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200 transition hover:bg-violet-800/40"
+                  title="Gebruik als autoplay fallback"
+                >
+                  Auto
+                </button>
+              </div>
             ))}
           </div>
           <details className="mb-2 rounded-lg border border-gray-700/70 bg-gradient-to-br from-gray-900 to-gray-900/70 p-2.5">

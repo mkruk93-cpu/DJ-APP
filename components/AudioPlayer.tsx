@@ -92,6 +92,11 @@ function getFullscreenArtworkUrl(url: string | null): string | null {
   if (!url) return null;
   // Prefer higher resolution YouTube thumbnails for fullscreen artwork.
   if (url.includes("img.youtube.com/vi/") || url.includes("i.ytimg.com/vi/")) {
+    const idMatch = url.match(/\/vi\/([^/]+)/i);
+    const videoId = idMatch?.[1];
+    if (videoId) {
+      return `https://i.ytimg.com/vi_webp/${videoId}/maxresdefault.webp`;
+    }
     return url
       .replace(/\/mqdefault\.jpg(\?.*)?$/i, "/maxresdefault.jpg")
       .replace(/\/hqdefault\.jpg(\?.*)?$/i, "/maxresdefault.jpg")
@@ -188,6 +193,25 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
       if (!isFullscreen) return;
       win.__radioPlayerFullscreenState = false;
       window.dispatchEvent(new CustomEvent("radio-player-fullscreen-state", { detail: { fullscreen: false } }));
+    };
+  }, [isFullscreen]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const html = document.documentElement;
+    const body = document.body;
+    const prevHtmlOverflow = html.style.overflow;
+    const prevBodyOverflow = body.style.overflow;
+    const prevBodyOverscroll = body.style.overscrollBehavior;
+    if (isFullscreen) {
+      html.style.overflow = "hidden";
+      body.style.overflow = "hidden";
+      body.style.overscrollBehavior = "none";
+    }
+    return () => {
+      html.style.overflow = prevHtmlOverflow;
+      body.style.overflow = prevBodyOverflow;
+      body.style.overscrollBehavior = prevBodyOverscroll;
     };
   }, [isFullscreen]);
 
@@ -647,9 +671,10 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   }
 
   const isRadioMode = !!syncedRadioTrack;
+  const hasLiveRadioTrack = !!radioTrack;
   const isLoading = isRadioMode && syncedRadioTrack.started_at === 0;
   const radioHasMetadata = !!(syncedRadioTrack?.title || syncedRadioTrack?.thumbnail);
-  const showSupabaseData = (showFallback && (!connected || preferSupabase)) || !radioHasMetadata;
+  const showSupabaseData = (((showFallback && (!connected || preferSupabase)) || !radioHasMetadata) && !hasLiveRadioTrack);
   const parsedRadio = parseTrackDisplay(syncedRadioTrack?.title);
   const radioTitle = isJingleTrack ? null : (parsedRadio.title ?? syncedRadioTrack?.title ?? null);
   const radioArtist = isJingleTrack ? null : parsedRadio.artist;
@@ -665,7 +690,8 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const selectionPlaylistLabel = syncedRadioTrack?.selection_playlist ?? sharedSelectionLabel ?? null;
   const displayTitle = syncedRadioTrack ? radioTitle : (showSupabaseData ? track.title : null);
   const displayArtist = syncedRadioTrack ? radioArtist : (showSupabaseData ? track.artist : null);
-  const displayArtwork = isJingleTrack ? null : (syncedRadioTrack?.thumbnail ?? (showSupabaseData ? track.artwork_url : null));
+  const immediateRadioArtwork = radioTrack?.thumbnail ?? null;
+  const displayArtwork = isJingleTrack ? null : (immediateRadioArtwork ?? syncedRadioTrack?.thumbnail ?? (showSupabaseData ? track.artwork_url : null));
   const artworkVersion = syncedRadioTrack
     ? `${syncedRadioTrack.id}|${syncedRadioTrack.started_at}`
     : `${displayTitle ?? ""}|${displayArtist ?? ""}`;
@@ -929,7 +955,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
       ref={playerRef}
       className={`audio-player-shell w-full overflow-hidden bg-gray-900 shadow-lg shadow-violet-500/5 ${
         isFullscreen
-          ? "fixed inset-0 z-[180] h-[100svh] max-w-none rounded-none border-0"
+          ? "fixed inset-0 z-[180] h-[100dvh] max-w-none rounded-none border-0"
           : "relative max-w-full rounded-xl border border-gray-800"
       }`}
     >
@@ -994,7 +1020,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
         <button
           type="button"
           onClick={toggleFullscreen}
-          className="absolute right-2 top-2 z-[12] flex h-8 w-8 items-center justify-center rounded-full border border-gray-600/70 bg-black/45 text-sm text-white transition hover:border-violet-400/80 hover:bg-black/65 sm:h-9 sm:w-9"
+          className="absolute right-1.5 top-1.5 z-[12] hidden h-6 w-6 items-center justify-center rounded-full border border-gray-600/70 bg-black/45 text-[11px] text-white transition hover:border-violet-400/80 hover:bg-black/65 sm:right-2 sm:top-2 sm:flex sm:h-8 sm:w-8 sm:text-sm"
           aria-label="Fullscreen player"
         >
           ⛶
@@ -1034,8 +1060,8 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
       )}
 
       {isFullscreen && (
-        <div className="relative z-[2] flex h-full w-full flex-col overflow-y-auto p-3 pb-5 sm:p-6">
-          <div className="sticky top-0 z-20 -mx-3 mb-2 flex items-center justify-between bg-gray-900/75 px-3 py-2 backdrop-blur-md sm:static sm:mx-0 sm:mb-0 sm:bg-transparent sm:px-0 sm:py-0">
+        <div className="relative z-[2] flex h-full w-full flex-col overflow-hidden p-2 pb-3 pt-[max(env(safe-area-inset-top),0.35rem)] sm:p-4">
+          <div className="z-20 mb-2 flex items-center justify-between">
             <span className="rounded-full border border-violet-400/40 bg-black/30 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-violet-100">
               Live player
             </span>
@@ -1061,12 +1087,12 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
             </div>
           </div>
 
-          <div className="flex flex-1 items-center justify-center py-3 sm:py-4">
-            <div className="flex w-full max-w-6xl flex-col items-center gap-4 lg:flex-row lg:items-center lg:justify-center lg:gap-10">
-              <div className="relative shrink-0">
+          <div className="flex flex-1 items-center justify-center py-0.5 sm:py-2">
+            <div className="grid h-full w-full max-w-6xl grid-cols-1 items-center gap-2 landscape:grid-cols-[minmax(0,1fr)_minmax(220px,1fr)] landscape:gap-3 md:grid-cols-[minmax(0,1fr)_minmax(320px,1fr)] md:gap-6">
+              <div className="relative flex items-center justify-center">
                 {(fullscreenCurrentArtwork || fullscreenIncomingArtwork) ? (
-                  <div className="player-cover-fullscreen player-cover-idle-drift relative h-[56vw] w-[56vw] max-h-[54svh] max-w-[54svh] min-h-[180px] min-w-[180px] sm:h-[44vw] sm:w-[44vw] sm:max-h-[62svh] sm:max-w-[62svh] sm:min-h-[220px] sm:min-w-[220px]">
-                    <div className="absolute inset-0 rounded-3xl border border-violet-300/30 bg-black/25 shadow-2xl shadow-black/50" />
+                  <div className="player-cover-fullscreen player-cover-idle-drift relative h-[44vw] w-[44vw] max-h-[40dvh] max-w-[40dvh] min-h-[120px] min-w-[120px] overflow-hidden rounded-3xl landscape:max-h-[34dvh] landscape:max-w-[34dvh] md:h-[56vh] md:w-[56vh] md:max-h-[64vh] md:max-w-[64vh]">
+                    <div className="absolute inset-0 rounded-3xl bg-black/20 shadow-2xl shadow-black/60" />
                     {fullscreenCurrentArtwork && (
                       <img
                         src={fullscreenCurrentArtwork}
@@ -1085,34 +1111,34 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
                     )}
                   </div>
                 ) : (
-                  <div className="player-fallback-note player-fallback-cover flex h-[56vw] w-[56vw] max-h-[54svh] max-w-[54svh] min-h-[180px] min-w-[180px] items-center justify-center rounded-3xl border border-violet-300/30 sm:h-[44vw] sm:w-[44vw] sm:max-h-[62svh] sm:max-w-[62svh] sm:min-h-[220px] sm:min-w-[220px]">
+                  <div className="player-fallback-note player-fallback-cover flex h-[44vw] w-[44vw] max-h-[40dvh] max-w-[40dvh] min-h-[120px] min-w-[120px] items-center justify-center rounded-3xl border border-violet-300/30 landscape:max-h-[34dvh] landscape:max-w-[34dvh] md:h-[56vh] md:w-[56vh] md:max-h-[64vh] md:max-w-[64vh]">
                     {artworkFallback}
                   </div>
                 )}
               </div>
 
-              <div className="w-full max-w-2xl rounded-2xl border border-gray-700/70 bg-black/30 p-3 backdrop-blur-md sm:p-6">
+              <div className="w-full rounded-2xl border border-gray-700/70 bg-black/35 p-2.5 backdrop-blur-md md:p-5">
                 <p className="text-xs uppercase tracking-[0.22em] text-gray-300">Nu live</p>
-                <h2 className="mt-2 line-clamp-2 text-xl font-bold text-white sm:text-4xl">
+                <h2 className="mt-1 line-clamp-2 text-base font-bold text-white landscape:text-sm md:text-3xl">
                   {displayTitle || "Wacht op nummer..."}
                 </h2>
-                <p className="mt-1 line-clamp-1 text-sm text-violet-200 sm:text-xl">{displayArtist || "Radio stream"}</p>
+                <p className="mt-1 line-clamp-1 text-xs text-violet-200 landscape:text-xs md:text-lg">{displayArtist || "Radio stream"}</p>
                 {isRadioMode && (
                   <>
-                    <p className="mt-1 text-sm text-gray-300">{formatTime(elapsed)} / {durationLabel}</p>
-                    <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-700/80">
+                    <p className="mt-1 text-xs text-gray-300 md:text-sm">{formatTime(elapsed)} / {durationLabel}</p>
+                    <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-gray-700/80">
                       <div className="h-full rounded-full bg-violet-500 transition-all duration-1000 ease-linear" style={{ width: `${progress * 100}%` }} />
                     </div>
                   </>
                 )}
                 {(nextTitle || nextArtist) && (
-                  <p className="mt-2 text-xs text-gray-300 sm:text-sm">
+                  <p className="mt-2 text-xs text-gray-300 md:text-sm">
                     Volgende: <span className="text-violet-200">{nextArtist || "Onbekend"}</span>
                     {nextTitle ? <span className="text-gray-400"> — </span> : null}
                     {nextTitle ? <span className="text-white">{nextTitle}</span> : null}
                   </p>
                 )}
-                <div className="mt-5 flex items-center gap-3">
+                <div className="mt-3 flex items-center gap-3">
                   <button
                     onClick={toggle}
                     className={`flex h-14 w-14 items-center justify-center rounded-full text-white transition ${
@@ -1121,15 +1147,18 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
                   >
                     {playing ? "❚❚" : "▶"}
                   </button>
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    value={volume}
-                    onChange={(e) => setVolume(Number(e.target.value))}
-                    className="violet-slider h-1.5 w-full cursor-pointer appearance-none rounded-full bg-gray-700 accent-violet-500"
-                  />
+                  <div className="hidden min-w-0 flex-1 items-center gap-2 sm:flex">
+                    <span className="text-[11px] text-gray-400">Volume</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={volume}
+                      onChange={(e) => setVolume(Number(e.target.value))}
+                      className="violet-slider h-1 w-full max-w-32 cursor-pointer appearance-none rounded-full bg-gray-700 accent-violet-500"
+                    />
+                  </div>
                 </div>
               </div>
             </div>
@@ -1318,6 +1347,14 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={toggleFullscreen}
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-gray-600/70 bg-black/40 text-[12px] text-white transition hover:border-violet-400/80 hover:bg-black/60"
+              aria-label="Fullscreen player"
+            >
+              ⛶
+            </button>
             <button
               onClick={toggle}
               className={`flex h-10 w-10 items-center justify-center rounded-full transition-all ${
@@ -1550,7 +1587,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
             </button>
 
             <div className="flex flex-1 items-center gap-2">
-              <svg className="h-3.5 w-3.5 shrink-0 text-gray-500" fill="currentColor" viewBox="0 0 24 24">
+              <svg className="h-3 w-3 shrink-0 text-gray-500" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M3 9v6h4l5 5V4L7 9H3z" />
               </svg>
               <input
@@ -1560,9 +1597,9 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
                 step={0.01}
                 value={volume}
                 onChange={(e) => setVolume(Number(e.target.value))}
-                className="violet-slider h-1 w-full max-w-32 cursor-pointer appearance-none rounded-full bg-gray-700 accent-violet-500"
+                className="violet-slider h-0.5 w-full max-w-20 cursor-pointer appearance-none rounded-full bg-gray-700 accent-violet-500"
               />
-              <svg className="h-3.5 w-3.5 shrink-0 text-gray-500" fill="currentColor" viewBox="0 0 24 24">
+              <svg className="h-3 w-3 shrink-0 text-gray-500" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
               </svg>
             </div>
