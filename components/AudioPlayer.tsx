@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { getSupabase } from "@/lib/supabaseClient";
 import { useRadioStore } from "@/lib/radioStore";
 import AudioVisualizer from "@/components/AudioVisualizer";
+import SkipButton from "@/components/SkipButton";
 import { parseTrackDisplay } from "@/lib/trackDisplay";
 import { useSyncedTrack } from "@/lib/useSyncedTrack";
 import { dislikeCurrentAutoTrack, likeCurrentAutoTrack } from "@/lib/radioApi";
@@ -709,8 +710,8 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const immediateRadioArtwork = radioTrack?.thumbnail ?? null;
   const displayArtwork = isJingleTrack ? null : (immediateRadioArtwork ?? syncedRadioTrack?.thumbnail ?? (showSupabaseData ? track.artwork_url : null));
   const artworkVersion = syncedRadioTrack
-    ? `${syncedRadioTrack.id}|${syncedRadioTrack.started_at}`
-    : `${displayTitle ?? ""}|${displayArtist ?? ""}`;
+    ? `${syncedRadioTrack.id}|${syncedRadioTrack.started_at}|${immediateRadioArtwork ?? ""}|${syncedRadioTrack.thumbnail ?? ""}`
+    : `${displayTitle ?? ""}|${displayArtist ?? ""}|${displayArtwork ?? ""}`;
   const displayArtworkSrc = useMemo(() => {
     if (!displayArtwork) return null;
     const separator = displayArtwork.includes("?") ? "&" : "?";
@@ -1111,11 +1112,15 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
             </div>
           </div>
 
-          <div className="flex flex-1 items-center justify-center py-0.5 sm:py-2">
+          <div className={`flex flex-1 items-center justify-center py-0.5 sm:py-2 ${showFullscreenChat ? "pb-44" : ""}`}>
             <div className="grid h-full w-full max-w-6xl grid-cols-1 items-center gap-2 landscape:grid-cols-[minmax(0,1fr)_minmax(220px,1fr)] landscape:gap-3 md:grid-cols-[minmax(0,1fr)_minmax(320px,1fr)] md:gap-6">
               <div className="relative flex items-center justify-center">
                 {(fullscreenCurrentArtwork || fullscreenIncomingArtwork) ? (
-                  <div className="player-cover-fullscreen player-cover-idle-drift relative h-[52vw] w-[52vw] max-h-[50dvh] max-w-[50dvh] min-h-[150px] min-w-[150px] overflow-hidden rounded-3xl landscape:max-h-[44dvh] landscape:max-w-[44dvh] md:h-[56vh] md:w-[56vh] md:max-h-[64vh] md:max-w-[64vh]">
+                  <div className={`player-cover-fullscreen player-cover-idle-drift relative overflow-hidden rounded-3xl ${
+                    showFullscreenChat
+                      ? "h-[54vw] w-[54vw] max-h-[52dvh] max-w-[52dvh] min-h-[170px] min-w-[170px] landscape:max-h-[45dvh] landscape:max-w-[45dvh]"
+                      : "h-[60vw] w-[60vw] max-h-[58dvh] max-w-[58dvh] min-h-[190px] min-w-[190px] landscape:max-h-[52dvh] landscape:max-w-[52dvh]"
+                  } md:h-[56vh] md:w-[56vh] md:max-h-[64vh] md:max-w-[64vh]`}>
                     <div className="absolute inset-0 rounded-3xl bg-black/20 shadow-2xl shadow-black/60" />
                     {fullscreenCurrentArtwork && (
                       <img
@@ -1151,7 +1156,11 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
                     )}
                   </div>
                 ) : (
-                  <div className="player-fallback-note player-fallback-cover flex h-[52vw] w-[52vw] max-h-[50dvh] max-w-[50dvh] min-h-[150px] min-w-[150px] items-center justify-center rounded-3xl border border-violet-300/30 landscape:max-h-[44dvh] landscape:max-w-[44dvh] md:h-[56vh] md:w-[56vh] md:max-h-[64vh] md:max-w-[64vh]">
+                  <div className={`player-fallback-note player-fallback-cover flex items-center justify-center rounded-3xl border border-violet-300/30 ${
+                    showFullscreenChat
+                      ? "h-[54vw] w-[54vw] max-h-[52dvh] max-w-[52dvh] min-h-[170px] min-w-[170px] landscape:max-h-[45dvh] landscape:max-w-[45dvh]"
+                      : "h-[60vw] w-[60vw] max-h-[58dvh] max-w-[58dvh] min-h-[190px] min-w-[190px] landscape:max-h-[52dvh] landscape:max-w-[52dvh]"
+                  } md:h-[56vh] md:w-[56vh] md:max-h-[64vh] md:max-w-[64vh]`}>
                     {artworkFallback}
                   </div>
                 )}
@@ -1186,6 +1195,9 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
                     >
                       {playing ? "❚❚" : "▶"}
                     </button>
+                    <div className="shrink-0">
+                      <SkipButton compact />
+                    </div>
                     <div className="hidden min-w-0 flex-1 items-center gap-2 sm:flex">
                       <span className="text-[11px] text-gray-400">Volume</span>
                       <input
@@ -1214,9 +1226,9 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
           </div>
 
           {showFullscreenChat && (
-            <div className="mx-auto mt-1 w-full max-w-3xl rounded-2xl border border-violet-500/25 bg-black/35 p-3 backdrop-blur-md">
+            <div className="absolute inset-x-2 bottom-[max(env(safe-area-inset-bottom),0.5rem)] z-30 mx-auto w-auto max-w-3xl rounded-2xl border border-violet-500/25 bg-black/55 p-3 backdrop-blur-md md:inset-x-4">
               <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-violet-200/90">Live chat</p>
-              <div className="chat-scroll max-h-44 space-y-1 overflow-y-auto pr-1">
+              <div className="chat-scroll max-h-36 space-y-1 overflow-y-auto pr-1 sm:max-h-44">
                 {chatPreviewMessages.length === 0 ? (
                   <p className="text-xs text-gray-400">Nog geen chatberichten.</p>
                 ) : (
@@ -1399,7 +1411,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
             <button
               type="button"
               onClick={toggleFullscreen}
-              className="flex h-9 w-9 items-center justify-center rounded-full border border-gray-600/70 bg-black/40 text-[12px] text-white transition hover:border-violet-400/80 hover:bg-black/60"
+              className="flex h-7 w-7 items-center justify-center rounded-full border border-gray-600/70 bg-black/40 text-[10px] text-white transition hover:border-violet-400/80 hover:bg-black/60"
               aria-label="Fullscreen player"
             >
               ⛶
