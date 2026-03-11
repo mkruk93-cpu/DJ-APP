@@ -134,6 +134,7 @@ export default function FallbackGenreSelector() {
   const [playlistViewMode, setPlaylistViewMode] = useState<PlaylistViewMode>("grouped");
   const [presets, setPresets] = useState<SharedFallbackPreset[]>([]);
   const [presetName, setPresetName] = useState("");
+  const [showPresetsPanel, setShowPresetsPanel] = useState(false);
 
   const sortedGenres = useMemo(
     () => [...genres].sort((a, b) => a.label.localeCompare(b.label, "nl")),
@@ -207,6 +208,25 @@ export default function FallbackGenreSelector() {
     if (explicit.length > 0) return explicit;
     return activeGenre ? [activeGenre] : [];
   }, [activeGenres, activeGenre]);
+
+  function getSectionForGenreId(id: string): FallbackSection {
+    if (id.startsWith("shared:")) return "playlists";
+    if (id.startsWith("auto:")) return "auto";
+    return "local";
+  }
+
+  function getSectionIds(section: FallbackSection): string[] {
+    if (section === "local") return localGenres.map((g) => g.id);
+    if (section === "auto") return autoGenres.map((g) => g.id);
+    return sharedPlaylists.map((g) => g.id);
+  }
+
+  function pickRandomSectionId(section: FallbackSection): string | null {
+    const options = getSectionIds(section);
+    if (options.length === 0) return null;
+    const index = Math.floor(Math.random() * options.length);
+    return options[index] ?? null;
+  }
   const shouldRender = connected && sortedGenres.length > 0;
   const activeLabel = useMemo(() => {
     if (selectedSharedGenres.length > 1) {
@@ -269,54 +289,62 @@ export default function FallbackGenreSelector() {
     });
   }
 
+  function applySectionSelection(section: FallbackSection, ids: string[]): void {
+    const sectionOnly = Array.from(new Set(ids.filter((id) => getSectionForGenreId(id) === section)));
+    if (sectionOnly.length === 0) return;
+    setActiveSection(section);
+    if (section === "playlists") {
+      emitSharedSelection(sectionOnly);
+      return;
+    }
+    emitSelection(sectionOnly);
+  }
+
   function toggleSelection(id: string): void {
-    const isActive = selectedGenreIds.includes(id);
-    const next = isActive
-      ? selectedGenreIds.filter((entry) => entry !== id)
-      : [...selectedGenreIds, id];
-    emitSelection(next.length > 0 ? next : [id]);
+    const section = getSectionForGenreId(id);
+    const sectionSelected = selectedGenreIds.filter((entry) => getSectionForGenreId(entry) === section);
+    const isActive = sectionSelected.includes(id);
+    let next = isActive
+      ? sectionSelected.filter((entry) => entry !== id)
+      : [...sectionSelected, id];
+    if (next.length === 0) {
+      const randomFallback = pickRandomSectionId(section);
+      if (randomFallback) next = [randomFallback];
+    }
+    applySectionSelection(section, next);
   }
 
   function setAllForSection(section: FallbackSection, enabled: boolean): void {
-    const sectionIds = (
-      section === "local"
-        ? localGenres.map((g) => g.id)
-        : section === "auto"
-          ? autoGenres.map((g) => g.id)
-          : sharedPlaylists.map((g) => g.id)
-    );
-    const nextSet = new Set(selectedGenreIds);
+    const sectionIds = getSectionIds(section);
+    if (sectionIds.length === 0) return;
     if (enabled) {
-      sectionIds.forEach((id) => nextSet.add(id));
-    } else {
-      sectionIds.forEach((id) => nextSet.delete(id));
+      applySectionSelection(section, sectionIds);
+      return;
     }
-    let next = Array.from(nextSet);
-    if (next.length === 0 && !enabled) {
-      const fallbackId = (
-        section === "local"
-          ? [...autoGenres, ...sharedPlaylists][0]?.id
-          : section === "auto"
-            ? [...localGenres, ...sharedPlaylists][0]?.id
-            : [...localGenres, ...autoGenres][0]?.id
-      );
-      if (fallbackId) next = [fallbackId];
-    }
-    if (next.length > 0) emitSelection(next);
+    const fallbackId = pickRandomSectionId(section);
+    if (fallbackId) applySectionSelection(section, [fallbackId]);
   }
 
   function applyPreset(preset: SharedFallbackPreset): void {
     const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
-    getSocket().emit("fallback:preset:apply", { id: preset.id, selectedBy });
+    const baseSection = preset.genreIds[0] ? getSectionForGenreId(preset.genreIds[0]) : null;
+    if (!baseSection) return;
+    const sameSectionIds = preset.genreIds.filter((id) => getSectionForGenreId(id) === baseSection);
+    if (sameSectionIds.length === 0) return;
+    if (baseSection === "playlists") {
+      getSocket().emit("fallback:shared:mode:set", { mode: preset.sharedPlaybackMode, selectedBy });
+    }
+    applySectionSelection(baseSection, sameSectionIds);
   }
 
   function savePreset(): void {
     const name = presetName.trim();
-    if (!name || selectedGenreIds.length === 0) return;
+    const currentSectionSelected = selectedGenreIds.filter((id) => getSectionForGenreId(id) === activeSection);
+    if (!name || currentSectionSelected.length === 0) return;
     const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
     getSocket().emit("fallback:preset:save", {
       name,
-      genreIds: selectedGenreIds,
+      genreIds: currentSectionSelected,
       sharedPlaybackMode: sharedPlaybackMode,
       selectedBy,
     });
@@ -444,6 +472,52 @@ export default function FallbackGenreSelector() {
           >
             Playlists ({sharedPlaylists.length})
           </button>
+        </div>
+        <div className="mb-1">
+          <button
+            type="button"
+            onClick={() => setShowPresetsPanel((prev) => !prev)}
+            className="flex w-full items-center justify-between rounded-md border border-gray-800 bg-gray-900/70 px-2 py-1 text-[10px] font-semibold text-gray-200 transition hover:bg-gray-800"
+          >
+            <span>Presetbeheer</span>
+            <span className={`text-gray-400 transition ${showPresetsPanel ? "rotate-180" : ""}`}>▾</span>
+          </button>
+          {showPresetsPanel && (
+            <div className="mt-1 rounded-md border border-gray-800 bg-gray-900/70 p-1.5">
+              <div className="mb-1 flex gap-1">
+                <input
+                  value={presetName}
+                  onChange={(e) => setPresetName(e.target.value)}
+                  placeholder="Naam preset..."
+                  className="min-w-0 flex-1 rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[11px] text-white placeholder-gray-500"
+                />
+                <button
+                  type="button"
+                  onClick={savePreset}
+                  className="rounded border border-violet-600/70 bg-violet-700/20 px-2 py-1 text-[11px] font-semibold text-violet-100 transition hover:bg-violet-700/30"
+                >
+                  Opslaan
+                </button>
+              </div>
+              <div className="max-h-20 space-y-1 overflow-y-auto pr-1">
+                {presets.length === 0 ? (
+                  <p className="text-[10px] text-gray-500">Nog geen presets.</p>
+                ) : (
+                  presets.map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      onClick={() => applyPreset(preset)}
+                      className="flex w-full items-center justify-between rounded border border-gray-700 bg-gray-800/70 px-2 py-1 text-left text-[10px] text-gray-200 transition hover:border-violet-500/70 hover:bg-gray-800"
+                    >
+                      <span className="truncate">{preset.name}</span>
+                      <span className="ml-2 text-gray-500">{preset.genreIds.length}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
         </div>
         <div className="rounded-md border border-gray-800 bg-gray-900/70 p-1">
           <div className="mb-1 grid grid-cols-2 gap-1">
@@ -584,45 +658,52 @@ export default function FallbackGenreSelector() {
                   Losse lijst
                 </button>
               </div>
-              <div className="mb-1 grid grid-cols-2 gap-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
-                    getSocket().emit("fallback:shared:mode:set", { mode: "random", selectedBy });
-                  }}
-                  className={`rounded px-2 py-1 text-[10px] font-semibold transition ${
-                    sharedPlaybackMode === "random"
-                      ? "bg-violet-600/30 text-violet-100"
-                      : "text-gray-300 hover:bg-gray-800"
-                  }`}
-                >
-                  Random
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
-                    getSocket().emit("fallback:shared:mode:set", { mode: "ordered", selectedBy });
-                  }}
-                  className={`rounded px-2 py-1 text-[10px] font-semibold transition ${
-                    sharedPlaybackMode === "ordered"
-                      ? "bg-violet-600/30 text-violet-100"
-                      : "text-gray-300 hover:bg-gray-800"
-                  }`}
-                >
-                  Op volgorde
-                </button>
-              </div>
-              <select
-                value={playlistSortMode}
-                onChange={(e) => setPlaylistSortMode(e.target.value as PlaylistSortMode)}
-                className="mb-1 w-full rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white"
-              >
-                <option value="name_asc">Sortering: Naam A-Z</option>
-                <option value="name_desc">Sortering: Naam Z-A</option>
-                <option value="tracks_desc">Sortering: Meeste tracks</option>
-              </select>
+              <details className="mb-1 rounded border border-gray-800 bg-gray-900/55 p-1">
+                <summary className="cursor-pointer list-none px-1 py-0.5 text-[10px] font-semibold text-gray-300">
+                  Afspeel- en sorteeropties
+                </summary>
+                <div className="mt-1 space-y-1">
+                  <div className="grid grid-cols-2 gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
+                        getSocket().emit("fallback:shared:mode:set", { mode: "random", selectedBy });
+                      }}
+                      className={`rounded px-2 py-1 text-[10px] font-semibold transition ${
+                        sharedPlaybackMode === "random"
+                          ? "bg-violet-600/30 text-violet-100"
+                          : "text-gray-300 hover:bg-gray-800"
+                      }`}
+                    >
+                      Mix willekeurig
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
+                        getSocket().emit("fallback:shared:mode:set", { mode: "ordered", selectedBy });
+                      }}
+                      className={`rounded px-2 py-1 text-[10px] font-semibold transition ${
+                        sharedPlaybackMode === "ordered"
+                          ? "bg-violet-600/30 text-violet-100"
+                          : "text-gray-300 hover:bg-gray-800"
+                      }`}
+                    >
+                      Per playlist op volgorde
+                    </button>
+                  </div>
+                  <select
+                    value={playlistSortMode}
+                    onChange={(e) => setPlaylistSortMode(e.target.value as PlaylistSortMode)}
+                    className="w-full rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white"
+                  >
+                    <option value="name_asc">Sortering: Naam A-Z</option>
+                    <option value="name_desc">Sortering: Naam Z-A</option>
+                    <option value="tracks_desc">Sortering: Meeste tracks</option>
+                  </select>
+                </div>
+              </details>
               {playlistViewMode === "grouped" ? groupedSharedPlaylists.map((genreGroup) => (
                 <div key={`genre:${genreGroup.genreLabel}`} className="mb-1 rounded border border-gray-800 bg-gray-900/50 p-1">
                   <p className="px-1 py-0.5 text-[11px] font-semibold text-violet-100">
@@ -712,41 +793,6 @@ export default function FallbackGenreSelector() {
               )}
             </>
           )}
-        </div>
-        <div className="mt-1 rounded-md border border-gray-800 bg-gray-900/70 p-1.5">
-          <p className="mb-1 text-[10px] font-semibold text-gray-300">Presets (gedeeld)</p>
-          <div className="mb-1 flex gap-1">
-            <input
-              value={presetName}
-              onChange={(e) => setPresetName(e.target.value)}
-              placeholder="Naam preset..."
-              className="min-w-0 flex-1 rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[11px] text-white placeholder-gray-500"
-            />
-            <button
-              type="button"
-              onClick={savePreset}
-              className="rounded border border-violet-600/70 bg-violet-700/20 px-2 py-1 text-[11px] font-semibold text-violet-100 transition hover:bg-violet-700/30"
-            >
-              Opslaan
-            </button>
-          </div>
-          <div className="max-h-20 space-y-1 overflow-y-auto pr-1">
-            {presets.length === 0 ? (
-              <p className="text-[10px] text-gray-500">Nog geen presets.</p>
-            ) : (
-              presets.map((preset) => (
-                <button
-                  key={preset.id}
-                  type="button"
-                  onClick={() => applyPreset(preset)}
-                  className="flex w-full items-center justify-between rounded border border-gray-700 bg-gray-800/70 px-2 py-1 text-left text-[10px] text-gray-200 transition hover:border-violet-500/70 hover:bg-gray-800"
-                >
-                  <span className="truncate">{preset.name}</span>
-                  <span className="ml-2 text-gray-500">{preset.genreIds.length}</span>
-                </button>
-              ))
-            )}
-          </div>
         </div>
       </div>
     </details>
