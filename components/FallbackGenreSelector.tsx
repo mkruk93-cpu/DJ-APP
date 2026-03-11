@@ -136,12 +136,7 @@ export default function FallbackGenreSelector() {
   });
   const [playlistSortMode, setPlaylistSortMode] = useState<PlaylistSortMode>("name_asc");
   const [playlistViewMode, setPlaylistViewMode] = useState<PlaylistViewMode>("grouped");
-  const [collapsedGenres, setCollapsedGenres] = useState<string[]>([]);
-  const [collapsedSubgenres, setCollapsedSubgenres] = useState<string[]>([]);
-  const [hasStoredCollapseState, setHasStoredCollapseState] = useState(false);
   const [showFallbackHelp, setShowFallbackHelp] = useState(false);
-  const [showSinglePlaylistChoice, setShowSinglePlaylistChoice] = useState(false);
-  const [singlePlaylistChoice, setSinglePlaylistChoice] = useState<string>("");
   const [presets, setPresets] = useState<SharedFallbackPreset[]>([]);
   const [presetName, setPresetName] = useState("");
 
@@ -288,7 +283,15 @@ export default function FallbackGenreSelector() {
   }
 
   function setSectionOpen(section: FallbackSection): void {
-    setOpenSections((prev) => ({ ...prev, [section]: !prev[section] }));
+    setOpenSections((prev) => {
+      const shouldOpen = !prev[section];
+      return {
+        local: false,
+        auto: false,
+        playlists: false,
+        [section]: shouldOpen,
+      };
+    });
   }
 
   function setAllForSection(section: FallbackSection, enabled: boolean): void {
@@ -337,25 +340,6 @@ export default function FallbackGenreSelector() {
     setPresetName("");
   }
 
-  function selectAllSharedPlaylists(): void {
-    const all = sortedSharedPlaylists.map((playlist) => playlist.id).filter((id) => id.startsWith("shared:"));
-    if (all.length === 0) return;
-    emitSharedSelection(all);
-  }
-
-  function openSinglePlaylistChoice(): void {
-    const initial = selectedSharedGenres[0] ?? sortedSharedPlaylists[0]?.id ?? "";
-    if (!initial) return;
-    setSinglePlaylistChoice(initial);
-    setShowSinglePlaylistChoice(true);
-  }
-
-  function confirmSinglePlaylistChoice(): void {
-    if (!singlePlaylistChoice) return;
-    emitSharedSelection([singlePlaylistChoice]);
-    setShowSinglePlaylistChoice(false);
-  }
-
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
@@ -365,19 +349,12 @@ export default function FallbackGenreSelector() {
         playlistSortMode: PlaylistSortMode;
         playlistViewMode: PlaylistViewMode;
         openSections: Record<FallbackSection, boolean>;
-        collapsedGenres: string[];
-        collapsedSubgenres: string[];
-        hasStoredCollapseState: boolean;
       }>;
       if (parsed.playlistSortMode) setPlaylistSortMode(parsed.playlistSortMode);
       if (parsed.playlistViewMode) setPlaylistViewMode(parsed.playlistViewMode);
       if (parsed.openSections) {
         setOpenSections((prev) => ({ ...prev, ...parsed.openSections }));
       }
-      if (Array.isArray(parsed.collapsedGenres)) setCollapsedGenres(parsed.collapsedGenres);
-      if (Array.isArray(parsed.collapsedSubgenres)) setCollapsedSubgenres(parsed.collapsedSubgenres);
-      if (typeof parsed.hasStoredCollapseState === "boolean") setHasStoredCollapseState(parsed.hasStoredCollapseState);
-      else setHasStoredCollapseState(true);
     } catch {
       // Ignore invalid preferences.
     }
@@ -389,13 +366,10 @@ export default function FallbackGenreSelector() {
       playlistSortMode,
       playlistViewMode,
       openSections,
-      collapsedGenres,
-      collapsedSubgenres,
-      hasStoredCollapseState,
     });
     localStorage.setItem(getStorageKey(), payload);
     localStorage.setItem(getLegacyStorageKey(), payload);
-  }, [playlistSortMode, playlistViewMode, openSections, collapsedGenres, collapsedSubgenres, hasStoredCollapseState]);
+  }, [playlistSortMode, playlistViewMode, openSections]);
 
   useEffect(() => {
     const socket = getSocket();
@@ -688,40 +662,6 @@ export default function FallbackGenreSelector() {
                 </button>
               </div>
             </div>
-            {showSinglePlaylistChoice && (
-              <div className="mb-1 rounded-md border border-violet-700/50 bg-gray-900/95 p-2">
-                <p className="mb-1 text-[11px] font-semibold text-violet-100">
-                  Kies 1 playlist die actief blijft
-                </p>
-                <select
-                  value={singlePlaylistChoice}
-                  onChange={(e) => setSinglePlaylistChoice(e.target.value)}
-                  className="mb-2 w-full rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[11px] text-white"
-                >
-                  {sortedSharedPlaylists.map((playlist) => (
-                    <option key={playlist.id} value={playlist.id}>
-                      {playlist.label.replace(/^Playlist ·\s*/i, "")}
-                    </option>
-                  ))}
-                </select>
-                <div className="grid grid-cols-2 gap-1">
-                  <button
-                    type="button"
-                    onClick={confirmSinglePlaylistChoice}
-                    className="rounded border border-violet-600/70 bg-violet-700/20 px-2 py-1 text-[11px] font-semibold text-violet-100 transition hover:bg-violet-700/30"
-                  >
-                    Toepassen
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowSinglePlaylistChoice(false)}
-                    className="rounded border border-gray-700 px-2 py-1 text-[11px] font-semibold text-gray-200 transition hover:bg-gray-800"
-                  >
-                    Annuleren
-                  </button>
-                </div>
-              </div>
-            )}
             <div className="mb-1 rounded-md border border-gray-800 bg-gray-900/70 p-1">
               <p className="mb-1 px-1 text-[10px] text-gray-400">Afspeelvolgorde</p>
               <div className="grid grid-cols-2 gap-1">
@@ -785,43 +725,16 @@ export default function FallbackGenreSelector() {
               </button>
             </div>
             {playlistViewMode === "grouped" ? groupedSharedPlaylists.map((genreGroup) => (
-              <details
-                key={`genre:${genreGroup.genreLabel}`}
-                open={hasStoredCollapseState ? !collapsedGenres.includes(genreGroup.genreLabel) : false}
-                onToggle={(event) => {
-                  const isOpen = (event.currentTarget as HTMLDetailsElement).open;
-                  setHasStoredCollapseState(true);
-                  setCollapsedGenres((prev) => (
-                    isOpen
-                      ? prev.filter((entry) => entry !== genreGroup.genreLabel)
-                      : Array.from(new Set([...prev, genreGroup.genreLabel]))
-                  ));
-                }}
-                className="mb-1 rounded border border-gray-800 bg-gray-900/50 p-1"
-              >
-                <summary className="cursor-pointer list-none px-1 py-0.5 text-[11px] font-semibold text-violet-100">
+              <div key={`genre:${genreGroup.genreLabel}`} className="mb-1 rounded border border-gray-800 bg-gray-900/50 p-1">
+                <p className="px-1 py-0.5 text-[11px] font-semibold text-violet-100">
                   {genreGroup.genreLabel} ({genreGroup.subgroups.reduce((acc, subgroup) => acc + subgroup.items.length, 0)})
-                </summary>
+                </p>
                 <div className="mt-1 space-y-1">
                   {genreGroup.subgroups.map((subgroup) => (
-                    <details
-                      key={`sub:${genreGroup.genreLabel}:${subgroup.subgenreLabel}`}
-                      open={hasStoredCollapseState ? !collapsedSubgenres.includes(`${genreGroup.genreLabel}::${subgroup.subgenreLabel}`) : false}
-                      onToggle={(event) => {
-                        const key = `${genreGroup.genreLabel}::${subgroup.subgenreLabel}`;
-                        const isOpen = (event.currentTarget as HTMLDetailsElement).open;
-                        setHasStoredCollapseState(true);
-                        setCollapsedSubgenres((prev) => (
-                          isOpen
-                            ? prev.filter((entry) => entry !== key)
-                            : Array.from(new Set([...prev, key]))
-                        ));
-                      }}
-                      className="rounded border border-gray-800/80 bg-gray-900/40 p-1"
-                    >
-                      <summary className="cursor-pointer list-none text-[10px] font-semibold text-gray-300">
+                    <div key={`sub:${genreGroup.genreLabel}:${subgroup.subgenreLabel}`} className="rounded border border-gray-800/80 bg-gray-900/40 p-1">
+                      <p className="text-[10px] font-semibold text-gray-300">
                         {subgroup.subgenreLabel} ({subgroup.items.length})
-                      </summary>
+                      </p>
                       <div className="mt-1 space-y-0.5">
                         {subgroup.items.map((playlist) => {
                           const isActive = selectedSharedGenres.includes(playlist.id);
@@ -854,10 +767,10 @@ export default function FallbackGenreSelector() {
                           );
                         })}
                       </div>
-                    </details>
+                    </div>
                   ))}
                 </div>
-              </details>
+              </div>
             )) : sortedSharedPlaylists.map((playlist) => {
               const isActive = selectedSharedGenres.includes(playlist.id);
               return (
