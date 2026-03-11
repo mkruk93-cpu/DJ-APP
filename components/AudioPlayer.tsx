@@ -531,7 +531,9 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   async function lockLandscapeOrientation(): Promise<void> {
     if (typeof window === "undefined") return;
     try {
-      const orientationApi = window.screen?.orientation as ScreenOrientation | undefined;
+      const orientationApi = window.screen?.orientation as (ScreenOrientation & {
+        lock?: (orientation: "portrait" | "landscape") => Promise<void>;
+      }) | undefined;
       if (orientationApi?.lock) await orientationApi.lock("landscape");
     } catch {
       // Ignore lock failures on unsupported browsers.
@@ -541,7 +543,9 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   function unlockLandscapeOrientation(): void {
     if (typeof window === "undefined") return;
     try {
-      const orientationApi = window.screen?.orientation as ScreenOrientation | undefined;
+      const orientationApi = window.screen?.orientation as (ScreenOrientation & {
+        unlock?: () => void;
+      }) | undefined;
       orientationApi?.unlock?.();
     } catch {
       // Ignore unlock failures on unsupported browsers.
