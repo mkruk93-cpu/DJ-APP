@@ -16,6 +16,13 @@ interface NowPlayingData {
   artwork_url: string | null;
 }
 
+interface ChatPreviewMessage {
+  id: string;
+  nickname: string;
+  content: string;
+  created_at: string;
+}
+
 interface AudioPlayerProps {
   src: string;
   radioTrack?: Track | null;
@@ -81,6 +88,18 @@ function formatTime(seconds: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+function getFullscreenArtworkUrl(url: string | null): string | null {
+  if (!url) return null;
+  // Prefer higher resolution YouTube thumbnails for fullscreen artwork.
+  if (url.includes("img.youtube.com/vi/") || url.includes("i.ytimg.com/vi/")) {
+    return url
+      .replace(/\/mqdefault\.jpg(\?.*)?$/i, "/maxresdefault.jpg")
+      .replace(/\/hqdefault\.jpg(\?.*)?$/i, "/maxresdefault.jpg")
+      .replace(/\/sddefault\.jpg(\?.*)?$/i, "/maxresdefault.jpg");
+  }
+  return url;
+}
+
 export default function AudioPlayer({ src, radioTrack, showFallback = false, preferSupabase = false }: AudioPlayerProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const playerRef = useRef<HTMLDivElement>(null);
@@ -101,6 +120,8 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const [nativeFullscreen, setNativeFullscreen] = useState(false);
   const [manualFullscreen, setManualFullscreen] = useState(false);
+  const [showFullscreenChat, setShowFullscreenChat] = useState(false);
+  const [chatPreviewMessages, setChatPreviewMessages] = useState<ChatPreviewMessage[]>([]);
   const userPaused = useRef(false);
   const playingRef = useRef(false);
   const reconnectAttemptRef = useRef(0);
@@ -195,6 +216,8 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   );
   const activeFallbackGenre = useRadioStore((s) => s.activeFallbackGenre);
   const fallbackGenres = useRadioStore((s) => s.fallbackGenres);
+  const queue = useRadioStore((s) => s.queue);
+  const upcomingTrack = useRadioStore((s) => s.upcomingTrack);
 
   useEffect(() => {
     if (audioRef.current) audioRef.current.volume = volume;
@@ -463,6 +486,41 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   }, []);
 
   useEffect(() => {
+    if (!isFullscreen || !showFullscreenChat) return;
+    const sb = getSupabase();
+    let disposed = false;
+
+    sb.from("chat_messages")
+      .select("id, nickname, content, created_at")
+      .order("created_at", { ascending: false })
+      .limit(12)
+      .then(({ data }) => {
+        if (disposed || !data) return;
+        setChatPreviewMessages((data as ChatPreviewMessage[]).reverse());
+      });
+
+    const channel = sb
+      .channel("audio-player-chat-preview")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "chat_messages" },
+        (payload) => {
+          const row = payload.new as ChatPreviewMessage;
+          setChatPreviewMessages((prev) => {
+            const next = [...prev, row];
+            return next.length > 18 ? next.slice(next.length - 18) : next;
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      disposed = true;
+      sb.removeChannel(channel);
+    };
+  }, [isFullscreen, showFullscreenChat]);
+
+  useEffect(() => {
     const sb = getSupabase();
 
     sb.from("now_playing")
@@ -627,6 +685,16 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     && (displayTitle || displayArtist)
   );
   const backgroundArtBaseOpacity = 0.15;
+  const nextQueueItem = queue.find((item) => {
+    const key = (item.selection_key ?? "").toLowerCase();
+    return item.youtube_id !== "jingle" && !key.startsWith("jingle:");
+  }) ?? null;
+  const nextCandidateTitle = nextQueueItem?.title ?? upcomingTrack?.title ?? null;
+  const parsedNext = parseTrackDisplay(nextCandidateTitle);
+  const nextTitle = parsedNext.title ?? nextCandidateTitle;
+  const nextArtist = parsedNext.artist;
+  const fullscreenCurrentArtwork = useMemo(() => getFullscreenArtworkUrl(currentArtwork), [currentArtwork]);
+  const fullscreenIncomingArtwork = useMemo(() => getFullscreenArtworkUrl(incomingArtwork), [incomingArtwork]);
 
   useEffect(() => {
     if (!feedbackMessage) return;
@@ -922,6 +990,16 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
           />
         </>
       )}
+      {!isFullscreen && (
+        <button
+          type="button"
+          onClick={toggleFullscreen}
+          className="absolute right-2 top-2 z-[12] flex h-8 w-8 items-center justify-center rounded-full border border-gray-600/70 bg-black/45 text-sm text-white transition hover:border-violet-400/80 hover:bg-black/65 sm:h-9 sm:w-9"
+          aria-label="Fullscreen player"
+        >
+          ⛶
+        </button>
+      )}
       <audio
         ref={audioRef}
         crossOrigin="anonymous"
@@ -956,37 +1034,50 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
       )}
 
       {isFullscreen && (
-        <div className="relative z-[2] flex h-full w-full flex-col justify-between p-4 sm:p-6">
-          <div className="flex items-center justify-between">
+        <div className="relative z-[2] flex h-full w-full flex-col overflow-y-auto p-3 pb-5 sm:p-6">
+          <div className="sticky top-0 z-20 -mx-3 mb-2 flex items-center justify-between bg-gray-900/75 px-3 py-2 backdrop-blur-md sm:static sm:mx-0 sm:mb-0 sm:bg-transparent sm:px-0 sm:py-0">
             <span className="rounded-full border border-violet-400/40 bg-black/30 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-violet-100">
               Live player
             </span>
-            <button
-              type="button"
-              onClick={toggleFullscreen}
-              className="rounded-full border border-gray-500/60 bg-black/35 px-3 py-1.5 text-xs font-semibold text-white transition hover:border-violet-400/70 hover:bg-black/50"
-            >
-              Sluit fullscreen
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowFullscreenChat((prev) => !prev)}
+                className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                  showFullscreenChat
+                    ? "border-violet-400/70 bg-violet-500/20 text-violet-100"
+                    : "border-gray-500/60 bg-black/35 text-white hover:border-violet-400/70 hover:bg-black/50"
+                }`}
+              >
+                {showFullscreenChat ? "Hide chat" : "Show chat"}
+              </button>
+              <button
+                type="button"
+                onClick={toggleFullscreen}
+                className="rounded-full border border-gray-500/60 bg-black/35 px-3 py-1.5 text-xs font-semibold text-white transition hover:border-violet-400/70 hover:bg-black/50"
+              >
+                Sluit fullscreen
+              </button>
+            </div>
           </div>
 
-          <div className="flex flex-1 items-center justify-center py-4">
-            <div className="flex w-full max-w-6xl flex-col items-center gap-5 lg:flex-row lg:items-center lg:justify-center lg:gap-10">
+          <div className="flex flex-1 items-center justify-center py-3 sm:py-4">
+            <div className="flex w-full max-w-6xl flex-col items-center gap-4 lg:flex-row lg:items-center lg:justify-center lg:gap-10">
               <div className="relative shrink-0">
-                {(currentArtwork || incomingArtwork) ? (
-                  <div className="player-cover-fullscreen player-cover-idle-drift relative h-[44vw] w-[44vw] max-h-[62svh] max-w-[62svh] min-h-[220px] min-w-[220px]">
+                {(fullscreenCurrentArtwork || fullscreenIncomingArtwork) ? (
+                  <div className="player-cover-fullscreen player-cover-idle-drift relative h-[56vw] w-[56vw] max-h-[54svh] max-w-[54svh] min-h-[180px] min-w-[180px] sm:h-[44vw] sm:w-[44vw] sm:max-h-[62svh] sm:max-w-[62svh] sm:min-h-[220px] sm:min-w-[220px]">
                     <div className="absolute inset-0 rounded-3xl border border-violet-300/30 bg-black/25 shadow-2xl shadow-black/50" />
-                    {currentArtwork && (
+                    {fullscreenCurrentArtwork && (
                       <img
-                        src={currentArtwork}
+                        src={fullscreenCurrentArtwork}
                         alt=""
                         className="absolute inset-0 z-10 h-full w-full rounded-3xl object-cover transition-opacity duration-700"
-                        style={{ opacity: incomingArtwork ? (incomingArtworkVisible ? 0 : 1) : 1 }}
+                        style={{ opacity: fullscreenIncomingArtwork ? (incomingArtworkVisible ? 0 : 1) : 1 }}
                       />
                     )}
-                    {incomingArtwork && (
+                    {fullscreenIncomingArtwork && (
                       <img
-                        src={incomingArtwork}
+                        src={fullscreenIncomingArtwork}
                         alt=""
                         className="absolute inset-0 z-20 h-full w-full rounded-3xl object-cover transition-opacity duration-700"
                         style={{ opacity: incomingArtworkVisible ? 1 : 0 }}
@@ -994,21 +1085,31 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
                     )}
                   </div>
                 ) : (
-                  <div className="player-fallback-note player-fallback-cover flex h-[44vw] w-[44vw] max-h-[62svh] max-w-[62svh] min-h-[220px] min-w-[220px] items-center justify-center rounded-3xl border border-violet-300/30">
+                  <div className="player-fallback-note player-fallback-cover flex h-[56vw] w-[56vw] max-h-[54svh] max-w-[54svh] min-h-[180px] min-w-[180px] items-center justify-center rounded-3xl border border-violet-300/30 sm:h-[44vw] sm:w-[44vw] sm:max-h-[62svh] sm:max-w-[62svh] sm:min-h-[220px] sm:min-w-[220px]">
                     {artworkFallback}
                   </div>
                 )}
               </div>
 
-              <div className="w-full max-w-2xl rounded-2xl border border-gray-700/70 bg-black/30 p-4 backdrop-blur-md sm:p-6">
+              <div className="w-full max-w-2xl rounded-2xl border border-gray-700/70 bg-black/30 p-3 backdrop-blur-md sm:p-6">
                 <p className="text-xs uppercase tracking-[0.22em] text-gray-300">Nu live</p>
-                <h2 className="mt-2 text-2xl font-bold text-white sm:text-4xl">
+                <h2 className="mt-2 line-clamp-2 text-xl font-bold text-white sm:text-4xl">
                   {displayTitle || "Wacht op nummer..."}
                 </h2>
-                <p className="mt-1 text-base text-violet-200 sm:text-xl">{displayArtist || "Radio stream"}</p>
+                <p className="mt-1 line-clamp-1 text-sm text-violet-200 sm:text-xl">{displayArtist || "Radio stream"}</p>
                 {isRadioMode && (
-                  <p className="mt-2 text-sm text-gray-300">
-                    {formatTime(elapsed)} / {durationLabel}
+                  <>
+                    <p className="mt-1 text-sm text-gray-300">{formatTime(elapsed)} / {durationLabel}</p>
+                    <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-700/80">
+                      <div className="h-full rounded-full bg-violet-500 transition-all duration-1000 ease-linear" style={{ width: `${progress * 100}%` }} />
+                    </div>
+                  </>
+                )}
+                {(nextTitle || nextArtist) && (
+                  <p className="mt-2 text-xs text-gray-300 sm:text-sm">
+                    Volgende: <span className="text-violet-200">{nextArtist || "Onbekend"}</span>
+                    {nextTitle ? <span className="text-gray-400"> — </span> : null}
+                    {nextTitle ? <span className="text-white">{nextTitle}</span> : null}
                   </p>
                 )}
                 <div className="mt-5 flex items-center gap-3">
@@ -1033,6 +1134,25 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
               </div>
             </div>
           </div>
+
+          {showFullscreenChat && (
+            <div className="mx-auto mt-1 w-full max-w-3xl rounded-2xl border border-violet-500/25 bg-black/35 p-3 backdrop-blur-md">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-violet-200/90">Live chat</p>
+              <div className="chat-scroll max-h-44 space-y-1 overflow-y-auto pr-1">
+                {chatPreviewMessages.length === 0 ? (
+                  <p className="text-xs text-gray-400">Nog geen chatberichten.</p>
+                ) : (
+                  chatPreviewMessages.map((m) => (
+                    <p key={m.id} className="text-xs leading-relaxed text-gray-200 sm:text-sm">
+                      <span className="font-semibold text-violet-300">{m.nickname}</span>
+                      <span className="mx-1 text-gray-500">·</span>
+                      <span>{m.content}</span>
+                    </p>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1198,14 +1318,6 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={toggleFullscreen}
-              className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-800 text-white transition hover:bg-gray-700"
-              aria-label="Fullscreen player"
-            >
-              ⛶
-            </button>
             <button
               onClick={toggle}
               className={`flex h-10 w-10 items-center justify-center rounded-full transition-all ${
@@ -1417,14 +1529,6 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
           )}
 
           <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={toggleFullscreen}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gray-800 text-white transition hover:bg-gray-700"
-              aria-label="Fullscreen player"
-            >
-              ⛶
-            </button>
             <button
               onClick={toggle}
               className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-all ${

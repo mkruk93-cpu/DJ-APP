@@ -59,6 +59,11 @@ import {
   type SharedStoreLimits,
   type PlaylistGenreMeta as SharedPlaylistGenreMeta,
 } from './services/sharedPlaylistStore.js';
+import {
+  getFallbackPreset,
+  listFallbackPresets,
+  saveFallbackPreset,
+} from './services/fallbackPresetStore.js';
 
 function getErrorMessage(err: unknown): string {
   if (err && typeof err === 'object') {
@@ -1128,6 +1133,12 @@ async function emitFallbackGenreUpdate(target?: { emit: (event: string, payload:
   };
   if (target) target.emit('fallback:genre:update', payload);
   else io.emit('fallback:genre:update', payload);
+}
+
+function emitFallbackPresetUpdate(target?: { emit: (event: string, payload: unknown) => void }): void {
+  const payload = { presets: listFallbackPresets() };
+  if (target) target.emit('fallback:presets:update', payload);
+  else io.emit('fallback:presets:update', payload);
 }
 
 async function getCombinedFallbackGenres(): Promise<FallbackGenre[]> {
@@ -4152,6 +4163,7 @@ io.on('connection', (socket) => {
   void emitSkipVoteState();
   socket.emit('upcoming:update', getUpcomingTrack());
   void emitFallbackGenreUpdate(socket);
+  emitFallbackPresetUpdate(socket);
   if (activeQueuePushVote) socket.emit('queuePushVote:update', activeQueuePushVote);
   else socket.emit('queuePushVote:end', null);
   socket.emit('queuePush:lock', { locked: queuePushLocked });
@@ -4639,6 +4651,66 @@ io.on('connection', (socket) => {
   });
 
   // ── fallback:genre:set (global, all listeners) ──
+  socket.on('fallback:presets:get', () => {
+    emitFallbackPresetUpdate(socket);
+  });
+
+  socket.on('fallback:preset:save', (data: {
+    name?: string;
+    genreIds?: string[];
+    sharedPlaybackMode?: string;
+    selectedBy?: string;
+  }) => {
+    const name = String(data?.name ?? '').trim();
+    const genreIds = Array.isArray(data?.genreIds) ? data.genreIds.map((entry) => String(entry)) : [];
+    const selectedBy = normalizeNickname(data?.selectedBy) ?? 'onbekend';
+    const sharedMode = normalizeSharedPlaybackMode(data?.sharedPlaybackMode);
+    const saved = saveFallbackPreset({
+      name,
+      genreIds,
+      sharedPlaybackMode: sharedMode,
+      createdBy: selectedBy,
+    });
+    if (!saved) {
+      socket.emit('error:toast', { message: 'Kon preset niet opslaan' });
+      return;
+    }
+    emitFallbackPresetUpdate();
+    socket.emit('info:toast', { message: `Preset opgeslagen: ${saved.name}` });
+  });
+
+  socket.on('fallback:preset:apply', async (data: { id?: string; selectedBy?: string }) => {
+    const presetId = String(data?.id ?? '').trim();
+    const preset = getFallbackPreset(presetId);
+    if (!preset || preset.genreIds.length === 0) {
+      socket.emit('error:toast', { message: 'Preset niet gevonden' });
+      return;
+    }
+    const selectedBy = normalizeNickname(data?.selectedBy) ?? 'onbekend';
+    try {
+      const requestedList = await normalizeFallbackGenreIds(preset.genreIds);
+      const requested = requestedList[0] ?? null;
+      if (!requested) {
+        socket.emit('error:toast', { message: 'Preset bevat geen geldige bronnen' });
+        return;
+      }
+      await setSetting(sb, 'fallback_active_genre', requested);
+      await setSetting(sb, 'fallback_active_shared_playlist_ids', requestedList);
+      await setSetting(sb, 'fallback_active_genre_by', selectedBy);
+      await setSetting(sb, 'fallback_shared_playback_mode', preset.sharedPlaybackMode);
+      setSharedAutoPlaybackMode(preset.sharedPlaybackMode);
+      resetSharedAutoPlaybackCycleForSelection(requested);
+      setActiveFallbackGenre(requested);
+      setActiveFallbackGenres(requestedList);
+      setActiveSharedFallbackPlaylists(requestedList.filter((id) => !!parseSharedFallbackPlaylistId(id)));
+      await emitFallbackGenreUpdate();
+      socket.emit('info:toast', { message: `Preset actief: ${preset.name}` });
+    } catch (err) {
+      console.error('[socket] fallback:preset:apply error:', err);
+      socket.emit('error:toast', { message: 'Preset toepassen mislukt' });
+    }
+  });
+
   socket.on('fallback:genre:set', async (data: { genreId?: string; genreIds?: string[]; selectedBy?: string; selectedLabel?: string; sharedPlaybackMode?: string }) => {
     const requestedList = await normalizeFallbackGenreIds(data.genreIds);
     const requestedSingle = normalizeFallbackGenreId(data.genreId);

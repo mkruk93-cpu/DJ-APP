@@ -11,8 +11,18 @@ import {
 } from "@/lib/genreDropdown";
 import type { GenreOption } from "@/lib/radioApi";
 
-type FallbackListTab = "local" | "auto" | "playlists";
 type PlaylistSortMode = "name_asc" | "name_desc" | "tracks_desc";
+type PlaylistViewMode = "grouped" | "all";
+type FallbackSection = "local" | "auto" | "playlists";
+
+interface SharedFallbackPreset {
+  id: string;
+  name: string;
+  genreIds: string[];
+  sharedPlaybackMode: "random" | "ordered";
+  createdBy: string | null;
+  createdAt: string;
+}
 
 function normalizeBucketLabel(value: string | null | undefined, fallback: string): string {
   const safe = (value ?? "").trim();
@@ -119,14 +129,21 @@ export default function FallbackGenreSelector() {
   const summaryRef = useRef<HTMLElement | null>(null);
   const [isMobile, setIsMobile] = useState(false);
   const [mobileMenuTop, setMobileMenuTop] = useState<number | null>(null);
-  const [activeListTab, setActiveListTab] = useState<FallbackListTab>("local");
+  const [openSections, setOpenSections] = useState<Record<FallbackSection, boolean>>({
+    local: true,
+    auto: false,
+    playlists: false,
+  });
   const [playlistSortMode, setPlaylistSortMode] = useState<PlaylistSortMode>("name_asc");
+  const [playlistViewMode, setPlaylistViewMode] = useState<PlaylistViewMode>("grouped");
   const [collapsedGenres, setCollapsedGenres] = useState<string[]>([]);
   const [collapsedSubgenres, setCollapsedSubgenres] = useState<string[]>([]);
   const [hasStoredCollapseState, setHasStoredCollapseState] = useState(false);
   const [showFallbackHelp, setShowFallbackHelp] = useState(false);
   const [showSinglePlaylistChoice, setShowSinglePlaylistChoice] = useState(false);
   const [singlePlaylistChoice, setSinglePlaylistChoice] = useState<string>("");
+  const [presets, setPresets] = useState<SharedFallbackPreset[]>([]);
+  const [presetName, setPresetName] = useState("");
 
   const sortedGenres = useMemo(
     () => [...genres].sort((a, b) => a.label.localeCompare(b.label, "nl")),
@@ -232,22 +249,6 @@ export default function FallbackGenreSelector() {
     };
   }, [isMobile]);
 
-  useEffect(() => {
-    if (selectedSharedGenres.length > 1) {
-      setActiveListTab("playlists");
-      return;
-    }
-    if (activeGenre?.startsWith("auto:")) {
-      setActiveListTab("auto");
-      return;
-    }
-    if (activeGenre?.startsWith("shared:")) {
-      setActiveListTab("playlists");
-      return;
-    }
-    setActiveListTab("local");
-  }, [activeGenre, selectedSharedGenres.length]);
-
   function emitSharedSelection(nextSelected: string[]): void {
     const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
     const normalized = Array.from(new Set(nextSelected.filter((id) => id.startsWith("shared:"))));
@@ -286,6 +287,56 @@ export default function FallbackGenreSelector() {
     emitSelection(next.length > 0 ? next : [id]);
   }
 
+  function setSectionOpen(section: FallbackSection): void {
+    setOpenSections((prev) => ({ ...prev, [section]: !prev[section] }));
+  }
+
+  function setAllForSection(section: FallbackSection, enabled: boolean): void {
+    const sectionIds = (
+      section === "local"
+        ? localGenres.map((g) => g.id)
+        : section === "auto"
+          ? autoGenres.map((g) => g.id)
+          : sharedPlaylists.map((g) => g.id)
+    );
+    const nextSet = new Set(selectedGenreIds);
+    if (enabled) {
+      sectionIds.forEach((id) => nextSet.add(id));
+    } else {
+      sectionIds.forEach((id) => nextSet.delete(id));
+    }
+    let next = Array.from(nextSet);
+    if (next.length === 0 && !enabled) {
+      const fallbackId = (
+        section === "local"
+          ? [...autoGenres, ...sharedPlaylists][0]?.id
+          : section === "auto"
+            ? [...localGenres, ...sharedPlaylists][0]?.id
+            : [...localGenres, ...autoGenres][0]?.id
+      );
+      if (fallbackId) next = [fallbackId];
+    }
+    if (next.length > 0) emitSelection(next);
+  }
+
+  function applyPreset(preset: SharedFallbackPreset): void {
+    const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
+    getSocket().emit("fallback:preset:apply", { id: preset.id, selectedBy });
+  }
+
+  function savePreset(): void {
+    const name = presetName.trim();
+    if (!name || selectedGenreIds.length === 0) return;
+    const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
+    getSocket().emit("fallback:preset:save", {
+      name,
+      genreIds: selectedGenreIds,
+      sharedPlaybackMode: sharedPlaybackMode,
+      selectedBy,
+    });
+    setPresetName("");
+  }
+
   function selectAllSharedPlaylists(): void {
     const all = sortedSharedPlaylists.map((playlist) => playlist.id).filter((id) => id.startsWith("shared:"));
     if (all.length === 0) return;
@@ -312,11 +363,17 @@ export default function FallbackGenreSelector() {
       if (!raw) return;
       const parsed = JSON.parse(raw) as Partial<{
         playlistSortMode: PlaylistSortMode;
+        playlistViewMode: PlaylistViewMode;
+        openSections: Record<FallbackSection, boolean>;
         collapsedGenres: string[];
         collapsedSubgenres: string[];
         hasStoredCollapseState: boolean;
       }>;
       if (parsed.playlistSortMode) setPlaylistSortMode(parsed.playlistSortMode);
+      if (parsed.playlistViewMode) setPlaylistViewMode(parsed.playlistViewMode);
+      if (parsed.openSections) {
+        setOpenSections((prev) => ({ ...prev, ...parsed.openSections }));
+      }
       if (Array.isArray(parsed.collapsedGenres)) setCollapsedGenres(parsed.collapsedGenres);
       if (Array.isArray(parsed.collapsedSubgenres)) setCollapsedSubgenres(parsed.collapsedSubgenres);
       if (typeof parsed.hasStoredCollapseState === "boolean") setHasStoredCollapseState(parsed.hasStoredCollapseState);
@@ -330,13 +387,27 @@ export default function FallbackGenreSelector() {
     if (typeof window === "undefined") return;
     const payload = JSON.stringify({
       playlistSortMode,
+      playlistViewMode,
+      openSections,
       collapsedGenres,
       collapsedSubgenres,
       hasStoredCollapseState,
     });
     localStorage.setItem(getStorageKey(), payload);
     localStorage.setItem(getLegacyStorageKey(), payload);
-  }, [playlistSortMode, collapsedGenres, collapsedSubgenres, hasStoredCollapseState]);
+  }, [playlistSortMode, playlistViewMode, openSections, collapsedGenres, collapsedSubgenres, hasStoredCollapseState]);
+
+  useEffect(() => {
+    const socket = getSocket();
+    function onPresetUpdate(data: { presets?: SharedFallbackPreset[] }) {
+      setPresets(Array.isArray(data?.presets) ? data.presets : []);
+    }
+    socket.on("fallback:presets:update", onPresetUpdate);
+    socket.emit("fallback:presets:get");
+    return () => {
+      socket.off("fallback:presets:update", onPresetUpdate);
+    };
+  }, []);
 
   if (!shouldRender) return null;
 
@@ -369,43 +440,8 @@ export default function FallbackGenreSelector() {
         }
       >
         <p className="mb-1 rounded-md bg-gray-800/70 px-2 py-1.5 text-[11px] leading-snug text-gray-300">
-          Kies lokaal genre, online genre, of gedeelde playlist voor random nummers als de wachtrij leeg is.
+          Kies bronnen voor autoplay als de wachtrij leeg is. Gebruik presets om complete sets op te slaan voor iedereen.
         </p>
-        <div className="mb-1 grid grid-cols-3 gap-1 rounded-md border border-gray-800 bg-gray-900/70 p-1">
-          <button
-            type="button"
-            onClick={() => setActiveListTab("local")}
-            className={`rounded px-2 py-1 text-[11px] font-semibold transition ${
-              activeListTab === "local"
-                ? "bg-violet-600/30 text-violet-100"
-                : "text-gray-300 hover:bg-gray-800"
-            }`}
-          >
-            Lokaal ({localGenres.length})
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveListTab("auto")}
-            className={`rounded px-2 py-1 text-[11px] font-semibold transition ${
-              activeListTab === "auto"
-                ? "bg-violet-600/30 text-violet-100"
-                : "text-gray-300 hover:bg-gray-800"
-            }`}
-          >
-            Online ({autoGenreCanonicalCount + (likedAutoGenre ? 1 : 0)})
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveListTab("playlists")}
-            className={`rounded px-2 py-1 text-[11px] font-semibold transition ${
-              activeListTab === "playlists"
-                ? "bg-violet-600/30 text-violet-100"
-                : "text-gray-300 hover:bg-gray-800"
-            }`}
-          >
-            Playlists ({sharedPlaylists.length})
-          </button>
-        </div>
         {activeGenreBy && (
           <p className="mb-1 px-2 py-1 text-[10px] text-gray-400">
             Gekozen door: <span className="text-violet-300">{activeGenreBy}</span>
@@ -421,9 +457,59 @@ export default function FallbackGenreSelector() {
             : "geen selectie"}
           {selectedGenreIds.length > 4 ? ` (+${selectedGenreIds.length - 4})` : ""}
         </div>
+        <div className="mb-1 rounded-md border border-gray-800 bg-gray-900/70 p-1.5">
+          <p className="mb-1 text-[10px] font-semibold text-gray-300">Presets (gedeeld)</p>
+          <div className="mb-1 flex gap-1">
+            <input
+              value={presetName}
+              onChange={(e) => setPresetName(e.target.value)}
+              placeholder="Naam preset..."
+              className="min-w-0 flex-1 rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[11px] text-white placeholder-gray-500"
+            />
+            <button
+              type="button"
+              onClick={savePreset}
+              className="rounded border border-violet-600/70 bg-violet-700/20 px-2 py-1 text-[11px] font-semibold text-violet-100 transition hover:bg-violet-700/30"
+            >
+              Opslaan
+            </button>
+          </div>
+          <div className="max-h-24 space-y-1 overflow-y-auto pr-1">
+            {presets.length === 0 ? (
+              <p className="text-[10px] text-gray-500">Nog geen presets opgeslagen.</p>
+            ) : (
+              presets.map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  onClick={() => applyPreset(preset)}
+                  className="flex w-full items-center justify-between rounded border border-gray-700 bg-gray-800/70 px-2 py-1 text-left text-[10px] text-gray-200 transition hover:border-violet-500/70 hover:bg-gray-800"
+                >
+                  <span className="truncate">{preset.name}</span>
+                  <span className="ml-2 text-gray-500">{preset.genreIds.length}</span>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
         <div className="border-b border-gray-800/80 mb-1" />
-        {activeListTab === "local" ? (
-          <>
+        <div className="space-y-1">
+          <div className="rounded-md border border-gray-800 bg-gray-900/70">
+            <button
+              type="button"
+              onClick={() => setSectionOpen("local")}
+              className="flex w-full items-center justify-between px-2 py-1.5 text-left text-[11px] font-semibold text-gray-200"
+            >
+              <span>Lokaal ({localGenres.length})</span>
+              <span>{openSections.local ? "▾" : "▸"}</span>
+            </button>
+            {openSections.local && (
+              <div className="border-t border-gray-800 px-1 pb-1">
+                <div className="mb-1 mt-1 grid grid-cols-2 gap-1">
+                  <button type="button" onClick={() => setAllForSection("local", true)} className="rounded border border-gray-700 px-2 py-1 text-[10px] text-gray-200 hover:bg-gray-800">Alles aan</button>
+                  <button type="button" onClick={() => setAllForSection("local", false)} className="rounded border border-gray-700 px-2 py-1 text-[10px] text-gray-200 hover:bg-gray-800">Alles uit</button>
+                </div>
+                <>
             {localGenres.map((genre) => {
               const isActive = selectedGenreIds.includes(genre.id);
               return (
@@ -453,9 +539,26 @@ export default function FallbackGenreSelector() {
                 Geen genres beschikbaar in de Lokale lijst.
               </p>
             )}
-          </>
-        ) : activeListTab === "auto" ? (
-          <>
+                </>
+              </div>
+            )}
+          </div>
+          <div className="rounded-md border border-gray-800 bg-gray-900/70">
+            <button
+              type="button"
+              onClick={() => setSectionOpen("auto")}
+              className="flex w-full items-center justify-between px-2 py-1.5 text-left text-[11px] font-semibold text-gray-200"
+            >
+              <span>Online ({autoGenreCanonicalCount + (likedAutoGenre ? 1 : 0)})</span>
+              <span>{openSections.auto ? "▾" : "▸"}</span>
+            </button>
+            {openSections.auto && (
+              <div className="border-t border-gray-800 px-1 pb-1">
+                <div className="mb-1 mt-1 grid grid-cols-2 gap-1">
+                  <button type="button" onClick={() => setAllForSection("auto", true)} className="rounded border border-gray-700 px-2 py-1 text-[10px] text-gray-200 hover:bg-gray-800">Alles aan</button>
+                  <button type="button" onClick={() => setAllForSection("auto", false)} className="rounded border border-gray-700 px-2 py-1 text-[10px] text-gray-200 hover:bg-gray-800">Alles uit</button>
+                </div>
+                <>
             {likedAutoGenre && (
               <label
                 className={`mb-1 flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs font-semibold transition ${
@@ -534,9 +637,21 @@ export default function FallbackGenreSelector() {
                 Geen genres beschikbaar in de Online lijst.
               </p>
             )}
-          </>
-        ) : (
-          <>
+                </>
+              </div>
+            )}
+          </div>
+          <div className="rounded-md border border-gray-800 bg-gray-900/70">
+            <button
+              type="button"
+              onClick={() => setSectionOpen("playlists")}
+              className="flex w-full items-center justify-between px-2 py-1.5 text-left text-[11px] font-semibold text-gray-200"
+            >
+              <span>Playlists ({sharedPlaylists.length})</span>
+              <span>{openSections.playlists ? "▾" : "▸"}</span>
+            </button>
+            {openSections.playlists && (
+              <div className="border-t border-gray-800 px-1 pb-1">
             <div className="mb-1 rounded-md border border-gray-800 bg-gray-900/70 p-1.5">
               <div className="mb-1 flex items-center justify-between gap-2">
                 <p className="text-[10px] font-semibold text-gray-300">Playlist selectie</p>
@@ -559,14 +674,14 @@ export default function FallbackGenreSelector() {
               <div className="grid grid-cols-2 gap-1">
                 <button
                   type="button"
-                  onClick={selectAllSharedPlaylists}
+                  onClick={() => setAllForSection("playlists", true)}
                   className="rounded border border-gray-700 px-2 py-1 text-[11px] font-semibold text-gray-200 transition hover:bg-gray-800"
                 >
                   Alles aan
                 </button>
                 <button
                   type="button"
-                  onClick={openSinglePlaylistChoice}
+                  onClick={() => setAllForSection("playlists", false)}
                   className="rounded border border-gray-700 px-2 py-1 text-[11px] font-semibold text-gray-200 transition hover:bg-gray-800"
                 >
                   Alles uit
@@ -649,7 +764,27 @@ export default function FallbackGenreSelector() {
               <option value="name_desc">Sortering: Naam Z-A</option>
               <option value="tracks_desc">Sortering: Meeste tracks</option>
             </select>
-            {groupedSharedPlaylists.map((genreGroup) => (
+            <div className="mb-1 grid grid-cols-2 gap-1">
+              <button
+                type="button"
+                onClick={() => setPlaylistViewMode("grouped")}
+                className={`rounded px-2 py-1 text-[10px] font-semibold transition ${
+                  playlistViewMode === "grouped" ? "bg-violet-600/30 text-violet-100" : "text-gray-300 hover:bg-gray-800"
+                }`}
+              >
+                Op genre
+              </button>
+              <button
+                type="button"
+                onClick={() => setPlaylistViewMode("all")}
+                className={`rounded px-2 py-1 text-[10px] font-semibold transition ${
+                  playlistViewMode === "all" ? "bg-violet-600/30 text-violet-100" : "text-gray-300 hover:bg-gray-800"
+                }`}
+              >
+                Alle playlists
+              </button>
+            </div>
+            {playlistViewMode === "grouped" ? groupedSharedPlaylists.map((genreGroup) => (
               <details
                 key={`genre:${genreGroup.genreLabel}`}
                 open={hasStoredCollapseState ? !collapsedGenres.includes(genreGroup.genreLabel) : false}
@@ -723,7 +858,36 @@ export default function FallbackGenreSelector() {
                   ))}
                 </div>
               </details>
-            ))}
+            )) : sortedSharedPlaylists.map((playlist) => {
+              const isActive = selectedSharedGenres.includes(playlist.id);
+              return (
+                <label
+                  key={playlist.id}
+                  className={`mb-0.5 flex w-full cursor-pointer items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
+                    isActive
+                      ? "bg-violet-600/25 text-violet-100"
+                      : "text-gray-300 hover:bg-gray-800 hover:text-white"
+                  }`}
+                >
+                  <span className="mr-2 flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={isActive}
+                      onChange={() => {
+                        const next = isActive
+                          ? selectedSharedGenres.filter((id) => id !== playlist.id)
+                          : [...selectedSharedGenres, playlist.id];
+                        const safeNext = next.length > 0 ? next : [playlist.id];
+                        emitSharedSelection(safeNext);
+                      }}
+                      className="h-3.5 w-3.5 cursor-pointer accent-violet-500"
+                    />
+                    <span className="truncate">{playlist.label.replace(/^Playlist ·\s*/i, "")}</span>
+                  </span>
+                  <span className="ml-2 text-[10px] text-gray-500">{playlist.trackCount}</span>
+                </label>
+              );
+            })}
             {selectedSharedGenres.length > 1 && (
               <div className="mb-1 rounded-md border border-violet-700/40 bg-violet-900/20 px-2 py-1 text-[10px] text-violet-100">
                 Mix actief: {selectedSharedGenres.length} playlists
@@ -734,8 +898,10 @@ export default function FallbackGenreSelector() {
                 Geen publieke playlists beschikbaar.
               </p>
             )}
-          </>
-        )}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </details>
   );
