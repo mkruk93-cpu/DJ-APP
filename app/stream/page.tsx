@@ -157,6 +157,7 @@ export default function StreamPage() {
   const [skipVoteToastExpiresAt, setSkipVoteToastExpiresAt] = useState<number | null>(null);
   const [skipVoteToastSecondsLeft, setSkipVoteToastSecondsLeft] = useState(0);
   const [skipVoteToastVoted, setSkipVoteToastVoted] = useState(false);
+  const [playerFullscreen, setPlayerFullscreen] = useState(false);
   const [displayHeaderNextTrack, setDisplayHeaderNextTrack] = useState<{
     title: string | null;
     artist: string | null;
@@ -184,6 +185,8 @@ export default function StreamPage() {
   const prevVisibleTrackKeyRef = useRef("");
   const mobileHeaderMenuRef = useRef<HTMLDivElement>(null);
   const skipWaitToastShownRef = useRef(false);
+  const hadSkipVoteActiveRef = useRef(false);
+  const lastQueuePushVoteIdRef = useRef<string | null>(null);
 
   const isStreamUnavailable = radioMode === "dj" ? !twitchLive : (!streamOnline && !pausedForIdle);
   const tabsAllowed = !isStreamUnavailable;
@@ -371,6 +374,18 @@ export default function StreamPage() {
     document.addEventListener("mousedown", onClickOutside);
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, [mobileHeaderMenuOpen]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const win = window as Window & { __radioPlayerFullscreenState?: boolean };
+    setPlayerFullscreen(!!win.__radioPlayerFullscreenState);
+    function onPlayerFullscreen(event: Event) {
+      const custom = event as CustomEvent<{ fullscreen?: boolean }>;
+      setPlayerFullscreen(!!custom.detail?.fullscreen);
+    }
+    window.addEventListener("radio-player-fullscreen-state", onPlayerFullscreen as EventListener);
+    return () => window.removeEventListener("radio-player-fullscreen-state", onPlayerFullscreen as EventListener);
+  }, []);
 
   useEffect(() => {
     if (!skipVoteToastExpiresAt) {
@@ -639,9 +654,9 @@ export default function StreamPage() {
       const addedBy = (data.added_by ?? "").trim();
       if (!addedBy) return;
       const me = (localStorage.getItem("nickname") ?? "").trim().toLowerCase();
-      if (me && addedBy.toLowerCase() === me) return;
       const title = (data.title ?? "").trim() || "een nummer";
-      showInfoToast(`${addedBy} voegde toe: ${title}`);
+      if (me && addedBy.toLowerCase() === me) showInfoToast(`Toegevoegd aan wachtrij: ${title}`);
+      else showInfoToast(`${addedBy} voegde toe: ${title}`);
     });
 
     socket.on("upcoming:update", (upcoming: UpcomingTrack | null) => {
@@ -663,6 +678,11 @@ export default function StreamPage() {
 
     socket.on("vote:update", (data: VoteState | null) => {
       store.getState().setVoteState(data);
+      const active = !!(data && data.votes > 0);
+      if (active && !hadSkipVoteActiveRef.current) {
+        showInfoToast("Skip voorgesteld. Stem nu mee als je wilt skippen.");
+      }
+      hadSkipVoteActiveRef.current = active;
     });
 
     socket.on("stream:status", (data: { online: boolean; listeners: number; pausedForIdle?: boolean }) => {
@@ -707,10 +727,15 @@ export default function StreamPage() {
     }) => {
       const voted = data.voters?.includes(socket.id ?? "") ?? false;
       store.getState().setQueuePushVote({ ...data, voted });
+      if (lastQueuePushVoteIdRef.current !== data.id) {
+        lastQueuePushVoteIdRef.current = data.id;
+        showInfoToast(`Push voorgesteld: ${data.title ?? "nummer"} · door ${data.proposed_by}`);
+      }
     });
 
     socket.on("queuePushVote:end", () => {
       store.getState().setQueuePushVote(null);
+      lastQueuePushVoteIdRef.current = null;
     });
 
     socket.on("queuePush:lock", (data: { locked: boolean }) => {
@@ -1331,8 +1356,12 @@ export default function StreamPage() {
         </div>
       </main>
       {infoToastMessage && (
-        <div className="pointer-events-none fixed left-1/2 top-3 z-[115] w-[92%] max-w-xl -translate-x-1/2 sm:top-4">
-          <div className="pointer-events-auto flex items-start justify-between gap-2 rounded-lg border border-violet-800/70 bg-violet-950/80 px-4 py-2 text-sm text-violet-100 shadow-lg shadow-violet-900/30 backdrop-blur-sm">
+        <div className={`pointer-events-none fixed left-1/2 top-3 -translate-x-1/2 sm:top-4 ${playerFullscreen ? "z-[220] w-[96%] max-w-2xl" : "z-[115] w-[92%] max-w-xl"}`}>
+          <div className={`pointer-events-auto flex items-start justify-between gap-2 text-violet-100 ${
+            playerFullscreen
+              ? "rounded-xl border border-violet-700/80 bg-violet-950/88 px-4 py-3 text-sm shadow-2xl shadow-violet-900/35 backdrop-blur-md sm:px-5 sm:py-3.5 sm:text-base"
+              : "rounded-lg border border-violet-800/70 bg-violet-950/80 px-4 py-2 text-sm shadow-lg shadow-violet-900/30 backdrop-blur-sm"
+          }`}>
             <span className="min-w-0 flex-1 break-words">{infoToastMessage}</span>
             <button
               type="button"
@@ -1526,14 +1555,18 @@ export default function StreamPage() {
         </div>
       )}
       {toastMessage && (
-        <div className="pointer-events-none fixed bottom-4 left-1/2 z-[120] w-[92%] max-w-xl -translate-x-1/2">
-          <div className="rounded-lg border border-red-900/60 bg-red-950/85 px-4 py-2 text-center text-sm text-red-100 shadow-lg shadow-red-900/40 backdrop-blur-sm">
+        <div className={`pointer-events-none fixed bottom-4 left-1/2 w-[92%] max-w-xl -translate-x-1/2 ${playerFullscreen ? "z-[220]" : "z-[120]"}`}>
+          <div className={`border border-red-900/60 bg-red-950/85 text-center text-red-100 backdrop-blur-sm ${
+            playerFullscreen
+              ? "rounded-xl px-5 py-3 text-base shadow-2xl shadow-red-900/45"
+              : "rounded-lg px-4 py-2 text-sm shadow-lg shadow-red-900/40"
+          }`}>
             {toastMessage}
           </div>
         </div>
       )}
       {voteState && voteState.votes > 0 && !skipVoteToastHidden && (
-        <div className="pointer-events-none fixed bottom-20 left-1/2 z-[125] w-[94%] max-w-xl -translate-x-1/2 sm:bottom-6">
+        <div className={`pointer-events-none fixed bottom-20 left-1/2 w-[94%] max-w-xl -translate-x-1/2 sm:bottom-6 ${playerFullscreen ? "z-[220]" : "z-[125]"}`}>
           <div className="pointer-events-auto rounded-lg border border-violet-700/60 bg-violet-950/90 px-3 py-2 text-violet-100 shadow-lg shadow-violet-900/40 backdrop-blur-sm">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 flex-1">

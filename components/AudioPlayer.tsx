@@ -99,6 +99,8 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const [likedTrackKey, setLikedTrackKey] = useState<string | null>(null);
   const [dislikedTrackKey, setDislikedTrackKey] = useState<string | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
+  const [nativeFullscreen, setNativeFullscreen] = useState(false);
+  const [manualFullscreen, setManualFullscreen] = useState(false);
   const userPaused = useRef(false);
   const playingRef = useRef(false);
   const reconnectAttemptRef = useRef(0);
@@ -108,6 +110,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const lastReconnectAtRef = useRef(0);
   const nicknameRef = useRef<string>("anonymous");
   const connected = useRadioStore((s) => s.connected);
+  const isFullscreen = nativeFullscreen || manualFullscreen;
   const buildFreshStreamUrl = useCallback((baseUrl: string): string => {
     const separator = baseUrl.includes("?") ? "&" : "?";
     return `${baseUrl}${separator}live=${Date.now()}`;
@@ -154,6 +157,18 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
       });
     }
   }, [playing, connected]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const win = window as Window & { __radioPlayerFullscreenState?: boolean };
+    win.__radioPlayerFullscreenState = isFullscreen;
+    window.dispatchEvent(new CustomEvent("radio-player-fullscreen-state", { detail: { fullscreen: isFullscreen } }));
+    return () => {
+      if (!isFullscreen) return;
+      win.__radioPlayerFullscreenState = false;
+      window.dispatchEvent(new CustomEvent("radio-player-fullscreen-state", { detail: { fullscreen: false } }));
+    };
+  }, [isFullscreen]);
 
   useEffect(() => {
     const socket = getSocket();
@@ -417,6 +432,37 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   }, [clearReconnectTimer, clearWaitingTimer]);
 
   useEffect(() => {
+    function onFullscreenChange() {
+      const host = playerRef.current;
+      const active = !!host && document.fullscreenElement === host;
+      setNativeFullscreen(active);
+      if (active) setManualFullscreen(false);
+    }
+
+    function onManualEscape(event: KeyboardEvent) {
+      if (!manualFullscreen) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setManualFullscreen(false);
+        unlockLandscapeOrientation();
+      }
+    }
+
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    document.addEventListener("keydown", onManualEscape);
+    return () => {
+      document.removeEventListener("fullscreenchange", onFullscreenChange);
+      document.removeEventListener("keydown", onManualEscape);
+    };
+  }, [manualFullscreen]);
+
+  useEffect(() => {
+    return () => {
+      unlockLandscapeOrientation();
+    };
+  }, []);
+
+  useEffect(() => {
     const sb = getSupabase();
 
     sb.from("now_playing")
@@ -480,6 +526,62 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
           setAutoplayBlocked(true);
         });
     }
+  }
+
+  async function lockLandscapeOrientation(): Promise<void> {
+    if (typeof window === "undefined") return;
+    try {
+      const orientationApi = window.screen?.orientation as ScreenOrientation | undefined;
+      if (orientationApi?.lock) await orientationApi.lock("landscape");
+    } catch {
+      // Ignore lock failures on unsupported browsers.
+    }
+  }
+
+  function unlockLandscapeOrientation(): void {
+    if (typeof window === "undefined") return;
+    try {
+      const orientationApi = window.screen?.orientation as ScreenOrientation | undefined;
+      orientationApi?.unlock?.();
+    } catch {
+      // Ignore unlock failures on unsupported browsers.
+    }
+  }
+
+  async function enterFullscreen(): Promise<void> {
+    const host = playerRef.current;
+    if (!host) return;
+    let enteredNative = false;
+    if (typeof host.requestFullscreen === "function") {
+      try {
+        await host.requestFullscreen();
+        enteredNative = true;
+      } catch {
+        enteredNative = false;
+      }
+    }
+    if (!enteredNative) setManualFullscreen(true);
+    await lockLandscapeOrientation();
+  }
+
+  async function exitFullscreen(): Promise<void> {
+    setManualFullscreen(false);
+    if (typeof document !== "undefined" && document.fullscreenElement && typeof document.exitFullscreen === "function") {
+      try {
+        await document.exitFullscreen();
+      } catch {
+        // Ignore.
+      }
+    }
+    unlockLandscapeOrientation();
+  }
+
+  function toggleFullscreen() {
+    if (isFullscreen) {
+      void exitFullscreen();
+      return;
+    }
+    void enterFullscreen();
   }
 
   const isRadioMode = !!syncedRadioTrack;
@@ -753,7 +855,11 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   return (
     <div
       ref={playerRef}
-      className="audio-player-shell relative w-full max-w-full overflow-hidden rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5"
+      className={`audio-player-shell w-full overflow-hidden bg-gray-900 shadow-lg shadow-violet-500/5 ${
+        isFullscreen
+          ? "fixed inset-0 z-[180] h-[100svh] max-w-none rounded-none border-0"
+          : "relative max-w-full rounded-xl border border-gray-800"
+      }`}
     >
       <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-xl">
         <div className="player-kick-sweep absolute inset-0" />
@@ -845,8 +951,89 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
         </button>
       )}
 
+      {isFullscreen && (
+        <div className="relative z-[2] flex h-full w-full flex-col justify-between p-4 sm:p-6">
+          <div className="flex items-center justify-between">
+            <span className="rounded-full border border-violet-400/40 bg-black/30 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-violet-100">
+              Live player
+            </span>
+            <button
+              type="button"
+              onClick={toggleFullscreen}
+              className="rounded-full border border-gray-500/60 bg-black/35 px-3 py-1.5 text-xs font-semibold text-white transition hover:border-violet-400/70 hover:bg-black/50"
+            >
+              Sluit fullscreen
+            </button>
+          </div>
+
+          <div className="flex flex-1 items-center justify-center py-4">
+            <div className="flex w-full max-w-6xl flex-col items-center gap-5 lg:flex-row lg:items-center lg:justify-center lg:gap-10">
+              <div className="relative shrink-0">
+                {(currentArtwork || incomingArtwork) ? (
+                  <div className="player-cover-fullscreen player-cover-idle-drift relative h-[44vw] w-[44vw] max-h-[62svh] max-w-[62svh] min-h-[220px] min-w-[220px]">
+                    <div className="absolute inset-0 rounded-3xl border border-violet-300/30 bg-black/25 shadow-2xl shadow-black/50" />
+                    {currentArtwork && (
+                      <img
+                        src={currentArtwork}
+                        alt=""
+                        className="absolute inset-0 z-10 h-full w-full rounded-3xl object-cover transition-opacity duration-700"
+                        style={{ opacity: incomingArtwork ? (incomingArtworkVisible ? 0 : 1) : 1 }}
+                      />
+                    )}
+                    {incomingArtwork && (
+                      <img
+                        src={incomingArtwork}
+                        alt=""
+                        className="absolute inset-0 z-20 h-full w-full rounded-3xl object-cover transition-opacity duration-700"
+                        style={{ opacity: incomingArtworkVisible ? 1 : 0 }}
+                      />
+                    )}
+                  </div>
+                ) : (
+                  <div className="player-fallback-note player-fallback-cover flex h-[44vw] w-[44vw] max-h-[62svh] max-w-[62svh] min-h-[220px] min-w-[220px] items-center justify-center rounded-3xl border border-violet-300/30">
+                    {artworkFallback}
+                  </div>
+                )}
+              </div>
+
+              <div className="w-full max-w-2xl rounded-2xl border border-gray-700/70 bg-black/30 p-4 backdrop-blur-md sm:p-6">
+                <p className="text-xs uppercase tracking-[0.22em] text-gray-300">Nu live</p>
+                <h2 className="mt-2 text-2xl font-bold text-white sm:text-4xl">
+                  {displayTitle || "Wacht op nummer..."}
+                </h2>
+                <p className="mt-1 text-base text-violet-200 sm:text-xl">{displayArtist || "Radio stream"}</p>
+                {isRadioMode && (
+                  <p className="mt-2 text-sm text-gray-300">
+                    {formatTime(elapsed)} / {durationLabel}
+                  </p>
+                )}
+                <div className="mt-5 flex items-center gap-3">
+                  <button
+                    onClick={toggle}
+                    className={`flex h-14 w-14 items-center justify-center rounded-full text-white transition ${
+                      playing ? "bg-violet-600 hover:bg-violet-500" : "bg-gray-700 hover:bg-gray-600"
+                    }`}
+                  >
+                    {playing ? "❚❚" : "▶"}
+                  </button>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={volume}
+                    onChange={(e) => setVolume(Number(e.target.value))}
+                    className="violet-slider h-1.5 w-full cursor-pointer appearance-none rounded-full bg-gray-700 accent-violet-500"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Mobile: compact horizontal layout */}
-      <div className="relative z-[1] flex flex-col landscape:hidden sm:hidden">
+      {!isFullscreen && <div className="relative z-[1] flex flex-col landscape:hidden sm:hidden">
         <div className="flex items-center gap-2 p-2">
           <div className="relative shrink-0" style={{ perspective: "900px" }}>
             {playing && <div className="player-cover-glow absolute -inset-1 rounded-xl bg-violet-500/30 blur-md" />}
@@ -1006,25 +1193,35 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
             )}
           </div>
 
-          <button
-            onClick={toggle}
-            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-all ${
-              playing
-                ? "bg-violet-600 shadow-md shadow-violet-500/30 hover:bg-violet-500"
-                : "bg-gray-700 hover:bg-gray-600"
-            }`}
-          >
-            {playing ? (
-              <svg className="h-4 w-4 text-white" fill="currentColor" viewBox="0 0 24 24">
-                <rect x="6" y="4" width="4" height="16" rx="1" />
-                <rect x="14" y="4" width="4" height="16" rx="1" />
-              </svg>
-            ) : (
-              <svg className="ml-0.5 h-4 w-4 text-white" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M8 5v14l11-7z" />
-              </svg>
-            )}
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={toggleFullscreen}
+              className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-800 text-white transition hover:bg-gray-700"
+              aria-label="Fullscreen player"
+            >
+              ⛶
+            </button>
+            <button
+              onClick={toggle}
+              className={`flex h-10 w-10 items-center justify-center rounded-full transition-all ${
+                playing
+                  ? "bg-violet-600 shadow-md shadow-violet-500/30 hover:bg-violet-500"
+                  : "bg-gray-700 hover:bg-gray-600"
+              }`}
+            >
+              {playing ? (
+                <svg className="h-4 w-4 text-white" fill="currentColor" viewBox="0 0 24 24">
+                  <rect x="6" y="4" width="4" height="16" rx="1" />
+                  <rect x="14" y="4" width="4" height="16" rx="1" />
+                </svg>
+              ) : (
+                <svg className="ml-0.5 h-4 w-4 text-white" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              )}
+            </button>
+          </div>
         </div>
 
         {isRadioMode && duration && duration > 0 && (
@@ -1043,10 +1240,10 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
             <AudioVisualizer audioRef={audioRef} hostRef={playerRef} playing={playing} barCount={24} className="h-8" />
           </div>
         )}
-      </div>
+      </div>}
 
       {/* Desktop: compact horizontal layout */}
-      <div className="relative z-[1] hidden items-center gap-4 px-4 py-4 landscape:flex sm:flex">
+      {!isFullscreen && <div className="relative z-[1] hidden items-center gap-4 px-4 py-4 landscape:flex sm:flex">
         <div className="relative -ml-2 shrink-0 overflow-visible" style={{ perspective: "1100px" }}>
           {playing && <div className="player-cover-glow absolute -inset-2 rounded-2xl bg-violet-500/30 blur-xl" />}
           {(currentArtwork || incomingArtwork) ? (
@@ -1217,6 +1414,14 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
 
           <div className="flex items-center gap-3">
             <button
+              type="button"
+              onClick={toggleFullscreen}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gray-800 text-white transition hover:bg-gray-700"
+              aria-label="Fullscreen player"
+            >
+              ⛶
+            </button>
+            <button
               onClick={toggle}
               className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-all ${
                 playing
@@ -1259,7 +1464,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
             <AudioVisualizer audioRef={audioRef} hostRef={playerRef} playing={playing} barCount={48} className="h-10" />
           )}
         </div>
-      </div>
+      </div>}
     </div>
   );
 }
