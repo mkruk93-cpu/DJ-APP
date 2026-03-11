@@ -88,12 +88,16 @@ function formatTime(seconds: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+function getYouTubeVideoId(url: string): string | null {
+  const idMatch = url.match(/\/vi\/([^/?]+)/i);
+  return idMatch?.[1] ?? null;
+}
+
 function getFullscreenArtworkUrl(url: string | null): string | null {
   if (!url) return null;
   // Prefer higher resolution YouTube thumbnails for fullscreen artwork.
   if (url.includes("img.youtube.com/vi/") || url.includes("i.ytimg.com/vi/")) {
-    const idMatch = url.match(/\/vi\/([^/]+)/i);
-    const videoId = idMatch?.[1];
+    const videoId = getYouTubeVideoId(url);
     if (videoId) {
       return `https://i.ytimg.com/vi_webp/${videoId}/maxresdefault.webp`;
     }
@@ -101,6 +105,18 @@ function getFullscreenArtworkUrl(url: string | null): string | null {
       .replace(/\/mqdefault\.jpg(\?.*)?$/i, "/maxresdefault.jpg")
       .replace(/\/hqdefault\.jpg(\?.*)?$/i, "/maxresdefault.jpg")
       .replace(/\/sddefault\.jpg(\?.*)?$/i, "/maxresdefault.jpg");
+  }
+  return url;
+}
+
+function getFullscreenArtworkFallbackUrl(url: string | null): string | null {
+  if (!url) return null;
+  if (url.includes("img.youtube.com/vi/") || url.includes("i.ytimg.com/vi/")) {
+    const videoId = getYouTubeVideoId(url);
+    if (videoId) {
+      // hqdefault exists much more often than maxres and avoids YouTube placeholder logo.
+      return `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+    }
   }
   return url;
 }
@@ -721,6 +737,14 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const nextArtist = parsedNext.artist;
   const fullscreenCurrentArtwork = useMemo(() => getFullscreenArtworkUrl(currentArtwork), [currentArtwork]);
   const fullscreenIncomingArtwork = useMemo(() => getFullscreenArtworkUrl(incomingArtwork), [incomingArtwork]);
+  const fullscreenCurrentArtworkFallback = useMemo(
+    () => getFullscreenArtworkFallbackUrl(currentArtwork),
+    [currentArtwork],
+  );
+  const fullscreenIncomingArtworkFallback = useMemo(
+    () => getFullscreenArtworkFallbackUrl(incomingArtwork),
+    [incomingArtwork],
+  );
 
   useEffect(() => {
     if (!feedbackMessage) return;
@@ -1091,74 +1115,99 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
             <div className="grid h-full w-full max-w-6xl grid-cols-1 items-center gap-2 landscape:grid-cols-[minmax(0,1fr)_minmax(220px,1fr)] landscape:gap-3 md:grid-cols-[minmax(0,1fr)_minmax(320px,1fr)] md:gap-6">
               <div className="relative flex items-center justify-center">
                 {(fullscreenCurrentArtwork || fullscreenIncomingArtwork) ? (
-                  <div className="player-cover-fullscreen player-cover-idle-drift relative h-[44vw] w-[44vw] max-h-[40dvh] max-w-[40dvh] min-h-[120px] min-w-[120px] overflow-hidden rounded-3xl landscape:max-h-[34dvh] landscape:max-w-[34dvh] md:h-[56vh] md:w-[56vh] md:max-h-[64vh] md:max-w-[64vh]">
+                  <div className="player-cover-fullscreen player-cover-idle-drift relative h-[52vw] w-[52vw] max-h-[50dvh] max-w-[50dvh] min-h-[150px] min-w-[150px] overflow-hidden rounded-3xl landscape:max-h-[44dvh] landscape:max-w-[44dvh] md:h-[56vh] md:w-[56vh] md:max-h-[64vh] md:max-w-[64vh]">
                     <div className="absolute inset-0 rounded-3xl bg-black/20 shadow-2xl shadow-black/60" />
                     {fullscreenCurrentArtwork && (
                       <img
+                        key={`fullscreen-current-${fullscreenCurrentArtwork}`}
                         src={fullscreenCurrentArtwork}
                         alt=""
                         className="absolute inset-0 z-10 h-full w-full rounded-3xl object-cover transition-opacity duration-700"
                         style={{ opacity: fullscreenIncomingArtwork ? (incomingArtworkVisible ? 0 : 1) : 1 }}
+                        data-fallback-src={fullscreenCurrentArtworkFallback ?? ""}
+                        onError={(event) => {
+                          const fallbackSrc = event.currentTarget.dataset.fallbackSrc;
+                          if (!fallbackSrc || event.currentTarget.dataset.fallbackApplied === "1") return;
+                          event.currentTarget.dataset.fallbackApplied = "1";
+                          event.currentTarget.src = fallbackSrc;
+                        }}
                       />
                     )}
                     {fullscreenIncomingArtwork && (
                       <img
+                        key={`fullscreen-incoming-${fullscreenIncomingArtwork}`}
                         src={fullscreenIncomingArtwork}
                         alt=""
                         className="absolute inset-0 z-20 h-full w-full rounded-3xl object-cover transition-opacity duration-700"
                         style={{ opacity: incomingArtworkVisible ? 1 : 0 }}
+                        data-fallback-src={fullscreenIncomingArtworkFallback ?? ""}
+                        onError={(event) => {
+                          const fallbackSrc = event.currentTarget.dataset.fallbackSrc;
+                          if (!fallbackSrc || event.currentTarget.dataset.fallbackApplied === "1") return;
+                          event.currentTarget.dataset.fallbackApplied = "1";
+                          event.currentTarget.src = fallbackSrc;
+                        }}
                       />
                     )}
                   </div>
                 ) : (
-                  <div className="player-fallback-note player-fallback-cover flex h-[44vw] w-[44vw] max-h-[40dvh] max-w-[40dvh] min-h-[120px] min-w-[120px] items-center justify-center rounded-3xl border border-violet-300/30 landscape:max-h-[34dvh] landscape:max-w-[34dvh] md:h-[56vh] md:w-[56vh] md:max-h-[64vh] md:max-w-[64vh]">
+                  <div className="player-fallback-note player-fallback-cover flex h-[52vw] w-[52vw] max-h-[50dvh] max-w-[50dvh] min-h-[150px] min-w-[150px] items-center justify-center rounded-3xl border border-violet-300/30 landscape:max-h-[44dvh] landscape:max-w-[44dvh] md:h-[56vh] md:w-[56vh] md:max-h-[64vh] md:max-w-[64vh]">
                     {artworkFallback}
                   </div>
                 )}
               </div>
 
-              <div className="w-full rounded-2xl border border-gray-700/70 bg-black/35 p-2.5 backdrop-blur-md md:p-5">
-                <p className="text-xs uppercase tracking-[0.22em] text-gray-300">Nu live</p>
-                <h2 className="mt-1 line-clamp-2 text-base font-bold text-white landscape:text-sm md:text-3xl">
-                  {displayTitle || "Wacht op nummer..."}
-                </h2>
-                <p className="mt-1 line-clamp-1 text-xs text-violet-200 landscape:text-xs md:text-lg">{displayArtist || "Radio stream"}</p>
-                {isRadioMode && (
-                  <>
-                    <p className="mt-1 text-xs text-gray-300 md:text-sm">{formatTime(elapsed)} / {durationLabel}</p>
-                    <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-gray-700/80">
-                      <div className="h-full rounded-full bg-violet-500 transition-all duration-1000 ease-linear" style={{ width: `${progress * 100}%` }} />
-                    </div>
-                  </>
-                )}
-                {(nextTitle || nextArtist) && (
-                  <p className="mt-2 text-xs text-gray-300 md:text-sm">
-                    Volgende: <span className="text-violet-200">{nextArtist || "Onbekend"}</span>
-                    {nextTitle ? <span className="text-gray-400"> — </span> : null}
-                    {nextTitle ? <span className="text-white">{nextTitle}</span> : null}
+              <div className="w-full space-y-2">
+                <div className="rounded-2xl border border-gray-700/70 bg-black/35 p-3 backdrop-blur-md md:p-5">
+                  <p className="text-[10px] uppercase tracking-[0.24em] text-gray-300">Nu live</p>
+                  <h2 className="mt-1.5 line-clamp-2 text-base font-bold leading-tight text-white landscape:text-sm md:text-3xl">
+                    {displayTitle || "Wacht op nummer..."}
+                  </h2>
+                  <p className="mt-1.5 line-clamp-1 text-xs text-violet-200 landscape:text-xs md:text-lg">
+                    {displayArtist || "Radio stream"}
                   </p>
-                )}
-                <div className="mt-3 flex items-center gap-3">
-                  <button
-                    onClick={toggle}
-                    className={`flex h-14 w-14 items-center justify-center rounded-full text-white transition ${
-                      playing ? "bg-violet-600 hover:bg-violet-500" : "bg-gray-700 hover:bg-gray-600"
-                    }`}
-                  >
-                    {playing ? "❚❚" : "▶"}
-                  </button>
-                  <div className="hidden min-w-0 flex-1 items-center gap-2 sm:flex">
-                    <span className="text-[11px] text-gray-400">Volume</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.01}
-                      value={volume}
-                      onChange={(e) => setVolume(Number(e.target.value))}
-                      className="violet-slider h-1 w-full max-w-32 cursor-pointer appearance-none rounded-full bg-gray-700 accent-violet-500"
-                    />
+                  {isRadioMode && (
+                    <div className="mt-2 space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px] text-gray-300 md:text-sm">
+                        <span>Voortgang</span>
+                        <span>{formatTime(elapsed)} / {durationLabel}</span>
+                      </div>
+                      <div className="h-1 w-full overflow-hidden rounded-full bg-gray-700/80">
+                        <div className="h-full rounded-full bg-violet-500 transition-all duration-1000 ease-linear" style={{ width: `${progress * 100}%` }} />
+                      </div>
+                    </div>
+                  )}
+                  <div className="mt-3 flex items-center gap-3">
+                    <button
+                      onClick={toggle}
+                      className={`flex h-14 w-14 items-center justify-center rounded-full text-white transition ${
+                        playing ? "bg-violet-600 hover:bg-violet-500" : "bg-gray-700 hover:bg-gray-600"
+                      }`}
+                    >
+                      {playing ? "❚❚" : "▶"}
+                    </button>
+                    <div className="hidden min-w-0 flex-1 items-center gap-2 sm:flex">
+                      <span className="text-[11px] text-gray-400">Volume</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        value={volume}
+                        onChange={(e) => setVolume(Number(e.target.value))}
+                        className="violet-slider h-1 w-full max-w-32 cursor-pointer appearance-none rounded-full bg-gray-700 accent-violet-500"
+                      />
+                    </div>
                   </div>
+                </div>
+                <div className="rounded-2xl border border-gray-700/70 bg-black/25 p-3 backdrop-blur-md md:p-4">
+                  <p className="text-[10px] uppercase tracking-[0.24em] text-gray-300">Volgend nummer</p>
+                  <p className="mt-1.5 line-clamp-1 text-sm font-semibold text-violet-100 md:text-base">
+                    {nextTitle || "Nog niet bekend"}
+                  </p>
+                  <p className="mt-1 line-clamp-1 text-xs text-gray-300 md:text-sm">
+                    {nextArtist || "Artiest onbekend"}
+                  </p>
                 </div>
               </div>
             </div>
