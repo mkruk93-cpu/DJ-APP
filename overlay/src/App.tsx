@@ -26,6 +26,17 @@ declare global {
   interface Window {
     overlayHost?: {
       setClickThrough: (enabled: boolean) => void;
+      pickDownloadDirectory?: () => Promise<string | null>;
+      downloadBatch?: (payload: {
+        targetDir: string;
+        items: Array<{ url: string; title: string; artist: string }>;
+      }) => Promise<{
+        ok: boolean;
+        success?: number;
+        total?: number;
+        failed?: Array<{ item: { url: string; title: string; artist: string }; error: string }>;
+        error?: string;
+      }>;
     };
   }
 }
@@ -78,6 +89,44 @@ interface LivePollState {
   options: string[];
   counts: number[];
   totalVotes: number;
+}
+
+interface SharedPlaylistSummary {
+  id: string;
+  name: string;
+  track_count: number;
+  genre_group?: string | null;
+  subgenre?: string | null;
+}
+
+interface SharedPlaylistTrack {
+  id: string;
+  title: string;
+  artist: string | null;
+  spotify_url?: string | null;
+}
+
+interface CsvTrackEntry {
+  id: string;
+  title: string;
+  artist: string | null;
+}
+
+interface ManualDownloadCandidate {
+  provider: "youtube" | "soundcloud" | "spotdl";
+  url: string;
+  title: string;
+  channel: string;
+  duration: number | null;
+  thumbnail: string | null;
+  score: number;
+  reasons: string[];
+}
+
+interface PendingManualResolveTrack {
+  id: string;
+  title: string;
+  artist?: string | null;
 }
 
 function formatDuration(seconds?: number | null): string {
@@ -144,11 +193,60 @@ function createPresetId(): string {
   return `preset-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function parseCsvLine(line: string): string[] {
+  const out: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (ch === "\"") {
+      if (inQuotes && line[i + 1] === "\"") {
+        current += "\"";
+        i += 1;
+        continue;
+      }
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (ch === "," && !inQuotes) {
+      out.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  out.push(current.trim());
+  return out;
+}
+
+function normalizeHeader(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function parseExportifyCsv(text: string): CsvTrackEntry[] {
+  const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  if (lines.length < 2) return [];
+  const headers = parseCsvLine(lines[0]).map(normalizeHeader);
+  const titleIdx = headers.findIndex((h) => h === "track name" || h === "title" || h === "name");
+  const artistIdx = headers.findIndex((h) => h === "artist name" || h === "artist" || h === "artists");
+  if (titleIdx < 0) return [];
+  const out: CsvTrackEntry[] = [];
+  for (let i = 1; i < lines.length; i += 1) {
+    const cols = parseCsvLine(lines[i]);
+    const title = (cols[titleIdx] ?? "").trim();
+    const artist = artistIdx >= 0 ? (cols[artistIdx] ?? "").trim() : "";
+    if (!title) continue;
+    out.push({
+      id: `csv-${i}-${title}-${artist}`,
+      title,
+      artist: artist || null,
+    });
+  }
+  return out;
+}
+
 function App() {
-  const nickname =
-    typeof window !== "undefined"
-      ? localStorage.getItem("nickname") ?? "anon"
-      : "anon";
+  const nickname = "KrukkeX";
   const [settings, setSettings] = useState<OverlaySettings>(() => {
     const base = loadSettings();
     const runsOverHttp = typeof window !== "undefined" && window.location.protocol.startsWith("http");
@@ -182,7 +280,7 @@ function App() {
   const [sessionStartedAt] = useState<string>(() => new Date().toISOString());
   const [onlineUsers, setOnlineUsers] = useState<string[]>([]);
   const [onlineExpanded, setOnlineExpanded] = useState(false);
-  const [activeTool, setActiveTool] = useState<"none" | "search" | "poll" | "shoutout">("none");
+  const [activeTool, setActiveTool] = useState<"none" | "search" | "poll" | "shoutout" | "downloads">("none");
   const [searchSource, setSearchSource] = useState<"youtube" | "soundcloud">("youtube");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<OverlaySearchResult[]>([]);
@@ -200,6 +298,23 @@ function App() {
   const [shoutoutMessage, setShoutoutMessage] = useState("");
   const [shoutoutFeedback, setShoutoutFeedback] = useState("");
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
+  const [downloadTargetDir, setDownloadTargetDir] = useState("");
+  const [sharedPlaylists, setSharedPlaylists] = useState<SharedPlaylistSummary[]>([]);
+  const [sharedPlaylistsLoading, setSharedPlaylistsLoading] = useState(false);
+  const [selectedSharedPlaylistId, setSelectedSharedPlaylistId] = useState("");
+  const [sharedPlaylistTracks, setSharedPlaylistTracks] = useState<SharedPlaylistTrack[]>([]);
+  const [sharedTracksLoading, setSharedTracksLoading] = useState(false);
+  const [sharedTracksLoadingMore, setSharedTracksLoadingMore] = useState(false);
+  const [sharedTracksHasMore, setSharedTracksHasMore] = useState(false);
+  const [sharedTracksOffset, setSharedTracksOffset] = useState(0);
+  const [selectedDownloadTrackIds, setSelectedDownloadTrackIds] = useState<Set<string>>(new Set());
+  const [downloadFeedback, setDownloadFeedback] = useState("");
+  const [downloadingBatch, setDownloadingBatch] = useState(false);
+  const [csvTracks, setCsvTracks] = useState<CsvTrackEntry[]>([]);
+  const [csvFileName, setCsvFileName] = useState("");
+  const [downloadSource, setDownloadSource] = useState<"public" | "csv">("public");
+  const [pendingManualResolveTrack, setPendingManualResolveTrack] = useState<PendingManualResolveTrack | null>(null);
+  const [manualResolveCandidates, setManualResolveCandidates] = useState<ManualDownloadCandidate[]>([]);
 
   const supabase: SupabaseClient | null = useMemo(() => {
     if (!settings.supabaseUrl || !settings.supabaseAnonKey) return null;
@@ -229,6 +344,10 @@ function App() {
   const selectedRequest = useMemo(
     () => openRequests.find((r) => r.id === selectedId) ?? openRequests[0] ?? null,
     [openRequests, selectedId],
+  );
+  const selectedPublicPlaylist = useMemo(
+    () => sharedPlaylists.find((playlist) => playlist.id === selectedSharedPlaylistId) ?? null,
+    [sharedPlaylists, selectedSharedPlaylistId],
   );
 
   async function refreshRequests() {
@@ -414,6 +533,208 @@ function App() {
       setSearchFeedback(err instanceof Error ? err.message : "Toevoegen mislukt");
     } finally {
       setAddingRequest(false);
+    }
+  }
+
+  async function refreshSharedPlaylists() {
+    const base = (settings.controlServerUrl ?? "").trim();
+    const candidates = uniqueStrings([
+      joinBase(base, "/api/shared-playlists?limit=250&offset=0"),
+      "http://localhost:3001/api/shared-playlists?limit=250&offset=0",
+      "http://localhost:3000/api/shared-playlists?limit=250&offset=0",
+    ]);
+    setSharedPlaylistsLoading(true);
+    try {
+      for (const url of candidates) {
+        try {
+          const res = await fetch(url, { cache: "no-store" });
+          if (!res.ok) continue;
+          const payload = (await res.json()) as { items?: SharedPlaylistSummary[] };
+          setSharedPlaylists(payload.items ?? []);
+          return;
+        } catch {
+          // try next candidate
+        }
+      }
+      setSharedPlaylists([]);
+      setDownloadFeedback("Publieke playlists ophalen mislukt.");
+    } finally {
+      setSharedPlaylistsLoading(false);
+    }
+  }
+
+  async function loadSharedTracks(playlistId: string, append: boolean) {
+    const safeId = encodeURIComponent(playlistId);
+    const nextOffset = append ? sharedTracksOffset : 0;
+    const base = (settings.controlServerUrl ?? "").trim();
+    const candidates = uniqueStrings([
+      joinBase(base, `/api/shared-playlists/${safeId}/tracks?limit=120&offset=${nextOffset}`),
+      `http://localhost:3001/api/shared-playlists/${safeId}/tracks?limit=120&offset=${nextOffset}`,
+      `http://localhost:3000/api/shared-playlists/${safeId}/tracks?limit=120&offset=${nextOffset}`,
+    ]);
+    if (append) setSharedTracksLoadingMore(true);
+    else setSharedTracksLoading(true);
+    try {
+      for (const url of candidates) {
+        try {
+          const res = await fetch(url, { cache: "no-store" });
+          if (!res.ok) continue;
+          const payload = (await res.json()) as { items?: SharedPlaylistTrack[]; paging?: { hasMore?: boolean; offset?: number } };
+          const items = payload.items ?? [];
+          setSharedPlaylistTracks((prev) => {
+            if (!append) return items;
+            const seen = new Set(prev.map((track) => track.id));
+            const merged = [...prev];
+            for (const item of items) {
+              if (seen.has(item.id)) continue;
+              seen.add(item.id);
+              merged.push(item);
+            }
+            return merged;
+          });
+          const fetched = items.length;
+          setSharedTracksOffset(nextOffset + fetched);
+          setSharedTracksHasMore(Boolean(payload.paging?.hasMore ?? fetched >= 120));
+          return;
+        } catch {
+          // try next candidate
+        }
+      }
+      setDownloadFeedback("Tracks laden mislukt.");
+    } finally {
+      setSharedTracksLoading(false);
+      setSharedTracksLoadingMore(false);
+    }
+  }
+
+  async function pickDownloadDirectory() {
+    if (!window.overlayHost?.pickDownloadDirectory) {
+      setDownloadFeedback("Padkiezer niet beschikbaar buiten Electron overlay.");
+      return;
+    }
+    const picked = await window.overlayHost.pickDownloadDirectory();
+    if (picked) setDownloadTargetDir(picked);
+  }
+
+  async function resolveTrackDownloadUrl(track: {
+    title: string;
+    artist?: string | null;
+    sourceType?: "shared_playlist" | "spotify" | "user_playlist";
+    spotifyUrl?: string | null;
+  }) {
+    const base = (settings.controlServerUrl ?? "").trim();
+    if (!base) throw new Error("Control server URL ontbreekt.");
+    const url = `${base.replace(/\/+$/, "")}/api/downloads/resolve`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: track.title,
+        artist: track.artist ?? null,
+        source_type: track.sourceType ?? "shared_playlist",
+        spotify_url: track.spotifyUrl ?? null,
+      }),
+    });
+    const payload = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      error?: string;
+      item?: { url?: string; title?: string; artist?: string | null };
+      candidates?: ManualDownloadCandidate[];
+    };
+    if (!res.ok || !payload.item?.url) {
+      const candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
+      if (candidates.length > 0) {
+        return {
+          kind: "manual" as const,
+          error: payload.error ?? `Geen exacte match gevonden voor: ${track.title}`,
+          candidates,
+        };
+      }
+      throw new Error(payload.error ?? `Geen downloadbare bron gevonden voor: ${track.title}`);
+    }
+    return {
+      kind: "resolved" as const,
+      item: {
+        url: payload.item.url,
+        title: payload.item.title ?? track.title,
+        artist: payload.item.artist ?? track.artist ?? "",
+      },
+    };
+  }
+
+  async function startBatchDownload(rawTracks: Array<{
+    id: string;
+    title: string;
+    artist?: string | null;
+    sourceType?: "shared_playlist" | "spotify" | "user_playlist";
+    spotifyUrl?: string | null;
+  }>) {
+    if (!window.overlayHost?.downloadBatch) {
+      setDownloadFeedback("Downloadfunctie niet beschikbaar buiten Electron overlay.");
+      return;
+    }
+    if (!downloadTargetDir.trim()) {
+      setDownloadFeedback("Kies eerst een download map.");
+      return;
+    }
+    if (rawTracks.length === 0) {
+      setDownloadFeedback("Geen tracks geselecteerd.");
+      return;
+    }
+    setDownloadingBatch(true);
+    setDownloadFeedback(`Resolven van ${rawTracks.length} tracks...`);
+    try {
+      const resolvedItems: Array<{ url: string; title: string; artist: string }> = [];
+      const failedResolve: string[] = [];
+      for (const track of rawTracks) {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          const resolved = await resolveTrackDownloadUrl(track);
+          if (resolved.kind === "manual") {
+            if (rawTracks.length === 1) {
+              setPendingManualResolveTrack({
+                id: track.id,
+                title: track.title,
+                artist: track.artist ?? null,
+              });
+              setManualResolveCandidates(resolved.candidates);
+              setDownloadFeedback("Geen exacte match. Kies handmatig een resultaat hieronder.");
+              return;
+            }
+            failedResolve.push(resolved.error);
+            continue;
+          }
+          resolvedItems.push({
+            url: resolved.item.url,
+            title: resolved.item.title,
+            artist: resolved.item.artist ?? "",
+          });
+        } catch (err) {
+          failedResolve.push(err instanceof Error ? err.message : track.title);
+        }
+      }
+      if (resolvedItems.length === 0) {
+        setDownloadFeedback(`Geen tracks resolved. ${failedResolve.slice(0, 2).join(" | ")}`);
+        return;
+      }
+      setDownloadFeedback(`Downloaden: ${resolvedItems.length} tracks...`);
+      const result = await window.overlayHost.downloadBatch({
+        targetDir: downloadTargetDir,
+        items: resolvedItems,
+      });
+      if (!result.ok) {
+        const firstError =
+          result.error
+          ?? (result.failed && result.failed.length > 0 ? result.failed[0].error : null)
+          ?? "Onbekende fout";
+        setDownloadFeedback(`Batch download mislukt: ${firstError}`);
+        return;
+      }
+      const resolveText = failedResolve.length > 0 ? ` • ${failedResolve.length} niet gevonden` : "";
+      const failedText = result.failed && result.failed.length > 0 ? ` • ${result.failed.length} download fouten` : "";
+      setDownloadFeedback(`Klaar: ${result.success ?? 0}/${result.total ?? resolvedItems.length}${resolveText}${failedText}`);
+    } finally {
+      setDownloadingBatch(false);
     }
   }
 
@@ -913,6 +1234,27 @@ function App() {
     return () => clearTimeout(timer);
   }, [activeTool, searchQuery, searchSource, settings.controlServerUrl]);
 
+  useEffect(() => {
+    if (activeTool !== "downloads") return;
+    if (sharedPlaylists.length > 0) return;
+    void refreshSharedPlaylists();
+  }, [activeTool, sharedPlaylists.length, settings.controlServerUrl]);
+
+  useEffect(() => {
+    if (activeTool !== "downloads") return;
+    if (!selectedSharedPlaylistId) {
+      setSharedPlaylistTracks([]);
+      setSharedTracksOffset(0);
+      setSharedTracksHasMore(false);
+      setSelectedDownloadTrackIds(new Set());
+      return;
+    }
+    setSharedTracksOffset(0);
+    setSharedTracksHasMore(false);
+    setSelectedDownloadTrackIds(new Set());
+    void loadSharedTracks(selectedSharedPlaylistId, false);
+  }, [activeTool, selectedSharedPlaylistId]);
+
   return (
     <div className="h-full w-full p-3">
       {settings.showTopBar && (
@@ -1139,6 +1481,15 @@ function App() {
                 >
                   Shoutout
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTool((prev) => (prev === "downloads" ? "none" : "downloads"))}
+                  className={`rounded px-2 py-1 text-[11px] ${
+                    activeTool === "downloads" ? "bg-blue-600/40 text-blue-100" : "bg-gray-700/80 hover:bg-gray-600"
+                  }`}
+                >
+                  Downloads
+                </button>
               </div>
               <div className="mt-1 text-xs text-gray-300">
                 Now playing: {nowPlaying.artist ? `${nowPlaying.artist} — ` : ""}{nowPlaying.title ?? "geen track"}
@@ -1215,6 +1566,327 @@ function App() {
                     ))
                   )}
                 </div>
+              </div>
+            )}
+            {activeTool === "downloads" && (
+              <div className="border-b border-gray-700/60 bg-gray-900/75 p-2 text-xs">
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setDownloadSource("public")}
+                    className={`rounded px-2 py-1 text-[11px] font-semibold ${
+                      downloadSource === "public" ? "bg-blue-600/35 text-blue-100" : "bg-gray-700/80 text-gray-300"
+                    }`}
+                  >
+                    Publieke playlists
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDownloadSource("csv")}
+                    className={`rounded px-2 py-1 text-[11px] font-semibold ${
+                      downloadSource === "csv" ? "bg-blue-600/35 text-blue-100" : "bg-gray-700/80 text-gray-300"
+                    }`}
+                  >
+                    Exportify CSV
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void pickDownloadDirectory()}
+                    className="rounded bg-blue-600/25 px-2 py-1 text-[11px] font-semibold text-blue-100 hover:bg-blue-600/40"
+                  >
+                    Kies download map
+                  </button>
+                  <span className="truncate text-[11px] text-gray-400">{downloadTargetDir || "Geen map gekozen"}</span>
+                </div>
+
+                {downloadSource === "public" && (
+                  <div className="grid grid-cols-1 gap-2 md:grid-cols-[220px_minmax(0,1fr)]">
+                    <div className="rounded border border-gray-700/70 bg-gray-950/50 p-1.5">
+                      <div className="mb-1 flex items-center justify-between">
+                        <div className="text-[11px] font-semibold text-blue-200">Playlists</div>
+                        <button
+                          type="button"
+                          onClick={() => void refreshSharedPlaylists()}
+                          className="text-[10px] text-blue-300 hover:text-blue-200"
+                        >
+                          Ververs
+                        </button>
+                      </div>
+                      <div className="max-h-44 space-y-1 overflow-y-auto">
+                        {sharedPlaylistsLoading && <div className="text-[11px] text-gray-400">Laden...</div>}
+                        {!sharedPlaylistsLoading && sharedPlaylists.length === 0 && (
+                          <div className="text-[11px] text-gray-500">Geen playlists.</div>
+                        )}
+                        {sharedPlaylists.map((playlist) => (
+                          <button
+                            key={playlist.id}
+                            type="button"
+                            onClick={() => setSelectedSharedPlaylistId(playlist.id)}
+                            className={`w-full rounded border px-2 py-1 text-left text-[11px] transition ${
+                              selectedSharedPlaylistId === playlist.id
+                                ? "border-blue-500/70 bg-blue-900/30 text-blue-100"
+                                : "border-gray-700 bg-gray-900/60 text-gray-200 hover:border-gray-600"
+                            }`}
+                          >
+                            <div className="truncate font-semibold">{playlist.name}</div>
+                            <div className="text-[10px] text-gray-400">{playlist.track_count} tracks</div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="rounded border border-gray-700/70 bg-gray-950/50 p-1.5">
+                      <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                        <div className="text-[11px] font-semibold text-gray-200 truncate">
+                          {selectedPublicPlaylist ? selectedPublicPlaylist.name : "Kies een playlist"}
+                        </div>
+                        <button
+                          type="button"
+                          disabled={!selectedPublicPlaylist || sharedTracksLoading || downloadingBatch}
+                          onClick={() => {
+                            if (!selectedPublicPlaylist) return;
+                            const tracks = sharedPlaylistTracks.map((track) => ({
+                              id: track.id,
+                              title: track.title,
+                              artist: track.artist,
+                              sourceType: "shared_playlist" as const,
+                            }));
+                            void startBatchDownload(tracks);
+                          }}
+                          className="ml-auto rounded bg-violet-600/30 px-2 py-1 text-[10px] font-semibold text-violet-100 hover:bg-violet-600/45 disabled:opacity-40"
+                        >
+                          Download hele playlist
+                        </button>
+                        <button
+                          type="button"
+                          disabled={selectedDownloadTrackIds.size === 0 || downloadingBatch}
+                          onClick={() => {
+                            const selected = sharedPlaylistTracks
+                              .filter((track) => selectedDownloadTrackIds.has(track.id))
+                              .map((track) => ({
+                                id: track.id,
+                                title: track.title,
+                                artist: track.artist,
+                                sourceType: "shared_playlist" as const,
+                              }));
+                            void startBatchDownload(selected);
+                          }}
+                          className="rounded bg-blue-600/30 px-2 py-1 text-[10px] font-semibold text-blue-100 hover:bg-blue-600/45 disabled:opacity-40"
+                        >
+                          Download selectie ({selectedDownloadTrackIds.size})
+                        </button>
+                      </div>
+                      <div className="max-h-44 space-y-1 overflow-y-auto">
+                        {sharedTracksLoading && <div className="text-[11px] text-gray-400">Tracks laden...</div>}
+                        {!sharedTracksLoading && selectedPublicPlaylist && sharedPlaylistTracks.length === 0 && (
+                          <div className="text-[11px] text-gray-500">Geen tracks in playlist.</div>
+                        )}
+                        {sharedPlaylistTracks.map((track) => {
+                          const isChecked = selectedDownloadTrackIds.has(track.id);
+                          return (
+                            <div key={track.id} className="flex items-center gap-2 rounded border border-gray-800 bg-gray-900/70 px-2 py-1">
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() => {
+                                  setSelectedDownloadTrackIds((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(track.id)) next.delete(track.id);
+                                    else next.add(track.id);
+                                    return next;
+                                  });
+                                }}
+                              />
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate text-[11px] text-white">{track.title}</div>
+                                <div className="truncate text-[10px] text-gray-400">{track.artist ?? "Onbekend"}</div>
+                              </div>
+                              <button
+                                type="button"
+                                disabled={downloadingBatch}
+                                onClick={() => void startBatchDownload([{
+                                  id: track.id,
+                                  title: track.title,
+                                  artist: track.artist,
+                                  sourceType: "shared_playlist",
+                                }])}
+                                className="rounded bg-gray-700/80 px-2 py-1 text-[10px] text-gray-100 hover:bg-gray-600 disabled:opacity-40"
+                              >
+                                Download
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {sharedTracksHasMore && (
+                        <button
+                          type="button"
+                          disabled={!selectedPublicPlaylist || sharedTracksLoadingMore}
+                          onClick={() => {
+                            if (!selectedPublicPlaylist) return;
+                            void loadSharedTracks(selectedPublicPlaylist.id, true);
+                          }}
+                          className="mt-1 rounded bg-gray-700/80 px-2 py-1 text-[10px] text-gray-200 hover:bg-gray-600 disabled:opacity-40"
+                        >
+                          {sharedTracksLoadingMore ? "Laden..." : "Meer tracks laden"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {downloadSource === "csv" && (
+                  <div className="rounded border border-gray-700/70 bg-gray-950/50 p-2">
+                    <div className="mb-2 flex flex-wrap items-center gap-2">
+                      <label className="rounded bg-gray-700/80 px-2 py-1 text-[11px] text-gray-100 hover:bg-gray-600">
+                        Kies Exportify CSV
+                        <input
+                          type="file"
+                          accept=".csv,text/csv,application/csv,application/vnd.ms-excel"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            setCsvFileName(file.name);
+                            void file.text().then((text) => {
+                              const parsed = parseExportifyCsv(text);
+                              setCsvTracks(parsed);
+                              setDownloadFeedback(parsed.length > 0 ? `${parsed.length} CSV tracks geladen.` : "Geen geldige tracks in CSV.");
+                            });
+                          }}
+                        />
+                      </label>
+                      <span className="truncate text-[11px] text-gray-400">{csvFileName || "Geen CSV gekozen"}</span>
+                      <button
+                        type="button"
+                        disabled={csvTracks.length === 0 || downloadingBatch}
+                        onClick={() => {
+                          const payload = csvTracks.map((track) => ({
+                            id: track.id,
+                            title: track.title,
+                            artist: track.artist,
+                            sourceType: "spotify" as const,
+                          }));
+                          void startBatchDownload(payload);
+                        }}
+                        className="ml-auto rounded bg-blue-600/30 px-2 py-1 text-[11px] font-semibold text-blue-100 hover:bg-blue-600/45 disabled:opacity-40"
+                      >
+                        Download CSV batch ({csvTracks.length})
+                      </button>
+                    </div>
+                    <div className="max-h-40 space-y-1 overflow-y-auto rounded border border-gray-800/80 bg-gray-900/60 p-1.5">
+                      {csvTracks.length === 0 ? (
+                        <div className="text-[11px] text-gray-500">Geen CSV tracks geladen.</div>
+                      ) : (
+                        csvTracks.map((track) => (
+                          <div key={track.id} className="flex items-center gap-2 rounded border border-gray-800 bg-gray-900/70 px-2 py-1">
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-[11px] text-white">{track.title}</div>
+                              <div className="truncate text-[10px] text-gray-400">{track.artist ?? "Onbekend"}</div>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={downloadingBatch}
+                              onClick={() => void startBatchDownload([{
+                                id: track.id,
+                                title: track.title,
+                                artist: track.artist,
+                                sourceType: "spotify",
+                              }])}
+                              className="rounded bg-gray-700/80 px-2 py-1 text-[10px] text-gray-100 hover:bg-gray-600 disabled:opacity-40"
+                            >
+                              Download
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {downloadFeedback && (
+                  <div className="mt-2 text-[11px] text-blue-200">{downloadFeedback}</div>
+                )}
+                {pendingManualResolveTrack && manualResolveCandidates.length > 0 && (
+                  <div className="mt-2 rounded border border-amber-700/50 bg-amber-950/20 p-2">
+                    <div className="mb-1 flex items-center justify-between">
+                      <div className="text-[11px] font-semibold text-amber-200">
+                        Handmatig kiezen: {pendingManualResolveTrack.artist ? `${pendingManualResolveTrack.artist} - ` : ""}
+                        {pendingManualResolveTrack.title}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPendingManualResolveTrack(null);
+                          setManualResolveCandidates([]);
+                        }}
+                        className="rounded bg-gray-700/80 px-2 py-0.5 text-[10px] text-gray-200 hover:bg-gray-600"
+                      >
+                        Sluiten
+                      </button>
+                    </div>
+                    <div className="max-h-44 space-y-1 overflow-y-auto">
+                      {manualResolveCandidates.map((candidate) => (
+                        <div key={`${candidate.provider}:${candidate.url}`} className="flex items-center gap-2 rounded border border-amber-800/30 bg-gray-900/70 p-1.5">
+                          {candidate.thumbnail ? (
+                            <img src={candidate.thumbnail} alt="" className="h-9 w-14 rounded object-cover" />
+                          ) : (
+                            <div className="h-9 w-14 rounded bg-gray-800" />
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-[11px] text-white">{candidate.title}</div>
+                            <div className="truncate text-[10px] text-gray-400">
+                              {candidate.channel}
+                              {candidate.duration ? ` • ${formatDuration(candidate.duration)}` : ""}
+                              {` • ${candidate.provider}`}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={downloadingBatch}
+                            onClick={async () => {
+                              if (!window.overlayHost?.downloadBatch) {
+                                setDownloadFeedback("Downloadfunctie niet beschikbaar buiten Electron overlay.");
+                                return;
+                              }
+                              if (!downloadTargetDir.trim()) {
+                                setDownloadFeedback("Kies eerst een download map.");
+                                return;
+                              }
+                              setDownloadingBatch(true);
+                              try {
+                                const result = await window.overlayHost.downloadBatch({
+                                  targetDir: downloadTargetDir,
+                                  items: [{
+                                    url: candidate.url,
+                                    title: candidate.title || pendingManualResolveTrack.title,
+                                    artist: candidate.channel || (pendingManualResolveTrack.artist ?? ""),
+                                  }],
+                                });
+                                if (!result.ok) {
+                                  const firstError =
+                                    result.error
+                                    ?? (result.failed && result.failed.length > 0 ? result.failed[0].error : null)
+                                    ?? "Onbekende fout";
+                                  setDownloadFeedback(`Handmatige download mislukt: ${firstError}`);
+                                  return;
+                                }
+                                setDownloadFeedback("Handmatige download gestart/voltooid.");
+                                setPendingManualResolveTrack(null);
+                                setManualResolveCandidates([]);
+                              } finally {
+                                setDownloadingBatch(false);
+                              }
+                            }}
+                            className="rounded bg-amber-600/35 px-2 py-1 text-[10px] font-semibold text-amber-100 hover:bg-amber-600/50 disabled:opacity-40"
+                          >
+                            Kies
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
             {(activeTool === "poll" || activeTool === "shoutout") && (

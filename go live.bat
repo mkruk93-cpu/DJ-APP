@@ -6,6 +6,8 @@ if /I "%~1"=="watchdog" goto tunnel_watchdog_loop
 
 set "ROOT_DIR=%~dp0"
 set "SERVER_DIR=%ROOT_DIR%server"
+set "START_PROFILE=%~1"
+if not defined START_PROFILE set "START_PROFILE=dj"
 set "PORT=3001"
 set "HEALTH_URL=http://127.0.0.1:%PORT%/health"
 set "STATE_URL=http://127.0.0.1:%PORT%/state"
@@ -31,7 +33,7 @@ call :start_butt
 call :start_tunnel
 call :start_tunnel_watchdog
 call :start_exporter
-call :start_overlay
+call :maybe_start_overlay
 
 echo.
 echo  ============================================
@@ -39,6 +41,35 @@ echo   Klaar Control/stream URL is automatisch opgeslagen.
 echo  ============================================
 echo.
 pause
+exit /b 0
+
+:maybe_start_overlay
+set "PROFILE_RAW=%START_PROFILE%"
+set "PROFILE_NORM=%PROFILE_RAW: =%"
+if not defined PROFILE_NORM set "PROFILE_NORM=dj"
+
+if /I "%PROFILE_NORM%"=="dj" (
+  call :start_overlay
+  exit /b 0
+)
+if /I "%PROFILE_NORM%"=="djmodus" (
+  call :start_overlay
+  exit /b 0
+)
+if /I "%PROFILE_NORM%"=="allebei" (
+  call :start_overlay
+  exit /b 0
+)
+if /I "%PROFILE_NORM%"=="both" (
+  call :start_overlay
+  exit /b 0
+)
+if /I "%PROFILE_NORM%"=="all" (
+  call :start_overlay
+  exit /b 0
+)
+
+echo  [+] Overlay overslaan voor profiel "%START_PROFILE%".
 exit /b 0
 
 :clean_start

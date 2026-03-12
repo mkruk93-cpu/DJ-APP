@@ -188,11 +188,12 @@ export default function StreamPage() {
   const hadSkipVoteActiveRef = useRef(false);
   const lastQueuePushVoteIdRef = useRef<string | null>(null);
 
-  const isStreamUnavailable = radioMode === "dj" ? !twitchLive : (!streamOnline && !pausedForIdle);
+  const isDjSessionLive = radioMode === "dj" && (twitchLive || radioConnected);
+  const isStreamUnavailable = radioMode === "dj" ? !isDjSessionLive : (!streamOnline && !pausedForIdle);
   const tabsAllowed = !isStreamUnavailable;
-  const showRequests = tabsAllowed && (twitchLive || (radioConnected && radioMode === "dj"));
+  const showRequests = tabsAllowed && (radioMode === "dj" ? isDjSessionLive : twitchLive);
   const showRadioPanel = tabsAllowed && radioMode !== "dj";
-  const showQueuePanel = tabsAllowed && radioMode !== "dj";
+  const showQueuePanel = tabsAllowed;
   const voteState = useRadioStore((s) => s.voteState);
   const syncedCurrentTrack = useSyncedTrack(radioMode === "dj" ? null : radioTrack);
   const statsServerUrl = (radioServerUrl ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL ?? "").replace(/\/+$/, "");
@@ -821,7 +822,7 @@ export default function StreamPage() {
   const radioStreamUrl = radioServerUrl
     ? `${radioServerUrl}/listen`
     : process.env.NEXT_PUBLIC_STREAM_URL ?? icecastUrl;
-  const isDjModeConnected = radioMode === "dj" && radioConnected;
+  const isDjModeConnected = radioMode === "dj" && (radioConnected || twitchLive);
   const showTunnelRecoveryState =
     mode === "radio" &&
     !!radioStreamUrl &&
@@ -1032,33 +1033,34 @@ export default function StreamPage() {
             </div>
           </div>
         </div>
-        {/* Always show next track section, even during loading */}
-        <div className="mt-2 rounded-lg border border-gray-700/60 bg-gray-800/60 px-2.5 py-1 sm:px-3 sm:py-1.5">
-          <p className="truncate text-[11px] text-gray-300 sm:text-xs">
-            <span className="mr-1 uppercase tracking-wider text-gray-500">Volgende:</span>
-            {!isHydrated || showLoadingStates ? (
-              <span className="text-gray-500">Laden...</span>
-            ) : !radioConnected ? (
-              <span className="text-gray-500">Verbinden...</span>
-            ) : displayHeaderNextTrack?.artist || (nextTitle || nextArtist) ? (
-              <>
-                <span className="text-violet-400">{displayHeaderNextTrack?.artist || nextArtist}</span>
-                {(displayHeaderNextTrack?.title || nextTitle) && <span className="text-gray-500"> — </span>}
-                {(displayHeaderNextTrack?.title || nextTitle) && <span>{displayHeaderNextTrack?.title || nextTitle}</span>}
-                {(displayHeaderNextTrack?.isFallback || nextIsFallback) && (
-                  <span className="ml-1 text-gray-500">(random)</span>
-                )}
-                {(displayHeaderNextTrack?.requestedBy || nextRequestedBy) && (
-                  <span className="ml-1 text-gray-500">
-                    · door <span className="text-violet-300">{displayHeaderNextTrack?.requestedBy || nextRequestedBy}</span>
-                  </span>
-                )}
-              </>
-            ) : (
-              <span className="text-gray-500">Nog geen track klaar...</span>
-            )}
-          </p>
-        </div>
+        {radioMode !== "dj" && (
+          <div className="mt-2 rounded-lg border border-gray-700/60 bg-gray-800/60 px-2.5 py-1 sm:px-3 sm:py-1.5">
+            <p className="truncate text-[11px] text-gray-300 sm:text-xs">
+              <span className="mr-1 uppercase tracking-wider text-gray-500">Volgende:</span>
+              {!isHydrated || showLoadingStates ? (
+                <span className="text-gray-500">Laden...</span>
+              ) : !radioConnected ? (
+                <span className="text-gray-500">Verbinden...</span>
+              ) : displayHeaderNextTrack?.artist || (nextTitle || nextArtist) ? (
+                <>
+                  <span className="text-violet-400">{displayHeaderNextTrack?.artist || nextArtist}</span>
+                  {(displayHeaderNextTrack?.title || nextTitle) && <span className="text-gray-500"> — </span>}
+                  {(displayHeaderNextTrack?.title || nextTitle) && <span>{displayHeaderNextTrack?.title || nextTitle}</span>}
+                  {(displayHeaderNextTrack?.isFallback || nextIsFallback) && (
+                    <span className="ml-1 text-gray-500">(random)</span>
+                  )}
+                  {(displayHeaderNextTrack?.requestedBy || nextRequestedBy) && (
+                    <span className="ml-1 text-gray-500">
+                      · door <span className="text-violet-300">{displayHeaderNextTrack?.requestedBy || nextRequestedBy}</span>
+                    </span>
+                  )}
+                </>
+              ) : (
+                <span className="text-gray-500">Nog geen track klaar...</span>
+              )}
+            </p>
+          </div>
+        )}
         {(mode !== "offline" && mode !== "radio" && !showRadioOfflineState) && (
           <div className={mode === "twitch" ? "block" : "hidden landscape:block sm:block"}>
             <NowPlaying

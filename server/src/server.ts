@@ -3484,6 +3484,58 @@ app.post('/api/tunnel-url', async (req, res) => {
   }
 });
 
+app.post('/api/downloads/resolve', async (req, res) => {
+  const {
+    title,
+    artist,
+    source_type,
+    source_playlist,
+    source_genre,
+    spotify_url,
+  } = (req.body ?? {}) as {
+    title?: unknown;
+    artist?: unknown;
+    source_type?: unknown;
+    source_playlist?: unknown;
+    source_genre?: unknown;
+    spotify_url?: unknown;
+  };
+  const safeTitle = String(title ?? '').trim();
+  const safeArtist = String(artist ?? '').trim();
+  const safeSpotifyUrl = String(spotify_url ?? '').trim();
+  if (!safeTitle && !safeSpotifyUrl) {
+    return res.status(400).json({ error: 'title of spotify_url is verplicht' });
+  }
+  const submissionUrl = safeSpotifyUrl || (safeArtist ? `${safeArtist} - ${safeTitle}` : safeTitle);
+  const submission: QueueAddSubmission = {
+    youtube_url: submissionUrl,
+    title: safeTitle || null,
+    artist: safeArtist || null,
+    source_type: String(source_type ?? 'shared_playlist').trim() || 'shared_playlist',
+    source_playlist: String(source_playlist ?? '').trim() || null,
+    source_genre: String(source_genre ?? '').trim() || null,
+  };
+
+  try {
+    const result = await addQueueItemFromSubmission(submission, 'overlay-download', { resolveOnly: true });
+    if (!result.resolved) {
+      return res.status(404).json({
+        ok: false,
+        error: result.error ?? 'Geen bruikbare match gevonden',
+        candidates: result.manualCandidates ?? [],
+      });
+    }
+    return res.json({
+      ok: true,
+      item: result.resolved,
+      candidates: result.manualCandidates ?? [],
+    });
+  } catch (err) {
+    console.warn('[rest] /api/downloads/resolve error:', getErrorMessage(err));
+    return res.status(500).json({ ok: false, error: getErrorMessage(err) });
+  }
+});
+
 // ── Vote skip state ──────────────────────────────────────────────────────────
 
 let voteSkipSet = new Set<string>();
@@ -3847,13 +3899,23 @@ type SubmissionManualCandidate = {
   reasons: string[];
 };
 
+type SubmissionResolvedResult = {
+  url: string;
+  title: string;
+  artist: string | null;
+  thumbnail: string | null;
+  duration: number | null;
+};
+
 async function addQueueItemFromSubmission(
   submission: QueueAddSubmission,
   addedBy: string,
+  options?: { resolveOnly?: boolean },
 ): Promise<{
   item: Awaited<ReturnType<typeof addToQueue>> | null;
   error: string | null;
   manualCandidates: SubmissionManualCandidate[] | null;
+  resolved: SubmissionResolvedResult | null;
   selectionMeta: {
     selectionLabel: string | null;
     selectionPlaylist: string | null;
@@ -3885,7 +3947,7 @@ async function addQueueItemFromSubmission(
       ...soundcloudResults.map((row) => ({ row, provider: 'soundcloud' as const })),
     ];
     if (searchResults.length === 0) {
-      return { item: null, error: `Geen resultaat gevonden voor "${url}"`, manualCandidates: null, selectionMeta: null };
+      return { item: null, error: `Geen resultaat gevonden voor "${url}"`, manualCandidates: null, resolved: null, selectionMeta: null };
     }
     const rankedStrict = searchResults
       .map((candidate) => ({
@@ -4028,6 +4090,7 @@ async function addQueueItemFromSubmission(
         item: null,
         error: `Geen bruikbaar resultaat gevonden voor "${url}"`,
         manualCandidates: manualCandidates && manualCandidates.length > 0 ? manualCandidates : null,
+        resolved: null,
         selectionMeta: null,
       };
     }
@@ -4035,7 +4098,7 @@ async function addQueueItemFromSubmission(
     url = selectedRow.url;
     sourceId = extractSourceId(url);
     if (!sourceId) {
-      return { item: null, error: 'Kon geen geldig nummer vinden', manualCandidates: null, selectionMeta: null };
+      return { item: null, error: 'Kon geen geldig nummer vinden', manualCandidates: null, resolved: null, selectionMeta: null };
     }
     discoveredTitle = selectedRow.title ?? null;
     discoveredArtist = selectedRow.channel ?? null;
@@ -4059,6 +4122,7 @@ async function addQueueItemFromSubmission(
       item: null,
       error: `Dit nummer is te lang (${Math.floor(info.duration / 60)}:${String(Math.round(info.duration % 60)).padStart(2, '0')}). Maximum is 65 minuten.`,
       manualCandidates: null,
+      resolved: null,
       selectionMeta: null,
     };
   }
@@ -4102,6 +4166,22 @@ async function addQueueItemFromSubmission(
       ?? sourceId
     );
 
+  const resolved: SubmissionResolvedResult = {
+    url,
+    title: mergedTitle,
+    artist: submittedArtist ?? discoveredArtist ?? null,
+    thumbnail: thumbForQueue ?? null,
+    duration: info.duration ?? null,
+  };
+  if (options?.resolveOnly) {
+    return {
+      item: null,
+      error: null,
+      manualCandidates: null,
+      resolved,
+      selectionMeta: null,
+    };
+  }
   const item = await addToQueue(sb, url, addedBy, mergedTitle, thumbForQueue);
   const sourceTypeNorm = (submission.source_type ?? '').trim().toLowerCase();
   const sourcePlaylistNorm = (submission.source_playlist ?? '').trim() || null;
@@ -4122,7 +4202,7 @@ async function addQueueItemFromSubmission(
         : 'queue') as 'queue' | 'online' | 'playlists',
     selectionKey: sourceGenreNorm,
   };
-  return { item, error: null, manualCandidates: null, selectionMeta };
+  return { item, error: null, manualCandidates: null, resolved, selectionMeta };
 }
 
 async function promoteOneDeferredQueueItem(reason: 'track-ended' | 'manual'): Promise<void> {
