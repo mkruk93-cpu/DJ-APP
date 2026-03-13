@@ -1,10 +1,13 @@
 const path = require("node:path");
 const fs = require("node:fs");
 const { spawn } = require("node:child_process");
+const NodeID3 = require("node-id3");
 const { app, BrowserWindow, ipcMain, screen, globalShortcut } = require("electron");
 const { dialog } = require("electron");
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
+const DEFAULT_DOWNLOAD_CONCURRENCY = 4;
+let preferredYtDlpRunner = null;
 
 function sanitizePart(value) {
   return String(value ?? "")
@@ -13,25 +16,48 @@ function sanitizePart(value) {
     .trim();
 }
 
+function normalizeDownloadTitle(title, artist) {
+  const base = sanitizePart(title || "Unknown Title");
+  const artistText = sanitizePart(artist || "");
+  if (!artistText) return base;
+  const escapedArtist = artistText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const withoutArtistPrefix = base.replace(new RegExp(`^${escapedArtist}\\s*[-–—:|]+\\s*`, "i"), "").trim();
+  return withoutArtistPrefix || base;
+}
+
 function runYtDlpDownload(targetDir, item) {
   return new Promise((resolve, reject) => {
     const safeArtist = sanitizePart(item.artist || "Unknown Artist");
-    const safeTitle = sanitizePart(item.title || "Unknown Title");
-    const outtmpl = path.join(targetDir, `${safeArtist} - ${safeTitle}.%(ext)s`);
+    const safeTitle = normalizeDownloadTitle(item.title || "Unknown Title", safeArtist);
+    const baseOutputName = `${safeArtist} - ${safeTitle}`;
+    const outtmpl = path.join(targetDir, `${baseOutputName}.%(ext)s`);
+    const expectedOutputPath = path.join(targetDir, `${baseOutputName}.mp3`);
     const args = [
       "--format", "bestaudio/best",
       "--extract-audio",
       "--audio-format", "mp3",
       "--audio-quality", "192K",
+      "--concurrent-fragments", "4",
+      "--add-metadata",
       "--no-playlist",
       "--no-warnings",
       "-o", outtmpl,
       String(item.url),
     ];
-    const attempts = [
-      { command: "python", args: ["-m", "yt_dlp", ...args] },
-      { command: "yt-dlp", args },
-    ];
+    const attempts = preferredYtDlpRunner === "python"
+      ? [
+          { command: "python", args: ["-m", "yt_dlp", ...args], runner: "python" },
+          { command: "yt-dlp", args, runner: "yt-dlp" },
+        ]
+      : preferredYtDlpRunner === "yt-dlp"
+        ? [
+            { command: "yt-dlp", args, runner: "yt-dlp" },
+            { command: "python", args: ["-m", "yt_dlp", ...args], runner: "python" },
+          ]
+        : [
+            { command: "python", args: ["-m", "yt_dlp", ...args], runner: "python" },
+            { command: "yt-dlp", args, runner: "yt-dlp" },
+          ];
     let stderr = "";
     const runAttempt = (index) => {
       const attempt = attempts[index];
@@ -50,7 +76,8 @@ function runYtDlpDownload(targetDir, item) {
       });
       child.on("close", (code) => {
         if (code === 0) {
-          resolve();
+          preferredYtDlpRunner = attempt.runner;
+          resolve(expectedOutputPath);
           return;
         }
         stderr += `\n${attempt.command} exited with ${code}`;
@@ -59,6 +86,23 @@ function runYtDlpDownload(targetDir, item) {
     };
     runAttempt(0);
   });
+}
+
+function writeMp3Metadata(filePath, item) {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) return;
+    const artist = sanitizePart(item.artist || "").trim();
+    const title = sanitizePart(item.title || "").trim();
+    const tags = {
+      title: title || "Unknown Title",
+      artist: artist || "Unknown Artist",
+      performerInfo: artist || "Unknown Artist",
+      albumArtist: artist || "Unknown Artist",
+    };
+    NodeID3.update(tags, filePath);
+  } catch (err) {
+    console.warn("[overlay] Could not write MP3 metadata:", err instanceof Error ? err.message : String(err));
+  }
 }
 
 function createWindow() {
@@ -116,27 +160,40 @@ app.whenReady().then(() => {
     if (!items.length) return { ok: false, error: "Geen items om te downloaden." };
     fs.mkdirSync(targetDir, { recursive: true });
 
+    const requestedParallel = Number(payload?.maxParallel);
+    const maxParallel = Number.isFinite(requestedParallel)
+      ? Math.min(8, Math.max(1, Math.round(requestedParallel)))
+      : DEFAULT_DOWNLOAD_CONCURRENCY;
+
     let success = 0;
     const failed = [];
-    for (const rawItem of items) {
-      const item = {
-        url: String(rawItem?.url ?? "").trim(),
-        title: String(rawItem?.title ?? "").trim(),
-        artist: String(rawItem?.artist ?? "").trim(),
-      };
-      if (!item.url) {
-        failed.push({ item, error: "Lege URL" });
-        continue;
+    const normalizedItems = items.map((rawItem) => ({
+      url: String(rawItem?.url ?? "").trim(),
+      title: String(rawItem?.title ?? "").trim(),
+      artist: String(rawItem?.artist ?? "").trim(),
+    }));
+    let cursor = 0;
+    const workerCount = Math.min(maxParallel, normalizedItems.length);
+    const workers = Array.from({ length: workerCount }, () => (async () => {
+      while (true) {
+        const idx = cursor;
+        cursor += 1;
+        if (idx >= normalizedItems.length) return;
+        const item = normalizedItems[idx];
+        if (!item.url) {
+          failed.push({ item, error: "Lege URL" });
+          continue;
+        }
+        try {
+          const outputPath = await runYtDlpDownload(targetDir, item);
+          writeMp3Metadata(outputPath, item);
+          success += 1;
+        } catch (err) {
+          failed.push({ item, error: err instanceof Error ? err.message : "Download mislukt" });
+        }
       }
-      try {
-        // Sequential downloads keep CPU/disk pressure lower during live DJ usage.
-        // eslint-disable-next-line no-await-in-loop
-        await runYtDlpDownload(targetDir, item);
-        success += 1;
-      } catch (err) {
-        failed.push({ item, error: err instanceof Error ? err.message : "Download mislukt" });
-      }
-    }
+    })());
+    await Promise.all(workers);
 
     return {
       ok: failed.length === 0,

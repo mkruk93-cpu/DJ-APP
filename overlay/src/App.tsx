@@ -30,6 +30,7 @@ declare global {
       downloadBatch?: (payload: {
         targetDir: string;
         items: Array<{ url: string; title: string; artist: string }>;
+        maxParallel?: number;
       }) => Promise<{
         ok: boolean;
         success?: number;
@@ -127,6 +128,43 @@ interface PendingManualResolveTrack {
   id: string;
   title: string;
   artist?: string | null;
+}
+
+function normalizeMetadataTitle(title: string, artist?: string | null): string {
+  const base = String(title ?? "").trim();
+  if (!base) return "";
+  const artistText = String(artist ?? "").trim();
+  if (!artistText) return base;
+  const escapedArtist = artistText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return base.replace(new RegExp(`^${escapedArtist}\\s*[-–—:|]+\\s*`, "i"), "").trim() || base;
+}
+
+function buildDownloadMetadata(
+  requestedTitle: string,
+  requestedArtist?: string | null,
+): { title: string; artist: string } {
+  let artist = String(requestedArtist ?? "").trim();
+  let title = String(requestedTitle ?? "").trim();
+  if (!title) return { title: "Unknown Title", artist };
+
+  if (!artist) {
+    const split = title.split(/\s[-–—:|]\s/, 2);
+    if (split.length === 2) {
+      const [left, right] = split;
+      const guessedArtist = left.trim();
+      const guessedTitle = right.trim();
+      if (guessedArtist.length > 0 && guessedArtist.length <= 90 && guessedTitle.length > 0) {
+        artist = guessedArtist;
+        title = guessedTitle;
+      }
+    }
+  }
+
+  const normalizedTitle = normalizeMetadataTitle(title, artist);
+  return {
+    title: normalizedTitle || title,
+    artist,
+  };
 }
 
 function formatDuration(seconds?: number | null): string {
@@ -686,41 +724,100 @@ function App() {
     try {
       const resolvedItems: Array<{ url: string; title: string; artist: string }> = [];
       const failedResolve: string[] = [];
-      for (const track of rawTracks) {
+      const resolveCache = new Map<string, Awaited<ReturnType<typeof resolveTrackDownloadUrl>>>();
+      if (rawTracks.length === 1) {
+        const track = rawTracks[0];
+        const cacheKey = JSON.stringify({
+          title: track.title,
+          artist: track.artist ?? "",
+          sourceType: track.sourceType ?? "shared_playlist",
+          spotifyUrl: track.spotifyUrl ?? "",
+        });
         try {
-          // eslint-disable-next-line no-await-in-loop
-          const resolved = await resolveTrackDownloadUrl(track);
+          const resolved = resolveCache.get(cacheKey) ?? await resolveTrackDownloadUrl(track);
+          if (!resolveCache.has(cacheKey)) resolveCache.set(cacheKey, resolved);
           if (resolved.kind === "manual") {
-            if (rawTracks.length === 1) {
-              setPendingManualResolveTrack({
-                id: track.id,
-                title: track.title,
-                artist: track.artist ?? null,
-              });
-              setManualResolveCandidates(resolved.candidates);
-              setDownloadFeedback("Geen exacte match. Kies handmatig een resultaat hieronder.");
-              return;
-            }
-            failedResolve.push(resolved.error);
-            continue;
+            setPendingManualResolveTrack({
+              id: track.id,
+              title: track.title,
+              artist: track.artist ?? null,
+            });
+            setManualResolveCandidates(resolved.candidates);
+            setDownloadFeedback("Geen exacte match. Kies handmatig een resultaat hieronder.");
+            return;
           }
           resolvedItems.push({
             url: resolved.item.url,
-            title: resolved.item.title,
-            artist: resolved.item.artist ?? "",
+            ...buildDownloadMetadata(track.title || resolved.item.title, track.artist),
           });
         } catch (err) {
           failedResolve.push(err instanceof Error ? err.message : track.title);
+        }
+      } else {
+        const resolveConcurrency = Math.min(8, Math.max(3, rawTracks.length >= 18 ? 7 : 5));
+        let cursor = 0;
+        let resolvedCount = 0;
+        const outcomes: Array<
+          | { kind: "resolved"; item: { url: string; title: string; artist: string } }
+          | { kind: "failed"; error: string }
+        > = new Array(rawTracks.length);
+        const workers = Array.from({ length: Math.min(resolveConcurrency, rawTracks.length) }, () => (async () => {
+          while (true) {
+            const idx = cursor;
+            cursor += 1;
+            if (idx >= rawTracks.length) return;
+            const track = rawTracks[idx];
+            const cacheKey = JSON.stringify({
+              title: track.title,
+              artist: track.artist ?? "",
+              sourceType: track.sourceType ?? "shared_playlist",
+              spotifyUrl: track.spotifyUrl ?? "",
+            });
+            try {
+              const resolved = resolveCache.get(cacheKey) ?? await resolveTrackDownloadUrl(track);
+              if (!resolveCache.has(cacheKey)) resolveCache.set(cacheKey, resolved);
+              if (resolved.kind === "manual") {
+                outcomes[idx] = { kind: "failed", error: resolved.error };
+              } else {
+                outcomes[idx] = {
+                  kind: "resolved",
+                  item: {
+                    url: resolved.item.url,
+                    ...buildDownloadMetadata(track.title || resolved.item.title, track.artist),
+                  },
+                };
+              }
+            } catch (err) {
+              outcomes[idx] = {
+                kind: "failed",
+                error: err instanceof Error ? err.message : track.title,
+              };
+            } finally {
+              resolvedCount += 1;
+              setDownloadFeedback(`Resolven van ${rawTracks.length} tracks... (${resolvedCount}/${rawTracks.length})`);
+            }
+          }
+        })());
+        await Promise.all(workers);
+        for (const outcome of outcomes) {
+          if (!outcome) continue;
+          if (outcome.kind === "resolved") {
+            resolvedItems.push(outcome.item);
+          } else {
+            failedResolve.push(outcome.error);
+          }
         }
       }
       if (resolvedItems.length === 0) {
         setDownloadFeedback(`Geen tracks resolved. ${failedResolve.slice(0, 2).join(" | ")}`);
         return;
       }
-      setDownloadFeedback(`Downloaden: ${resolvedItems.length} tracks...`);
+      const downloadParallel = Math.min(8, Math.max(2, resolvedItems.length >= 20 ? 6 : 4));
+      setDownloadFeedback(`Downloaden: ${resolvedItems.length} tracks (parallel ${downloadParallel})...`);
       const result = await window.overlayHost.downloadBatch({
         targetDir: downloadTargetDir,
         items: resolvedItems,
+        maxParallel: downloadParallel,
       });
       if (!result.ok) {
         const firstError =
@@ -1859,8 +1956,10 @@ function App() {
                                   targetDir: downloadTargetDir,
                                   items: [{
                                     url: candidate.url,
-                                    title: candidate.title || pendingManualResolveTrack.title,
-                                    artist: candidate.channel || (pendingManualResolveTrack.artist ?? ""),
+                                    ...buildDownloadMetadata(
+                                      pendingManualResolveTrack.title || candidate.title,
+                                      pendingManualResolveTrack.artist,
+                                    ),
                                   }],
                                 });
                                 if (!result.ok) {
