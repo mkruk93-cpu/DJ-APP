@@ -158,6 +158,7 @@ export default function StreamPage() {
   const [skipVoteToastSecondsLeft, setSkipVoteToastSecondsLeft] = useState(0);
   const [skipVoteToastVoted, setSkipVoteToastVoted] = useState(false);
   const [playerFullscreen, setPlayerFullscreen] = useState(false);
+  const [isStandalonePwa, setIsStandalonePwa] = useState(false);
   const [displayHeaderNextTrack, setDisplayHeaderNextTrack] = useState<{
     title: string | null;
     artist: string | null;
@@ -516,15 +517,98 @@ export default function StreamPage() {
   }, []);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const navStandalone = (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
+    const displayModeMedia = window.matchMedia("(display-mode: standalone)");
+
+    const syncViewportHeight = () => {
+      const nextHeight = Math.max(320, Math.round(window.visualViewport?.height ?? window.innerHeight));
+      document.documentElement.style.setProperty("--app-dvh", `${nextHeight}px`);
+    };
+
+    const syncDisplayMode = () => {
+      const standalone = navStandalone || displayModeMedia.matches;
+      setIsStandalonePwa(standalone);
+      document.documentElement.dataset.displayMode = standalone ? "standalone" : "browser";
+      document.body.dataset.displayMode = standalone ? "standalone" : "browser";
+    };
+
+    const syncViewport = () => {
+      syncViewportHeight();
+      syncDisplayMode();
+    };
+
+    syncViewport();
+    const timers = [0, 80, 220, 500, 1000].map((delay) => window.setTimeout(syncViewport, delay));
+    window.addEventListener("resize", syncViewport);
+    window.addEventListener("orientationchange", syncViewport);
+    window.addEventListener("pageshow", syncViewport);
+    window.addEventListener("focus", syncViewport);
+    document.addEventListener("visibilitychange", syncViewport);
+    window.visualViewport?.addEventListener("resize", syncViewport);
+    window.visualViewport?.addEventListener("scroll", syncViewport);
+    if (typeof displayModeMedia.addEventListener === "function") {
+      displayModeMedia.addEventListener("change", syncViewport);
+    } else {
+      displayModeMedia.addListener(syncViewport);
+    }
+
+    return () => {
+      timers.forEach((id) => window.clearTimeout(id));
+      window.removeEventListener("resize", syncViewport);
+      window.removeEventListener("orientationchange", syncViewport);
+      window.removeEventListener("pageshow", syncViewport);
+      window.removeEventListener("focus", syncViewport);
+      document.removeEventListener("visibilitychange", syncViewport);
+      window.visualViewport?.removeEventListener("resize", syncViewport);
+      window.visualViewport?.removeEventListener("scroll", syncViewport);
+      if (typeof displayModeMedia.removeEventListener === "function") {
+        displayModeMedia.removeEventListener("change", syncViewport);
+      } else {
+        displayModeMedia.removeListener(syncViewport);
+      }
+      delete document.documentElement.dataset.displayMode;
+      delete document.body.dataset.displayMode;
+    };
+  }, []);
+
+  useEffect(() => {
     const prevHtmlOverflow = document.documentElement.style.overflow;
     const prevBodyOverflow = document.body.style.overflow;
+    const prevHtmlOverscroll = document.documentElement.style.overscrollBehaviorY;
+    const prevBodyOverscroll = document.body.style.overscrollBehaviorY;
     document.documentElement.style.overflow = "hidden";
     document.body.style.overflow = "hidden";
+    document.documentElement.style.overscrollBehaviorY = "none";
+    document.body.style.overscrollBehaviorY = "none";
     return () => {
       document.documentElement.style.overflow = prevHtmlOverflow;
       document.body.style.overflow = prevBodyOverflow;
+      document.documentElement.style.overscrollBehaviorY = prevHtmlOverscroll;
+      document.body.style.overscrollBehaviorY = prevBodyOverscroll;
     };
   }, []);
+
+  useEffect(() => {
+    if (!isStandalonePwa) return;
+    const prevBodyPosition = document.body.style.position;
+    const prevBodyInset = document.body.style.inset;
+    const prevBodyWidth = document.body.style.width;
+    const prevBodyHeight = document.body.style.height;
+    const prevBodyOverflow = document.body.style.overflow;
+    document.body.style.position = "fixed";
+    document.body.style.inset = "0";
+    document.body.style.width = "100%";
+    document.body.style.height = "var(--app-dvh, 100dvh)";
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.position = prevBodyPosition;
+      document.body.style.inset = prevBodyInset;
+      document.body.style.width = prevBodyWidth;
+      document.body.style.height = prevBodyHeight;
+      document.body.style.overflow = prevBodyOverflow;
+    };
+  }, [isStandalonePwa]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -962,7 +1046,10 @@ export default function StreamPage() {
   }
 
   return (
-    <div className="fixed inset-0 flex h-dvh max-h-dvh flex-col overflow-hidden">
+    <div
+      className="fixed inset-0 flex flex-col overflow-hidden"
+      style={{ height: "var(--app-dvh, 100dvh)", maxHeight: "var(--app-dvh, 100dvh)" }}
+    >
       <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
         <div className="player-ambient absolute -left-20 top-10 h-72 w-72 rounded-full bg-violet-500/15 blur-3xl" />
         <div className="player-ambient absolute bottom-0 right-0 h-80 w-80 rounded-full bg-fuchsia-500/10 blur-3xl" />
@@ -1403,6 +1490,13 @@ export default function StreamPage() {
           )}
         </div>
       </main>
+      <button
+        type="button"
+        onClick={requestCastFromHeader}
+        className="fixed bottom-[max(5.25rem,calc(env(safe-area-inset-bottom)+4.5rem))] right-3 z-[160] inline-flex h-10 items-center justify-center rounded-full border border-emerald-500/80 bg-emerald-500/20 px-3 text-xs font-semibold text-emerald-100 shadow-lg shadow-black/40 transition hover:bg-emerald-500/30 sm:hidden"
+      >
+        Cast
+      </button>
       {infoToastMessage && (
         <div className={`pointer-events-none fixed left-1/2 top-3 -translate-x-1/2 sm:top-4 ${playerFullscreen ? "z-[220] w-[96%] max-w-2xl" : "z-[115] w-[92%] max-w-xl"}`}>
           <div className={`pointer-events-auto flex items-start justify-between gap-2 text-violet-100 ${
