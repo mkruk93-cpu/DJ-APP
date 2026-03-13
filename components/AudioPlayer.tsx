@@ -930,10 +930,13 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const selectionPlaylistLabel = syncedRadioTrack?.selection_playlist ?? sharedSelectionLabel ?? null;
   const displayTitle = syncedRadioTrack ? radioTitle : (showSupabaseData ? track.title : null);
   const displayArtist = syncedRadioTrack ? radioArtist : (showSupabaseData ? track.artist : null);
+  const syncedRadioArtwork = syncedRadioTrack?.thumbnail ?? null;
   const immediateRadioArtwork = radioTrack?.thumbnail ?? null;
-  const displayArtwork = isJingleTrack ? null : (immediateRadioArtwork ?? syncedRadioTrack?.thumbnail ?? (showSupabaseData ? track.artwork_url : null));
+  const supabaseArtwork = showSupabaseData ? track.artwork_url : null;
+  // Keep synced artwork leading to avoid falling back to stale exporter thumbnails.
+  const displayArtwork = isJingleTrack ? null : (syncedRadioArtwork ?? immediateRadioArtwork ?? supabaseArtwork);
   const artworkVersion = syncedRadioTrack
-    ? `${syncedRadioTrack.id}|${syncedRadioTrack.started_at}|${immediateRadioArtwork ?? ""}|${syncedRadioTrack.thumbnail ?? ""}`
+    ? `${syncedRadioTrack.id}|${syncedRadioTrack.started_at}|${displayArtwork ?? ""}`
     : `${displayTitle ?? ""}|${displayArtist ?? ""}|${displayArtwork ?? ""}`;
   const displayArtworkSrc = useMemo(() => {
     if (!displayArtwork) return null;
