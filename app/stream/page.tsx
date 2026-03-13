@@ -191,13 +191,14 @@ export default function StreamPage() {
 
   const hasExternalDjSignal = twitchLive || (radioConnected && !streamOnline && !pausedForIdle);
   const isDjSessionLive = (radioMode === "dj" && (twitchLive || radioConnected)) || hasExternalDjSignal;
+  const communityUiActive = mode !== "offline" && (radioConnected || twitchLive || !!radioServerUrl || radioMode === "dj");
   const forceDjCommunityUi = radioMode === "dj" || hasExternalDjSignal || mode === "twitch";
-  // Keep tabs visible for DJ-like external streams (BUTT/Twitch), even if mode sync lags.
-  const isStreamUnavailable = forceDjCommunityUi ? false : (!streamOnline && !pausedForIdle);
-  const tabsAllowed = forceDjCommunityUi ? true : !isStreamUnavailable;
-  const showRequests = forceDjCommunityUi ? true : (tabsAllowed && twitchLive);
-  const showRadioPanel = tabsAllowed && radioMode !== "dj";
-  const showQueuePanel = tabsAllowed;
+  // Fail-safe: once stream context is active, keep request/queue UI available.
+  const isStreamUnavailable = communityUiActive ? false : (!streamOnline && !pausedForIdle);
+  const tabsAllowed = communityUiActive ? true : !isStreamUnavailable;
+  const showRequests = radioMode === "dj";
+  const showRadioPanel = communityUiActive && radioMode !== "dj";
+  const showQueuePanel = communityUiActive;
   const voteState = useRadioStore((s) => s.voteState);
   const syncedCurrentTrack = useSyncedTrack(radioMode === "dj" ? null : radioTrack);
   const statsServerUrl = (radioServerUrl ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL ?? "").replace(/\/+$/, "");
@@ -1222,7 +1223,7 @@ export default function StreamPage() {
             </div>
           </div>
         </div>
-        {!forceDjCommunityUi && (
+        {!(forceDjCommunityUi || (communityUiActive && !showRadioPanel)) && (
           <div className="mt-2 rounded-lg border border-gray-700/60 bg-gray-800/60 px-2.5 py-1 sm:px-3 sm:py-1.5">
             <p className="truncate text-[11px] text-gray-300 sm:text-xs">
               <span className="mr-1 uppercase tracking-wider text-gray-500">Volgende:</span>
