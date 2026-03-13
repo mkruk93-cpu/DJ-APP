@@ -189,11 +189,12 @@ export default function StreamPage() {
   const hadSkipVoteActiveRef = useRef(false);
   const lastQueuePushVoteIdRef = useRef<string | null>(null);
 
-  const isDjSessionLive = radioMode === "dj" && (twitchLive || radioConnected);
-  // In DJ mode keep tabs visible even during short reconnect/status sync gaps.
-  const isStreamUnavailable = radioMode === "dj" ? false : (!streamOnline && !pausedForIdle);
-  const tabsAllowed = radioMode === "dj" ? true : !isStreamUnavailable;
-  const showRequests = radioMode === "dj" ? true : (tabsAllowed && twitchLive);
+  const hasExternalDjSignal = twitchLive || (radioConnected && !streamOnline && !pausedForIdle);
+  const isDjSessionLive = (radioMode === "dj" && (twitchLive || radioConnected)) || hasExternalDjSignal;
+  // Keep tabs visible for DJ-like external streams (BUTT/Twitch), even if mode sync lags.
+  const isStreamUnavailable = isDjSessionLive ? false : (!streamOnline && !pausedForIdle);
+  const tabsAllowed = isDjSessionLive ? true : !isStreamUnavailable;
+  const showRequests = isDjSessionLive ? true : (tabsAllowed && twitchLive);
   const showRadioPanel = tabsAllowed && radioMode !== "dj";
   const showQueuePanel = tabsAllowed;
   const voteState = useRadioStore((s) => s.voteState);
@@ -990,7 +991,7 @@ export default function StreamPage() {
   const radioStreamUrl = radioServerUrl
     ? `${radioServerUrl}/listen`
     : process.env.NEXT_PUBLIC_STREAM_URL ?? icecastUrl;
-  const isDjModeConnected = radioMode === "dj" && (radioConnected || twitchLive);
+  const isDjModeConnected = isDjSessionLive;
   const showTunnelRecoveryState =
     mode === "radio" &&
     !!radioStreamUrl &&
@@ -1220,7 +1221,7 @@ export default function StreamPage() {
             </div>
           </div>
         </div>
-        {radioMode !== "dj" && (
+        {!isDjSessionLive && (
           <div className="mt-2 rounded-lg border border-gray-700/60 bg-gray-800/60 px-2.5 py-1 sm:px-3 sm:py-1.5">
             <p className="truncate text-[11px] text-gray-300 sm:text-xs">
               <span className="mr-1 uppercase tracking-wider text-gray-500">Volgende:</span>
