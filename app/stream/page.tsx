@@ -190,9 +190,10 @@ export default function StreamPage() {
   const lastQueuePushVoteIdRef = useRef<string | null>(null);
 
   const isDjSessionLive = radioMode === "dj" && (twitchLive || radioConnected);
-  const isStreamUnavailable = radioMode === "dj" ? !isDjSessionLive : (!streamOnline && !pausedForIdle);
-  const tabsAllowed = !isStreamUnavailable;
-  const showRequests = tabsAllowed && (radioMode === "dj" ? isDjSessionLive : twitchLive);
+  // In DJ mode keep tabs visible even during short reconnect/status sync gaps.
+  const isStreamUnavailable = radioMode === "dj" ? false : (!streamOnline && !pausedForIdle);
+  const tabsAllowed = radioMode === "dj" ? true : !isStreamUnavailable;
+  const showRequests = radioMode === "dj" ? true : (tabsAllowed && twitchLive);
   const showRadioPanel = tabsAllowed && radioMode !== "dj";
   const showQueuePanel = tabsAllowed;
   const voteState = useRadioStore((s) => s.voteState);
