@@ -1252,7 +1252,7 @@ export default function StreamPage() {
           </div>
         )}
         {(mode !== "offline" && mode !== "radio" && !showRadioOfflineState) && (
-          <div className={mode === "twitch" ? "block" : "hidden landscape:block sm:block"}>
+          <div className={mode === "twitch" ? "block" : "hidden sm:block"}>
             <NowPlaying
               radioTrack={radioConnected && radioMode !== "dj" ? radioTrack : null}
               showFallback={!suppressFallback || radioMode === "dj"}
@@ -1289,9 +1289,9 @@ export default function StreamPage() {
         )}
       </header>
 
-      <main className="flex min-h-0 flex-1 flex-col gap-1.5 p-1.5 sm:gap-4 sm:p-4 landscape:flex-row lg:flex-row">
+      <main className="flex min-h-0 flex-1 flex-col gap-1.5 p-1.5 pb-[calc(env(safe-area-inset-bottom)+3.9rem)] sm:gap-4 sm:p-4 lg:pb-4 lg:flex-row">
         {/* Player */}
-        <div className="min-h-0 shrink-0 max-h-[38dvh] overflow-hidden landscape:min-w-0 landscape:flex-1 landscape:max-h-none landscape:min-h-0 landscape:overflow-hidden lg:min-w-0 lg:flex-1 lg:max-h-none lg:min-h-0 lg:overflow-visible">
+        <div className="min-h-0 shrink-0 max-h-[38dvh] overflow-hidden lg:min-w-0 lg:flex-1 lg:max-h-none lg:min-h-0 lg:overflow-visible">
           {shouldPollCommunityWidgets && <ShoutoutBanner />}
           {mode === "twitch" && twitchLive && (
             <div className="space-y-2">
@@ -1413,7 +1413,7 @@ export default function StreamPage() {
         </div>
 
         {/* Mobile: tab bar */}
-        <div className="flex shrink-0 gap-1 rounded-lg bg-gray-800/60 p-1 landscape:hidden lg:hidden">
+        <div className="fixed bottom-[max(env(safe-area-inset-bottom),0.35rem)] left-1 right-1 z-[130] flex shrink-0 gap-1 rounded-lg border border-gray-700/70 bg-gray-900/92 p-1 shadow-xl shadow-black/45 backdrop-blur-md lg:hidden">
           <button
             onClick={() => { setActiveTab("chat"); setChatBadge(false); }}
             className={`relative flex-1 rounded-md px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition ${
@@ -1472,12 +1472,12 @@ export default function StreamPage() {
         </div>
 
         {/* Content panels */}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 landscape:min-w-0 landscape:flex-[2] landscape:flex-row landscape:gap-4 lg:min-w-0 lg:flex-[2] lg:flex-row lg:gap-4">
-          <div className={`min-h-0 min-w-0 flex-1 ${activeTab === "chat" ? "" : "hidden"} landscape:block lg:block`}>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 lg:min-w-0 lg:flex-[2] lg:flex-row lg:gap-4">
+          <div className={`min-h-0 min-w-0 flex-1 ${activeTab === "chat" ? "" : "hidden"} lg:block`}>
             <ChatBox onNewMessage={() => { if (activeTabRef.current !== "chat") setChatBadge(true); }} />
           </div>
           {showRequests && (
-            <div className={`min-h-0 min-w-0 flex-1 ${activeTab === "requests" ? "" : "hidden"} landscape:block lg:block`}>
+            <div className={`min-h-0 min-w-0 flex-1 ${activeTab === "requests" ? "" : "hidden"} lg:block`}>
               <RequestForm onNewRequest={() => { if (activeTabRef.current !== "requests") setRequestBadge(true); }} />
             </div>
           )}
