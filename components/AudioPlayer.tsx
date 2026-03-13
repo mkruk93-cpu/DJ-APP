@@ -202,6 +202,8 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const [castConnected, setCastConnected] = useState(false);
   const [castBusy, setCastBusy] = useState(false);
   const [castError, setCastError] = useState<string | null>(null);
+  const [remoteCastSupported, setRemoteCastSupported] = useState(false);
+  const [remoteCastConnected, setRemoteCastConnected] = useState(false);
   const userPaused = useRef(false);
   const playingRef = useRef(false);
   const reconnectAttemptRef = useRef(0);
@@ -267,6 +269,22 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     if (storedVolume !== null) {
       setVolume(storedVolume);
     }
+  }, []);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const remote = (audio as HTMLAudioElement & { remote?: RemotePlayback }).remote;
+    if (!remote || typeof remote.prompt !== "function") return;
+    setRemoteCastSupported(true);
+    const onRemoteConnect = () => setRemoteCastConnected(true);
+    const onRemoteDisconnect = () => setRemoteCastConnected(false);
+    remote.addEventListener("connect", onRemoteConnect);
+    remote.addEventListener("disconnect", onRemoteDisconnect);
+    return () => {
+      remote.removeEventListener("connect", onRemoteConnect);
+      remote.removeEventListener("disconnect", onRemoteDisconnect);
+    };
   }, []);
 
   useEffect(() => {
@@ -822,7 +840,24 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   }
 
   async function toggleCast() {
-    if (typeof window === "undefined" || !castSupported || castBusy) return;
+    if (typeof window === "undefined" || castBusy) return;
+    if (!castSupported) {
+      const audio = audioRef.current as (HTMLAudioElement & { remote?: RemotePlayback }) | null;
+      if (!audio?.remote || typeof audio.remote.prompt !== "function") {
+        setCastError("Cast niet ondersteund op dit toestel/browser");
+        return;
+      }
+      setCastBusy(true);
+      setCastError(null);
+      try {
+        await audio.remote.prompt();
+      } catch {
+        setCastError("Kies een cast/apparaat via de browser popup");
+      } finally {
+        setCastBusy(false);
+      }
+      return;
+    }
     const castFramework = window.cast?.framework;
     if (!castFramework) return;
     setCastBusy(true);
@@ -1259,18 +1294,18 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
               Live player
             </span>
             <div className="flex items-center gap-2">
-              {castSupported && (
+              {(castSupported || remoteCastSupported) && (
                 <button
                   type="button"
                   onClick={toggleCast}
                   disabled={castBusy}
                   className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
-                    castConnected
+                    (castConnected || remoteCastConnected)
                       ? "border-emerald-400/70 bg-emerald-500/20 text-emerald-100"
                       : "border-gray-500/60 bg-black/35 text-white hover:border-emerald-400/70 hover:bg-black/50"
                   } disabled:opacity-60`}
                 >
-                  {castConnected ? "TV verbonden" : castBusy ? "Cast..." : "Cast naar TV"}
+                  {(castConnected || remoteCastConnected) ? "TV verbonden" : castBusy ? "Cast..." : "Cast naar TV"}
                 </button>
               )}
               <button
@@ -1590,19 +1625,19 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
-            {castSupported && (
+            {(castSupported || remoteCastSupported) && (
               <button
                 type="button"
                 onClick={toggleCast}
                 disabled={castBusy}
                 className={`flex h-7 min-w-[44px] items-center justify-center rounded-full border px-2 text-[10px] font-semibold transition ${
-                  castConnected
+                  (castConnected || remoteCastConnected)
                     ? "border-emerald-400/80 bg-emerald-500/20 text-emerald-100"
                     : "border-gray-600/70 bg-black/40 text-white hover:border-emerald-400/80 hover:bg-black/60"
                 } disabled:opacity-60`}
                 aria-label="Cast naar tv"
               >
-                {castBusy ? "..." : castConnected ? "TV" : "Cast"}
+                {castBusy ? "..." : (castConnected || remoteCastConnected) ? "TV" : "Cast"}
               </button>
             )}
             <button
@@ -1824,18 +1859,18 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
           )}
 
           <div className="flex items-center gap-3">
-            {castSupported && (
+            {(castSupported || remoteCastSupported) && (
               <button
                 type="button"
                 onClick={toggleCast}
                 disabled={castBusy}
                 className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold transition ${
-                  castConnected
+                  (castConnected || remoteCastConnected)
                     ? "border-emerald-400/70 bg-emerald-500/20 text-emerald-100"
                     : "border-gray-600/70 bg-black/40 text-white hover:border-emerald-400/70 hover:bg-black/60"
                 } disabled:opacity-60`}
               >
-                {castBusy ? "Cast..." : castConnected ? "TV verbonden" : "Cast"}
+                {castBusy ? "Cast..." : (castConnected || remoteCastConnected) ? "TV verbonden" : "Cast"}
               </button>
             )}
             <button
