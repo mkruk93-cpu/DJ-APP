@@ -850,7 +850,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     void enterFullscreen();
   }
 
-  async function toggleCast() {
+  const toggleCast = useCallback(async () => {
     if (typeof window === "undefined" || castBusy) return;
     if (!castSupported) {
       const audio = audioRef.current as (HTMLAudioElement & { remote?: RemotePlayback }) | null;
@@ -888,7 +888,27 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     } finally {
       setCastBusy(false);
     }
-  }
+  }, [castBusy, castConnected, castSupported, loadToCastSession]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const available = castSupported || remoteCastSupported || mobileCastFallbackVisible;
+    (window as Window & { __radioCastUiAvailable?: boolean }).__radioCastUiAvailable = available;
+    return () => {
+      (window as Window & { __radioCastUiAvailable?: boolean }).__radioCastUiAvailable = false;
+    };
+  }, [castSupported, mobileCastFallbackVisible, remoteCastSupported]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onRequest = () => {
+      void toggleCast();
+    };
+    window.addEventListener("radio-cast-toggle-request", onRequest);
+    return () => {
+      window.removeEventListener("radio-cast-toggle-request", onRequest);
+    };
+  }, [toggleCast]);
 
   const isRadioMode = !!syncedRadioTrack;
   const hasLiveRadioTrack = !!radioTrack;

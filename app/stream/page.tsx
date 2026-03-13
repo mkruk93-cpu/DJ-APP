@@ -285,6 +285,16 @@ export default function StreamPage() {
     }
   }
 
+  function requestCastFromHeader(): void {
+    if (typeof window === "undefined") return;
+    const hasPlayerCastUi = Boolean((window as Window & { __radioCastUiAvailable?: boolean }).__radioCastUiAvailable);
+    if (!hasPlayerCastUi) {
+      showInfoToast("Open eerst de radio player om cast te starten.");
+      return;
+    }
+    window.dispatchEvent(new CustomEvent("radio-cast-toggle-request"));
+  }
+
   useEffect(() => {
     if (skipLocked) {
       if (!skipWaitToastShownRef.current) {
@@ -535,7 +545,13 @@ export default function StreamPage() {
       resetScrollContainers();
       setTimeout(resetScrollContainers, 0);
     };
-    const timers = [0, 60, 180, 420, 900].map((delay) => window.setTimeout(forceTop, delay));
+    const timers = [0, 60, 180, 420, 900, 1500, 2200].map((delay) => window.setTimeout(forceTop, delay));
+    const guard = window.setInterval(() => {
+      if (window.scrollY > 0 || document.documentElement.scrollTop > 0 || document.body.scrollTop > 0) {
+        forceTop();
+      }
+    }, 300);
+    window.setTimeout(() => window.clearInterval(guard), 3200);
     const onVisibility = () => {
       if (document.visibilityState === "visible") forceTop();
     };
@@ -545,6 +561,7 @@ export default function StreamPage() {
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
       timers.forEach((id) => window.clearTimeout(id));
+      window.clearInterval(guard);
       window.removeEventListener("pageshow", forceTop);
       window.removeEventListener("focus", forceTop);
       document.removeEventListener("visibilitychange", onVisibility);
@@ -997,6 +1014,12 @@ export default function StreamPage() {
             >
               Info
             </button>
+            <button
+              onClick={requestCastFromHeader}
+              className="hidden whitespace-nowrap rounded-lg border border-emerald-500/70 bg-emerald-500/15 px-2 py-1 text-xs text-emerald-100 transition hover:bg-emerald-500/25 sm:inline-flex sm:px-3 sm:text-sm"
+            >
+              Cast
+            </button>
             <div ref={mobileHeaderMenuRef} className="relative sm:hidden">
               <button
                 type="button"
@@ -1027,6 +1050,16 @@ export default function StreamPage() {
                     className="mt-1 block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 transition hover:bg-gray-800"
                   >
                     {appInfoOpen ? "Sluit info" : "Open info"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobileHeaderMenuOpen(false);
+                      requestCastFromHeader();
+                    }}
+                    className="mt-1 block w-full rounded px-2 py-1.5 text-left text-xs text-emerald-200 transition hover:bg-emerald-900/30"
+                  >
+                    Cast naar TV
                   </button>
                   <button
                     type="button"
