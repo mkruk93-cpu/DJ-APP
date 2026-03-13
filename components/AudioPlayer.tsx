@@ -11,6 +11,60 @@ import { dislikeCurrentAutoTrack, likeCurrentAutoTrack } from "@/lib/radioApi";
 import { getSocket } from "@/lib/socket";
 import type { Track } from "@/lib/types";
 
+declare global {
+  interface Window {
+    __onGCastApiAvailable?: (isAvailable: boolean) => void;
+    cast?: {
+      framework?: {
+        CastContext: {
+          getInstance: () => {
+            setOptions: (options: { receiverApplicationId: string; autoJoinPolicy: string }) => void;
+            requestSession: () => Promise<void>;
+            endCurrentSession: (stopCasting: boolean) => void;
+            getCurrentSession: () => {
+              loadMedia: (request: unknown) => Promise<void>;
+            } | null;
+            getCastState: () => string;
+            addEventListener: (eventType: string, listener: (event: unknown) => void) => void;
+            removeEventListener: (eventType: string, listener: (event: unknown) => void) => void;
+          };
+        };
+        CastContextEventType: {
+          CAST_STATE_CHANGED: string;
+          SESSION_STATE_CHANGED: string;
+        };
+        CastState: {
+          CONNECTED: string;
+        };
+      };
+    };
+    chrome?: {
+      cast?: {
+        isAvailable?: boolean;
+        AutoJoinPolicy?: { ORIGIN_SCOPED: string };
+        media?: {
+          DEFAULT_MEDIA_RECEIVER_APP_ID: string;
+          MediaInfo: new (contentId: string, contentType: string) => {
+            metadata?: unknown;
+            streamType?: string;
+          };
+          MusicTrackMediaMetadata: new () => {
+            title?: string;
+            artist?: string;
+            albumName?: string;
+            images?: Array<{ url: string }>;
+          };
+          Image: new (url: string) => { url: string };
+          LoadRequest: new (mediaInfo: unknown) => {
+            autoplay?: boolean;
+          };
+          StreamType?: { LIVE: string };
+        };
+      };
+    };
+  }
+}
+
 interface NowPlayingData {
   title: string | null;
   artist: string | null;
@@ -144,6 +198,10 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const [manualFullscreen, setManualFullscreen] = useState(false);
   const [showFullscreenChat, setShowFullscreenChat] = useState(false);
   const [chatPreviewMessages, setChatPreviewMessages] = useState<ChatPreviewMessage[]>([]);
+  const [castSupported, setCastSupported] = useState(false);
+  const [castConnected, setCastConnected] = useState(false);
+  const [castBusy, setCastBusy] = useState(false);
+  const [castError, setCastError] = useState<string | null>(null);
   const userPaused = useRef(false);
   const playingRef = useRef(false);
   const reconnectAttemptRef = useRef(0);
@@ -158,6 +216,31 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     const separator = baseUrl.includes("?") ? "&" : "?";
     return `${baseUrl}${separator}live=${Date.now()}`;
   }, []);
+
+  const loadToCastSession = useCallback(async () => {
+    const castFramework = window.cast?.framework;
+    const castMedia = window.chrome?.cast?.media;
+    if (!castFramework || !castMedia || !src) return;
+    const context = castFramework.CastContext.getInstance();
+    const session = context.getCurrentSession();
+    if (!session) return;
+    const mediaInfo = new castMedia.MediaInfo(buildFreshStreamUrl(src), "audio/mpeg");
+    if (castMedia.StreamType?.LIVE) mediaInfo.streamType = castMedia.StreamType.LIVE;
+    const metadata = new castMedia.MusicTrackMediaMetadata();
+    const castTitle = track.title ?? "KrukkeX Live";
+    const castArtist = track.artist ?? "Live radio";
+    const castArtwork = currentArtwork ?? track.artwork_url ?? null;
+    metadata.title = castTitle;
+    metadata.artist = castArtist;
+    metadata.albumName = "KrukkeX Radio";
+    if (castArtwork) {
+      metadata.images = [new castMedia.Image(castArtwork)];
+    }
+    mediaInfo.metadata = metadata;
+    const request = new castMedia.LoadRequest(mediaInfo);
+    request.autoplay = true;
+    await session.loadMedia(request);
+  }, [buildFreshStreamUrl, currentArtwork, src, track.artist, track.artwork_url, track.title]);
 
   function getVolumeStorageKey(): string {
     if (typeof window === "undefined") return VOLUME_STORAGE_KEY_BASE;
@@ -527,6 +610,57 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   }, []);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const castFramework = window.cast?.framework;
+    const castApi = window.chrome?.cast;
+    const initCast = () => {
+      const framework = window.cast?.framework;
+      const chromeCast = window.chrome?.cast;
+      if (!framework || !chromeCast?.media || !chromeCast?.AutoJoinPolicy) return;
+      const context = framework.CastContext.getInstance();
+      context.setOptions({
+        receiverApplicationId: chromeCast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
+        autoJoinPolicy: chromeCast.AutoJoinPolicy.ORIGIN_SCOPED,
+      });
+      setCastSupported(true);
+      setCastConnected(context.getCastState() === framework.CastState.CONNECTED);
+      const onCastStateChanged = () => {
+        setCastConnected(context.getCastState() === framework.CastState.CONNECTED);
+      };
+      context.addEventListener(framework.CastContextEventType.CAST_STATE_CHANGED, onCastStateChanged);
+      context.addEventListener(framework.CastContextEventType.SESSION_STATE_CHANGED, onCastStateChanged);
+      return () => {
+        context.removeEventListener(framework.CastContextEventType.CAST_STATE_CHANGED, onCastStateChanged);
+        context.removeEventListener(framework.CastContextEventType.SESSION_STATE_CHANGED, onCastStateChanged);
+      };
+    };
+
+    let cleanup: (() => void) | undefined;
+    if (castFramework && castApi?.isAvailable) {
+      cleanup = initCast();
+      return () => {
+        cleanup?.();
+      };
+    }
+
+    window.__onGCastApiAvailable = (isAvailable: boolean) => {
+      if (!isAvailable) return;
+      cleanup = initCast();
+    };
+    const existing = document.querySelector('script[src*="cast_sender.js?loadCastFramework=1"]');
+    if (!existing) {
+      const script = document.createElement("script");
+      script.src = "https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1";
+      script.async = true;
+      document.head.appendChild(script);
+    }
+
+    return () => {
+      cleanup?.();
+    };
+  }, []);
+
+  useEffect(() => {
     if (!isFullscreen || !showFullscreenChat) return;
     const sb = getSupabase();
     let disposed = false;
@@ -687,6 +821,29 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     void enterFullscreen();
   }
 
+  async function toggleCast() {
+    if (typeof window === "undefined" || !castSupported || castBusy) return;
+    const castFramework = window.cast?.framework;
+    if (!castFramework) return;
+    setCastBusy(true);
+    setCastError(null);
+    try {
+      const context = castFramework.CastContext.getInstance();
+      if (castConnected) {
+        context.endCurrentSession(true);
+        setCastConnected(false);
+      } else {
+        await context.requestSession();
+        await loadToCastSession();
+        setCastConnected(true);
+      }
+    } catch {
+      setCastError("Cast koppelen mislukt");
+    } finally {
+      setCastBusy(false);
+    }
+  }
+
   const isRadioMode = !!syncedRadioTrack;
   const hasLiveRadioTrack = !!radioTrack;
   const isLoading = isRadioMode && syncedRadioTrack.started_at === 0;
@@ -752,6 +909,12 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     const timer = setTimeout(() => setFeedbackMessage(null), 3000);
     return () => clearTimeout(timer);
   }, [feedbackMessage]);
+
+  useEffect(() => {
+    if (!castError) return;
+    const timer = setTimeout(() => setCastError(null), 2500);
+    return () => clearTimeout(timer);
+  }, [castError]);
 
   async function likeTrack() {
     if (!canLikeTrack || feedbackSaving) return;
@@ -1083,6 +1246,11 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
           </div>
         </button>
       )}
+      {castError && (
+        <div className="absolute left-2 top-2 z-20 rounded-md border border-red-500/40 bg-red-900/40 px-2 py-1 text-[10px] text-red-100">
+          {castError}
+        </div>
+      )}
 
       {isFullscreen && (
         <div className="relative z-[2] flex h-full w-full flex-col overflow-hidden p-2 pb-3 pt-[max(env(safe-area-inset-top),0.35rem)] sm:p-4">
@@ -1091,6 +1259,20 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
               Live player
             </span>
             <div className="flex items-center gap-2">
+              {castSupported && (
+                <button
+                  type="button"
+                  onClick={toggleCast}
+                  disabled={castBusy}
+                  className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                    castConnected
+                      ? "border-emerald-400/70 bg-emerald-500/20 text-emerald-100"
+                      : "border-gray-500/60 bg-black/35 text-white hover:border-emerald-400/70 hover:bg-black/50"
+                  } disabled:opacity-60`}
+                >
+                  {castConnected ? "TV verbonden" : castBusy ? "Cast..." : "Cast naar TV"}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setShowFullscreenChat((prev) => !prev)}
@@ -1408,6 +1590,21 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
+            {castSupported && (
+              <button
+                type="button"
+                onClick={toggleCast}
+                disabled={castBusy}
+                className={`flex h-7 min-w-[44px] items-center justify-center rounded-full border px-2 text-[10px] font-semibold transition ${
+                  castConnected
+                    ? "border-emerald-400/80 bg-emerald-500/20 text-emerald-100"
+                    : "border-gray-600/70 bg-black/40 text-white hover:border-emerald-400/80 hover:bg-black/60"
+                } disabled:opacity-60`}
+                aria-label="Cast naar tv"
+              >
+                {castBusy ? "..." : castConnected ? "TV" : "Cast"}
+              </button>
+            )}
             <button
               type="button"
               onClick={toggleFullscreen}
@@ -1627,6 +1824,20 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
           )}
 
           <div className="flex items-center gap-3">
+            {castSupported && (
+              <button
+                type="button"
+                onClick={toggleCast}
+                disabled={castBusy}
+                className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold transition ${
+                  castConnected
+                    ? "border-emerald-400/70 bg-emerald-500/20 text-emerald-100"
+                    : "border-gray-600/70 bg-black/40 text-white hover:border-emerald-400/70 hover:bg-black/60"
+                } disabled:opacity-60`}
+              >
+                {castBusy ? "Cast..." : castConnected ? "TV verbonden" : "Cast"}
+              </button>
+            )}
             <button
               onClick={toggle}
               className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-all ${
