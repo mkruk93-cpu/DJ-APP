@@ -232,7 +232,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     const metadata = new castMedia.MusicTrackMediaMetadata();
     const castTitle = track.title ?? "KrukkeX Live";
     const castArtist = track.artist ?? "Live radio";
-    const castArtwork = currentArtwork ?? track.artwork_url ?? null;
+    const castArtwork = currentArtwork ?? (preferSupabase ? track.artwork_url : null) ?? null;
     metadata.title = castTitle;
     metadata.artist = castArtist;
     metadata.albumName = "KrukkeX Radio";
@@ -243,7 +243,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     const request = new castMedia.LoadRequest(mediaInfo);
     request.autoplay = true;
     await session.loadMedia(request);
-  }, [buildFreshStreamUrl, currentArtwork, src, track.artist, track.artwork_url, track.title]);
+  }, [buildFreshStreamUrl, currentArtwork, preferSupabase, src, track.artist, track.artwork_url, track.title]);
 
   function getVolumeStorageKey(): string {
     if (typeof window === "undefined") return VOLUME_STORAGE_KEY_BASE;
@@ -932,7 +932,8 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const displayArtist = syncedRadioTrack ? radioArtist : (showSupabaseData ? track.artist : null);
   const syncedRadioArtwork = syncedRadioTrack?.thumbnail ?? null;
   const immediateRadioArtwork = radioTrack?.thumbnail ?? null;
-  const supabaseArtwork = showSupabaseData ? track.artwork_url : null;
+  // Outside DJ mode we never render Supabase artwork to avoid Rekordbox exporter covers flashing in.
+  const supabaseArtwork = (showSupabaseData && preferSupabase) ? track.artwork_url : null;
   // Keep synced artwork leading to avoid falling back to stale exporter thumbnails.
   const displayArtwork = isJingleTrack ? null : (syncedRadioArtwork ?? immediateRadioArtwork ?? supabaseArtwork);
   const artworkVersion = syncedRadioTrack
