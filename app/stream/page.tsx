@@ -523,6 +523,8 @@ export default function StreamPage() {
     }
     const forceTop = () => {
       window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
       const resetScrollContainers = () => {
         document
           .querySelectorAll<HTMLElement>(".overflow-y-auto, .chat-scroll")
@@ -533,9 +535,20 @@ export default function StreamPage() {
       resetScrollContainers();
       setTimeout(resetScrollContainers, 0);
     };
+    const timers = [0, 60, 180, 420, 900].map((delay) => window.setTimeout(forceTop, delay));
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") forceTop();
+    };
     forceTop();
     window.addEventListener("pageshow", forceTop);
-    return () => window.removeEventListener("pageshow", forceTop);
+    window.addEventListener("focus", forceTop);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      timers.forEach((id) => window.clearTimeout(id));
+      window.removeEventListener("pageshow", forceTop);
+      window.removeEventListener("focus", forceTop);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, []);
 
   // Handle Spotify OAuth callback (code in URL after redirect)
