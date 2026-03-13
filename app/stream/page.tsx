@@ -191,10 +191,11 @@ export default function StreamPage() {
 
   const hasExternalDjSignal = twitchLive || (radioConnected && !streamOnline && !pausedForIdle);
   const isDjSessionLive = (radioMode === "dj" && (twitchLive || radioConnected)) || hasExternalDjSignal;
+  const forceDjCommunityUi = radioMode === "dj" || hasExternalDjSignal || mode === "twitch";
   // Keep tabs visible for DJ-like external streams (BUTT/Twitch), even if mode sync lags.
-  const isStreamUnavailable = isDjSessionLive ? false : (!streamOnline && !pausedForIdle);
-  const tabsAllowed = isDjSessionLive ? true : !isStreamUnavailable;
-  const showRequests = isDjSessionLive ? true : (tabsAllowed && twitchLive);
+  const isStreamUnavailable = forceDjCommunityUi ? false : (!streamOnline && !pausedForIdle);
+  const tabsAllowed = forceDjCommunityUi ? true : !isStreamUnavailable;
+  const showRequests = forceDjCommunityUi ? true : (tabsAllowed && twitchLive);
   const showRadioPanel = tabsAllowed && radioMode !== "dj";
   const showQueuePanel = tabsAllowed;
   const voteState = useRadioStore((s) => s.voteState);
@@ -991,7 +992,7 @@ export default function StreamPage() {
   const radioStreamUrl = radioServerUrl
     ? `${radioServerUrl}/listen`
     : process.env.NEXT_PUBLIC_STREAM_URL ?? icecastUrl;
-  const isDjModeConnected = isDjSessionLive;
+  const isDjModeConnected = isDjSessionLive || forceDjCommunityUi;
   const showTunnelRecoveryState =
     mode === "radio" &&
     !!radioStreamUrl &&
@@ -1221,7 +1222,7 @@ export default function StreamPage() {
             </div>
           </div>
         </div>
-        {!isDjSessionLive && (
+        {!forceDjCommunityUi && (
           <div className="mt-2 rounded-lg border border-gray-700/60 bg-gray-800/60 px-2.5 py-1 sm:px-3 sm:py-1.5">
             <p className="truncate text-[11px] text-gray-300 sm:text-xs">
               <span className="mr-1 uppercase tracking-wider text-gray-500">Volgende:</span>
