@@ -611,6 +611,59 @@ export default function StreamPage() {
   }, [isStandalonePwa]);
 
   useEffect(() => {
+    if (!isStandalonePwa) return;
+
+    let touchStartY = 0;
+    const findScrollableParent = (node: EventTarget | null): HTMLElement | null => {
+      let el = node instanceof HTMLElement ? node : null;
+      while (el && el !== document.body) {
+        const style = window.getComputedStyle(el);
+        const canScrollY = (style.overflowY === "auto" || style.overflowY === "scroll") && el.scrollHeight > el.clientHeight;
+        if (canScrollY) return el;
+        el = el.parentElement;
+      }
+      return null;
+    };
+
+    const onTouchStart = (event: TouchEvent) => {
+      if (event.touches.length !== 1) return;
+      touchStartY = event.touches[0]?.clientY ?? 0;
+    };
+
+    const onTouchMove = (event: TouchEvent) => {
+      if (event.touches.length !== 1) return;
+      const currentY = event.touches[0]?.clientY ?? touchStartY;
+      const pullingDown = currentY - touchStartY > 8;
+      if (!pullingDown) return;
+      const scrollable = findScrollableParent(event.target);
+      if (!scrollable || scrollable.scrollTop <= 0) {
+        event.preventDefault();
+      }
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      const isRefresh =
+        key === "f5" ||
+        ((event.ctrlKey || event.metaKey) && key === "r") ||
+        ((event.ctrlKey || event.metaKey) && event.shiftKey && key === "r");
+      if (!isRefresh) return;
+      event.preventDefault();
+      showInfoToast("Refresh is uitgeschakeld in app-modus.");
+    };
+
+    document.addEventListener("touchstart", onTouchStart, { passive: true });
+    document.addEventListener("touchmove", onTouchMove, { passive: false });
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      document.removeEventListener("touchstart", onTouchStart);
+      document.removeEventListener("touchmove", onTouchMove);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [isStandalonePwa]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
     if ("scrollRestoration" in window.history) {
       window.history.scrollRestoration = "manual";
