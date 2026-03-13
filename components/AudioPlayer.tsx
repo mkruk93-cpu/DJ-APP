@@ -855,7 +855,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     if (!castSupported) {
       const audio = audioRef.current as (HTMLAudioElement & { remote?: RemotePlayback }) | null;
       if (!audio?.remote || typeof audio.remote.prompt !== "function") {
-        setCastError("Cast niet ondersteund op dit toestel/browser");
+        setCastError("Gebruik op Android: Chrome menu (⋮) > Casten");
         return;
       }
       setCastBusy(true);
@@ -863,7 +863,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
       try {
         await audio.remote.prompt();
       } catch {
-        setCastError("Kies een cast/apparaat via de browser popup");
+        setCastError("Open browser cast picker en kies je TV");
       } finally {
         setCastBusy(false);
       }
@@ -1190,6 +1190,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const duration = isJingleTrack ? null : (syncedRadioTrack?.duration ?? null);
   const progress = duration && duration > 0 ? Math.min(elapsed / duration, 1) : 0;
   const durationLabel = duration && duration > 0 ? formatTime(duration) : "--:--";
+  const showCastButton = true;
 
   const artworkFallback = (
     <svg
@@ -1325,7 +1326,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
               Live player
             </span>
             <div className="flex items-center gap-2">
-              {(castSupported || remoteCastSupported || mobileCastFallbackVisible) && (
+              {showCastButton && (
                 <button
                   type="button"
                   onClick={toggleCast}
@@ -1656,7 +1657,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
-            {(castSupported || remoteCastSupported || mobileCastFallbackVisible) && (
+            {showCastButton && (
               <button
                 type="button"
                 onClick={toggleCast}
@@ -1890,7 +1891,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
           )}
 
           <div className="flex items-center gap-3">
-            {(castSupported || remoteCastSupported || mobileCastFallbackVisible) && (
+            {showCastButton && (
               <button
                 type="button"
                 onClick={toggleCast}

@@ -962,7 +962,7 @@ export default function StreamPage() {
   }
 
   return (
-    <div className="relative flex min-h-[100svh] h-dvh max-h-dvh flex-col overflow-hidden">
+    <div className="fixed inset-0 flex h-dvh max-h-dvh flex-col overflow-hidden">
       <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
         <div className="player-ambient absolute -left-20 top-10 h-72 w-72 rounded-full bg-violet-500/15 blur-3xl" />
         <div className="player-ambient absolute bottom-0 right-0 h-80 w-80 rounded-full bg-fuchsia-500/10 blur-3xl" />
@@ -1016,7 +1016,7 @@ export default function StreamPage() {
             </button>
             <button
               onClick={requestCastFromHeader}
-              className="hidden whitespace-nowrap rounded-lg border border-emerald-500/70 bg-emerald-500/15 px-2 py-1 text-xs text-emerald-100 transition hover:bg-emerald-500/25 sm:inline-flex sm:px-3 sm:text-sm"
+              className="inline-flex whitespace-nowrap rounded-lg border border-emerald-500/70 bg-emerald-500/15 px-2 py-1 text-xs text-emerald-100 transition hover:bg-emerald-500/25 sm:px-3 sm:text-sm"
             >
               Cast
             </button>
