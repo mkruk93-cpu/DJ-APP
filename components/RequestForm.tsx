@@ -6,6 +6,7 @@ import { isSpotifyConfigured } from "@/lib/spotify";
 import { getGenres, getGenreHits, type GenreOption, type GenreHit } from "@/lib/radioApi";
 import { buildGroupedGenreSections, GENRE_FALLBACK_OPTIONS, getGenreGroupMembers, isGroupedParentGenre, resolveGenreLabel } from "@/lib/genreDropdown";
 import SpotifyBrowser from "@/components/SpotifyBrowser";
+import SharedPlaylistsBrowser from "@/components/SharedPlaylistsBrowser";
 
 interface Request {
   id: string;
@@ -22,7 +23,7 @@ interface Request {
   created_at: string;
 }
 
-type SearchSource = "youtube" | "soundcloud" | "spotify" | "genres";
+type SearchSource = "youtube" | "soundcloud" | "spotify" | "genres" | "playlists";
 
 interface SearchResult {
   id: string;
@@ -367,7 +368,7 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (source === "spotify" || source === "genres") return;
+    if (source === "spotify" || source === "genres" || source === "playlists") return;
     const trimmed = input.trim();
     if (!trimmed) return;
     const preferredSource = source === "soundcloud" ? "soundcloud" : "youtube";
@@ -379,7 +380,7 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
     setFeedback(null);
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
-    if (URL_REGEX.test(value.trim()) || source === "spotify" || source === "genres") {
+    if (URL_REGEX.test(value.trim()) || source === "spotify" || source === "genres" || source === "playlists") {
       setResults([]);
       setShowResults(false);
       return;
@@ -424,7 +425,7 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
       if (genreMenuRef.current) genreMenuRef.current.open = true;
       return;
     }
-    if (newSource === "spotify") return;
+    if (newSource === "spotify" || newSource === "playlists") return;
     const query = input.trim();
     if (query.length >= 2 && !URL_REGEX.test(query)) {
       if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -436,6 +437,26 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
     try {
       await submitRequest(track.query, "youtube", {
         source: "spotify",
+        artist: track.artist ?? null,
+        title: track.title ?? null,
+      });
+      return "added" as const;
+    } catch {
+      return "error" as const;
+    }
+  }
+
+  async function handlePlaylistAdd(track: {
+    query: string;
+    artist?: string | null;
+    title?: string | null;
+    sourceType?: string | null;
+    sourceGenre?: string | null;
+  }) {
+    try {
+      await submitRequest(track.query, "youtube", {
+        source: track.sourceType ?? "shared_playlist",
+        genre: track.sourceGenre ?? null,
         artist: track.artist ?? null,
         title: track.title ?? null,
       });
@@ -514,6 +535,26 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
               Genres
             </span>
           </button>
+          <button
+            type="button"
+            onClick={() => switchSource("playlists")}
+            className={`group flex h-8 min-w-0 basis-0 items-center justify-center rounded-md px-1.5 text-[11px] font-semibold transition-all duration-200 ${
+              source === "playlists"
+                ? "flex-[1.45] bg-blue-500/20 text-blue-300"
+                : "flex-1 text-gray-400 hover:text-gray-200"
+            }`}
+          >
+            <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+            <span
+              className={`overflow-hidden whitespace-nowrap transition-all duration-200 ${
+                source === "playlists" ? "ml-1 max-w-[86px] opacity-100" : "max-w-0 opacity-0"
+              }`}
+            >
+              Playlists
+            </span>
+          </button>
           {isSpotifyConfigured() && (
             <button
               type="button"
@@ -540,6 +581,8 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
 
         {source === "spotify" ? (
           <SpotifyBrowser onAddTrack={handleSpotifyAdd} submitting={submitting} />
+        ) : source === "playlists" ? (
+          <SharedPlaylistsBrowser onAddTrack={handlePlaylistAdd} submitting={submitting} />
         ) : source === "genres" ? (
           <div className="space-y-2">
             <input

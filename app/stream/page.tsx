@@ -1289,7 +1289,7 @@ export default function StreamPage() {
         )}
       </header>
 
-      <main className="flex min-h-0 flex-1 flex-col gap-1.5 p-1.5 pb-[calc(env(safe-area-inset-bottom)+3.9rem)] sm:gap-4 sm:p-4 lg:pb-4 lg:flex-row">
+      <main className="flex min-h-0 flex-1 flex-col gap-1.5 p-1.5 sm:gap-4 sm:p-4 lg:flex-row">
         {/* Player */}
         <div className="min-h-0 shrink-0 max-h-[38dvh] overflow-hidden lg:min-w-0 lg:flex-1 lg:max-h-none lg:min-h-0 lg:overflow-visible">
           {shouldPollCommunityWidgets && <ShoutoutBanner />}
@@ -1413,7 +1413,7 @@ export default function StreamPage() {
         </div>
 
         {/* Mobile: tab bar */}
-        <div className="fixed bottom-[max(env(safe-area-inset-bottom),0.35rem)] left-1 right-1 z-[130] flex shrink-0 gap-1 rounded-lg border border-gray-700/70 bg-gray-900/92 p-1 shadow-xl shadow-black/45 backdrop-blur-md lg:hidden">
+        <div className="flex shrink-0 gap-1 rounded-lg bg-gray-800/60 p-1 lg:hidden">
           <button
             onClick={() => { setActiveTab("chat"); setChatBadge(false); }}
             className={`relative flex-1 rounded-md px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition ${
@@ -1547,13 +1547,6 @@ export default function StreamPage() {
           )}
         </div>
       </main>
-      <button
-        type="button"
-        onClick={requestCastFromHeader}
-        className="fixed bottom-[max(5.25rem,calc(env(safe-area-inset-bottom)+4.5rem))] right-3 z-[160] inline-flex h-10 items-center justify-center rounded-full border border-emerald-500/80 bg-emerald-500/20 px-3 text-xs font-semibold text-emerald-100 shadow-lg shadow-black/40 transition hover:bg-emerald-500/30 sm:hidden"
-      >
-        Cast
-      </button>
       {infoToastMessage && (
         <div className={`pointer-events-none fixed left-1/2 top-3 -translate-x-1/2 sm:top-4 ${playerFullscreen ? "z-[220] w-[96%] max-w-2xl" : "z-[115] w-[92%] max-w-xl"}`}>
           <div className={`pointer-events-auto flex items-start justify-between gap-2 text-violet-100 ${
