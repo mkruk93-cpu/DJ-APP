@@ -41,6 +41,13 @@ type StreamRequestItem = {
 };
 type DesktopAccordionTab = "radio" | "queue";
 const TUNNEL_RECOVERY_WINDOW_MS = 150_000;
+const PWA_INSTALL_DISMISS_KEY = "djapp:pwa-install-dismissed-at";
+
+interface BeforeInstallPromptEvent extends Event {
+  readonly platforms: string[];
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+}
 
 interface PublicStatsSummary {
   generatedAt: number;
@@ -173,6 +180,8 @@ export default function StreamPage() {
   const [skipVoteToastVoted, setSkipVoteToastVoted] = useState(false);
   const [playerFullscreen, setPlayerFullscreen] = useState(false);
   const [isStandalonePwa, setIsStandalonePwa] = useState(false);
+  const [deferredInstallPrompt, setDeferredInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [installBannerDismissed, setInstallBannerDismissed] = useState(false);
   const [displayHeaderNextTrack, setDisplayHeaderNextTrack] = useState<{
     title: string | null;
     artist: string | null;
@@ -217,6 +226,7 @@ export default function StreamPage() {
   const voteState = useRadioStore((s) => s.voteState);
   const syncedCurrentTrack = useSyncedTrack(radioMode === "dj" ? null : radioTrack);
   const statsServerUrl = (radioServerUrl ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL ?? "").replace(/\/+$/, "");
+  const shouldShowInstallBanner = isHydrated && !isStandalonePwa && !installBannerDismissed;
 
   function hydrateCurrentTrack(track: Track | null): Track | null {
     if (!track) return null;
@@ -426,6 +436,64 @@ export default function StreamPage() {
     window.addEventListener("radio-player-fullscreen-state", onPlayerFullscreen as EventListener);
     return () => window.removeEventListener("radio-player-fullscreen-state", onPlayerFullscreen as EventListener);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const dismissedAt = Number.parseInt(localStorage.getItem(PWA_INSTALL_DISMISS_KEY) ?? "", 10);
+    if (Number.isFinite(dismissedAt) && Date.now() - dismissedAt < 12 * 60 * 60 * 1000) {
+      setInstallBannerDismissed(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const onBeforeInstallPrompt = (event: Event) => {
+      const promptEvent = event as BeforeInstallPromptEvent;
+      promptEvent.preventDefault();
+      setDeferredInstallPrompt(promptEvent);
+    };
+
+    const onAppInstalled = () => {
+      setDeferredInstallPrompt(null);
+      setInstallBannerDismissed(true);
+      localStorage.removeItem(PWA_INSTALL_DISMISS_KEY);
+      showInfoToast("App geinstalleerd. Veel luisterplezier!");
+    };
+
+    window.addEventListener("beforeinstallprompt", onBeforeInstallPrompt);
+    window.addEventListener("appinstalled", onAppInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onBeforeInstallPrompt);
+      window.removeEventListener("appinstalled", onAppInstalled);
+    };
+  }, []);
+
+  const dismissInstallBanner = () => {
+    setInstallBannerDismissed(true);
+    if (typeof window !== "undefined") {
+      localStorage.setItem(PWA_INSTALL_DISMISS_KEY, String(Date.now()));
+    }
+  };
+
+  const promptInstallApp = async () => {
+    if (!deferredInstallPrompt) {
+      showInfoToast("Open browsermenu en kies 'Installeer app' of 'Toevoegen aan beginscherm'.");
+      return;
+    }
+    try {
+      await deferredInstallPrompt.prompt();
+      const choice = await deferredInstallPrompt.userChoice;
+      if (choice.outcome === "accepted") {
+        setInstallBannerDismissed(true);
+        localStorage.removeItem(PWA_INSTALL_DISMISS_KEY);
+      }
+    } catch {
+      showInfoToast("Installatieprompt kon niet worden geopend.");
+    } finally {
+      setDeferredInstallPrompt(null);
+    }
+  };
 
   useEffect(() => {
     if (!skipVoteToastExpiresAt) {
@@ -1262,6 +1330,31 @@ export default function StreamPage() {
             </div>
           </div>
         </div>
+        {shouldShowInstallBanner && (
+          <div className="mt-2 rounded-lg border border-violet-500/40 bg-violet-950/35 px-3 py-2 text-xs text-violet-100">
+            <div className="flex items-start justify-between gap-2">
+              <p className="min-w-0 flex-1 leading-relaxed">
+                Installeer de app voor snellere start en stabielere playback. Wil je nu installeren?
+              </p>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => { void promptInstallApp(); }}
+                  className="rounded-md border border-violet-300/60 bg-violet-500/30 px-2 py-1 text-[11px] font-semibold text-violet-100 transition hover:bg-violet-500/45"
+                >
+                  Installeer
+                </button>
+                <button
+                  type="button"
+                  onClick={dismissInstallBanner}
+                  className="rounded-md border border-violet-300/30 px-2 py-1 text-[11px] text-violet-200 transition hover:bg-violet-500/20"
+                >
+                  Later
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {!(forceDjCommunityUi || (communityUiActive && !showRadioPanel)) && (
           <div className="mt-2 rounded-lg border border-gray-700/60 bg-gray-800/60 px-2.5 py-1 sm:px-3 sm:py-1.5">
             <p className="truncate text-[11px] text-gray-300 sm:text-xs">

@@ -2,12 +2,20 @@
 
 import { useEffect, useRef, useState, useCallback, useId } from "react";
 import { getSupabase } from "@/lib/supabaseClient";
+import EmojiPicker, { Theme, type EmojiClickData } from "emoji-picker-react";
 
 interface ChatMessage {
   id: string;
   nickname: string;
   content: string;
   created_at: string;
+}
+
+interface MediaSearchItem {
+  id: string;
+  title: string | null;
+  previewUrl: string;
+  mediaUrl: string;
 }
 
 const MAX_MESSAGES = 200;
@@ -17,19 +25,8 @@ const DUPLICATE_WINDOW_MS = 5000;
 const STICKER_TOKEN_PREFIX = "[[sticker:";
 const STICKER_TOKEN_SUFFIX = "]]";
 
-const EMOJIS = [
-  "🔥", "🎉", "💜", "😂", "😮", "😍",
-  "🤯", "🥳", "🙌", "⚡", "🎧", "🫶",
-];
-
-const STICKERS = [
-  { label: "Party", url: "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f389.png" },
-  { label: "Fire", url: "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f525.png" },
-  { label: "Hype", url: "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f973.png" },
-  { label: "Love", url: "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f60d.png" },
-  { label: "Mindblown", url: "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f92f.png" },
-  { label: "Headphones", url: "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f3a7.png" },
-];
+type PickerTab = "emoji" | "sticker" | "gif";
+type MediaType = "sticker" | "gif";
 
 function decodeLegacyEntities(text: string): string {
   // Older chat rows were stored as HTML entities (e.g. &#39;). React already
@@ -42,6 +39,23 @@ function decodeLegacyEntities(text: string): string {
     .replace(/&amp;/g, "&");
 }
 
+function normalizeApostrophes(text: string): string {
+  // Normalize common apostrophe/quote variants so every client sees plain ASCII apostrophes.
+  return text
+    .replace(/[’‘‚‛`´ʻʼʹ′＇]/g, "'")
+    .replace(/[“”„‟]/g, '"');
+}
+
+function parseMediaToken(raw: string): { type: MediaType; url: string } | null {
+  const match = raw.trim().match(/^\[\[media:(gif|sticker):(.+)\]\]$/i);
+  if (!match) return null;
+  const [, typeRaw, urlRaw] = match;
+  const type = typeRaw.toLowerCase() === "sticker" ? "sticker" : "gif";
+  const url = urlRaw.trim();
+  if (!/^https?:\/\//i.test(url)) return null;
+  return { type, url };
+}
+
 function timeStr(iso: string) {
   return new Date(iso).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" });
 }
@@ -51,12 +65,20 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
   const [input, setInput] = useState("");
   const [cooldown, setCooldown] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerTab, setPickerTab] = useState<"emoji" | "sticker">("emoji");
+  const [pickerTab, setPickerTab] = useState<PickerTab>("emoji");
+  const [mediaQuery, setMediaQuery] = useState("");
+  const [mediaItems, setMediaItems] = useState<MediaSearchItem[]>([]);
+  const [mediaNextPos, setMediaNextPos] = useState<string | null>(null);
+  const [mediaLoading, setMediaLoading] = useState(false);
+  const [mediaLoadingMore, setMediaLoadingMore] = useState(false);
+  const [mediaError, setMediaError] = useState("");
   const lastMsgRef = useRef<{ text: string; time: number }>({ text: "", time: 0 });
   const bottomRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
+  const mediaAbortRef = useRef<AbortController | null>(null);
   const channelId = useId();
   const nickname = typeof window !== "undefined" ? localStorage.getItem("nickname") ?? "anon" : "anon";
+  const activeMediaType: MediaType | null = pickerTab === "gif" || pickerTab === "sticker" ? pickerTab : null;
 
   function parseSticker(raw: string): string | null {
     const trimmed = raw.trim();
@@ -67,6 +89,17 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
   }
 
   function renderContent(raw: string) {
+    const media = parseMediaToken(raw);
+    if (media) {
+      return (
+        <img
+          src={media.url}
+          alt={media.type === "gif" ? "GIF" : "Sticker"}
+          loading="lazy"
+          className="mt-1 max-h-44 w-auto max-w-[14rem] rounded-xl object-contain shadow-md shadow-black/30 sm:max-h-56 sm:max-w-[18rem]"
+        />
+      );
+    }
     const stickerUrl = parseSticker(raw);
     if (stickerUrl) {
       return (
@@ -77,8 +110,64 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
         />
       );
     }
-    return <span>{decodeLegacyEntities(raw)}</span>;
+    return <span>{normalizeApostrophes(decodeLegacyEntities(raw))}</span>;
   }
+
+  const fetchMedia = useCallback(async (type: MediaType, query: string, options?: { append?: boolean }) => {
+    const append = !!options?.append;
+    if (!append) {
+      setMediaLoading(true);
+      setMediaError("");
+      setMediaNextPos(null);
+    } else {
+      if (!mediaNextPos) return;
+      setMediaLoadingMore(true);
+      setMediaError("");
+    }
+
+    mediaAbortRef.current?.abort();
+    const controller = new AbortController();
+    mediaAbortRef.current = controller;
+
+    const params = new URLSearchParams({
+      type,
+      q: query.trim(),
+      limit: "24",
+    });
+    if (append && mediaNextPos) params.set("pos", mediaNextPos);
+
+    try {
+      const res = await fetch(`/api/chat-media/search?${params.toString()}`, {
+        method: "GET",
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      const payload = (await res.json().catch(() => ({}))) as {
+        items?: MediaSearchItem[];
+        nextPos?: string | null;
+        error?: string;
+      };
+      if (!res.ok) {
+        setMediaError(payload.error ?? "Media laden mislukt");
+        return;
+      }
+
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      setMediaItems((prev) => {
+        if (!append) return items;
+        const merged = [...prev, ...items];
+        return Array.from(new Map(merged.map((item) => [item.id, item])).values());
+      });
+      setMediaNextPos(payload.nextPos ?? null);
+    } catch (err) {
+      if (controller.signal.aborted) return;
+      const msg = err instanceof Error ? err.message : "Media laden mislukt";
+      setMediaError(msg);
+    } finally {
+      if (!append) setMediaLoading(false);
+      else setMediaLoadingMore(false);
+    }
+  }, [mediaNextPos]);
 
   useEffect(() => {
     const sb = getSupabase();
@@ -112,6 +201,10 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
   }, []);
 
   useEffect(() => {
+    return () => mediaAbortRef.current?.abort();
+  }, []);
+
+  useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
@@ -127,7 +220,8 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
   }, [pickerOpen]);
 
   const sendMessage = useCallback(async (content?: string) => {
-    const text = (content ?? input).trim();
+    const normalizedInput = normalizeApostrophes(content ?? input);
+    const text = normalizedInput.trim();
     if (!text || text.length > MAX_LENGTH || cooldown) return;
 
     const now = Date.now();
@@ -141,15 +235,31 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
     await getSupabase().from("chat_messages").insert({ nickname, content: text });
   }, [input, cooldown, nickname]);
 
-  function addEmoji(emoji: string) {
-    setInput((prev) => `${prev}${emoji}`);
+  function addEmoji(emojiData: EmojiClickData) {
+    setInput((prev) => `${prev}${emojiData.emoji}`);
+  }
+
+  function sendMedia(type: MediaType, url: string) {
+    const payload = `[[media:${type}:${url}]]`;
+    void sendMessage(payload);
     setPickerOpen(false);
   }
 
-  function sendSticker(url: string) {
-    const stickerPayload = `${STICKER_TOKEN_PREFIX}${url}${STICKER_TOKEN_SUFFIX}`;
-    void sendMessage(stickerPayload);
-    setPickerOpen(false);
+  useEffect(() => {
+    if (!pickerOpen || !activeMediaType) return;
+    const timer = window.setTimeout(() => {
+      void fetchMedia(activeMediaType, mediaQuery, { append: false });
+    }, 280);
+    return () => window.clearTimeout(timer);
+  }, [pickerOpen, activeMediaType, mediaQuery, fetchMedia]);
+
+  function switchTab(tab: PickerTab) {
+    setPickerTab(tab);
+    setMediaError("");
+    if (tab === "emoji") return;
+    setMediaQuery("");
+    setMediaItems([]);
+    setMediaNextPos(null);
   }
 
   return (
@@ -206,7 +316,7 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
             <div className="mb-2 flex gap-1 rounded-lg bg-gray-800 p-1">
               <button
                 type="button"
-                onClick={() => setPickerTab("emoji")}
+                onClick={() => switchTab("emoji")}
                 className={`flex-1 rounded-md px-2 py-1 text-xs font-semibold transition ${
                   pickerTab === "emoji" ? "bg-violet-600 text-white" : "text-gray-300 hover:text-white"
                 }`}
@@ -215,42 +325,79 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
               </button>
               <button
                 type="button"
-                onClick={() => setPickerTab("sticker")}
+                onClick={() => switchTab("sticker")}
                 className={`flex-1 rounded-md px-2 py-1 text-xs font-semibold transition ${
                   pickerTab === "sticker" ? "bg-violet-600 text-white" : "text-gray-300 hover:text-white"
                 }`}
               >
                 Stickers
               </button>
+              <button
+                type="button"
+                onClick={() => switchTab("gif")}
+                className={`flex-1 rounded-md px-2 py-1 text-xs font-semibold transition ${
+                  pickerTab === "gif" ? "bg-violet-600 text-white" : "text-gray-300 hover:text-white"
+                }`}
+              >
+                GIF
+              </button>
             </div>
 
             {pickerTab === "emoji" ? (
-              <div className="grid grid-cols-6 gap-1">
-                {EMOJIS.map((emoji) => (
-                  <button
-                    key={emoji}
-                    type="button"
-                    onClick={() => addEmoji(emoji)}
-                    className="rounded-lg bg-gray-800 py-1.5 text-xl transition hover:bg-gray-700"
-                    title={`Voeg ${emoji} toe`}
-                  >
-                    {emoji}
-                  </button>
-                ))}
+              <div className="overflow-hidden rounded-lg border border-gray-700">
+                <EmojiPicker
+                  width="100%"
+                  height={300}
+                  lazyLoadEmojis
+                  searchDisabled={false}
+                  skinTonesDisabled
+                  autoFocusSearch={false}
+                  theme={Theme.DARK}
+                  onEmojiClick={addEmoji}
+                />
               </div>
             ) : (
-              <div className="grid grid-cols-3 gap-2">
-                {STICKERS.map((sticker) => (
+              <div>
+                <input
+                  type="text"
+                  value={mediaQuery}
+                  onChange={(e) => setMediaQuery(e.target.value)}
+                  placeholder={pickerTab === "gif" ? "Zoek GIF's..." : "Zoek stickers..."}
+                  className="mb-2 w-full rounded-lg border border-gray-700 bg-gray-800 px-2.5 py-1.5 text-xs text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
+                />
+                {mediaError && <p className="mb-2 text-[11px] text-red-300">{mediaError}</p>}
+                <div className="chat-scroll grid max-h-64 grid-cols-3 gap-2 overflow-y-auto pr-1">
+                  {mediaLoading && mediaItems.length === 0 ? (
+                    <p className="col-span-3 text-[11px] text-gray-400">Media laden...</p>
+                  ) : mediaItems.length === 0 ? (
+                    <p className="col-span-3 text-[11px] text-gray-400">Geen resultaten gevonden.</p>
+                  ) : (
+                    mediaItems.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => sendMedia(activeMediaType ?? "gif", item.mediaUrl)}
+                        className="rounded-lg bg-gray-800 p-1.5 transition hover:bg-gray-700"
+                        title={item.title ?? "Media"}
+                      >
+                        <img src={item.previewUrl} alt={item.title ?? "Media"} className="h-16 w-full rounded-md object-cover" loading="lazy" />
+                      </button>
+                    ))
+                  )}
+                </div>
+                {mediaNextPos && (
                   <button
-                    key={sticker.url}
                     type="button"
-                    onClick={() => sendSticker(sticker.url)}
-                    className="rounded-lg bg-gray-800 p-1.5 transition hover:bg-gray-700"
-                    title={`Sticker: ${sticker.label}`}
+                    onClick={() => {
+                      if (!activeMediaType || mediaLoadingMore) return;
+                      void fetchMedia(activeMediaType, mediaQuery, { append: true });
+                    }}
+                    className="mt-2 w-full rounded-lg border border-gray-700 bg-gray-800/80 px-2 py-1.5 text-xs text-gray-200 transition hover:bg-gray-700 disabled:opacity-50"
+                    disabled={mediaLoadingMore}
                   >
-                    <img src={sticker.url} alt={sticker.label} className="h-16 w-full rounded-md object-cover" />
+                    {mediaLoadingMore ? "Laden..." : "Meer laden"}
                   </button>
-                ))}
+                )}
               </div>
             )}
           </div>
