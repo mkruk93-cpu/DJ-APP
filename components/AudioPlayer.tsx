@@ -86,6 +86,9 @@ interface AudioPlayerProps {
 }
 
 const VOLUME_STORAGE_KEY_BASE = "djapp:player-volume";
+// Tolerate temporary network jitter before forcing a stream reload.
+const LIVE_RECOVER_WAIT_MS = 7500;
+const LIVE_RECOVER_MIN_INTERVAL_MS = 12000;
 
 function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
   const rn = r / 255;
@@ -501,10 +504,10 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
         if (!current || !playingRef.current || userPaused.current || !src) return;
         const waitingForMs = Date.now() - waitingSinceRef.current;
         const stillNoData = current.readyState < 3 || current.networkState === HTMLMediaElement.NETWORK_LOADING;
-        if (waitingForMs >= 4000 && stillNoData) {
-          attemptRecover(1100, { forceReload: true, minIntervalMs: 7000 });
+        if (waitingForMs >= LIVE_RECOVER_WAIT_MS && stillNoData) {
+          attemptRecover(1100, { forceReload: true, minIntervalMs: LIVE_RECOVER_MIN_INTERVAL_MS });
         }
-      }, 4200);
+      }, LIVE_RECOVER_WAIT_MS);
     }
 
     function onCanPlay() {
@@ -522,7 +525,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
 
     function onEnded() {
       if (!playingRef.current || userPaused.current) return;
-      attemptRecover(500, { forceReload: true, minIntervalMs: 7000 });
+      attemptRecover(500, { forceReload: true, minIntervalMs: LIVE_RECOVER_MIN_INTERVAL_MS });
     }
 
     function onVisibilityOrFocus() {
@@ -1293,14 +1296,14 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
         onPause={() => setPlaying(false)}
         onError={() => {
           if (playingRef.current && !userPaused.current && src) {
-            attemptRecover(1300, { forceReload: true, minIntervalMs: 7000 });
+            attemptRecover(1300, { forceReload: true, minIntervalMs: LIVE_RECOVER_MIN_INTERVAL_MS });
           } else {
             setPlaying(false);
           }
         }}
         onStalled={() => {
           if (playingRef.current && !userPaused.current && src) {
-            attemptRecover(1500, { forceReload: true, minIntervalMs: 7000 });
+            attemptRecover(1500, { forceReload: true, minIntervalMs: LIVE_RECOVER_MIN_INTERVAL_MS });
           }
         }}
       />
