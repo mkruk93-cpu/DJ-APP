@@ -840,6 +840,8 @@ function App() {
     const candidates = uniqueStrings([
       runsOverHttp ? "/api/live-polls" : "",
       joinBase(settings.apiBaseUrl, "/api/live-polls"),
+      joinBase(settings.controlServerUrl, "/api/live-polls"),
+      "http://localhost:3001/api/live-polls",
       "http://localhost:3000/api/live-polls",
       "http://localhost:3002/api/live-polls",
       "http://localhost:3003/api/live-polls",
@@ -869,6 +871,8 @@ function App() {
     const candidates = uniqueStrings([
       runsOverHttp ? "/api/live-polls" : "",
       joinBase(settings.apiBaseUrl, "/api/live-polls"),
+      joinBase(settings.controlServerUrl, "/api/live-polls"),
+      "http://localhost:3001/api/live-polls",
       "http://localhost:3000/api/live-polls",
       "http://localhost:3002/api/live-polls",
       "http://localhost:3003/api/live-polls",
@@ -903,6 +907,8 @@ function App() {
     const candidates = uniqueStrings([
       runsOverHttp ? `/api/live-polls/${activePoll.id}` : "",
       joinBase(settings.apiBaseUrl, `/api/live-polls/${activePoll.id}`),
+      joinBase(settings.controlServerUrl, `/api/live-polls/${activePoll.id}`),
+      `http://localhost:3001/api/live-polls/${activePoll.id}`,
       `http://localhost:3000/api/live-polls/${activePoll.id}`,
       `http://localhost:3002/api/live-polls/${activePoll.id}`,
       `http://localhost:3003/api/live-polls/${activePoll.id}`,
@@ -941,6 +947,8 @@ function App() {
     const candidates = uniqueStrings([
       runsOverHttp ? "/api/shoutouts" : "",
       joinBase(settings.apiBaseUrl, "/api/shoutouts"),
+      joinBase(settings.controlServerUrl, "/api/shoutouts"),
+      "http://localhost:3001/api/shoutouts",
       "http://localhost:3000/api/shoutouts",
       "http://localhost:3002/api/shoutouts",
       "http://localhost:3003/api/shoutouts",

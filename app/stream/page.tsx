@@ -26,7 +26,15 @@ import { parseTrackDisplay } from "@/lib/trackDisplay";
 import { useSyncedTrack } from "@/lib/useSyncedTrack";
 
 type StreamMode = "twitch" | "audio" | "radio" | "offline";
-type MobileTab = "chat" | "requests" | "radio" | "queue";
+type MobileTab = "chat" | "requests" | "radio" | "queue" | "requested";
+type StreamRequestItem = {
+  id: string;
+  nickname: string;
+  title: string | null;
+  artist: string | null;
+  status: string;
+  created_at: string;
+};
 type DesktopAccordionTab = "radio" | "queue";
 const TUNNEL_RECOVERY_WINDOW_MS = 150_000;
 
@@ -116,6 +124,8 @@ export default function StreamPage() {
   const [chatBadge, setChatBadge] = useState(false);
   const [requestBadge, setRequestBadge] = useState(false);
   const [queueBadge, setQueueBadge] = useState(false);
+  const [requestedItems, setRequestedItems] = useState<StreamRequestItem[]>([]);
+  const [requestedLoading, setRequestedLoading] = useState(false);
   const [statsOpen, setStatsOpen] = useState(false);
   const [appInfoOpen, setAppInfoOpen] = useState(false);
   const [mobileHeaderMenuOpen, setMobileHeaderMenuOpen] = useState(false);
@@ -198,7 +208,8 @@ export default function StreamPage() {
   const tabsAllowed = communityUiActive ? true : !isStreamUnavailable;
   const showRequests = radioMode === "dj";
   const showRadioPanel = communityUiActive && radioMode !== "dj";
-  const showQueuePanel = communityUiActive;
+  const showQueuePanel = communityUiActive && radioMode !== "dj";
+  const showRequestedPanel = communityUiActive && radioMode === "dj";
   const voteState = useRadioStore((s) => s.voteState);
   const syncedCurrentTrack = useSyncedTrack(radioMode === "dj" ? null : radioTrack);
   const statsServerUrl = (radioServerUrl ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL ?? "").replace(/\/+$/, "");
@@ -330,9 +341,18 @@ export default function StreamPage() {
   useEffect(() => {
     if (!showQueuePanel && activeTab === "queue") {
       if (showRadioPanel) setActiveTab("radio");
+      else if (showRequestedPanel) setActiveTab("requested");
       else setActiveTab(showRequests ? "requests" : "chat");
     }
-  }, [showQueuePanel, showRadioPanel, activeTab, showRequests]);
+  }, [showQueuePanel, showRadioPanel, showRequestedPanel, activeTab, showRequests]);
+
+  useEffect(() => {
+    if (!showRequestedPanel && activeTab === "requested") {
+      if (showQueuePanel) setActiveTab("queue");
+      else if (showRadioPanel) setActiveTab("radio");
+      else setActiveTab(showRequests ? "requests" : "chat");
+    }
+  }, [showRequestedPanel, showQueuePanel, showRadioPanel, activeTab, showRequests]);
 
   useEffect(() => {
     if (desktopAccordionTab === "radio" && !showRadioPanel && showQueuePanel) {
@@ -1082,6 +1102,37 @@ export default function StreamPage() {
     return () => clearInterval(interval);
   }, [statsOpen, statsServerUrl, statsDays]);
 
+  useEffect(() => {
+    if (!showRequestedPanel) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const loadRequested = async () => {
+      if (!cancelled) setRequestedLoading((prev) => prev || requestedItems.length === 0);
+      try {
+        const res = await fetch("/api/requests", { cache: "no-store" });
+        if (!res.ok) return;
+        const payload = (await res.json().catch(() => ({}))) as { items?: StreamRequestItem[] };
+        if (cancelled) return;
+        const rows = Array.isArray(payload.items) ? payload.items : [];
+        setRequestedItems(
+          rows.filter((item) => item.status !== "rejected" && item.status !== "error"),
+        );
+      } catch {
+        // keep previous list on fetch hiccup
+      } finally {
+        if (!cancelled) setRequestedLoading(false);
+      }
+    };
+
+    void loadRequested();
+    timer = setInterval(() => void loadRequested(), 5000);
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, [showRequestedPanel, requestedItems.length]);
+
   const filteredRecentStats = (statsSummary?.recentRequests ?? []).filter((row) => {
     if (!statsFilter.kind || !statsFilter.value) return true;
     if (statsFilter.kind === "requester") return row.added_by === statsFilter.value;
@@ -1158,12 +1209,6 @@ export default function StreamPage() {
             >
               Info
             </button>
-            <button
-              onClick={requestCastFromHeader}
-              className="inline-flex whitespace-nowrap rounded-lg border border-emerald-500/70 bg-emerald-500/15 px-2 py-1 text-xs text-emerald-100 transition hover:bg-emerald-500/25 sm:px-3 sm:text-sm"
-            >
-              Cast
-            </button>
             <div ref={mobileHeaderMenuRef} className="relative sm:hidden">
               <button
                 type="button"
@@ -1194,16 +1239,6 @@ export default function StreamPage() {
                     className="mt-1 block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 transition hover:bg-gray-800"
                   >
                     {appInfoOpen ? "Sluit info" : "Open info"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMobileHeaderMenuOpen(false);
-                      requestCastFromHeader();
-                    }}
-                    className="mt-1 block w-full rounded px-2 py-1.5 text-left text-xs text-emerald-200 transition hover:bg-emerald-900/30"
-                  >
-                    Cast naar TV
                   </button>
                   <button
                     type="button"
@@ -1469,6 +1504,18 @@ export default function StreamPage() {
               )}
             </button>
           )}
+          {showRequestedPanel && (
+            <button
+              onClick={() => setActiveTab("requested")}
+              className={`relative flex-1 rounded-md px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition ${
+                activeTab === "requested"
+                  ? "bg-violet-600 text-white shadow-sm"
+                  : "text-gray-400 hover:text-white"
+              }`}
+            >
+              Aangevraagd{requestedItems.length > 0 ? ` (${requestedItems.length})` : ""}
+            </button>
+          )}
         </div>
 
         {/* Content panels */}
@@ -1493,6 +1540,30 @@ export default function StreamPage() {
               <RadioPanelErrorBoundary>
                 <Queue />
               </RadioPanelErrorBoundary>
+            </div>
+          )}
+          {showRequestedPanel && (
+            <div className={`min-h-0 min-w-0 flex-1 overflow-hidden flex-col gap-2 ${activeTab === "requested" ? "flex" : "hidden"} lg:hidden`}>
+              <div className="chat-scroll min-h-0 flex-1 overflow-y-auto rounded-xl border border-gray-800 bg-gray-900 p-2">
+                {requestedLoading && requestedItems.length === 0 ? (
+                  <p className="text-xs text-gray-400">Verzoekjes laden...</p>
+                ) : requestedItems.length === 0 ? (
+                  <p className="text-xs text-gray-500">Nog geen verzoekjes in DJ modus.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {requestedItems.map((item) => (
+                      <div key={item.id} className="rounded-lg border border-gray-800 bg-gray-950/60 p-2">
+                        <p className="truncate text-xs font-semibold text-white">
+                          {item.title || "Onbekende titel"}
+                        </p>
+                        <p className="truncate text-[11px] text-gray-400">
+                          {item.artist || "Onbekende artiest"} · door {item.nickname}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
           {(showRadioPanel || showQueuePanel) && (
