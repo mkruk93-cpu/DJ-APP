@@ -60,6 +60,10 @@ function timeStr(iso: string) {
   return new Date(iso).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" });
 }
 
+function normalizeName(value: string): string {
+  return value.trim().toLowerCase();
+}
+
 export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } = {}) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -72,13 +76,21 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
   const [mediaLoading, setMediaLoading] = useState(false);
   const [mediaLoadingMore, setMediaLoadingMore] = useState(false);
   const [mediaError, setMediaError] = useState("");
+  const [deleteError, setDeleteError] = useState("");
+  const [deletingMessageId, setDeletingMessageId] = useState<string | null>(null);
   const lastMsgRef = useRef<{ text: string; time: number }>({ text: "", time: 0 });
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const mediaAbortRef = useRef<AbortController | null>(null);
   const channelId = useId();
   const nickname = typeof window !== "undefined" ? localStorage.getItem("nickname") ?? "anon" : "anon";
   const activeMediaType: MediaType | null = pickerTab === "gif" || pickerTab === "sticker" ? pickerTab : null;
+
+  const scrollToBottom = useCallback((smooth = false) => {
+    const host = messagesRef.current;
+    if (!host) return;
+    host.scrollTo({ top: host.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+  }, []);
 
   function parseSticker(raw: string): string | null {
     const trimmed = raw.trim();
@@ -96,7 +108,7 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
           src={media.url}
           alt={media.type === "gif" ? "GIF" : "Sticker"}
           loading="lazy"
-          className="mt-1 max-h-44 w-auto max-w-[14rem] rounded-xl object-contain shadow-md shadow-black/30 sm:max-h-56 sm:max-w-[18rem]"
+          className="mt-1 max-h-28 w-auto max-w-[10rem] rounded-xl object-contain shadow-md shadow-black/30 sm:max-h-40 sm:max-w-[14rem]"
         />
       );
     }
@@ -106,21 +118,26 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
         <img
           src={stickerUrl}
           alt="Sticker"
-          className="mt-1 h-20 w-20 rounded-xl object-cover shadow-md shadow-black/30 sm:h-24 sm:w-24"
+          className="mt-1 h-14 w-14 rounded-xl object-cover shadow-md shadow-black/30 sm:h-20 sm:w-20"
         />
       );
     }
     return <span>{normalizeApostrophes(decodeLegacyEntities(raw))}</span>;
   }
 
-  const fetchMedia = useCallback(async (type: MediaType, query: string, options?: { append?: boolean }) => {
+  const fetchMedia = useCallback(async (
+    type: MediaType,
+    query: string,
+    options?: { append?: boolean; pos?: string | null },
+  ) => {
     const append = !!options?.append;
+    const pos = options?.pos ?? null;
     if (!append) {
       setMediaLoading(true);
       setMediaError("");
       setMediaNextPos(null);
     } else {
-      if (!mediaNextPos) return;
+      if (!pos) return;
       setMediaLoadingMore(true);
       setMediaError("");
     }
@@ -134,7 +151,7 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
       q: query.trim(),
       limit: "24",
     });
-    if (append && mediaNextPos) params.set("pos", mediaNextPos);
+    if (append && pos) params.set("pos", pos);
 
     try {
       const res = await fetch(`/api/chat-media/search?${params.toString()}`, {
@@ -167,7 +184,7 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
       if (!append) setMediaLoading(false);
       else setMediaLoadingMore(false);
     }
-  }, [mediaNextPos]);
+  }, []);
 
   useEffect(() => {
     const sb = getSupabase();
@@ -193,6 +210,15 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
           onNewMessage?.();
         }
       )
+      .on<{ old: { id: string } }>(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "chat_messages" },
+        (payload) => {
+          const removedId = (payload as { old?: { id?: string } }).old?.id;
+          if (!removedId) return;
+          setMessages((prev) => prev.filter((m) => m.id !== removedId));
+        },
+      )
       .subscribe();
 
     return () => {
@@ -205,8 +231,19 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
   }, []);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    // Always show latest message on load and follow new messages.
+    scrollToBottom(messages.length > 1);
+  }, [messages, scrollToBottom]);
+
+  useEffect(() => {
+    const host = messagesRef.current;
+    if (!host) return;
+    const observer = new MutationObserver(() => {
+      scrollToBottom(false);
+    });
+    observer.observe(host, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [scrollToBottom]);
 
   useEffect(() => {
     function handleOutsideClick(e: MouseEvent) {
@@ -245,6 +282,29 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
     setPickerOpen(false);
   }
 
+  async function deleteOwnMessage(messageId: string) {
+    if (!messageId || deletingMessageId) return;
+    setDeleteError("");
+    setDeletingMessageId(messageId);
+    try {
+      const res = await fetch(`/api/chat-messages/${messageId}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nickname }),
+      });
+      const payload = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setDeleteError(payload.error ?? "Bericht verwijderen mislukt");
+        return;
+      }
+      setMessages((prev) => prev.filter((m) => m.id !== messageId));
+    } catch {
+      setDeleteError("Bericht verwijderen mislukt");
+    } finally {
+      setDeletingMessageId(null);
+    }
+  }
+
   useEffect(() => {
     if (!pickerOpen || !activeMediaType) return;
     const timer = window.setTimeout(() => {
@@ -268,16 +328,38 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
         <h2 className="text-xs font-semibold uppercase tracking-wider text-violet-400 sm:text-sm">Chat</h2>
       </div>
 
-      <div className="chat-scroll min-h-0 flex-1 space-y-0.5 overflow-y-auto px-3 py-2 sm:space-y-1 sm:px-4 sm:py-3">
+      <div
+        ref={messagesRef}
+        className="chat-scroll min-h-0 flex-1 space-y-0.5 overflow-y-auto px-3 py-2 sm:space-y-1 sm:px-4 sm:py-3"
+      >
         {messages.map((m) => (
-          <div key={m.id} className="text-sm leading-relaxed">
-            <span className="font-semibold text-violet-400">{m.nickname}</span>
-            <span className="mx-1 text-gray-600 sm:mx-1.5">{timeStr(m.created_at)}</span>
-            <span className="text-gray-300">{renderContent(m.content)}</span>
+          <div key={m.id} className="group text-sm leading-relaxed">
+            <div className="flex items-start gap-1.5">
+              <div className="min-w-0 flex-1">
+                <span className="font-semibold text-violet-400">{m.nickname}</span>
+                <span className="mx-1 text-gray-600 sm:mx-1.5">{timeStr(m.created_at)}</span>
+                <span className="text-gray-300">{renderContent(m.content)}</span>
+              </div>
+              {normalizeName(m.nickname) === normalizeName(nickname) && (
+                <button
+                  type="button"
+                  onClick={() => { void deleteOwnMessage(m.id); }}
+                  disabled={deletingMessageId === m.id}
+                  className="mt-0.5 shrink-0 rounded border border-gray-700/80 px-1.5 py-0.5 text-[10px] text-gray-400 opacity-0 transition hover:border-red-500/60 hover:text-red-300 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  aria-label="Verwijder je bericht"
+                >
+                  {deletingMessageId === m.id ? "..." : "x"}
+                </button>
+              )}
+            </div>
           </div>
         ))}
-        <div ref={bottomRef} />
       </div>
+      {deleteError && (
+        <p className="border-t border-red-900/50 px-3 py-1.5 text-[11px] text-red-300 sm:px-4">
+          {deleteError}
+        </p>
+      )}
 
       <form
         ref={formRef}
@@ -312,7 +394,7 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
         </button>
 
         {pickerOpen && (
-          <div className="absolute bottom-[calc(100%+8px)] left-3 z-20 w-72 rounded-xl border border-gray-700 bg-gray-900 p-2 shadow-2xl shadow-black/40 sm:left-4">
+          <div className="absolute bottom-[calc(100%+8px)] left-1/2 z-20 w-[min(95vw,26rem)] -translate-x-1/2 rounded-xl border border-gray-700 bg-gray-900 p-2 shadow-2xl shadow-black/40 sm:left-4 sm:w-80 sm:translate-x-0">
             <div className="mb-2 flex gap-1 rounded-lg bg-gray-800 p-1">
               <button
                 type="button"
@@ -347,12 +429,14 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
               <div className="overflow-hidden rounded-lg border border-gray-700">
                 <EmojiPicker
                   width="100%"
-                  height={300}
+                  height={360}
                   lazyLoadEmojis
                   searchDisabled={false}
                   skinTonesDisabled
                   autoFocusSearch={false}
                   theme={Theme.DARK}
+                  previewConfig={{ showPreview: false }}
+                  searchPlaceHolder="Zoek emoji..."
                   onEmojiClick={addEmoji}
                 />
               </div>
@@ -366,7 +450,7 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
                   className="mb-2 w-full rounded-lg border border-gray-700 bg-gray-800 px-2.5 py-1.5 text-xs text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
                 />
                 {mediaError && <p className="mb-2 text-[11px] text-red-300">{mediaError}</p>}
-                <div className="chat-scroll grid max-h-64 grid-cols-3 gap-2 overflow-y-auto pr-1">
+                <div className="chat-scroll grid max-h-64 grid-cols-3 gap-1.5 overflow-y-auto pr-1 sm:gap-2">
                   {mediaLoading && mediaItems.length === 0 ? (
                     <p className="col-span-3 text-[11px] text-gray-400">Media laden...</p>
                   ) : mediaItems.length === 0 ? (
@@ -380,7 +464,7 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
                         className="rounded-lg bg-gray-800 p-1.5 transition hover:bg-gray-700"
                         title={item.title ?? "Media"}
                       >
-                        <img src={item.previewUrl} alt={item.title ?? "Media"} className="h-16 w-full rounded-md object-cover" loading="lazy" />
+                        <img src={item.previewUrl} alt={item.title ?? "Media"} className="h-12 w-full rounded-md object-cover sm:h-14" loading="lazy" />
                       </button>
                     ))
                   )}
@@ -390,7 +474,7 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
                     type="button"
                     onClick={() => {
                       if (!activeMediaType || mediaLoadingMore) return;
-                      void fetchMedia(activeMediaType, mediaQuery, { append: true });
+                      void fetchMedia(activeMediaType, mediaQuery, { append: true, pos: mediaNextPos });
                     }}
                     className="mt-2 w-full rounded-lg border border-gray-700 bg-gray-800/80 px-2 py-1.5 text-xs text-gray-200 transition hover:bg-gray-700 disabled:opacity-50"
                     disabled={mediaLoadingMore}
