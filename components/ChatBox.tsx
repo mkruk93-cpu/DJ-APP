@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback, useId } from "react";
 import { getSupabase } from "@/lib/supabaseClient";
+import { getRadioToken } from "@/lib/auth";
 import EmojiPicker, { Theme, type EmojiClickData } from "emoji-picker-react";
 
 interface ChatMessage {
@@ -22,6 +23,7 @@ const MAX_MESSAGES = 200;
 const MAX_LENGTH = 300;
 const COOLDOWN_MS = 2000;
 const DUPLICATE_WINDOW_MS = 5000;
+const DELETE_LONG_PRESS_MS = 550;
 const STICKER_TOKEN_PREFIX = "[[sticker:";
 const STICKER_TOKEN_SUFFIX = "]]";
 
@@ -78,13 +80,17 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
   const [mediaError, setMediaError] = useState("");
   const [deleteError, setDeleteError] = useState("");
   const [deletingMessageId, setDeletingMessageId] = useState<string | null>(null);
+  const [deleteMenuMessageId, setDeleteMenuMessageId] = useState<string | null>(null);
+  const [adminToken, setAdminToken] = useState<string>("");
   const lastMsgRef = useRef<{ text: string; time: number }>({ text: "", time: 0 });
   const messagesRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const mediaAbortRef = useRef<AbortController | null>(null);
+  const longPressTimerRef = useRef<number | null>(null);
   const channelId = useId();
   const nickname = typeof window !== "undefined" ? localStorage.getItem("nickname") ?? "anon" : "anon";
   const activeMediaType: MediaType | null = pickerTab === "gif" || pickerTab === "sticker" ? pickerTab : null;
+  const isAdmin = !!adminToken;
 
   const scrollToBottom = useCallback((smooth = false) => {
     const host = messagesRef.current;
@@ -231,6 +237,10 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
   }, []);
 
   useEffect(() => {
+    setAdminToken(getRadioToken() ?? "");
+  }, []);
+
+  useEffect(() => {
     // Always show latest message on load and follow new messages.
     scrollToBottom(messages.length > 1);
   }, [messages, scrollToBottom]);
@@ -282,21 +292,49 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
     setPickerOpen(false);
   }
 
-  async function deleteOwnMessage(messageId: string) {
+  function clearLongPressTimer() {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }
+
+  function startLongPress(messageId: string, canDelete: boolean) {
+    clearLongPressTimer();
+    if (!canDelete) return;
+    longPressTimerRef.current = window.setTimeout(() => {
+      setDeleteMenuMessageId(messageId);
+    }, DELETE_LONG_PRESS_MS);
+  }
+
+  function cancelLongPress() {
+    clearLongPressTimer();
+  }
+
+  function canDeleteMessage(message: ChatMessage): boolean {
+    return isAdmin || normalizeName(message.nickname) === normalizeName(nickname);
+  }
+
+  async function deleteMessage(messageId: string) {
     if (!messageId || deletingMessageId) return;
     setDeleteError("");
     setDeletingMessageId(messageId);
     try {
+      const token = getRadioToken() ?? "";
       const res = await fetch(`/api/chat-messages/${messageId}`, {
         method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nickname }),
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { "x-admin-token": token } : {}),
+        },
+        body: JSON.stringify({ nickname, token: token || undefined }),
       });
       const payload = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) {
         setDeleteError(payload.error ?? "Bericht verwijderen mislukt");
         return;
       }
+      setDeleteMenuMessageId(null);
       setMessages((prev) => prev.filter((m) => m.id !== messageId));
     } catch {
       setDeleteError("Bericht verwijderen mislukt");
@@ -312,6 +350,12 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
     }, 280);
     return () => window.clearTimeout(timer);
   }, [pickerOpen, activeMediaType, mediaQuery, fetchMedia]);
+
+  useEffect(() => {
+    return () => {
+      clearLongPressTimer();
+    };
+  }, []);
 
   function switchTab(tab: PickerTab) {
     setPickerTab(tab);
@@ -330,28 +374,53 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
 
       <div
         ref={messagesRef}
+        onClick={() => setDeleteMenuMessageId(null)}
         className="chat-scroll min-h-0 flex-1 space-y-0.5 overflow-y-auto px-3 py-2 sm:space-y-1 sm:px-4 sm:py-3"
       >
         {messages.map((m) => (
-          <div key={m.id} className="group text-sm leading-relaxed">
+          <div
+            key={m.id}
+            className="group text-sm leading-relaxed"
+            onPointerDown={() => startLongPress(m.id, canDeleteMessage(m))}
+            onPointerUp={cancelLongPress}
+            onPointerLeave={cancelLongPress}
+            onPointerCancel={cancelLongPress}
+            onPointerMove={cancelLongPress}
+            onContextMenu={(e) => {
+              if (!canDeleteMessage(m)) return;
+              e.preventDefault();
+              setDeleteMenuMessageId(m.id);
+            }}
+          >
             <div className="flex items-start gap-1.5">
               <div className="min-w-0 flex-1">
                 <span className="font-semibold text-violet-400">{m.nickname}</span>
                 <span className="mx-1 text-gray-600 sm:mx-1.5">{timeStr(m.created_at)}</span>
                 <span className="text-gray-300">{renderContent(m.content)}</span>
               </div>
-              {normalizeName(m.nickname) === normalizeName(nickname) && (
+            </div>
+            {deleteMenuMessageId === m.id && canDeleteMessage(m) && (
+              <div
+                className="mt-1.5 flex gap-2"
+                onClick={(e) => e.stopPropagation()}
+              >
                 <button
                   type="button"
-                  onClick={() => { void deleteOwnMessage(m.id); }}
+                  onClick={() => { void deleteMessage(m.id); }}
                   disabled={deletingMessageId === m.id}
-                  className="mt-0.5 shrink-0 rounded border border-gray-700/80 px-1.5 py-0.5 text-[10px] text-gray-300 opacity-90 transition hover:border-red-500/60 hover:text-red-300 sm:text-gray-400 sm:opacity-0 sm:group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-60"
-                  aria-label="Verwijder je bericht"
+                  className="rounded border border-red-500/60 bg-red-500/10 px-2 py-0.5 text-[11px] font-semibold text-red-300 transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {deletingMessageId === m.id ? "..." : "x"}
+                  {deletingMessageId === m.id ? "Verwijderen..." : "Verwijderen"}
                 </button>
-              )}
-            </div>
+                <button
+                  type="button"
+                  onClick={() => setDeleteMenuMessageId(null)}
+                  className="rounded border border-gray-700 bg-gray-800 px-2 py-0.5 text-[11px] text-gray-300 transition hover:bg-gray-700"
+                >
+                  Annuleren
+                </button>
+              </div>
+            )}
           </div>
         ))}
       </div>
