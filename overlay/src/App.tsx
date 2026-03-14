@@ -2017,7 +2017,25 @@ function App() {
                       <div className="mb-2">
                         <div className="text-gray-100">{activePoll.question}</div>
                         <div className="mt-1 text-[11px] text-gray-400">
-                          {activePoll.totalVotes} stemmen • {activePoll.options.map((opt, i) => `${opt}: ${activePoll.counts[i] ?? 0}`).join(" | ")}
+                          {activePoll.totalVotes} stemmen · live update elke ~4s
+                        </div>
+                        <div className="mt-2 space-y-1.5">
+                          {activePoll.options.map((opt, i) => {
+                            const count = activePoll.counts[i] ?? 0;
+                            const pct = activePoll.totalVotes > 0 ? Math.round((count / activePoll.totalVotes) * 100) : 0;
+                            return (
+                              <div key={`${opt}-${i}`} className="relative overflow-hidden rounded border border-fuchsia-500/20 bg-gray-900/70 px-2 py-1.5">
+                                <span
+                                  className="pointer-events-none absolute inset-y-0 left-0 bg-fuchsia-500/20"
+                                  style={{ width: `${pct}%` }}
+                                />
+                                <div className="relative z-10 flex items-center justify-between gap-2 text-[11px]">
+                                  <span className="truncate text-gray-100">{opt}</span>
+                                  <span className="shrink-0 text-fuchsia-200">{count} ({pct}%)</span>
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     ) : (
