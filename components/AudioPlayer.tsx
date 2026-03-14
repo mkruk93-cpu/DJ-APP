@@ -214,6 +214,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const lastReconnectAtRef = useRef(0);
   const nicknameRef = useRef<string>("anonymous");
   const connected = useRadioStore((s) => s.connected);
+  const radioMode = useRadioStore((s) => s.mode);
   const isFullscreen = nativeFullscreen || manualFullscreen;
   const buildFreshStreamUrl = useCallback((baseUrl: string): string => {
     const separator = baseUrl.includes("?") ? "&" : "?";
@@ -1465,15 +1466,17 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
                     </div>
                   </div>
                 </div>
-                <div className="rounded-2xl border border-gray-700/70 bg-black/25 p-3 backdrop-blur-md md:p-4">
-                  <p className="text-[10px] uppercase tracking-[0.24em] text-gray-300">Volgend nummer</p>
-                  <p className="mt-1.5 line-clamp-1 text-sm font-semibold text-violet-100 md:text-base">
-                    {nextTitle || "Nog niet bekend"}
-                  </p>
-                  <p className="mt-1 line-clamp-1 text-xs text-gray-300 md:text-sm">
-                    {nextArtist || "Artiest onbekend"}
-                  </p>
-                </div>
+                {radioMode !== "dj" && (
+                  <div className="rounded-2xl border border-gray-700/70 bg-black/25 p-3 backdrop-blur-md md:p-4">
+                    <p className="text-[10px] uppercase tracking-[0.24em] text-gray-300">Volgend nummer</p>
+                    <p className="mt-1.5 line-clamp-1 text-sm font-semibold text-violet-100 md:text-base">
+                      {nextTitle || "Nog niet bekend"}
+                    </p>
+                    <p className="mt-1 line-clamp-1 text-xs text-gray-300 md:text-sm">
+                      {nextArtist || "Artiest onbekend"}
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           </div>

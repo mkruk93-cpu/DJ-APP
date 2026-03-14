@@ -195,6 +195,17 @@ function joinBase(base: string, path: string): string {
   return `${trimmed.replace(/\/+$/, "")}${path}`;
 }
 
+function shouldUseRelativeApiRoutes(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.location.protocol.startsWith("http") && !window.overlayHost;
+}
+
+function resolveApiCandidate(base: string, path: string, allowRelative: boolean): string {
+  const trimmed = (base ?? "").trim();
+  if (!trimmed || trimmed === "/") return allowRelative ? path : "";
+  return joinBase(trimmed, path);
+}
+
 function uniqueStrings(values: string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -287,8 +298,9 @@ function App() {
   const nickname = "KrukkeX";
   const [settings, setSettings] = useState<OverlaySettings>(() => {
     const base = loadSettings();
-    const runsOverHttp = typeof window !== "undefined" && window.location.protocol.startsWith("http");
-    const defaultApiBase = runsOverHttp ? "/" : "http://localhost:3000";
+    const defaultApiBase = shouldUseRelativeApiRoutes()
+      ? "/"
+      : (import.meta.env.VITE_CONTROL_SERVER_URL ?? "http://localhost:3001");
     return {
       ...base,
       apiBaseUrl: base.apiBaseUrl || defaultApiBase,
@@ -836,10 +848,9 @@ function App() {
   }
 
   async function refreshLivePoll() {
-    const runsOverHttp = typeof window !== "undefined" && window.location.protocol.startsWith("http");
+    const allowRelativeApi = shouldUseRelativeApiRoutes();
     const candidates = uniqueStrings([
-      runsOverHttp ? "/api/live-polls" : "",
-      joinBase(settings.apiBaseUrl, "/api/live-polls"),
+      resolveApiCandidate(settings.apiBaseUrl, "/api/live-polls", allowRelativeApi),
       joinBase(settings.controlServerUrl, "/api/live-polls"),
       "http://localhost:3001/api/live-polls",
       "http://localhost:3000/api/live-polls",
@@ -868,10 +879,9 @@ function App() {
       setPollFeedback("Vul een vraag + minimaal 2 opties in.");
       return;
     }
-    const runsOverHttp = typeof window !== "undefined" && window.location.protocol.startsWith("http");
+    const allowRelativeApi = shouldUseRelativeApiRoutes();
     const candidates = uniqueStrings([
-      runsOverHttp ? "/api/live-polls" : "",
-      joinBase(settings.apiBaseUrl, "/api/live-polls"),
+      resolveApiCandidate(settings.apiBaseUrl, "/api/live-polls", allowRelativeApi),
       joinBase(settings.controlServerUrl, "/api/live-polls"),
       "http://localhost:3001/api/live-polls",
       "http://localhost:3000/api/live-polls",
@@ -905,10 +915,9 @@ function App() {
 
   async function closeLivePoll() {
     if (!activePoll) return;
-    const runsOverHttp = typeof window !== "undefined" && window.location.protocol.startsWith("http");
+    const allowRelativeApi = shouldUseRelativeApiRoutes();
     const candidates = uniqueStrings([
-      runsOverHttp ? `/api/live-polls/${activePoll.id}` : "",
-      joinBase(settings.apiBaseUrl, `/api/live-polls/${activePoll.id}`),
+      resolveApiCandidate(settings.apiBaseUrl, `/api/live-polls/${activePoll.id}`, allowRelativeApi),
       joinBase(settings.controlServerUrl, `/api/live-polls/${activePoll.id}`),
       `http://localhost:3001/api/live-polls/${activePoll.id}`,
       `http://localhost:3000/api/live-polls/${activePoll.id}`,
@@ -946,10 +955,9 @@ function App() {
       setShoutoutFeedback("Kies een nickname en vul een bericht in.");
       return;
     }
-    const runsOverHttp = typeof window !== "undefined" && window.location.protocol.startsWith("http");
+    const allowRelativeApi = shouldUseRelativeApiRoutes();
     const candidates = uniqueStrings([
-      runsOverHttp ? "/api/shoutouts" : "",
-      joinBase(settings.apiBaseUrl, "/api/shoutouts"),
+      resolveApiCandidate(settings.apiBaseUrl, "/api/shoutouts", allowRelativeApi),
       joinBase(settings.controlServerUrl, "/api/shoutouts"),
       "http://localhost:3001/api/shoutouts",
       "http://localhost:3000/api/shoutouts",

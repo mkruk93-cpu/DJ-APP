@@ -155,7 +155,7 @@ app.use((_req, res, next) => {
   const origin = _req.headers.origin ?? '*';
   res.header('Access-Control-Allow-Origin', origin);
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, X-Admin-Token, x-admin-token');
   if (_req.method === 'OPTIONS') { res.sendStatus(204); return; }
   next();
 });
@@ -172,6 +172,15 @@ app.use('/api', genreManagementRouter);
 
 function isAdmin(token?: string): boolean {
   return !!token && token === ADMIN_TOKEN;
+}
+
+function readAdminToken(req: Request): string {
+  const bodyToken = typeof (req.body as { token?: unknown } | undefined)?.token === 'string'
+    ? String((req.body as { token?: string }).token ?? '')
+    : '';
+  const headerToken = String(req.headers['x-admin-token'] ?? '');
+  const queryToken = typeof req.query.token === 'string' ? req.query.token : '';
+  return bodyToken || headerToken || queryToken;
 }
 
 let appliedPlaybackMode: Mode | null = null;
@@ -3533,6 +3542,152 @@ app.post('/api/downloads/resolve', async (req, res) => {
   } catch (err) {
     console.warn('[rest] /api/downloads/resolve error:', getErrorMessage(err));
     return res.status(500).json({ ok: false, error: getErrorMessage(err) });
+  }
+});
+
+app.get('/api/live-polls', async (_req, res) => {
+  try {
+    const { data: poll, error } = await sb
+      .from('live_polls')
+      .select('id,question,options,status,created_at')
+      .eq('status', 'active')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!poll) return res.json({ poll: null });
+
+    const { data: votes, error: votesErr } = await sb
+      .from('live_poll_votes')
+      .select('option_index')
+      .eq('poll_id', poll.id);
+    if (votesErr) return res.status(500).json({ error: votesErr.message });
+
+    const options = Array.isArray(poll.options) ? poll.options.map((opt) => String(opt)) : [];
+    const counts = new Array(options.length).fill(0);
+    for (const row of votes ?? []) {
+      const idx = Number((row as { option_index?: unknown }).option_index);
+      if (Number.isFinite(idx) && idx >= 0 && idx < counts.length) counts[idx] += 1;
+    }
+
+    return res.json({
+      poll: {
+        ...poll,
+        options,
+        counts,
+        totalVotes: counts.reduce((sum, value) => sum + value, 0),
+      },
+    });
+  } catch (err) {
+    console.error('[rest] /api/live-polls GET error:', err);
+    return res.status(500).json({ error: 'Failed to fetch live poll' });
+  }
+});
+
+app.post('/api/live-polls', async (req, res) => {
+  if (!isAdmin(readAdminToken(req))) return res.status(403).json({ error: 'Unauthorized' });
+  const question = String((req.body as { question?: unknown })?.question ?? '').trim();
+  const optionsRaw = (req.body as { options?: unknown })?.options;
+  const options = Array.isArray(optionsRaw)
+    ? optionsRaw.map((opt) => String(opt ?? '').trim()).filter(Boolean)
+    : [];
+  if (!question || options.length < 2) {
+    return res.status(400).json({ error: 'Question and at least 2 options are required' });
+  }
+  try {
+    await sb
+      .from('live_polls')
+      .update({ status: 'closed', closed_at: new Date().toISOString() })
+      .eq('status', 'active');
+
+    const { data, error } = await sb
+      .from('live_polls')
+      .insert({
+        question,
+        options,
+        status: 'active',
+        created_by: 'dj',
+      })
+      .select('id,question,options,status,created_at')
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    return res.status(201).json({ poll: data });
+  } catch (err) {
+    console.error('[rest] /api/live-polls POST error:', err);
+    return res.status(500).json({ error: 'Failed to create live poll' });
+  }
+});
+
+app.patch('/api/live-polls/:id', async (req, res) => {
+  if (!isAdmin(readAdminToken(req))) return res.status(403).json({ error: 'Unauthorized' });
+  const id = String(req.params.id ?? '').trim();
+  const status = String((req.body as { status?: unknown })?.status ?? '').trim();
+  if (!id) return res.status(400).json({ error: 'Missing poll id' });
+  if (status !== 'active' && status !== 'closed') {
+    return res.status(400).json({ error: 'Invalid status' });
+  }
+  try {
+    const payload: Record<string, unknown> = { status };
+    if (status === 'closed') payload.closed_at = new Date().toISOString();
+    const { data, error } = await sb
+      .from('live_polls')
+      .update(payload)
+      .eq('id', id)
+      .select('id,question,options,status,created_at')
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json({ poll: data });
+  } catch (err) {
+    console.error('[rest] /api/live-polls/:id PATCH error:', err);
+    return res.status(500).json({ error: 'Failed to update poll' });
+  }
+});
+
+app.get('/api/shoutouts', async (_req, res) => {
+  try {
+    const nowIso = new Date().toISOString();
+    const { data, error } = await sb
+      .from('shoutouts')
+      .select('id,nickname,message,created_at,expires_at')
+      .eq('active', true)
+      .gt('expires_at', nowIso)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json({ shoutout: data ?? null });
+  } catch (err) {
+    console.error('[rest] /api/shoutouts GET error:', err);
+    return res.status(500).json({ error: 'Failed to fetch shoutout' });
+  }
+});
+
+app.post('/api/shoutouts', async (req, res) => {
+  if (!isAdmin(readAdminToken(req))) return res.status(403).json({ error: 'Unauthorized' });
+  const nickname = String((req.body as { nickname?: unknown })?.nickname ?? '').trim().slice(0, 40);
+  const message = String((req.body as { message?: unknown })?.message ?? '').trim().slice(0, 140);
+  const durationSecondsRaw = Number((req.body as { durationSeconds?: unknown })?.durationSeconds ?? 18);
+  const durationSeconds = Math.max(8, Math.min(45, Number.isFinite(durationSecondsRaw) ? durationSecondsRaw : 18));
+  if (!nickname || !message) {
+    return res.status(400).json({ error: 'Nickname and message are required' });
+  }
+  try {
+    await sb
+      .from('shoutouts')
+      .update({ active: false })
+      .eq('active', true);
+
+    const expiresAt = new Date(Date.now() + durationSeconds * 1000).toISOString();
+    const { data, error } = await sb
+      .from('shoutouts')
+      .insert({ nickname, message, active: true, expires_at: expiresAt })
+      .select('id,nickname,message,created_at,expires_at')
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    return res.status(201).json({ shoutout: data });
+  } catch (err) {
+    console.error('[rest] /api/shoutouts POST error:', err);
+    return res.status(500).json({ error: 'Failed to create shoutout' });
   }
 });
 
