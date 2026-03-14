@@ -843,6 +843,7 @@ function App() {
       joinBase(settings.controlServerUrl, "/api/live-polls"),
       "http://localhost:3001/api/live-polls",
       "http://localhost:3000/api/live-polls",
+      "http://127.0.0.1:3000/api/live-polls",
       "http://localhost:3002/api/live-polls",
       "http://localhost:3003/api/live-polls",
     ]);
@@ -874,6 +875,7 @@ function App() {
       joinBase(settings.controlServerUrl, "/api/live-polls"),
       "http://localhost:3001/api/live-polls",
       "http://localhost:3000/api/live-polls",
+      "http://127.0.0.1:3000/api/live-polls",
       "http://localhost:3002/api/live-polls",
       "http://localhost:3003/api/live-polls",
     ]);
@@ -910,6 +912,7 @@ function App() {
       joinBase(settings.controlServerUrl, `/api/live-polls/${activePoll.id}`),
       `http://localhost:3001/api/live-polls/${activePoll.id}`,
       `http://localhost:3000/api/live-polls/${activePoll.id}`,
+      `http://127.0.0.1:3000/api/live-polls/${activePoll.id}`,
       `http://localhost:3002/api/live-polls/${activePoll.id}`,
       `http://localhost:3003/api/live-polls/${activePoll.id}`,
     ]);
@@ -950,6 +953,7 @@ function App() {
       joinBase(settings.controlServerUrl, "/api/shoutouts"),
       "http://localhost:3001/api/shoutouts",
       "http://localhost:3000/api/shoutouts",
+      "http://127.0.0.1:3000/api/shoutouts",
       "http://localhost:3002/api/shoutouts",
       "http://localhost:3003/api/shoutouts",
     ]);

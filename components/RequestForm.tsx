@@ -38,6 +38,32 @@ interface GenreHitRow extends GenreHit {
   query: string;
 }
 
+interface ManualResolveCandidate {
+  provider: "youtube" | "soundcloud" | "spotdl";
+  url: string;
+  title: string;
+  channel: string;
+  duration: number | null;
+  thumbnail: string | null;
+}
+
+interface PendingManualResolve {
+  query: string;
+  sourceType: string;
+  sourceGenre?: string | null;
+  sourcePlaylist?: string | null;
+  artist?: string | null;
+  title?: string | null;
+}
+
+type OwnRequestStatusUpdate = {
+  requestId: string;
+  title: string | null;
+  artist: string | null;
+  previousStatus: string;
+  status: string;
+};
+
 function normalizeLoose(value: string): string {
   return value
     .toLowerCase()
@@ -60,7 +86,12 @@ const statusConfig: Record<string, { label: string; color: string }> = {
   error: { label: "Download mislukt", color: "bg-orange-500/20 text-orange-400" },
 };
 
-export default function RequestForm({ onNewRequest }: { onNewRequest?: () => void } = {}) {
+export default function RequestForm(
+  { onNewRequest, onOwnRequestStatusUpdate }: {
+    onNewRequest?: () => void;
+    onOwnRequestStatusUpdate?: (update: OwnRequestStatusUpdate) => void;
+  } = {},
+) {
   const [input, setInput] = useState("");
   const [feedback, setFeedback] = useState<{ msg: string; ok: boolean } | null>(null);
   const [allRequests, setAllRequests] = useState<Request[]>([]);
@@ -81,12 +112,16 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
   const [genreHasMore, setGenreHasMore] = useState(false);
   const [activeGenre, setActiveGenre] = useState<string | null>(null);
   const [genreError, setGenreError] = useState<string | null>(null);
+  const [pendingManualResolve, setPendingManualResolve] = useState<PendingManualResolve | null>(null);
+  const [manualResolveCandidates, setManualResolveCandidates] = useState<ManualResolveCandidate[]>([]);
   const cooldownTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const genreListRef = useRef<HTMLDivElement>(null);
   const genreMenuRef = useRef<HTMLDetailsElement>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ownRequestStatusRef = useRef<Map<string, string>>(new Map());
+  const didInitOwnStatusRef = useRef(false);
   const nickname = typeof window !== "undefined" ? localStorage.getItem("nickname") ?? "anon" : "anon";
   const serverUrl = useRadioStore((s) => s.serverUrl) ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
   const activeGenreLabel = resolveGenreLabel(activeGenre, genres);
@@ -221,6 +256,35 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
   }, [load]);
 
   useEffect(() => {
+    const ownName = normalizeLoose(nickname);
+    if (!ownName) return;
+    const ownRequests = allRequests.filter((item) => normalizeLoose(item.nickname) === ownName);
+    const nextMap = new Map<string, string>();
+    for (const item of ownRequests) nextMap.set(item.id, item.status);
+
+    if (!didInitOwnStatusRef.current) {
+      ownRequestStatusRef.current = nextMap;
+      didInitOwnStatusRef.current = true;
+      return;
+    }
+
+    for (const item of ownRequests) {
+      const previousStatus = ownRequestStatusRef.current.get(item.id);
+      if (!previousStatus || previousStatus === item.status) continue;
+      if (item.status === "approved" || item.status === "rejected") {
+        onOwnRequestStatusUpdate?.({
+          requestId: item.id,
+          title: item.title ?? null,
+          artist: item.artist ?? null,
+          previousStatus,
+          status: item.status,
+        });
+      }
+    }
+    ownRequestStatusRef.current = nextMap;
+  }, [allRequests, nickname, onOwnRequestStatusUpdate]);
+
+  useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
         setShowResults(false);
@@ -297,6 +361,52 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
     }
   }
 
+  async function resolveRequestSource(track: {
+    query: string;
+    sourceType: string;
+    sourceGenre?: string | null;
+    sourcePlaylist?: string | null;
+    artist?: string | null;
+    title?: string | null;
+  }): Promise<
+    | { kind: "resolved"; item: { url: string; title?: string | null; artist?: string | null; thumbnail?: string | null; duration?: number | null } }
+    | { kind: "manual"; candidates: ManualResolveCandidate[] }
+  > {
+    if (!serverUrl) throw new Error("Control server niet bereikbaar.");
+    const endpoint = `${serverUrl.replace(/\/+$/, "")}/api/downloads/resolve`;
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: track.title ?? null,
+        artist: track.artist ?? null,
+        source_type: track.sourceType,
+        source_playlist: track.sourcePlaylist ?? null,
+        source_genre: track.sourceGenre ?? null,
+      }),
+    });
+    const payload = (await res.json().catch(() => ({}))) as {
+      item?: { url?: string; title?: string | null; artist?: string | null; thumbnail?: string | null; duration?: number | null };
+      candidates?: ManualResolveCandidate[];
+      error?: string;
+    };
+    if (!res.ok || !payload.item?.url) {
+      const candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
+      if (candidates.length > 0) return { kind: "manual", candidates };
+      throw new Error(payload.error ?? `Geen resultaat gevonden voor "${track.query}"`);
+    }
+    return {
+      kind: "resolved",
+      item: {
+        url: payload.item.url,
+        title: payload.item.title ?? null,
+        artist: payload.item.artist ?? null,
+        thumbnail: payload.item.thumbnail ?? null,
+        duration: payload.item.duration ?? null,
+      },
+    };
+  }
+
   async function submitRequest(
     rawInput: string,
     preferredSource: "youtube" | "soundcloud",
@@ -359,6 +469,8 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
     setInput("");
     setResults([]);
     setShowResults(false);
+    setPendingManualResolve(null);
+    setManualResolveCandidates([]);
     setCooldownLeft(COOLDOWN_SEC);
     setFeedback({ msg: "Verzoekje ingediend!", ok: true });
     setTimeout(() => setFeedback(null), 3000);
@@ -393,6 +505,13 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
       setResults([]);
       setShowResults(false);
     }
+  }
+
+  function formatDuration(seconds?: number | null): string {
+    if (!seconds || seconds <= 0) return "";
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return `${m}:${String(s).padStart(2, "0")}`;
   }
 
   async function selectResult(result: SearchResult) {
@@ -435,10 +554,29 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
 
   async function handleSpotifyAdd(track: { query: string; artist?: string | null; title?: string | null }) {
     try {
-      await submitRequest(track.query, "youtube", {
-        source: "spotify",
+      const resolved = await resolveRequestSource({
+        query: track.query,
+        sourceType: "spotify",
         artist: track.artist ?? null,
         title: track.title ?? null,
+      });
+      if (resolved.kind === "manual") {
+        setPendingManualResolve({
+          query: track.query,
+          sourceType: "spotify",
+          artist: track.artist ?? null,
+          title: track.title ?? null,
+        });
+        setManualResolveCandidates(resolved.candidates);
+        setFeedback({ msg: "Geen exacte match. Kies hieronder handmatig een versie.", ok: false });
+        return "manual_select" as const;
+      }
+      await submitRequest(resolved.item.url, "youtube", {
+        source: "spotify",
+        artist: track.artist ?? resolved.item.artist ?? null,
+        title: track.title ?? resolved.item.title ?? null,
+        providedThumb: resolved.item.thumbnail ?? undefined,
+        duration: resolved.item.duration ?? null,
       });
       return "added" as const;
     } catch {
@@ -452,13 +590,38 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
     title?: string | null;
     sourceType?: string | null;
     sourceGenre?: string | null;
+    sourcePlaylist?: string | null;
   }) {
     try {
-      await submitRequest(track.query, "youtube", {
-        source: track.sourceType ?? "shared_playlist",
-        genre: track.sourceGenre ?? null,
+      const sourceType = track.sourceType ?? "shared_playlist";
+      const resolved = await resolveRequestSource({
+        query: track.query,
+        sourceType,
+        sourceGenre: track.sourceGenre ?? null,
+        sourcePlaylist: track.sourcePlaylist ?? null,
         artist: track.artist ?? null,
         title: track.title ?? null,
+      });
+      if (resolved.kind === "manual") {
+        setPendingManualResolve({
+          query: track.query,
+          sourceType,
+          sourceGenre: track.sourceGenre ?? null,
+          sourcePlaylist: track.sourcePlaylist ?? null,
+          artist: track.artist ?? null,
+          title: track.title ?? null,
+        });
+        setManualResolveCandidates(resolved.candidates);
+        setFeedback({ msg: "Geen exacte match. Kies hieronder handmatig een versie.", ok: false });
+        return "manual_select" as const;
+      }
+      await submitRequest(resolved.item.url, "youtube", {
+        source: sourceType,
+        genre: track.sourceGenre ?? null,
+        artist: track.artist ?? resolved.item.artist ?? null,
+        title: track.title ?? resolved.item.title ?? null,
+        providedThumb: resolved.item.thumbnail ?? undefined,
+        duration: resolved.item.duration ?? null,
       });
       return "added" as const;
     } catch {
@@ -797,6 +960,59 @@ export default function RequestForm({ onNewRequest }: { onNewRequest?: () => voi
           <p className={`text-sm ${feedback.ok ? "text-green-400" : "text-red-400"}`}>
             {feedback.msg}
           </p>
+        )}
+        {pendingManualResolve && manualResolveCandidates.length > 0 && (
+          <div className="rounded-lg border border-amber-700/50 bg-amber-950/20 p-2">
+            <div className="mb-1 flex items-center justify-between">
+              <p className="text-[11px] font-semibold text-amber-200">Kies handmatig de juiste versie</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingManualResolve(null);
+                  setManualResolveCandidates([]);
+                }}
+                className="rounded bg-gray-700/80 px-2 py-0.5 text-[10px] text-gray-200 hover:bg-gray-600"
+              >
+                Sluiten
+              </button>
+            </div>
+            <div className="max-h-40 space-y-1 overflow-y-auto">
+              {manualResolveCandidates.map((candidate) => (
+                <div key={`${candidate.provider}:${candidate.url}`} className="flex items-center gap-2 rounded border border-amber-800/30 bg-gray-900/70 p-1.5">
+                  {candidate.thumbnail ? (
+                    <img src={candidate.thumbnail} alt="" className="h-9 w-14 rounded object-cover" />
+                  ) : (
+                    <div className="h-9 w-14 rounded bg-gray-800" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[11px] text-white">{candidate.title}</p>
+                    <p className="truncate text-[10px] text-gray-400">
+                      {candidate.channel}
+                      {candidate.duration ? ` • ${formatDuration(candidate.duration)}` : ""}
+                      {` • ${candidate.provider}`}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={() =>
+                      submitRequest(candidate.url, "youtube", {
+                        source: pendingManualResolve.sourceType,
+                        genre: pendingManualResolve.sourceGenre ?? null,
+                        artist: pendingManualResolve.artist ?? null,
+                        title: pendingManualResolve.title ?? null,
+                        providedThumb: candidate.thumbnail ?? undefined,
+                        duration: candidate.duration ?? null,
+                      })
+                    }
+                    className="rounded bg-amber-600/35 px-2 py-1 text-[10px] font-semibold text-amber-100 hover:bg-amber-600/50 disabled:opacity-40"
+                  >
+                    Kies
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
       </form>
 

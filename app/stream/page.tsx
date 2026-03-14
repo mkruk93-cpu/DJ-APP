@@ -32,6 +32,10 @@ type StreamRequestItem = {
   nickname: string;
   title: string | null;
   artist: string | null;
+  thumbnail: string | null;
+  duration: number | null;
+  genre: string | null;
+  genre_confidence: "explicit" | "artist_based" | "unknown" | null;
   status: string;
   created_at: string;
 };
@@ -1525,7 +1529,17 @@ export default function StreamPage() {
           </div>
           {showRequests && (
             <div className={`min-h-0 min-w-0 flex-1 ${activeTab === "requests" ? "" : "hidden"} lg:block`}>
-              <RequestForm onNewRequest={() => { if (activeTabRef.current !== "requests") setRequestBadge(true); }} />
+              <RequestForm
+                onNewRequest={() => { if (activeTabRef.current !== "requests") setRequestBadge(true); }}
+                onOwnRequestStatusUpdate={(update) => {
+                  const trackLabel = [update.artist, update.title].filter(Boolean).join(" - ") || "je verzoekje";
+                  if (update.status === "approved") {
+                    showToast(`Verzoek geaccepteerd: ${trackLabel}`);
+                  } else if (update.status === "rejected") {
+                    showToast(`Verzoek afgewezen: ${trackLabel}`);
+                  }
+                }}
+              />
             </div>
           )}
           {showRadioPanel && (
@@ -1552,13 +1566,50 @@ export default function StreamPage() {
                 ) : (
                   <div className="space-y-1.5">
                     {requestedItems.map((item) => (
-                      <div key={item.id} className="rounded-lg border border-gray-800 bg-gray-950/60 p-2">
-                        <p className="truncate text-xs font-semibold text-white">
-                          {item.title || "Onbekende titel"}
-                        </p>
-                        <p className="truncate text-[11px] text-gray-400">
-                          {item.artist || "Onbekende artiest"} · door {item.nickname}
-                        </p>
+                      <div
+                        key={item.id}
+                        className={`overflow-hidden rounded-lg border ${
+                          item.status === "approved"
+                            ? "border-green-500/20 bg-green-500/5"
+                            : item.status === "downloaded"
+                              ? "border-violet-500/20 bg-violet-500/5"
+                              : "border-gray-800 bg-gray-800/50"
+                        }`}
+                      >
+                        <div className="flex gap-2.5 p-2.5">
+                          {item.thumbnail ? (
+                            <img
+                              src={item.thumbnail}
+                              alt=""
+                              className="h-12 w-12 shrink-0 rounded-md object-cover"
+                            />
+                          ) : null}
+                          <div className="min-w-0 flex-1">
+                            <div className="mb-0.5 flex flex-wrap items-center gap-1.5">
+                              <span className="text-xs font-semibold text-violet-400">{item.nickname}</span>
+                              <span className="shrink-0 rounded-full bg-gray-700/70 px-2 py-0.5 text-xs font-medium text-gray-200">
+                                {item.status === "approved"
+                                  ? "Goedgekeurd"
+                                  : item.status === "downloaded"
+                                    ? "Gedownload"
+                                    : "Wachtrij"}
+                              </span>
+                            </div>
+                            <p className="truncate text-sm font-medium text-white">{item.title || "Onbekende titel"}</p>
+                            <p className="truncate text-xs text-gray-400">{item.artist || "Onbekende artiest"}</p>
+                            {typeof item.duration === "number" && item.duration > 0 && (
+                              <p className="truncate text-xs text-gray-500">
+                                Lengte: {Math.floor(item.duration / 60)}:{String(item.duration % 60).padStart(2, "0")}
+                              </p>
+                            )}
+                            {item.genre && (
+                              <p className="truncate text-xs text-fuchsia-300">
+                                Genre: {item.genre}
+                                {item.genre_confidence === "artist_based" ? " (op artiest)" : ""}
+                              </p>
+                            )}
+                          </div>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1875,7 +1926,7 @@ export default function StreamPage() {
       )}
       {appInfoOpen && (
         <div className="fixed inset-0 z-[160] flex items-end justify-center bg-black/70 px-2 py-2 sm:items-center sm:p-6">
-          <div className="w-full max-w-2xl rounded-2xl border border-gray-700 bg-gray-950 p-4 shadow-2xl shadow-black/50 sm:p-5">
+          <div className="flex max-h-[calc(100dvh-1rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-gray-700 bg-gray-950 p-4 shadow-2xl shadow-black/50 sm:max-h-[min(85dvh,42rem)] sm:p-5">
             <div className="mb-3 flex items-start justify-between gap-3">
               <div>
                 <h2 className="text-base font-semibold text-white">Hoe deze app werkt</h2>
@@ -1889,7 +1940,7 @@ export default function StreamPage() {
                 Sluiten
               </button>
             </div>
-            <div className="space-y-2 text-sm text-gray-200">
+            <div className="min-h-0 space-y-2 overflow-y-auto pr-1 text-sm text-gray-200">
               <p><span className="font-semibold text-violet-300">1. Aanvragen:</span> in de add-track tabs kun je tracks zoeken of uit playlists toevoegen aan de wachtrij.</p>
               <p><span className="font-semibold text-violet-300">2. Wachtrij:</span> als de wachtrij niet leeg is, speelt de server die tracks af in volgorde.</p>
               <p><span className="font-semibold text-violet-300">3. Autoplay fallback:</span> als de wachtrij leeg is, gebruikt de app het gekozen fallback genre of de geselecteerde autoplay playlists.</p>
