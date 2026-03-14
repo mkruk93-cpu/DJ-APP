@@ -345,7 +345,7 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
                   type="button"
                   onClick={() => { void deleteOwnMessage(m.id); }}
                   disabled={deletingMessageId === m.id}
-                  className="mt-0.5 shrink-0 rounded border border-gray-700/80 px-1.5 py-0.5 text-[10px] text-gray-400 opacity-0 transition hover:border-red-500/60 hover:text-red-300 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="mt-0.5 shrink-0 rounded border border-gray-700/80 px-1.5 py-0.5 text-[10px] text-gray-300 opacity-90 transition hover:border-red-500/60 hover:text-red-300 sm:text-gray-400 sm:opacity-0 sm:group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-60"
                   aria-label="Verwijder je bericht"
                 >
                   {deletingMessageId === m.id ? "..." : "x"}
