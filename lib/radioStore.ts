@@ -20,6 +20,8 @@ interface RadioStore extends RadioState {
   setDurationVote: (vote: DurationVote | null) => void;
   setQueuePushVote: (vote: QueuePushVote | null) => void;
   setQueuePushLocked: (locked: boolean) => void;
+  setLockAutoplayFallback: (locked: boolean) => void;
+  setHideLocalDiscovery: (hide: boolean) => void;
   setServerUrl: (url: string | null) => void;
   skipLocked: boolean;
   setSkipLocked: (locked: boolean) => void;
@@ -68,6 +70,8 @@ export const useRadioStore = create<RadioStore>((set) => ({
   queuePushLocked: false,
   serverUrl: null,
   skipLocked: false,
+  lockAutoplayFallback: false,
+  hideLocalDiscovery: false,
 
   setConnected: (connected) => set({ connected }),
   setCurrentTrack: (currentTrack) => set({ currentTrack }),
@@ -87,6 +91,8 @@ export const useRadioStore = create<RadioStore>((set) => ({
   setDurationVote: (durationVote) => set({ durationVote }),
   setQueuePushVote: (queuePushVote) => set({ queuePushVote }),
   setQueuePushLocked: (queuePushLocked) => set({ queuePushLocked }),
+  setLockAutoplayFallback: (lockAutoplayFallback) => set({ lockAutoplayFallback }),
+  setHideLocalDiscovery: (hideLocalDiscovery) => set({ hideLocalDiscovery }),
   setServerUrl: (serverUrl) => set({ serverUrl }),
   setSkipLocked: (skipLocked) => set({ skipLocked }),
   resetAll: () => set({
@@ -107,6 +113,8 @@ export const useRadioStore = create<RadioStore>((set) => ({
     queuePushVote: null,
     queuePushLocked: false,
     skipLocked: false,
+    lockAutoplayFallback: false,
+    hideLocalDiscovery: false,
   }),
   initFromServer: (state) => set(state),
 }));

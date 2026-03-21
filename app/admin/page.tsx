@@ -56,6 +56,8 @@ export default function AdminPage() {
 
   const radioConnected = useRadioStore((s) => s.connected);
   const radioTrack = useRadioStore((s) => s.currentTrack);
+  const lockAutoplayFallback = useRadioStore((s) => s.lockAutoplayFallback);
+  const hideLocalDiscovery = useRadioStore((s) => s.hideLocalDiscovery);
   const store = useRadioStore;
 
   useEffect(() => {
@@ -102,6 +104,8 @@ export default function AdminPage() {
             streamOnline: state.streamOnline ?? false,
             pausedForIdle: state.pausedForIdle ?? false,
             durationVote: state.durationVote ?? null,
+            lockAutoplayFallback: state.lockAutoplayFallback ?? false,
+            hideLocalDiscovery: state.hideLocalDiscovery ?? false,
           });
           if (typeof state.jingleEnabled === "boolean") {
             setJingleEnabled(state.jingleEnabled);
@@ -487,6 +491,66 @@ export default function AdminPage() {
                       {keepFiles ? "BEWAREN" : "VERWIJDEREN"}
                     </span>
                   </button>
+                </div>
+                <div className="space-y-3 rounded-xl border border-amber-900/40 bg-amber-950/20 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-white">Autoplay fallback vergrendelen</p>
+                      <p className="text-xs text-gray-500">
+                        {lockAutoplayFallback
+                          ? "Alleen met radio admin-token kan het actieve autoplay-pad (genre / online / playlists) gewijzigd worden."
+                          : "Iedereen met de stream kan het autoplay-pad wijzigen."}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const next = !lockAutoplayFallback;
+                        try {
+                          await apiUpdateSetting("lock_autoplay_fallback", next);
+                        } catch (err) {
+                          console.warn("[admin] lock_autoplay_fallback failed:", err);
+                        }
+                      }}
+                      className="flex shrink-0 items-center gap-2 rounded-lg border border-gray-700 px-3 py-1.5 text-sm transition hover:border-gray-600"
+                    >
+                      <span
+                        className={`inline-block h-3 w-3 rounded-full ${lockAutoplayFallback ? "bg-amber-400 shadow-sm shadow-amber-400/50" : "bg-gray-600"}`}
+                      />
+                      <span className={lockAutoplayFallback ? "font-semibold text-amber-200" : "text-gray-400"}>
+                        {lockAutoplayFallback ? "VERGRENDELD" : "VRIJ"}
+                      </span>
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 border-t border-amber-900/30 pt-3">
+                    <div>
+                      <p className="text-sm font-semibold text-white">Lokale discovery verbergen</p>
+                      <p className="text-xs text-gray-500">
+                        {hideLocalDiscovery
+                          ? "Lokale genres en zoekresultaten zijn uitgezet (YouTube/SoundCloud-zoek en autoplay)."
+                          : "Lokale map-genres en lokale zoekresultaten zijn zichtbaar."}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const next = !hideLocalDiscovery;
+                        try {
+                          await apiUpdateSetting("hide_local_discovery", next);
+                        } catch (err) {
+                          console.warn("[admin] hide_local_discovery failed:", err);
+                        }
+                      }}
+                      className="flex shrink-0 items-center gap-2 rounded-lg border border-gray-700 px-3 py-1.5 text-sm transition hover:border-gray-600"
+                    >
+                      <span
+                        className={`inline-block h-3 w-3 rounded-full ${hideLocalDiscovery ? "bg-amber-400 shadow-sm shadow-amber-400/50" : "bg-gray-600"}`}
+                      />
+                      <span className={hideLocalDiscovery ? "font-semibold text-amber-200" : "text-gray-400"}>
+                        {hideLocalDiscovery ? "VERBORGEN" : "ZICHTBAAR"}
+                      </span>
+                    </button>
+                  </div>
                 </div>
                 <div className="space-y-3 rounded-xl border border-gray-800 bg-gray-900 p-4">
                   <div className="flex items-center justify-between">

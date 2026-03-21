@@ -105,7 +105,9 @@ function normalizeSpotifyUrl(value: string): string | null {
 
 function normalizePlaylistName(fileName: string): string {
   const raw = basename(fileName, extname(fileName)).trim();
-  return raw || 'Imported playlist';
+  // Exportify saves filenames with spaces replaced by underscores; restore readable titles.
+  const withSpaces = raw.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+  return withSpaces || 'Imported playlist';
 }
 
 function detectCsvDelimiter(text: string): ',' | ';' | '\t' {

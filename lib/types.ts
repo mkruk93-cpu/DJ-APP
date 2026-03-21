@@ -129,6 +129,8 @@ export interface RadioState {
   queuePushLocked: boolean;
   skipLocked: boolean;
   serverUrl: string | null;
+  lockAutoplayFallback: boolean;
+  hideLocalDiscovery: boolean;
 }
 
 export const MODE_LABELS: Record<Mode, string> = {

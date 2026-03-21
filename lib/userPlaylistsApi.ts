@@ -68,13 +68,29 @@ function withIdentityParams(): URLSearchParams {
 export async function importUserPlaylistFile(
   file: File,
   meta?: PlaylistGenreMetaInput,
+  playlistName?: string | null,
 ): Promise<UserPlaylistImportResult> {
+  return importUserPlaylistFiles([file], meta, playlistName);
+}
+
+export async function importUserPlaylistFiles(
+  files: File[],
+  meta?: PlaylistGenreMetaInput,
+  playlistName?: string | null,
+): Promise<UserPlaylistImportResult> {
+  if (!files.length) {
+    throw new Error('Geen bestanden geselecteerd');
+  }
   const { nickname, deviceId } = getUserIdentity(true);
   const url = `${getServerUrl()}/api/user-playlists/import`;
   const form = new FormData();
-  form.append('file', file);
+  for (const file of files) {
+    form.append('files', file);
+  }
   form.append('nickname', nickname);
   form.append('device_id', deviceId);
+  const name = (playlistName ?? '').trim();
+  if (name) form.append('playlist_name', name);
   if (meta?.genre_group) form.append('genre_group', meta.genre_group);
   if (meta?.subgenre) form.append('subgenre', meta.subgenre);
   if (meta?.related_parent_playlist_id) form.append('related_parent_playlist_id', meta.related_parent_playlist_id);
@@ -247,6 +263,36 @@ export async function importSharedPlaylistFiles(
     body: form,
   });
   return parseOrThrow<SharedPlaylistImportResult>(res);
+}
+
+export async function updateSharedPlaylistAsOwner(
+  playlistId: string,
+  payload: {
+    playlistName?: string;
+    genre_group?: string | null;
+    subgenre?: string | null;
+    cover_url?: string | null;
+    auto_cover?: boolean;
+  },
+): Promise<SharedPlaylist> {
+  const { nickname, deviceId } = getUserIdentity(true);
+  const safeId = encodeURIComponent(playlistId);
+  const body: Record<string, unknown> = {
+    nickname,
+    device_id: deviceId,
+  };
+  if (payload.playlistName?.trim()) body.playlist_name = payload.playlistName.trim();
+  if (Object.prototype.hasOwnProperty.call(payload, 'genre_group')) body.genre_group = payload.genre_group ?? null;
+  if (Object.prototype.hasOwnProperty.call(payload, 'subgenre')) body.subgenre = payload.subgenre ?? null;
+  if (Object.prototype.hasOwnProperty.call(payload, 'cover_url')) body.cover_url = payload.cover_url ?? null;
+  if (typeof payload.auto_cover === 'boolean') body.auto_cover = payload.auto_cover;
+  const res = await fetch(`${getServerUrl()}/api/shared-playlists/${safeId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const result = await parseOrThrow<{ ok: boolean; playlist: SharedPlaylist }>(res);
+  return result.playlist;
 }
 
 export async function updateSharedPlaylistAdmin(

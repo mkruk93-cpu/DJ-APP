@@ -130,4 +130,8 @@ export interface ServerState {
   queuePushVote: Omit<QueuePushVote, 'voters'> | null;
   queuePushLocked: boolean;
   skipLocked: boolean;
+  /** When true, only admin token may change autoplay fallback / shared mode / presets apply */
+  lockAutoplayFallback: boolean;
+  /** When true, hide local genre catalog in fallback UI and omit local slices in search APIs */
+  hideLocalDiscovery: boolean;
 }

@@ -855,6 +855,8 @@ export default function StreamPage() {
             queuePushVote: state.queuePushVote ?? null,
             queuePushLocked: state.queuePushLocked ?? false,
             skipLocked: state.skipLocked ?? false,
+            lockAutoplayFallback: state.lockAutoplayFallback ?? false,
+            hideLocalDiscovery: state.hideLocalDiscovery ?? false,
           });
         })
         .catch((err) => {
@@ -928,12 +930,26 @@ export default function StreamPage() {
       store.getState().setUpcomingTrack(upcoming);
     });
 
-    socket.on("fallback:genre:update", (data: { activeGenreId: string | null; activeGenreIds?: string[]; selectedBy?: string | null; sharedPlaybackMode?: "random" | "ordered"; genres: Array<{ id: string; label: string; trackCount: number }> }) => {
+    socket.on("fallback:genre:update", (data: {
+      activeGenreId: string | null;
+      activeGenreIds?: string[];
+      selectedBy?: string | null;
+      sharedPlaybackMode?: "random" | "ordered";
+      genres: Array<{ id: string; label: string; trackCount: number }>;
+      lockAutoplayFallback?: boolean;
+      hideLocalDiscovery?: boolean;
+    }) => {
       store.getState().setFallbackGenres(data.genres ?? []);
       store.getState().setActiveFallbackGenre(data.activeGenreId ?? null);
       store.getState().setActiveFallbackGenres(Array.isArray(data.activeGenreIds) ? data.activeGenreIds : []);
       store.getState().setActiveFallbackGenreBy(data.selectedBy ?? null);
       store.getState().setActiveFallbackSharedMode(data.sharedPlaybackMode ?? "random");
+      if (typeof data.lockAutoplayFallback === "boolean") {
+        store.getState().setLockAutoplayFallback(data.lockAutoplayFallback);
+      }
+      if (typeof data.hideLocalDiscovery === "boolean") {
+        store.getState().setHideLocalDiscovery(data.hideLocalDiscovery);
+      }
     });
 
     socket.on("mode:change", (data: { mode: Mode; settings: ModeSettings }) => {

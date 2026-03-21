@@ -203,6 +203,7 @@ export default function QueueAdd() {
   const [mobileGenreMenuTop, setMobileGenreMenuTop] = useState<number | null>(null);
   const mode = useRadioStore((s) => s.mode);
   const queue = useRadioStore((s) => s.queue);
+  const hideLocalDiscovery = useRadioStore((s) => s.hideLocalDiscovery);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const genreListRef = useRef<HTMLDivElement>(null);
   const genreMenuRef = useRef<HTMLDetailsElement>(null);
@@ -390,12 +391,13 @@ export default function QueueAdd() {
       return;
     }
 
+    const useLocal = hideLocalDiscovery ? false : includeLocal;
     const offset = append ? searchOffsetRef.current : 0;
     const runId = ++latestSearchRunRef.current;
     if (append) setSearchingMore(true);
     else setSearching(true);
     fetch(
-      `${serverUrl}/search?q=${encodeURIComponent(query)}&source=${source}&limit=${SEARCH_PAGE_SIZE}&offset=${offset}&includeLocal=${includeLocal ? "1" : "0"}`,
+      `${serverUrl}/search?q=${encodeURIComponent(query)}&source=${source}&limit=${SEARCH_PAGE_SIZE}&offset=${offset}&includeLocal=${useLocal ? "1" : "0"}`,
     )
       .then((r) => r.json())
       .then((data: SearchResult[]) => {
@@ -411,10 +413,10 @@ export default function QueueAdd() {
         setSearchOffsetSafe(offset + normalized.length);
         
         // Improved logic for hasMore when local files are included
-        if (includeLocal && offset < 30) {
+        if (useLocal && offset < 30) {
           // When local files are enabled, always assume more results until offset 30
           // This ensures we can reach remote results after local bucket (20) + buffer
-          console.log('[search-debug] Setting hasMore=true (includeLocal, offset < 30)', { offset, includeLocal });
+          console.log('[search-debug] Setting hasMore=true (includeLocal, offset < 30)', { offset, includeLocal: useLocal });
           setSearchHasMore(true);
         } else {
           // Standard logic: has more if we got results
@@ -433,7 +435,7 @@ export default function QueueAdd() {
           setSearchHasMore(false);
         } else {
           // On error during append, still allow more attempts if we're in local+remote mode
-          if (includeLocal && searchOffsetRef.current < 30) {
+          if (useLocal && searchOffsetRef.current < 30) {
             setSearchHasMore(true);
           } else {
             setSearchHasMore(false);
@@ -445,7 +447,7 @@ export default function QueueAdd() {
         setSearching(false);
         setSearchingMore(false);
       });
-  }, [serverUrl, source, includeSets, includeLocal]);
+  }, [serverUrl, source, includeSets, includeLocal, hideLocalDiscovery]);
 
   const loadGenres = useCallback((query: string) => {
     if (!serverUrl) {
@@ -692,13 +694,17 @@ export default function QueueAdd() {
   }, [genreQuery, source, loadGenres]);
 
   useEffect(() => {
+    if (hideLocalDiscovery) setIncludeLocal(false);
+  }, [hideLocalDiscovery]);
+
+  useEffect(() => {
     if (source !== "genres" || !activeGenre) return;
     setGenreHits([]);
     setGenreOffsetSafe(0);
     setGenreHasMore(false);
     genreNoProgressPagesRef.current = 0;
     loadGenreHits(activeGenre, false);
-  }, [includeLocal]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [includeLocal, hideLocalDiscovery]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Lightweight: No auto-retry to reduce server load
   // The server now always returns something, so no need for aggressive retrying
@@ -991,7 +997,7 @@ export default function QueueAdd() {
       debounceRef.current = setTimeout(() => {
         setSearching(true);
         const url = serverUrl ?? "";
-        fetch(`${url}/search?q=${encodeURIComponent(query)}&source=${newSource}&limit=${SEARCH_PAGE_SIZE}&offset=0&includeLocal=${includeLocal ? "1" : "0"}`)
+        fetch(`${url}/search?q=${encodeURIComponent(query)}&source=${newSource}&limit=${SEARCH_PAGE_SIZE}&offset=0&includeLocal=${hideLocalDiscovery ? "0" : includeLocal ? "1" : "0"}`)
           .then((r) => r.json())
           .then((data: SearchResult[]) => {
             const normalized = Array.isArray(data) ? data : [];
@@ -1515,6 +1521,7 @@ export default function QueueAdd() {
               >
                 Sets tonen
               </button>
+              {!hideLocalDiscovery && (
               <button
                 type="button"
                 onClick={() => setIncludeLocal((prev) => !prev)}
@@ -1528,6 +1535,7 @@ export default function QueueAdd() {
               >
                 Lokaal
               </button>
+              )}
               {searching && (
                 <div className="absolute right-36 top-1/2 -translate-y-1/2">
                   <span className="block h-4 w-4 animate-spin rounded-full border-2 border-violet-400 border-t-transparent" />

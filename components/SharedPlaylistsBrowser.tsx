@@ -5,12 +5,15 @@ import {
   getSharedPlaylistTracksPage,
   getSpotifyOembed,
   importSharedPlaylistFiles,
+  updateSharedPlaylistAsOwner,
   listAllSharedPlaylists,
   type PlaylistGenreMetaInput,
   type SharedPlaylist,
   type UserPlaylistTrack,
 } from "@/lib/userPlaylistsApi";
 import { getSocket } from "@/lib/socket";
+import { getRadioToken } from "@/lib/auth";
+import { useRadioStore } from "@/lib/radioStore";
 
 interface SharedPlaylistsBrowserProps {
   onAddTrack: (track: {
@@ -111,6 +114,7 @@ function getLegacyStorageKey(): string {
 }
 
 export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: SharedPlaylistsBrowserProps) {
+  const lockAutoplayFallback = useRadioStore((s) => s.lockAutoplayFallback);
   const [view, setView] = useState<View>("playlists");
   const [filter, setFilter] = useState("");
   const [loading, setLoading] = useState(false);
@@ -129,6 +133,14 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
   const [importSubgenre, setImportSubgenre] = useState("");
   const [importCoverUrl, setImportCoverUrl] = useState("");
   const [importAutoCover, setImportAutoCover] = useState(true);
+  const [editDraft, setEditDraft] = useState<{
+    id: string;
+    name: string;
+    genre_group: string;
+    subgenre: string;
+    cover_url: string;
+  } | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
   const [addedTrackId, setAddedTrackId] = useState<string | null>(null);
   const [pendingTrackId, setPendingTrackId] = useState<string | null>(null);
   const [sharedPlaylists, setSharedPlaylists] = useState<SharedPlaylist[]>([]);
@@ -145,6 +157,20 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
   const listRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<View>("playlists");
+
+  const viewerNickname = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    return (localStorage.getItem("nickname") ?? "").trim();
+  }, []);
+
+  const isPlaylistOwner = useCallback(
+    (playlist: SharedPlaylist) => {
+      const by = (playlist.added_by ?? "").trim().toLowerCase();
+      const me = viewerNickname.trim().toLowerCase();
+      return !!by && !!me && by === me;
+    },
+    [viewerNickname],
+  );
 
   const backToPlaylists = useCallback(() => {
     setView("playlists");
@@ -377,6 +403,37 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
     }
   }
 
+  function openPlaylistEdit(playlist: SharedPlaylist) {
+    setEditDraft({
+      id: playlist.id,
+      name: playlist.name,
+      genre_group: playlist.genre_group ?? "",
+      subgenre: playlist.subgenre ?? "",
+      cover_url: playlist.cover_url ?? "",
+    });
+  }
+
+  async function savePlaylistEdit() {
+    if (!editDraft) return;
+    setEditSaving(true);
+    setError(null);
+    try {
+      await updateSharedPlaylistAsOwner(editDraft.id, {
+        playlistName: editDraft.name.trim(),
+        genre_group: editDraft.genre_group.trim() || null,
+        subgenre: editDraft.subgenre.trim() || null,
+        cover_url: editDraft.cover_url.trim() || null,
+      });
+      setStatus("Playlist bijgewerkt.");
+      setEditDraft(null);
+      await loadSharedPlaylists();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Opslaan mislukt.");
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
   async function handleAddTrack(track: UserPlaylistTrack) {
     if (pendingTrackId === track.id || addedTrackId === track.id) return;
     setPendingTrackId(track.id);
@@ -410,11 +467,16 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
   }
 
   function setAsAutoplayFallback(playlist: SharedPlaylist) {
+    if (lockAutoplayFallback && !getRadioToken()) {
+      setStatus("Autoplay fallback is vergrendeld (alleen admin kan dit wijzigen).");
+      return;
+    }
     const selectedBy = (typeof window !== "undefined" ? localStorage.getItem("nickname") : null)?.trim() || "onbekend";
     getSocket().emit("fallback:genre:set", {
       genreId: `shared:${playlist.id}`,
       selectedBy,
       sharedPlaybackMode: "random",
+      token: getRadioToken() ?? undefined,
     });
     setStatus(`Autoplay fallback ingesteld op: ${playlist.name}`);
   }
@@ -473,7 +535,8 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
           <p className="font-semibold">Wat doet dit?</p>
           <p className="mt-0.5 text-blue-100/90">
             Hier kies je publieke playlists om snel tracks toe te voegen. Upload 1 of meerdere Exportify CSV's,
-            geef 1 playlistnaam op, en dubbele tracks worden automatisch verwijderd.
+            geef 1 playlistnaam op, en dubbele tracks worden automatisch verwijderd. Onderstrepingen in
+            bestandsnamen worden weer als spaties getoond.
           </p>
         </div>
       )}
@@ -589,37 +652,101 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                       </summary>
                       <div className="mt-1 space-y-1">
                         {subgroup.items.map((playlist) => (
-                          <div
-                            key={playlist.id}
-                            className="flex w-full items-center gap-2 rounded-lg border border-gray-800 bg-gray-900/70 px-2.5 py-1.5 text-left transition hover:border-blue-700/60 hover:bg-gray-800/80"
-                          >
-                            {playlist.cover_url ? (
-                              <img src={playlist.cover_url} alt="" className="h-8 w-8 shrink-0 rounded object-cover" />
-                            ) : (
-                              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-blue-500/15">
-                                <svg className="h-4 w-4 text-blue-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                                  <path d="M8 6h12M8 12h12M8 18h12M3 6h.01M3 12h.01M3 18h.01" />
-                                </svg>
+                          <div key={playlist.id} className="space-y-1">
+                            <div className="flex w-full items-center gap-1 rounded-lg border border-gray-800 bg-gray-900/70 px-2 py-1.5 text-left transition hover:border-blue-700/60 hover:bg-gray-800/80 sm:gap-2 sm:px-2.5">
+                              {playlist.cover_url ? (
+                                <img src={playlist.cover_url} alt="" className="h-8 w-8 shrink-0 rounded object-cover" />
+                              ) : (
+                                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-blue-500/15">
+                                  <svg className="h-4 w-4 text-blue-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                                    <path d="M8 6h12M8 12h12M8 18h12M3 6h.01M3 12h.01M3 18h.01" />
+                                  </svg>
+                                </div>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => { void openPlaylist(playlist); }}
+                                className="min-w-0 flex-1 truncate text-left text-[11px] font-semibold text-white"
+                              >
+                                {playlist.name}
+                              </button>
+                              <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-300">
+                                {playlist.track_count}
+                              </span>
+                              {isPlaylistOwner(playlist) && (
+                                <button
+                                  type="button"
+                                  onClick={() => openPlaylistEdit(playlist)}
+                                  className="shrink-0 rounded border border-gray-600 bg-gray-800 px-1.5 py-0.5 text-[10px] font-semibold text-gray-200 transition hover:border-violet-500 hover:text-white"
+                                  title="Naam en genre aanpassen"
+                                >
+                                  Bewerk
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => setAsAutoplayFallback(playlist)}
+                                className="shrink-0 rounded border border-violet-700/80 bg-violet-900/30 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200 transition hover:bg-violet-800/40"
+                                title="Gebruik als autoplay fallback"
+                              >
+                                Auto
+                              </button>
+                            </div>
+                            {editDraft?.id === playlist.id && (
+                              <div className="rounded border border-violet-800/60 bg-violet-950/25 p-2 text-[10px] text-gray-200">
+                                <p className="mb-1 font-semibold text-violet-200">Playlist bewerken</p>
+                                <input
+                                  type="text"
+                                  value={editDraft.name}
+                                  onChange={(e) => setEditDraft((d) => (d ? { ...d, name: e.target.value } : d))}
+                                  className="mb-1 w-full rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[10px] text-white"
+                                  placeholder="Naam"
+                                />
+                                <div className="mb-1 grid gap-1 sm:grid-cols-2">
+                                  <select
+                                    value={editDraft.genre_group}
+                                    onChange={(e) => setEditDraft((d) => (d ? { ...d, genre_group: e.target.value } : d))}
+                                    className="rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[10px] text-white"
+                                  >
+                                    <option value="">Overkoepelend genre</option>
+                                    {PLAYLIST_GENRE_GROUPS.map((group) => (
+                                      <option key={group} value={group}>{group}</option>
+                                    ))}
+                                  </select>
+                                  <input
+                                    type="text"
+                                    value={editDraft.subgenre}
+                                    onChange={(e) => setEditDraft((d) => (d ? { ...d, subgenre: e.target.value } : d))}
+                                    placeholder="Subgenre"
+                                    className="rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[10px] text-white placeholder-gray-500"
+                                  />
+                                </div>
+                                <input
+                                  type="text"
+                                  value={editDraft.cover_url}
+                                  onChange={(e) => setEditDraft((d) => (d ? { ...d, cover_url: e.target.value } : d))}
+                                  placeholder="Cover URL (https...)"
+                                  className="mb-1 w-full rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[10px] text-white placeholder-gray-500"
+                                />
+                                <div className="flex flex-wrap gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => { void savePlaylistEdit(); }}
+                                    disabled={editSaving || !editDraft.name.trim()}
+                                    className="rounded bg-violet-600 px-2 py-1 text-[10px] font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
+                                  >
+                                    {editSaving ? "Opslaan..." : "Opslaan"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditDraft(null)}
+                                    className="rounded border border-gray-600 px-2 py-1 text-[10px] text-gray-300 hover:bg-gray-800"
+                                  >
+                                    Annuleren
+                                  </button>
+                                </div>
                               </div>
                             )}
-                            <button
-                              type="button"
-                              onClick={() => { void openPlaylist(playlist); }}
-                              className="min-w-0 flex-1 truncate text-left text-[11px] font-semibold text-white"
-                            >
-                              {playlist.name}
-                            </button>
-                            <span className="ml-2 shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-300">
-                              {playlist.track_count}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => setAsAutoplayFallback(playlist)}
-                              className="ml-1 shrink-0 rounded border border-violet-700/80 bg-violet-900/30 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200 transition hover:bg-violet-800/40"
-                              title="Gebruik als autoplay fallback"
-                            >
-                              Auto
-                            </button>
                           </div>
                         ))}
                       </div>
@@ -628,37 +755,101 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                 </div>
               </details>
             )) : sortedPlaylists.map((playlist) => (
-              <div
-                key={playlist.id}
-                className="mt-1 flex w-full items-center gap-2 rounded-lg border border-gray-800 bg-gray-900/70 px-2.5 py-1.5 text-left transition hover:border-blue-700/60 hover:bg-gray-800/80"
-              >
-                {playlist.cover_url ? (
-                  <img src={playlist.cover_url} alt="" className="h-8 w-8 shrink-0 rounded object-cover" />
-                ) : (
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-blue-500/15">
-                    <svg className="h-4 w-4 text-blue-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                      <path d="M8 6h12M8 12h12M8 18h12M3 6h.01M3 12h.01M3 18h.01" />
-                    </svg>
+              <div key={playlist.id} className="mt-1 space-y-1">
+                <div className="flex w-full items-center gap-1 rounded-lg border border-gray-800 bg-gray-900/70 px-2 py-1.5 text-left transition hover:border-blue-700/60 hover:bg-gray-800/80 sm:gap-2 sm:px-2.5">
+                  {playlist.cover_url ? (
+                    <img src={playlist.cover_url} alt="" className="h-8 w-8 shrink-0 rounded object-cover" />
+                  ) : (
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-blue-500/15">
+                      <svg className="h-4 w-4 text-blue-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                        <path d="M8 6h12M8 12h12M8 18h12M3 6h.01M3 12h.01M3 18h.01" />
+                      </svg>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => { void openPlaylist(playlist); }}
+                    className="min-w-0 flex-1 truncate text-left text-[11px] font-semibold text-white"
+                  >
+                    {playlist.name}
+                  </button>
+                  <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-300">
+                    {playlist.track_count}
+                  </span>
+                  {isPlaylistOwner(playlist) && (
+                    <button
+                      type="button"
+                      onClick={() => openPlaylistEdit(playlist)}
+                      className="shrink-0 rounded border border-gray-600 bg-gray-800 px-1.5 py-0.5 text-[10px] font-semibold text-gray-200 transition hover:border-violet-500 hover:text-white"
+                      title="Naam en genre aanpassen"
+                    >
+                      Bewerk
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setAsAutoplayFallback(playlist)}
+                    className="shrink-0 rounded border border-violet-700/80 bg-violet-900/30 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200 transition hover:bg-violet-800/40"
+                    title="Gebruik als autoplay fallback"
+                  >
+                    Auto
+                  </button>
+                </div>
+                {editDraft?.id === playlist.id && (
+                  <div className="rounded border border-violet-800/60 bg-violet-950/25 p-2 text-[10px] text-gray-200">
+                    <p className="mb-1 font-semibold text-violet-200">Playlist bewerken</p>
+                    <input
+                      type="text"
+                      value={editDraft.name}
+                      onChange={(e) => setEditDraft((d) => (d ? { ...d, name: e.target.value } : d))}
+                      className="mb-1 w-full rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[10px] text-white"
+                      placeholder="Naam"
+                    />
+                    <div className="mb-1 grid gap-1 sm:grid-cols-2">
+                      <select
+                        value={editDraft.genre_group}
+                        onChange={(e) => setEditDraft((d) => (d ? { ...d, genre_group: e.target.value } : d))}
+                        className="rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[10px] text-white"
+                      >
+                        <option value="">Overkoepelend genre</option>
+                        {PLAYLIST_GENRE_GROUPS.map((group) => (
+                          <option key={group} value={group}>{group}</option>
+                        ))}
+                      </select>
+                      <input
+                        type="text"
+                        value={editDraft.subgenre}
+                        onChange={(e) => setEditDraft((d) => (d ? { ...d, subgenre: e.target.value } : d))}
+                        placeholder="Subgenre"
+                        className="rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[10px] text-white placeholder-gray-500"
+                      />
+                    </div>
+                    <input
+                      type="text"
+                      value={editDraft.cover_url}
+                      onChange={(e) => setEditDraft((d) => (d ? { ...d, cover_url: e.target.value } : d))}
+                      placeholder="Cover URL (https...)"
+                      className="mb-1 w-full rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[10px] text-white placeholder-gray-500"
+                    />
+                    <div className="flex flex-wrap gap-1">
+                      <button
+                        type="button"
+                        onClick={() => { void savePlaylistEdit(); }}
+                        disabled={editSaving || !editDraft.name.trim()}
+                        className="rounded bg-violet-600 px-2 py-1 text-[10px] font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
+                      >
+                        {editSaving ? "Opslaan..." : "Opslaan"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditDraft(null)}
+                        className="rounded border border-gray-600 px-2 py-1 text-[10px] text-gray-300 hover:bg-gray-800"
+                      >
+                        Annuleren
+                      </button>
+                    </div>
                   </div>
                 )}
-                <button
-                  type="button"
-                  onClick={() => { void openPlaylist(playlist); }}
-                  className="min-w-0 flex-1 truncate text-left text-[11px] font-semibold text-white"
-                >
-                  {playlist.name}
-                </button>
-                <span className="ml-2 shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-300">
-                  {playlist.track_count}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setAsAutoplayFallback(playlist)}
-                  className="ml-1 shrink-0 rounded border border-violet-700/80 bg-violet-900/30 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200 transition hover:bg-violet-800/40"
-                  title="Gebruik als autoplay fallback"
-                >
-                  Auto
-                </button>
               </div>
             ))}
           </div>
@@ -666,7 +857,10 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
             <summary className="cursor-pointer list-none text-[11px] font-semibold text-gray-200">
               Nieuwe playlist toevoegen
             </summary>
-            <p className="mt-1 text-[10px] text-gray-500">Upload meerdere Exportify CSV's. We voegen samen en dedupliceren.</p>
+            <p className="mt-1 text-[10px] text-gray-500">
+              Upload meerdere Exportify CSV&apos;s tegelijk (Ctrl/Shift in bestandsdialoog). We voegen samen en dedupliceren
+              zoals bij admin-import. Naam is verplicht; daarna kun je je eigen playlist nog bewerken via Bewerk.
+            </p>
             <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
               <select
                 value={importGenreGroup}
@@ -709,7 +903,7 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
               type="text"
               value={importName}
               onChange={(e) => setImportName(e.target.value)}
-              placeholder="Playlist naam (verplicht)"
+              placeholder="Playlist naam (verplicht; underscores → spaties in titel)"
               className="mt-2 w-full rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[11px] text-white placeholder-gray-500 outline-none focus:border-violet-500"
             />
             <input

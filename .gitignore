@@ -29,3 +29,16 @@ server/node_modules/
 server/dist/
 
 .vercel
+
+# --- Custom Project Data ---
+# Voorkom dat lokale database-bestanden worden gepusht
+server/data/*.json
+server/data/*.jsonl
+server/data/jingles/
+
+# Voorkom dat build-informatie van TypeScript wordt gepusht
+*.tsbuildinfo
+
+# Voorkom dat de gecompileerde overlay-bestanden worden gepusht
+# (Omdat deze in je status als 'modified' en 'deleted' stonden)
+overlay/dist/

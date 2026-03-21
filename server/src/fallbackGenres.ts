@@ -185,6 +185,12 @@ export function getDefaultFallbackGenreId(): string | null {
   return defaultGenreId;
 }
 
+/** True for genres backed by on-disk folders in fallback-genres config (not auto:/shared:). */
+export function isLocalDiskFallbackGenre(genreId: string | null | undefined): boolean {
+  if (!genreId) return false;
+  return runtimeGenres.some((genre) => genre.id === genreId);
+}
+
 export function isKnownFallbackGenre(genreId: string | null | undefined): boolean {
   if (!genreId) return false;
   const localKnown = runtimeGenres.some((genre) => genre.id === genreId);

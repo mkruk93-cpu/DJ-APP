@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getSocket } from "@/lib/socket";
+import { getRadioToken } from "@/lib/auth";
 import { useRadioStore } from "@/lib/radioStore";
 import {
   buildGroupedGenreSections,
@@ -125,6 +126,9 @@ export default function FallbackGenreSelector() {
   const activeGenres = useRadioStore((s) => s.activeFallbackGenres);
   const activeGenreBy = useRadioStore((s) => s.activeFallbackGenreBy);
   const sharedPlaybackMode = useRadioStore((s) => s.activeFallbackSharedMode);
+  const lockAutoplayFallback = useRadioStore((s) => s.lockAutoplayFallback);
+  const hideLocalDiscovery = useRadioStore((s) => s.hideLocalDiscovery);
+  const fallbackChangeBlocked = lockAutoplayFallback && !getRadioToken();
   const menuRef = useRef<HTMLDetailsElement | null>(null);
   const summaryRef = useRef<HTMLElement | null>(null);
   const [isMobile, setIsMobile] = useState(false);
@@ -260,6 +264,7 @@ export default function FallbackGenreSelector() {
   }, [isMobile]);
 
   function emitSharedSelection(nextSelected: string[]): void {
+    if (fallbackChangeBlocked) return;
     const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
     const normalized = Array.from(new Set(nextSelected.filter((id) => id.startsWith("shared:"))));
     const primary = normalized[0] ?? activeGenre ?? null;
@@ -271,10 +276,12 @@ export default function FallbackGenreSelector() {
       selectedBy,
       selectedLabel,
       sharedPlaybackMode,
+      token: getRadioToken() ?? undefined,
     });
   }
 
   function emitSelection(nextSelected: string[]): void {
+    if (fallbackChangeBlocked) return;
     const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
     const normalized = Array.from(new Set(nextSelected.map((id) => id.trim()).filter(Boolean)));
     const primary = normalized[0] ?? activeGenre ?? null;
@@ -286,6 +293,7 @@ export default function FallbackGenreSelector() {
       selectedBy,
       selectedLabel,
       sharedPlaybackMode,
+      token: getRadioToken() ?? undefined,
     });
   }
 
@@ -326,13 +334,18 @@ export default function FallbackGenreSelector() {
   }
 
   function applyPreset(preset: SharedFallbackPreset): void {
+    if (fallbackChangeBlocked) return;
     const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
     const baseSection = preset.genreIds[0] ? getSectionForGenreId(preset.genreIds[0]) : null;
     if (!baseSection) return;
     const sameSectionIds = preset.genreIds.filter((id) => getSectionForGenreId(id) === baseSection);
     if (sameSectionIds.length === 0) return;
     if (baseSection === "playlists") {
-      getSocket().emit("fallback:shared:mode:set", { mode: preset.sharedPlaybackMode, selectedBy });
+      getSocket().emit("fallback:shared:mode:set", {
+        mode: preset.sharedPlaybackMode,
+        selectedBy,
+        token: getRadioToken() ?? undefined,
+      });
     }
     applySectionSelection(baseSection, sameSectionIds);
   }
@@ -444,7 +457,17 @@ export default function FallbackGenreSelector() {
             Gekozen door: <span className="text-violet-300">{activeGenreBy}</span>
           </p>
         )}
-        <div className="mb-1 grid grid-cols-3 gap-1 rounded-md bg-gray-800/60 p-1">
+        {lockAutoplayFallback && !getRadioToken() && (
+          <p className="mb-1 rounded-md border border-amber-800/60 bg-amber-950/40 px-2 py-1 text-[10px] text-amber-100">
+            Autoplay is <span className="font-semibold">vergrendeld</span>. Alleen met het radio admin-token (zoals in het admin-dashboard) kun je dit wijzigen.
+          </p>
+        )}
+        <div
+          className={`mb-1 grid gap-1 rounded-md bg-gray-800/60 p-1 ${
+            hideLocalDiscovery ? "grid-cols-2" : "grid-cols-3"
+          }`}
+        >
+          {!hideLocalDiscovery && (
           <button
             type="button"
             onClick={() => setActiveSection("local")}
@@ -454,6 +477,7 @@ export default function FallbackGenreSelector() {
           >
             Lokaal ({localGenres.length})
           </button>
+          )}
           <button
             type="button"
             onClick={() => setActiveSection("auto")}
@@ -521,8 +545,8 @@ export default function FallbackGenreSelector() {
         </div>
         <div className="rounded-md border border-gray-800 bg-gray-900/70 p-1">
           <div className="mb-1 grid grid-cols-2 gap-1">
-            <button type="button" onClick={() => setAllForSection(activeSection, true)} className="rounded border border-gray-700 px-2 py-1 text-[10px] font-semibold text-gray-200 transition hover:bg-gray-800">Alles aan</button>
-            <button type="button" onClick={() => setAllForSection(activeSection, false)} className="rounded border border-gray-700 px-2 py-1 text-[10px] font-semibold text-gray-200 transition hover:bg-gray-800">Alles uit</button>
+            <button type="button" disabled={fallbackChangeBlocked} onClick={() => setAllForSection(activeSection, true)} className="rounded border border-gray-700 px-2 py-1 text-[10px] font-semibold text-gray-200 transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50">Alles aan</button>
+            <button type="button" disabled={fallbackChangeBlocked} onClick={() => setAllForSection(activeSection, false)} className="rounded border border-gray-700 px-2 py-1 text-[10px] font-semibold text-gray-200 transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50">Alles uit</button>
           </div>
           {activeSection === "local" && (
             <>
@@ -541,8 +565,9 @@ export default function FallbackGenreSelector() {
                       <input
                         type="checkbox"
                         checked={isActive}
+                        disabled={fallbackChangeBlocked}
                         onChange={() => toggleSelection(genre.id)}
-                        className="h-3.5 w-3.5 cursor-pointer accent-violet-500"
+                        className="h-3.5 w-3.5 cursor-pointer accent-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
                       />
                       <span className="truncate">{genre.label}</span>
                     </span>
@@ -569,8 +594,9 @@ export default function FallbackGenreSelector() {
                     <input
                       type="checkbox"
                       checked={selectedGenreIds.includes(likedAutoGenre.id)}
+                      disabled={fallbackChangeBlocked}
                       onChange={() => toggleSelection(likedAutoGenre.id)}
-                      className="h-3.5 w-3.5 cursor-pointer accent-fuchsia-500"
+                      className="h-3.5 w-3.5 cursor-pointer accent-fuchsia-500 disabled:cursor-not-allowed disabled:opacity-50"
                     />
                     <span className="truncate">{likedAutoGenre.label}</span>
                   </span>
@@ -593,8 +619,9 @@ export default function FallbackGenreSelector() {
                         <input
                           type="checkbox"
                           checked={parentActive}
+                          disabled={fallbackChangeBlocked}
                           onChange={() => toggleSelection(parentAutoId)}
-                          className="h-3.5 w-3.5 cursor-pointer accent-fuchsia-500"
+                          className="h-3.5 w-3.5 cursor-pointer accent-fuchsia-500 disabled:cursor-not-allowed disabled:opacity-50"
                         />
                         <span className="truncate">{section.parent.name}</span>
                       </span>
@@ -618,8 +645,9 @@ export default function FallbackGenreSelector() {
                             <input
                               type="checkbox"
                               checked={isActive}
+                              disabled={fallbackChangeBlocked}
                               onChange={() => toggleSelection(childAutoId)}
-                              className="h-3.5 w-3.5 cursor-pointer accent-violet-500"
+                              className="h-3.5 w-3.5 cursor-pointer accent-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
                             />
                             <span className="truncate">- {genre.name}</span>
                           </span>
@@ -667,28 +695,40 @@ export default function FallbackGenreSelector() {
                     <button
                       type="button"
                       onClick={() => {
+                        if (fallbackChangeBlocked) return;
                         const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
-                        getSocket().emit("fallback:shared:mode:set", { mode: "random", selectedBy });
+                        getSocket().emit("fallback:shared:mode:set", {
+                          mode: "random",
+                          selectedBy,
+                          token: getRadioToken() ?? undefined,
+                        });
                       }}
+                      disabled={fallbackChangeBlocked}
                       className={`rounded px-2 py-1 text-[10px] font-semibold transition ${
                         sharedPlaybackMode === "random"
                           ? "bg-violet-600/30 text-violet-100"
                           : "text-gray-300 hover:bg-gray-800"
-                      }`}
+                      } ${fallbackChangeBlocked ? "cursor-not-allowed opacity-50" : ""}`}
                     >
                       Mix willekeurig
                     </button>
                     <button
                       type="button"
                       onClick={() => {
+                        if (fallbackChangeBlocked) return;
                         const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
-                        getSocket().emit("fallback:shared:mode:set", { mode: "ordered", selectedBy });
+                        getSocket().emit("fallback:shared:mode:set", {
+                          mode: "ordered",
+                          selectedBy,
+                          token: getRadioToken() ?? undefined,
+                        });
                       }}
+                      disabled={fallbackChangeBlocked}
                       className={`rounded px-2 py-1 text-[10px] font-semibold transition ${
                         sharedPlaybackMode === "ordered"
                           ? "bg-violet-600/30 text-violet-100"
                           : "text-gray-300 hover:bg-gray-800"
-                      }`}
+                      } ${fallbackChangeBlocked ? "cursor-not-allowed opacity-50" : ""}`}
                     >
                       Per playlist op volgorde
                     </button>
@@ -731,6 +771,7 @@ export default function FallbackGenreSelector() {
                                   <input
                                     type="checkbox"
                                     checked={isActive}
+                                    disabled={fallbackChangeBlocked}
                                     onChange={() => {
                                       const next = isActive
                                         ? selectedSharedGenres.filter((id) => id !== playlist.id)
@@ -738,7 +779,7 @@ export default function FallbackGenreSelector() {
                                       const safeNext = next.length > 0 ? next : [playlist.id];
                                       emitSharedSelection(safeNext);
                                     }}
-                                    className="h-3.5 w-3.5 cursor-pointer accent-violet-500"
+                                    className="h-3.5 w-3.5 cursor-pointer accent-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
                                   />
                                   <span className="truncate">{playlist.label.replace(/^Playlist ·\s*/i, "")}</span>
                                 </span>
@@ -766,6 +807,7 @@ export default function FallbackGenreSelector() {
                       <input
                         type="checkbox"
                         checked={isActive}
+                        disabled={fallbackChangeBlocked}
                         onChange={() => {
                           const next = isActive
                             ? selectedSharedGenres.filter((id) => id !== playlist.id)
@@ -773,7 +815,7 @@ export default function FallbackGenreSelector() {
                           const safeNext = next.length > 0 ? next : [playlist.id];
                           emitSharedSelection(safeNext);
                         }}
-                        className="h-3.5 w-3.5 cursor-pointer accent-violet-500"
+                        className="h-3.5 w-3.5 cursor-pointer accent-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
                       />
                       <span className="truncate">{playlist.label.replace(/^Playlist ·\s*/i, "")}</span>
                     </span>

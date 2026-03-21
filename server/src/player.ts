@@ -265,7 +265,15 @@ export function setActiveFallbackGenres(genreIds: string[] | null | undefined): 
   broadcastUpcomingTrack();
 }
 
+let hideLocalDiscoveryForFallback = false;
+
+/** When true, autoplay will not pick tracks from local curated genre folders (only auto/shared/remote paths). */
+export function setHideLocalDiscoveryForFallback(value: boolean): void {
+  hideLocalDiscoveryForFallback = value;
+}
+
 function getActiveLocalFallbackGenres(): string[] {
+  if (hideLocalDiscoveryForFallback) return [];
   const selected = activeFallbackGenreIds.length > 0
     ? activeFallbackGenreIds
     : (activeFallbackGenre ? [activeFallbackGenre] : []);

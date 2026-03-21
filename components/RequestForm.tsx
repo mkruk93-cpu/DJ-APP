@@ -124,6 +124,7 @@ export default function RequestForm(
   const didInitOwnStatusRef = useRef(false);
   const nickname = typeof window !== "undefined" ? localStorage.getItem("nickname") ?? "anon" : "anon";
   const serverUrl = useRadioStore((s) => s.serverUrl) ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
+  const hideLocalDiscovery = useRadioStore((s) => s.hideLocalDiscovery);
   const activeGenreLabel = resolveGenreLabel(activeGenre, genres);
   const groupedGenreSections = useMemo(
     () => buildGroupedGenreSections(genres, genreQuery),
@@ -146,7 +147,7 @@ export default function RequestForm(
       return;
     }
     setSearching(true);
-    fetch(`${serverUrl}/search?q=${encodeURIComponent(query)}&source=${source}&includeLocal=${includeLocal ? "1" : "0"}`)
+    fetch(`${serverUrl}/search?q=${encodeURIComponent(query)}&source=${source}&includeLocal=${hideLocalDiscovery ? "0" : includeLocal ? "1" : "0"}`)
       .then((r) => r.json())
       .then((data: SearchResult[]) => {
         setResults(data);
@@ -154,7 +155,7 @@ export default function RequestForm(
       })
       .catch(() => setResults([]))
       .finally(() => setSearching(false));
-  }, [serverUrl, source, includeLocal]);
+  }, [serverUrl, source, includeLocal, hideLocalDiscovery]);
 
   const loadGenres = useCallback((query: string) => {
     if (!serverUrl) {
@@ -339,6 +340,10 @@ export default function RequestForm(
   }, [source, activeGenre, genreHasMore, genreHitsLoading, genreHitsLoadingMore, loadGenreHits]);
 
   useEffect(() => {
+    if (hideLocalDiscovery) setIncludeLocal(false);
+  }, [hideLocalDiscovery]);
+
+  useEffect(() => {
     if (source === "genres") {
       if (activeGenre) loadGenreHits(activeGenre, false);
       return;
@@ -347,12 +352,12 @@ export default function RequestForm(
     if (query.length >= 2 && !URL_REGEX.test(query)) {
       search(query);
     }
-  }, [includeLocal]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [includeLocal, hideLocalDiscovery]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function resolveToUrl(query: string, preferredSource: "youtube" | "soundcloud"): Promise<SearchResult | null> {
     if (!serverUrl) return null;
     try {
-      const res = await fetch(`${serverUrl}/search?q=${encodeURIComponent(query)}&source=${preferredSource}&includeLocal=${includeLocal ? "1" : "0"}`);
+      const res = await fetch(`${serverUrl}/search?q=${encodeURIComponent(query)}&source=${preferredSource}&includeLocal=${hideLocalDiscovery ? "0" : includeLocal ? "1" : "0"}`);
       if (!res.ok) return null;
       const data = await res.json() as SearchResult[];
       return data[0] ?? null;
@@ -894,6 +899,7 @@ export default function RequestForm(
                 placeholder={source === "youtube" ? "Zoek op YouTube of plak een link..." : "Zoek op SoundCloud of plak een link..."}
                 className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 pr-28 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
               />
+              {!hideLocalDiscovery && (
               <button
                 type="button"
                 onClick={() => setIncludeLocal((prev) => !prev)}
@@ -907,6 +913,7 @@ export default function RequestForm(
               >
                 Lokaal
               </button>
+              )}
               {searching && (
                 <div className="absolute right-24 top-1/2 -translate-y-1/2">
                   <span className="block h-4 w-4 animate-spin rounded-full border-2 border-violet-400 border-t-transparent" />

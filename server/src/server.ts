@@ -13,7 +13,7 @@ import { initCache } from './cleanup.js';
 import { seedSettings, getActiveMode, getActiveFallbackGenre, getModeSettings, getSetting, setSetting } from './settings.js';
 import { getQueue, addToQueue, removeFromQueue, reorderQueue, fetchVideoInfo, extractYoutubeId, extractSourceId, isSoundcloudUrl, getThumbnailUrl, encodeLocalFileUrl } from './queue.js';
 import { canPerformAction } from './permissions.js';
-import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, isPlayCycleRunning, playerEvents, setKeepFiles, getJingleSettings, setJingleSettings, getJingleSelection, setJingleSelection, getJingleCatalog, invalidatePreload, invalidateNextReady, removeQueueItemFromPreload, setActiveFallbackGenre, setActiveFallbackGenres, setActiveSharedFallbackPlaylists, setSharedAutoPlaybackMode, resetSharedAutoPlaybackCycleForSelection, setQueueItemSelectionMeta } from './player.js';
+import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, isPlayCycleRunning, playerEvents, setKeepFiles, getJingleSettings, setJingleSettings, getJingleSelection, setJingleSelection, getJingleCatalog, invalidatePreload, invalidateNextReady, removeQueueItemFromPreload, setActiveFallbackGenre, setActiveFallbackGenres, setActiveSharedFallbackPlaylists, setSharedAutoPlaybackMode, resetSharedAutoPlaybackCycleForSelection, setQueueItemSelectionMeta, setHideLocalDiscoveryForFallback } from './player.js';
 import { youtubeSearch, soundcloudSearch, spotdlSearch } from './services/search.js';
 import { startBridge } from './bridge.js';
 import { startNowPlayingWatcher } from './nowPlaying.js';
@@ -78,7 +78,7 @@ function getErrorMessage(err: unknown): string {
 // Simple cache for genre hits to avoid repeated searches
 const genreHitsCache = new Map<string, { results: any[], timestamp: number }>();
 const GENRE_HITS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-import { reloadFallbackGenres, listFallbackGenres, getDefaultFallbackGenreId, isKnownFallbackGenre, toAutoFallbackGenreId, parseAutoFallbackGenreId, LIKED_AUTO_GENRE_ID } from './fallbackGenres.js';
+import { reloadFallbackGenres, listFallbackGenres, getDefaultFallbackGenreId, isKnownFallbackGenre, isLocalDiskFallbackGenre, toAutoFallbackGenreId, parseAutoFallbackGenreId, LIKED_AUTO_GENRE_ID } from './fallbackGenres.js';
 import { addPriorityArtistForGenre, addBlockedArtistForGenre, addPriorityTrackForGenre, addBlockedTrackForGenre, addLikedPlaylistTrack } from './services/genreCuratedConfig.js';
 import genreManagementRouter from './routes/genreManagement.js';
 import {
@@ -147,14 +147,14 @@ const httpServer = createServer(app);
 const io = new IOServer(httpServer, {
   cors: {
     origin: (_origin, callback) => callback(null, true),
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   },
 });
 
 app.use((_req, res, next) => {
   const origin = _req.headers.origin ?? '*';
   res.header('Access-Control-Allow-Origin', origin);
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, X-Admin-Token, x-admin-token');
   if (_req.method === 'OPTIONS') { res.sendStatus(204); return; }
   next();
@@ -172,6 +172,13 @@ app.use('/api', genreManagementRouter);
 
 function isAdmin(token?: string): boolean {
   return !!token && token === ADMIN_TOKEN;
+}
+
+/** When lock_autoplay_fallback is set in DB, only admin token may change autoplay source / shared mode / presets apply. */
+async function canChangeAutoplayFallback(token: string | undefined): Promise<boolean> {
+  const locked = await getSetting<boolean>(sb, 'lock_autoplay_fallback');
+  if (!locked) return true;
+  return isAdmin(token);
 }
 
 function readAdminToken(req: Request): string {
@@ -1059,6 +1066,13 @@ async function resolveActiveFallbackGenre(persistFix = false): Promise<string | 
   if (!resolved) {
     resolved = getDefaultFallbackGenreId();
   }
+  const hide = await getSetting<boolean>(sb, 'hide_local_discovery');
+  if (hide && resolved && isLocalDiskFallbackGenre(resolved)) {
+    resolved = null;
+  }
+  if (!resolved) {
+    resolved = toAutoFallbackGenreId(LIKED_AUTO_GENRE_ID);
+  }
   if (persistFix && resolved !== normalized) {
     await setSetting(sb, 'fallback_active_genre', resolved);
   }
@@ -1115,23 +1129,29 @@ async function resolveActiveFallbackGenres(
 
 async function isKnownFallbackSelection(genreId: string | null): Promise<boolean> {
   if (!genreId) return false;
-  if (isKnownFallbackGenre(genreId)) return true;
+  const hide = await getSetting<boolean>(sb, 'hide_local_discovery');
+  if (isKnownFallbackGenre(genreId)) {
+    if (hide && isLocalDiskFallbackGenre(genreId)) return false;
+    return true;
+  }
   const sharedPlaylistId = parseSharedFallbackPlaylistId(genreId);
   if (!sharedPlaylistId) return false;
   return hasSharedPlaylist(sharedPlaylistId);
 }
 
 async function emitFallbackGenreUpdate(target?: { emit: (event: string, payload: unknown) => void }): Promise<void> {
-  const [activeGenreId, selectedBy, sharedMode] = await Promise.all([
+  const [activeGenreId, selectedBy, sharedMode, lockAutoplayFallback, hideLocalDiscovery] = await Promise.all([
     resolveActiveFallbackGenre(),
     getSetting<string | null>(sb, 'fallback_active_genre_by'),
     resolveSharedPlaybackMode(),
+    getSetting<boolean>(sb, 'lock_autoplay_fallback'),
+    getSetting<boolean>(sb, 'hide_local_discovery'),
   ]);
   const activeGenreIds = await resolveActiveFallbackGenres(activeGenreId, true);
   setSharedAutoPlaybackMode(sharedMode);
   setActiveFallbackGenre(activeGenreId);
   setActiveFallbackGenres(activeGenreIds);
-  setActiveSharedFallbackPlaylists(activeGenreIds);
+  setActiveSharedFallbackPlaylists(activeGenreIds.filter((id) => !!parseSharedFallbackPlaylistId(id)));
   const genres = await getCombinedFallbackGenres();
   const payload = {
     activeGenreId,
@@ -1139,6 +1159,8 @@ async function emitFallbackGenreUpdate(target?: { emit: (event: string, payload:
     selectedBy: normalizeNickname(selectedBy),
     sharedPlaybackMode: sharedMode,
     genres,
+    lockAutoplayFallback: !!lockAutoplayFallback,
+    hideLocalDiscovery: !!hideLocalDiscovery,
   };
   if (target) target.emit('fallback:genre:update', payload);
   else io.emit('fallback:genre:update', payload);
@@ -1151,7 +1173,8 @@ function emitFallbackPresetUpdate(target?: { emit: (event: string, payload: unkn
 }
 
 async function getCombinedFallbackGenres(): Promise<FallbackGenre[]> {
-  const localGenres = listFallbackGenres() as FallbackGenre[];
+  const hide = await getSetting<boolean>(sb, 'hide_local_discovery');
+  const localGenres = hide ? [] : (listFallbackGenres() as FallbackGenre[]);
   let autoGenreOptions: GenreItem[] = [];
   try {
     autoGenreOptions = await searchGenres('');
@@ -1366,7 +1389,7 @@ function popDeferredQueueItemRoundRobin(): { addedBy: string; item: DeferredQueu
 }
 
 async function getServerState(): Promise<ServerState> {
-  const [mode, modeSettings, queue, activeFallbackGenre, activeFallbackGenreBy, fallbackGenres, activeFallbackSharedMode] = await withStateRetry(() => Promise.all([
+  const [mode, modeSettings, queue, activeFallbackGenre, activeFallbackGenreBy, fallbackGenres, activeFallbackSharedMode, lockAutoplayFallback, hideLocalDiscovery] = await withStateRetry(() => Promise.all([
     getActiveMode(sb),
     getModeSettings(sb),
     getQueue(sb),
@@ -1374,6 +1397,8 @@ async function getServerState(): Promise<ServerState> {
     getSetting<string | null>(sb, 'fallback_active_genre_by'),
     getCombinedFallbackGenres(),
     resolveSharedPlaybackMode(),
+    getSetting<boolean>(sb, 'lock_autoplay_fallback'),
+    getSetting<boolean>(sb, 'hide_local_discovery'),
   ]));
   const activeFallbackGenres = await resolveActiveFallbackGenres(activeFallbackGenre, true);
 
@@ -1392,6 +1417,8 @@ async function getServerState(): Promise<ServerState> {
     activeFallbackGenres,
     activeFallbackGenreBy: normalizeNickname(activeFallbackGenreBy),
     activeFallbackSharedMode,
+    lockAutoplayFallback: !!lockAutoplayFallback,
+    hideLocalDiscovery: !!hideLocalDiscovery,
     listenerCount: getEffectiveListenerCount(),
     streamOnline: isStreamOnlineForStatus(),
     pausedForIdle: playbackPausedForIdle,
@@ -1483,6 +1510,8 @@ function buildDegradedServerState(): ServerState {
     activeFallbackGenres: [],
     activeFallbackGenreBy: null,
     activeFallbackSharedMode: 'random',
+    lockAutoplayFallback: false,
+    hideLocalDiscovery: false,
     listenerCount: getEffectiveListenerCount(),
     streamOnline: isStreamOnlineForStatus(),
     pausedForIdle: playbackPausedForIdle,
@@ -2154,7 +2183,9 @@ app.get('/api/stats/summary', async (req, res) => {
 app.get('/search', async (req, res) => {
   const q = String(req.query.q ?? '').trim();
   const source = String(req.query.source ?? 'youtube').toLowerCase();
-  const includeLocal = String(req.query.includeLocal ?? '1') !== '0';
+  const hideLocal = await getSetting<boolean>(sb, 'hide_local_discovery');
+  let includeLocal = String(req.query.includeLocal ?? '1') !== '0';
+  if (hideLocal) includeLocal = false;
   const parsedLimit = parseInt(String(req.query.limit ?? '12'), 10);
   const parsedOffset = parseInt(String(req.query.offset ?? '0'), 10);
   const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(parsedLimit, 50)) : 12;
@@ -2209,31 +2240,94 @@ app.get('/search', async (req, res) => {
   }
 });
 
-app.post('/api/user-playlists/import', upload.single('file'), async (req, res) => {
+function normalizeExportifyDedupeKey(artist: string, title: string): string {
+  const a = artist.toLowerCase().replace(/\s+/g, ' ').trim();
+  const t = title.toLowerCase().replace(/\s+/g, ' ').trim();
+  return `${a}|${t}`;
+}
+
+function mergeExportifyTracksFromUploads(
+  files: Express.Multer.File[],
+): ExportifyPlaylistImport[] {
+  const mergedTracks: Array<{
+    title: string;
+    artist: string;
+    album: string | null;
+    spotifyUrl: string | null;
+    position: number;
+  }> = [];
+  const seenKeys = new Set<string>();
+  for (const file of files) {
+    const parsed = parseExportifyUpload(file.originalname ?? 'import.csv', file.buffer, {
+      maxPlaylists: USER_PLAYLIST_MAX_PLAYLISTS_PER_IMPORT,
+      maxTracksPerPlaylist: USER_PLAYLIST_MAX_TRACKS_PER_IMPORT,
+    }).filter((playlist) => playlist.tracks.length > 0);
+    for (const playlist of parsed) {
+      for (const track of playlist.tracks) {
+        const dedupeKey = normalizeExportifyDedupeKey(track.artist, track.title);
+        if (seenKeys.has(dedupeKey)) continue;
+        seenKeys.add(dedupeKey);
+        mergedTracks.push({
+          title: track.title,
+          artist: track.artist,
+          album: track.album,
+          spotifyUrl: track.spotifyUrl,
+          position: mergedTracks.length + 1,
+        });
+      }
+    }
+  }
+  return mergedTracks.length
+    ? [{ name: 'Merged import', tracks: mergedTracks }]
+    : [];
+}
+
+app.post('/api/user-playlists/import', upload.any(), async (req, res) => {
   const identity = getUserIdentityFromRequest(req);
   if (!identity) {
     return res.status(400).json({ error: 'nickname en device_id zijn verplicht' });
   }
-  if (!req.file) {
-    return res.status(400).json({ error: 'Bestand ontbreekt (field: file)' });
+  const uploaded = Array.isArray(req.files) ? req.files : [];
+  if (uploaded.length === 0) {
+    return res.status(400).json({ error: 'Bestand ontbreekt (field: file of files)' });
   }
-
-  const originalName = req.file.originalname ?? 'import.csv';
-  const extension = extname(originalName).toLowerCase();
-  if (extension !== '.csv' && extension !== '.zip') {
-    return res.status(400).json({ error: 'Alleen .csv of .zip toegestaan' });
+  for (const file of uploaded) {
+    const ext = extname(file.originalname ?? '').toLowerCase();
+    if (ext !== '.csv' && ext !== '.zip') {
+      return res.status(400).json({ error: `Alleen .csv of .zip toegestaan (bestand: ${file.originalname ?? '?'})` });
+    }
   }
 
   try {
     const genreMeta = getPlaylistGenreMetaFromRequest(req);
     const coverOptions = getPlaylistCoverOptionsFromRequest(req);
-    const parsed = parseExportifyUpload(originalName, req.file.buffer, {
-      maxPlaylists: USER_PLAYLIST_MAX_PLAYLISTS_PER_IMPORT,
-      maxTracksPerPlaylist: USER_PLAYLIST_MAX_TRACKS_PER_IMPORT,
-    }).filter((playlist) => playlist.tracks.length > 0);
+    const nameOverride = getSharedPlaylistNameFromRequest(req);
+    const mergeMultiple = uploaded.length >= 2;
 
-    if (parsed.length === 0) {
-      return res.status(400).json({ error: 'Geen geldige tracks gevonden in upload' });
+    let parsed: ExportifyPlaylistImport[];
+    if (mergeMultiple) {
+      if (!nameOverride) {
+        return res.status(400).json({ error: 'playlist_name is verplicht bij meerdere bestanden' });
+      }
+      const merged = mergeExportifyTracksFromUploads(uploaded);
+      if (merged.length === 0 || merged[0].tracks.length === 0) {
+        return res.status(400).json({ error: 'Geen geldige tracks gevonden in upload' });
+      }
+      merged[0].name = nameOverride.trim().slice(0, 140) || 'Imported playlist';
+      parsed = merged;
+    } else {
+      const originalName = uploaded[0].originalname ?? 'import.csv';
+      const extension = extname(originalName).toLowerCase();
+      parsed = parseExportifyUpload(originalName, uploaded[0].buffer, {
+        maxPlaylists: USER_PLAYLIST_MAX_PLAYLISTS_PER_IMPORT,
+        maxTracksPerPlaylist: USER_PLAYLIST_MAX_TRACKS_PER_IMPORT,
+      }).filter((playlist) => playlist.tracks.length > 0);
+      if (parsed.length === 0) {
+        return res.status(400).json({ error: 'Geen geldige tracks gevonden in upload' });
+      }
+      if (extension === '.csv' && nameOverride && parsed.length === 1) {
+        parsed = [{ ...parsed[0], name: nameOverride.trim().slice(0, 140) || parsed[0].name }];
+      }
     }
 
     const totalTracks = parsed.reduce((sum, playlist) => sum + playlist.tracks.length, 0);
@@ -2664,6 +2758,94 @@ app.put('/api/shared-playlists/:id', async (req, res) => {
     return res.json({ ok: true, playlist: updated });
   } catch (err) {
     console.error('[rest] /api/shared-playlists/:id PUT error:', err);
+    return res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
+app.patch('/api/shared-playlists/:id', async (req, res) => {
+  const identity = getUserIdentityFromRequest(req);
+  if (!identity) {
+    return res.status(400).json({ error: 'nickname en device_id zijn verplicht' });
+  }
+  const playlistId = String(req.params.id ?? '').trim();
+  if (!playlistId) {
+    return res.status(400).json({ error: 'Playlist id ontbreekt' });
+  }
+  try {
+    const existing = await getSharedPlaylistSummaryById(playlistId);
+    if (!existing) {
+      return res.status(404).json({ error: 'Playlist niet gevonden' });
+    }
+    const ownerNick = normalizeNickname(existing.added_by);
+    const requesterNick = normalizeNickname(identity.nickname);
+    if (!ownerNick || !requesterNick || ownerNick !== requesterNick) {
+      return res.status(403).json({ error: 'Alleen de eigenaar kan deze playlist wijzigen' });
+    }
+    const nextName = getSharedPlaylistNameFromRequest(req);
+    const nextMeta = getPlaylistGenreMetaFromRequest(req);
+    const coverOptions = getPlaylistCoverOptionsFromRequest(req);
+    let updated: Awaited<ReturnType<typeof updateSharedPlaylistName>> = null;
+    if (nextName) {
+      updated = await updateSharedPlaylistName(playlistId, nextName);
+      if (!updated) return res.status(404).json({ error: 'Playlist niet gevonden' });
+    }
+    const wantsMetaUpdate = req.body && typeof req.body === 'object'
+      && (
+        Object.prototype.hasOwnProperty.call(req.body, 'genre_group')
+        || Object.prototype.hasOwnProperty.call(req.body, 'genreGroup')
+        || Object.prototype.hasOwnProperty.call(req.body, 'subgenre')
+        || Object.prototype.hasOwnProperty.call(req.body, 'subGenre')
+        || Object.prototype.hasOwnProperty.call(req.body, 'related_parent_playlist_id')
+        || Object.prototype.hasOwnProperty.call(req.body, 'relatedParentPlaylistId')
+        || Object.prototype.hasOwnProperty.call(req.body, 'related_playlist_id')
+        || Object.prototype.hasOwnProperty.call(req.body, 'cover_url')
+        || Object.prototype.hasOwnProperty.call(req.body, 'coverUrl')
+        || Object.prototype.hasOwnProperty.call(req.body, 'cover')
+        || Object.prototype.hasOwnProperty.call(req.body, 'auto_cover')
+        || Object.prototype.hasOwnProperty.call(req.body, 'autoCover')
+      );
+    if (wantsMetaUpdate) {
+      const hasCoverField = req.body && typeof req.body === 'object'
+        && (
+          Object.prototype.hasOwnProperty.call(req.body, 'cover_url')
+          || Object.prototype.hasOwnProperty.call(req.body, 'coverUrl')
+          || Object.prototype.hasOwnProperty.call(req.body, 'cover')
+        );
+      const hasExplicitCover = !!(coverOptions.coverUrl ?? nextMeta.cover_url);
+      let resolvedCover = coverOptions.coverUrl ?? nextMeta.cover_url ?? null;
+      const hasAutoCoverFlag = req.body && typeof req.body === 'object'
+        && (
+          Object.prototype.hasOwnProperty.call(req.body, 'auto_cover')
+          || Object.prototype.hasOwnProperty.call(req.body, 'autoCover')
+        );
+      if (!hasExplicitCover && hasAutoCoverFlag && coverOptions.autoCover) {
+        const tracks = await getSharedPlaylistTracks(playlistId);
+        if (tracks) {
+          resolvedCover = await resolvePlaylistCoverUrlFromTracks(
+            tracks,
+            null,
+            true,
+          );
+        }
+      } else if (!hasCoverField && !hasAutoCoverFlag) {
+        if (!updated) {
+          updated = await getSharedPlaylistSummaryById(playlistId);
+        }
+        resolvedCover = updated?.cover_url ?? null;
+      }
+      const metaUpdated = await updateSharedPlaylistGenreMeta(playlistId, {
+        ...nextMeta,
+        cover_url: resolvedCover ?? null,
+      });
+      if (!metaUpdated) return res.status(404).json({ error: 'Playlist niet gevonden' });
+      updated = metaUpdated;
+    }
+    if (!updated) {
+      return res.status(400).json({ error: 'Geef minstens playlist_name, cover of genre/subgenre mee' });
+    }
+    return res.json({ ok: true, playlist: updated });
+  } catch (err) {
+    console.error('[rest] /api/shared-playlists/:id PATCH error:', err);
     return res.status(500).json({ error: getErrorMessage(err) });
   }
 });
@@ -3354,6 +3536,18 @@ app.post('/api/settings', async (req, res) => {
   if (!isAdmin(token)) return res.status(403).json({ error: 'Unauthorized' });
 
   try {
+    if (key === 'lock_autoplay_fallback' || key === 'hide_local_discovery') {
+      const bool = typeof value === 'boolean'
+        ? value
+        : (value === 'true' || value === 1 || value === '1');
+      await setSetting(sb, key, bool);
+      if (key === 'hide_local_discovery') {
+        setHideLocalDiscoveryForFallback(bool);
+      }
+      await emitFallbackGenreUpdate();
+      console.log(`[rest] Setting updated: ${key}=${bool}`);
+      return res.json({ ok: true });
+    }
     if (key === 'fallback_active_genre') {
       const requested = normalizeFallbackGenreId(value);
       if (requested && !(await isKnownFallbackSelection(requested))) {
@@ -4914,7 +5108,11 @@ io.on('connection', (socket) => {
     socket.emit('info:toast', { message: `Preset opgeslagen: ${saved.name}` });
   });
 
-  socket.on('fallback:preset:apply', async (data: { id?: string; selectedBy?: string }) => {
+  socket.on('fallback:preset:apply', async (data: { id?: string; selectedBy?: string; token?: string }) => {
+    if (!(await canChangeAutoplayFallback(data?.token))) {
+      socket.emit('error:toast', { message: 'Autoplay fallback is vergrendeld (alleen admin)' });
+      return;
+    }
     const presetId = String(data?.id ?? '').trim();
     const preset = getFallbackPreset(presetId);
     if (!preset || preset.genreIds.length === 0) {
@@ -4946,7 +5144,11 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('fallback:genre:set', async (data: { genreId?: string; genreIds?: string[]; selectedBy?: string; selectedLabel?: string; sharedPlaybackMode?: string }) => {
+  socket.on('fallback:genre:set', async (data: { genreId?: string; genreIds?: string[]; selectedBy?: string; selectedLabel?: string; sharedPlaybackMode?: string; token?: string }) => {
+    if (!(await canChangeAutoplayFallback(data?.token))) {
+      socket.emit('error:toast', { message: 'Autoplay fallback is vergrendeld (alleen admin)' });
+      return;
+    }
     const requestedList = await normalizeFallbackGenreIds(data.genreIds);
     const requestedSingle = normalizeFallbackGenreId(data.genreId);
     const requested = requestedSingle
@@ -4990,7 +5192,11 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('fallback:shared:mode:set', async (data: { mode: string; selectedBy?: string }) => {
+  socket.on('fallback:shared:mode:set', async (data: { mode: string; selectedBy?: string; token?: string }) => {
+    if (!(await canChangeAutoplayFallback(data?.token))) {
+      socket.emit('error:toast', { message: 'Autoplay fallback is vergrendeld (alleen admin)' });
+      return;
+    }
     const nextMode = normalizeSharedPlaybackMode(data.mode);
     const selectedBy = normalizeNickname(data.selectedBy) ?? null;
     try {
@@ -5062,6 +5268,9 @@ async function main(): Promise<void> {
   setJingleSelection(startupJingleSelectedKeys ?? []);
   const jingleState = getJingleSettings();
   console.log(`[server] Jingle config: enabled=${jingleState.enabled}, every=${jingleState.everyTracks} tracks, selected=${getJingleSelection().length}`);
+
+  const startupHideLocal = await getSetting<boolean>(sb, 'hide_local_discovery');
+  setHideLocalDiscoveryForFallback(!!startupHideLocal);
 
   const initialMode = await getActiveMode(sb);
   console.log(`[mode] Initial mode: ${initialMode}`);

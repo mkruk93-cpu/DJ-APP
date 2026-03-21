@@ -17,7 +17,7 @@ import {
   getUserPlaylistTracksPage,
   getSharedPlaylistTracksPage,
   getSpotifyOembed,
-  importUserPlaylistFile,
+  importUserPlaylistFiles,
   listAllSharedPlaylists,
   listUserPlaylists,
   type SharedPlaylist,
@@ -159,7 +159,8 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
   const [importing, setImporting] = useState(false);
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
-  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importFiles, setImportFiles] = useState<File[]>([]);
+  const [importPlaylistName, setImportPlaylistName] = useState("");
   const [showHelp, setShowHelp] = useState(false);
   const [savedSortMode, setSavedSortMode] = useState<PlaylistSortMode>("name_asc");
   const [sharedSortMode, setSharedSortMode] = useState<PlaylistSortMode>("name_asc");
@@ -513,8 +514,12 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
   }, [resolveSavedTrackThumbnail]);
 
   async function handleImportExportify() {
-    if (!importFile) {
+    if (importFiles.length === 0) {
       setImportError("Kies eerst een .csv of .zip bestand.");
+      return;
+    }
+    if (importFiles.length >= 2 && !importPlaylistName.trim()) {
+      setImportError("Geef een playlistnaam op als je meerdere CSV's tegelijk importeert.");
       return;
     }
     setImporting(true);
@@ -527,12 +532,17 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
         cover_url: importCoverUrl.trim() || null,
         auto_cover: importAutoCover,
       };
-      const result = await importUserPlaylistFile(importFile, meta);
+      const result = await importUserPlaylistFiles(
+        importFiles,
+        meta,
+        importPlaylistName.trim() || null,
+      );
       const sharedInfo = result.shared
         ? ` · gedeeld: ${result.shared.importedPlaylists}`
         : "";
       setImportStatus(`Import klaar: ${result.totalPlaylists} playlist(s), ${result.totalTracks} tracks${sharedInfo}.`);
-      setImportFile(null);
+      setImportFiles([]);
+      setImportPlaylistName("");
       setImportSubgenre("");
       setImportCoverUrl("");
       setImportAutoCover(true);
@@ -1400,7 +1410,10 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
             <summary className="cursor-pointer list-none text-[11px] font-semibold text-gray-200">
               Nieuwe playlist toevoegen
             </summary>
-            <p className="mt-1 text-[10px] text-gray-500">Upload .csv of .zip met playlists uit Exportify.</p>
+            <p className="mt-1 text-[10px] text-gray-500">
+              Upload één of meerdere .csv-bestanden (worden samengevoegd en dedupliceren) of één .zip. Exportify gebruikt
+              soms underscores in bestandsnamen; die worden weer als spaties getoond.
+            </p>
             <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
               <select
                 value={importGenreGroup}
@@ -1438,19 +1451,39 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
               </label>
             </div>
             <input
+              type="text"
+              value={importPlaylistName}
+              onChange={(e) => setImportPlaylistName(e.target.value)}
+              placeholder="Playlistnaam (verplicht bij meerdere CSV's; optioneel bij 1 CSV)"
+              className="mt-2 w-full rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white placeholder-gray-500 outline-none focus:border-violet-500"
+            />
+            <input
               type="file"
+              multiple
               accept=".csv,.zip,text/csv,application/csv,application/vnd.ms-excel,application/zip,application/x-zip-compressed"
               onChange={(e) => {
-                const file = e.target.files?.[0] ?? null;
-                setImportFile(file);
+                const files = Array.from(e.target.files ?? []).filter(
+                  (f) => /\.(csv|zip)$/i.test(f.name),
+                );
+                setImportFiles(files);
                 setImportError(null);
               }}
               className="mt-2 w-full text-[10px] text-gray-400 file:mr-2 file:rounded file:border-0 file:bg-gray-700 file:px-2 file:py-1 file:text-[10px] file:font-medium file:text-white"
             />
+            {importFiles.length > 0 && (
+              <p className="mt-1 text-[10px] text-gray-400">
+                {importFiles.length} bestand(en) geselecteerd
+                {importFiles.length >= 2 ? " — vul een playlistnaam in" : ""}
+              </p>
+            )}
             <button
               type="button"
               onClick={() => { void handleImportExportify(); }}
-              disabled={!importFile || importing}
+              disabled={
+                importFiles.length === 0
+                || importing
+                || (importFiles.length >= 2 && !importPlaylistName.trim())
+              }
               className="mt-2 rounded bg-violet-600 px-2 py-1 text-[10px] font-semibold text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {importing ? "Importeren..." : "Importeer bestand"}

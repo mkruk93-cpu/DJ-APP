@@ -152,6 +152,8 @@ function refreshState(): void {
         listenerCount: state.listenerCount ?? 0,
         streamOnline: state.streamOnline ?? false,
         pausedForIdle: state.pausedForIdle ?? false,
+        lockAutoplayFallback: state.lockAutoplayFallback ?? false,
+        hideLocalDiscovery: state.hideLocalDiscovery ?? false,
       });
     })
     .catch(() => {});
