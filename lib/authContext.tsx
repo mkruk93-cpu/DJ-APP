@@ -20,8 +20,8 @@ interface AuthContextType {
   session: Session | null;
   userAccount: UserAccount | null;
   loading: boolean;
-  signUp: (email: string, password: string, username: string, realName: string) => Promise<{ error: AuthError | null }>;
-  signIn: (identifier: string, password: string) => Promise<{ error: AuthError | null }>;
+  signUp: (email: string, password: string) => Promise<{ error: AuthError | null }>;
+  signIn: (email: string, password: string) => Promise<{ error: AuthError | null }>;
   signOut: () => Promise<void>;
   refreshUserAccount: () => Promise<void>;
 }
@@ -48,143 +48,132 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .eq('id', user.id)
         .single();
 
-      // If there's no data and no error, or the error is specifically 'no rows found',
-      // it means the account doesn't exist yet, so we should create it.
-      const noRowsFound = error && error.code === 'PGRST116';
-      if (!data && (!error || noRowsFound)) {
-        console.warn('No user account found for user:', user.id, '- creating account from metadata.');
-        
-        const username = user.user_metadata.username;
-        const realName = user.user_metadata.real_name;
+      // Check if this is a "no rows found" error (different error formats from Supabase)
+      const noRowsError = !!error && (
+        (error.code && error.code === 'PGRST116') ||
+        (typeof error.message === 'string' && /no rows/i.test(error.message)) ||
+        (Object.keys(error).length === 0) // Empty error object = no rows
+      );
 
-        if (!username) {
-            console.error("Critical: Cannot create user account, username is missing in auth metadata.", user);
-            // Attempt to fall back to a generated username if metadata is missing
-            const fallbackUsername = user.email!.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '_').substring(0, 15);
-            console.warn("Falling back to generated username:", fallbackUsername);
-            user.user_metadata.username = fallbackUsername;
-        }
-
-        try {
-          // Check auto_approve setting
-          const { data: settings } = await supabase
-            .from('settings')
-            .select('auto_approve')
-            .eq('id', 1)
-            .single();
-
-          const autoApprove = settings?.auto_approve ?? false;
-
-          // Create user account
-          const { error: accountError } = await supabase
-            .from('user_accounts')
-            .insert({
-              id: user.id,
-              email: user.email!.toLowerCase(),
-              username: user.user_metadata.username,
-              real_name: user.user_metadata.real_name || null,
-              approved: autoApprove,
-            });
-
-          if (accountError) {
-            console.error('User account creation error during refresh:', accountError);
-            setUserAccount(null);
-            return;
-          }
-
-          // Create approval request if not auto approved
-          if (!autoApprove) {
-            const { error: approvalError } = await supabase
-              .from('user_approvals')
-              .insert({
-                user_id: user.id,
-                email: user.email!.toLowerCase(),
-                username: user.user_metadata.username,
-                real_name: user.user_metadata.real_name || null,
-              });
-
-            if (approvalError) {
-              console.error('Approval creation error during refresh:', approvalError);
-            }
-          }
-
-          // Now fetch the created account
-          const { data: newData, error: fetchError } = await supabase
-            .from('user_accounts')
-            .select('*')
-            .eq('id', user.id)
-            .single();
-
-          if (fetchError || !newData) {
-            console.error('Error fetching newly created account:', fetchError);
-            setUserAccount(null);
-            return;
-          }
-
-          setUserAccount(newData);
-        } catch (err) {
-          console.error('Error creating user account in refresh flow:', err);
-          setUserAccount(null);
-        }
+      if (error && !noRowsError) {
+        console.error('Error fetching user account:', {
+          fullError: error,
+          code: error.code,
+          message: error.message,
+          hint: error.hint,
+          details: error.details,
+        });
+        setUserAccount(null);
         return;
       }
 
-      if (error) {
-        console.error("Error fetching user account:", error);
+      // Handle no rows found - user doesn't have account yet
+      if (noRowsError) {
+        console.warn('No user account found for user:', user.id, '- user may need to complete setup or be approved');
+        setUserAccount(null);
+        return;
       }
-      
-      setUserAccount(data ?? null);
 
+      if (!data) {
+        setUserAccount(null);
+        return;
+      }
+
+      setUserAccount(data);
     } catch (err) {
       console.error('Error in refreshUserAccount:', err);
       setUserAccount(null);
     }
   }
 
-  async function signUp(email: string, password: string, username: string, realName: string) {
+  async function signUp(email: string, password: string) {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: {
-        data: {
-          username: username,
-          real_name: realName,
-        }
-      }
     });
 
-    // The rest of the logic is now handled by onAuthStateChange -> refreshUserAccount
+    // If signup successful, create user account and approval request
+    if (!error && data.user) {
+      // Generate a username from email (remove domain, sanitize)
+      const baseUsername = email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '_').substring(0, 15);
+      let username = baseUsername;
+      let counter = 1;
+      
+      // Ensure unique username
+      let isUnique = false;
+      while (!isUnique && counter < 50) {
+        try {
+          const { data: existing, error: checkError } = await supabase
+            .from('user_accounts')
+            .select('id')
+            .eq('username', username)
+            .single();
+          
+          if (checkError || !existing) {
+            isUnique = true;
+          } else {
+            username = `${baseUsername}_${counter}`;
+            counter++;
+          }
+        } catch {
+          // If query fails, assume username is available
+          isUnique = true;
+        }
+      }
+
+      // Create user account
+      try {
+        const { error: accountError } = await supabase
+          .from('user_accounts')
+          .insert({
+            id: data.user.id,
+            email: email.toLowerCase(),
+            username: username,
+            approved: false,
+          });
+
+        if (accountError) {
+          console.error('User account creation error:', {
+            fullError: accountError,
+            code: accountError?.code,
+            message: accountError?.message,
+            status: accountError?.status,
+            hint: accountError?.hint,
+            details: accountError?.details,
+          });
+        }
+      } catch (err) {
+        console.error('User account creation exception:', err);
+      }
+
+      // Create approval request
+      try {
+        const { error: approvalError } = await supabase
+          .from('user_approvals')
+          .insert({
+            user_id: data.user.id,
+            email: email.toLowerCase(),
+          });
+
+        if (approvalError) {
+          console.error('Approval creation error:', {
+            fullError: approvalError,
+            code: approvalError?.code,
+            message: approvalError?.message,
+            status: approvalError?.status,
+            hint: approvalError?.hint,
+            details: approvalError?.details,
+          });
+        }
+      } catch (err) {
+        console.error('Approval creation exception:', err);
+      }
+    }
+
     return { error };
   }
 
-  async function signIn(identifier: string, password: string) {
-    let email = identifier;
-
-    // If the identifier doesn't look like an email, assume it's a username
-    if (!identifier.includes('@')) {
-      try {
-        const response = await fetch('/api/get-email-by-username', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: identifier }),
-        });
-
-        const result = await response.json();
-
-        if (!response.ok) {
-          // Create an AuthError-like object to be consistent
-          return { error: { name: "AuthApiError", message: result.error || 'User not found.' } as AuthError };
-        }
-        
-        email = result.email;
-
-      } catch (e) {
-        console.error("API call to get email failed", e);
-        return { error: { name: "AuthApiError", message: 'An unexpected error occurred.' } as AuthError };
-      }
-    }
-    
-    // Proceed with the email and password
+  async function signIn(email: string, password: string) {
     const { error } = await supabase.auth.signInWithPassword({
       email,
       password,
