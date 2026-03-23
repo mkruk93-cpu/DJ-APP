@@ -87,9 +87,10 @@ const statusConfig: Record<string, { label: string; color: string }> = {
 };
 
 export default function RequestForm(
-  { onNewRequest, onOwnRequestStatusUpdate }: {
+  { onNewRequest, onOwnRequestStatusUpdate, username }: {
     onNewRequest?: () => void;
     onOwnRequestStatusUpdate?: (update: OwnRequestStatusUpdate) => void;
+    username?: string;
   } = {},
 ) {
   const [input, setInput] = useState("");
@@ -122,7 +123,7 @@ export default function RequestForm(
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const ownRequestStatusRef = useRef<Map<string, string>>(new Map());
   const didInitOwnStatusRef = useRef(false);
-  const nickname = typeof window !== "undefined" ? localStorage.getItem("nickname") ?? "anon" : "anon";
+  const nickname = username || (typeof window !== "undefined" ? localStorage.getItem("nickname") ?? "anon" : "anon");
   const serverUrl = useRadioStore((s) => s.serverUrl) ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
   const hideLocalDiscovery = useRadioStore((s) => s.hideLocalDiscovery);
   const activeGenreLabel = resolveGenreLabel(activeGenre, genres);

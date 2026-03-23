@@ -14,13 +14,13 @@ export default function manifest(): MetadataRoute.Manifest {
     icons: [
       {
         src: "/icons/krukkex-icon.svg",
-        sizes: "any",
+        sizes: "512x512",
         type: "image/svg+xml",
         purpose: "any",
       },
       {
         src: "/icons/krukkex-icon-maskable.svg",
-        sizes: "any",
+        sizes: "512x512",
         type: "image/svg+xml",
         purpose: "maskable",
       },

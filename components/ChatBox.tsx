@@ -66,7 +66,7 @@ function normalizeName(value: string): string {
   return value.trim().toLowerCase();
 }
 
-export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } = {}) {
+export default function ChatBox({ onNewMessage, username }: { onNewMessage?: () => void; username?: string } = {}) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [cooldown, setCooldown] = useState(false);
@@ -88,7 +88,7 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
   const mediaAbortRef = useRef<AbortController | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
   const channelId = useId();
-  const nickname = typeof window !== "undefined" ? localStorage.getItem("nickname") ?? "anon" : "anon";
+  const nickname = username || (typeof window !== "undefined" ? localStorage.getItem("nickname") ?? "anon" : "anon");
   const activeMediaType: MediaType | null = pickerTab === "gif" || pickerTab === "sticker" ? pickerTab : null;
   const isAdmin = !!adminToken;
 
@@ -519,7 +519,7 @@ export default function ChatBox({ onNewMessage }: { onNewMessage?: () => void } 
                   className="mb-2 w-full rounded-lg border border-gray-700 bg-gray-800 px-2.5 py-1.5 text-xs text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
                 />
                 {mediaError && <p className="mb-2 text-[11px] text-red-300">{mediaError}</p>}
-                <div className="chat-scroll grid max-h-64 grid-cols-3 gap-1.5 overflow-y-auto pr-1 sm:gap-2">
+                <div className="chat-scroll grid h-64 grid-cols-3 gap-1.5 overflow-y-auto pr-1 sm:gap-2">
                   {mediaLoading && mediaItems.length === 0 ? (
                     <p className="col-span-3 text-[11px] text-gray-400">Media laden...</p>
                   ) : mediaItems.length === 0 ? (

@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getSocket } from "@/lib/socket";
-import { getRadioToken } from "@/lib/auth";
 import { useRadioStore } from "@/lib/radioStore";
+import { useIsAdmin } from "@/lib/useIsAdmin";
+import { getRadioToken } from "@/lib/auth";
 import {
   buildGroupedGenreSections,
   GENRE_FALLBACK_OPTIONS,
@@ -128,7 +129,8 @@ export default function FallbackGenreSelector() {
   const sharedPlaybackMode = useRadioStore((s) => s.activeFallbackSharedMode);
   const lockAutoplayFallback = useRadioStore((s) => s.lockAutoplayFallback);
   const hideLocalDiscovery = useRadioStore((s) => s.hideLocalDiscovery);
-  const fallbackChangeBlocked = lockAutoplayFallback && !getRadioToken();
+  const isAdmin = useIsAdmin();
+  const fallbackChangeBlocked = lockAutoplayFallback && !isAdmin;
   const menuRef = useRef<HTMLDetailsElement | null>(null);
   const summaryRef = useRef<HTMLElement | null>(null);
   const [isMobile, setIsMobile] = useState(false);
@@ -418,7 +420,11 @@ export default function FallbackGenreSelector() {
     <details
       ref={menuRef}
       className="group relative z-[130]"
-      onToggle={() => {
+      onToggle={(e) => {
+        if (fallbackChangeBlocked) {
+          e.preventDefault();
+          return;
+        }
         if (!menuRef.current?.open || !isMobile || !summaryRef.current) {
           setMobileMenuTop(null);
           return;
@@ -427,11 +433,22 @@ export default function FallbackGenreSelector() {
         setMobileMenuTop(Math.max(8, Math.round(rect.bottom + 8)));
       }}
     >
-      <summary ref={summaryRef} className="grid cursor-pointer list-none grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-gray-700 bg-gray-900/75 px-2.5 py-1.5 text-xs text-gray-200 transition hover:border-violet-500/60">
+      <summary 
+        ref={summaryRef} 
+        onClick={(e) => { if (fallbackChangeBlocked) { e.preventDefault(); } }}
+        className={`grid cursor-pointer list-none grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-gray-700 bg-gray-900/75 px-2.5 py-1.5 text-xs text-gray-200 transition ${fallbackChangeBlocked ? 'cursor-not-allowed opacity-70' : 'hover:border-violet-500/60'}`}
+      >
         <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] font-semibold text-gray-300">
           Genre
         </span>
-        <span className="min-w-0 truncate text-center text-[12px] font-semibold text-violet-300">{activeLabel}</span>
+        <span className="flex min-w-0 items-center justify-center gap-1.5 truncate text-center text-[12px] font-semibold text-violet-300">
+          {lockAutoplayFallback && (
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M10 1a3 3 0 00-3 3v2H5a2 2 0 00-2 2v8a2 2 0 002 2h10a2 2 0 002-2V8a2 2 0 00-2-2h-2V4a3 3 0 00-3-3zM8 9a1 1 0 10-2 0v1a1 1 0 102 0V9zm4 0a1 1 0 10-2 0v1a1 1 0 102 0V9z" clipRule="evenodd" />
+            </svg>
+          )}
+          {activeLabel}
+        </span>
         <span className="justify-self-end text-gray-400 transition group-open:rotate-180">▾</span>
       </summary>
       <div

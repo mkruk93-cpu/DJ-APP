@@ -4,7 +4,8 @@ import { useState, useEffect, useRef, useCallback, useMemo, Component, type Reac
 import { getSocket } from "@/lib/socket";
 import { useRadioStore } from "@/lib/radioStore";
 import { canPerformAction } from "@/lib/types";
-import { isRadioAdmin, getRadioToken } from "@/lib/auth";
+import { useIsAdmin } from "@/lib/useIsAdmin";
+import { getRadioToken } from "@/lib/auth";
 import { isSpotifyConfigured } from "@/lib/spotify";
 import { getGenres, getGenreHits, addPriorityArtistToGenre, blockArtistForGenre, type GenreOption, type GenreHit } from "@/lib/radioApi";
 import { buildGroupedGenreSections, GENRE_FALLBACK_OPTIONS, getGenreGroupMembers, isGroupedParentGenre, resolveGenreLabel } from "@/lib/genreDropdown";
@@ -164,7 +165,7 @@ function normalizeLoose(value: string): string {
     .trim();
 }
 
-export default function QueueAdd() {
+export default function QueueAdd({ username }: { username?: string } = {}) {
   const [hydrated, setHydrated] = useState(false);
   const [input, setInput] = useState("");
   const [feedback, setFeedback] = useState<{ msg: string; ok: boolean } | null>(null);
@@ -249,8 +250,8 @@ export default function QueueAdd() {
   }, [showResults]);
 
   const serverUrl = useRadioStore((s) => s.serverUrl) ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
-  const isAdmin = hydrated && isRadioAdmin();
-  const canAdd = canPerformAction(mode, "add_to_queue", isAdmin);
+  const isAdmin = useIsAdmin();
+  const canAdd = hydrated && canPerformAction(mode, "add_to_queue", isAdmin);
   const isUrl = isSupportedUrl(input.trim());
   const hasSpotifySource = isSpotifyConfigured();
   const activeGenreLabel = resolveGenreLabel(activeGenre, genres);
@@ -288,9 +289,9 @@ export default function QueueAdd() {
   }
 
   function getNickname(): string {
-    return typeof window !== "undefined"
+    return username || (typeof window !== "undefined"
       ? localStorage.getItem("nickname") ?? "anonymous"
-      : "anonymous";
+      : "anonymous");
   }
 
   function normalizeForMatch(value: string | null | undefined): string {
@@ -850,10 +851,7 @@ export default function QueueAdd() {
     setSubmitting(true);
     if (!options?.keepResults) setShowResults(false);
 
-    const nickname =
-      typeof window !== "undefined"
-        ? localStorage.getItem("nickname") ?? "anonymous"
-        : "anonymous";
+    const nickname = getNickname();
 
     const socket = getSocket();
 

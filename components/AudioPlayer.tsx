@@ -199,6 +199,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const [nativeFullscreen, setNativeFullscreen] = useState(false);
   const [manualFullscreen, setManualFullscreen] = useState(false);
+  const [artworkFailed, setArtworkFailed] = useState(false);
   const [showFullscreenChat, setShowFullscreenChat] = useState(false);
   const [chatPreviewMessages, setChatPreviewMessages] = useState<ChatPreviewMessage[]>([]);
   const [castSupported, setCastSupported] = useState(false);
@@ -302,12 +303,12 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     }
   }, []);
 
+  const setPlayerPlaying = useRadioStore((s) => s.setPlayerPlaying);
+
   useEffect(() => {
     playingRef.current = playing;
-    if (typeof window !== "undefined") {
-      (window as Window & { __radioListeningState?: boolean }).__radioListeningState = playing;
-      window.dispatchEvent(new CustomEvent("radio-listening-state", { detail: { listening: playing } }));
-    }
+    setPlayerPlaying(playing);
+
     const socket = getSocket();
     if (socket && socket.connected) {
       socket.emit("listener:state", {
@@ -315,7 +316,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
         listening: playing,
       });
     }
-  }, [playing, connected]);
+  }, [playing, connected, setPlayerPlaying]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -438,7 +439,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
 
   // Autoplay when stream source becomes available
   useEffect(() => {
-    if (!src || userPaused.current || playing) return;
+    if (!src || userPaused.current || playing || (typeof document !== "undefined" && document.hidden)) return;
     const audio = audioRef.current;
     if (!audio) return;
 
@@ -530,7 +531,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
 
     function onVisibilityOrFocus() {
       if (document.visibilityState === "hidden") return;
-      if (!src || userPaused.current || !playingRef.current) return;
+      if (!src || userPaused.current) return;
       const current = audioRef.current;
       if (!current) return;
       if (current.paused) {
@@ -948,6 +949,11 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     const separator = displayArtwork.includes("?") ? "&" : "?";
     return `${displayArtwork}${separator}v=${encodeURIComponent(artworkVersion)}`;
   }, [displayArtwork, artworkVersion]);
+
+  useEffect(() => {
+    setArtworkFailed(false);
+  }, [artworkVersion]);
+
   const hasTrack = displayTitle || displayArtist;
   const currentLikeKey = `${syncedRadioTrack?.id ?? ""}|${displayTitle ?? ""}|${displayArtist ?? ""}`;
   const canLikeTrack = !!(isRadioMode && !isJingleTrack && (displayTitle || displayArtist));
@@ -1371,65 +1377,52 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
 
           <div className={`flex flex-1 items-center justify-center py-0.5 sm:py-2 ${showFullscreenChat ? "pb-44" : ""}`}>
             <div className="grid h-full w-full max-w-6xl grid-cols-1 items-center gap-2 landscape:grid-cols-[minmax(0,1fr)_minmax(220px,1fr)] landscape:gap-3 md:grid-cols-[minmax(0,1fr)_minmax(320px,1fr)] md:gap-6">
-              <div className="relative flex items-center justify-center">
-                {(fullscreenCurrentArtwork || fullscreenIncomingArtwork) ? (
-                  <div className={`player-cover-fullscreen player-cover-idle-drift relative overflow-hidden rounded-3xl ${
-                    showFullscreenChat
-                      ? "h-[54vw] w-[54vw] max-h-[52dvh] max-w-[52dvh] min-h-[170px] min-w-[170px] landscape:max-h-[45dvh] landscape:max-w-[45dvh]"
-                      : "h-[60vw] w-[60vw] max-h-[58dvh] max-w-[58dvh] min-h-[190px] min-w-[190px] landscape:max-h-[52dvh] landscape:max-w-[52dvh]"
-                  } md:h-[56vh] md:w-[56vh] md:max-h-[64vh] md:max-w-[64vh]`}>
-                    <div className="absolute inset-0 rounded-3xl bg-black/20 shadow-2xl shadow-black/60" />
-                    {fullscreenCurrentArtwork && (
-                      <img
-                        key={`fullscreen-current-${fullscreenCurrentArtwork}`}
-                        src={fullscreenCurrentArtwork}
-                        alt=""
-                        className="absolute inset-0 z-10 h-full w-full rounded-3xl object-cover transition-opacity duration-700"
-                        style={{ opacity: fullscreenIncomingArtwork ? (incomingArtworkVisible ? 0 : 1) : 1 }}
-                        data-fallback-src={fullscreenCurrentArtworkFallback ?? ""}
-                        onError={(event) => {
-                          const fallbackSrc = event.currentTarget.dataset.fallbackSrc;
-                          if (!fallbackSrc || event.currentTarget.dataset.fallbackApplied === "1") return;
-                          event.currentTarget.dataset.fallbackApplied = "1";
-                          event.currentTarget.src = fallbackSrc;
-                        }}
-                      />
-                    )}
-                    {fullscreenIncomingArtwork && (
-                      <img
-                        key={`fullscreen-incoming-${fullscreenIncomingArtwork}`}
-                        src={fullscreenIncomingArtwork}
-                        alt=""
-                        className="absolute inset-0 z-20 h-full w-full rounded-3xl object-cover transition-opacity duration-700"
-                        style={{ opacity: incomingArtworkVisible ? 1 : 0 }}
-                        data-fallback-src={fullscreenIncomingArtworkFallback ?? ""}
-                        onError={(event) => {
-                          const fallbackSrc = event.currentTarget.dataset.fallbackSrc;
-                          if (!fallbackSrc || event.currentTarget.dataset.fallbackApplied === "1") return;
-                          event.currentTarget.dataset.fallbackApplied = "1";
-                          event.currentTarget.src = fallbackSrc;
-                        }}
-                      />
-                    )}
-                  </div>
-                ) : (
-                  <div className={`player-fallback-note player-fallback-cover flex items-center justify-center rounded-3xl border border-violet-300/30 ${
-                    showFullscreenChat
-                      ? "h-[54vw] w-[54vw] max-h-[52dvh] max-w-[52dvh] min-h-[170px] min-w-[170px] landscape:max-h-[45dvh] landscape:max-w-[45dvh]"
-                      : "h-[60vw] w-[60vw] max-h-[58dvh] max-w-[58dvh] min-h-[190px] min-w-[190px] landscape:max-h-[52dvh] landscape:max-w-[52dvh]"
-                  } md:h-[56vh] md:w-[56vh] md:max-h-[64vh] md:max-w-[64vh]`}>
-                    {artworkFallback}
-                  </div>
-                )}
-              </div>
-
-              <div className="w-full space-y-2">
-                <div className="rounded-2xl border border-gray-700/70 bg-black/35 p-3 backdrop-blur-md md:p-5">
-                  <p className="text-[10px] uppercase tracking-[0.24em] text-gray-300">Nu live</p>
-                  <h2 className="mt-1.5 line-clamp-2 text-base font-bold leading-tight text-white landscape:text-sm md:text-3xl">
-                    {displayTitle || "Wacht op nummer..."}
-                  </h2>
-                  <p className="mt-1.5 line-clamp-1 text-xs text-violet-200 landscape:text-xs md:text-lg">
+                        <div className="relative flex items-center justify-center">
+                          {(fullscreenCurrentArtwork || fullscreenIncomingArtwork) && !artworkFailed ? (
+                            <div className={`player-cover-fullscreen player-cover-idle-drift relative overflow-hidden rounded-3xl ${
+                              showFullscreenChat
+                                ? "h-[54vw] w-[54vw] max-h-[52dvh] max-w-[52dvh] min-h-[170px] min-w-[170px] landscape:max-h-[45dvh] landscape:max-w-[45dvh]"
+                                : "h-[60vw] w-[60vw] max-h-[58dvh] max-w-[58dvh] min-h-[190px] min-w-[190px] landscape:max-h-[52dvh] landscape:max-w-[52dvh]"
+                            } md:h-[56vh] md:w-[56vh] md:max-h-[64vh] md:max-w-[64vh]`}>
+                              <div className="absolute inset-0 rounded-3xl bg-black/20 shadow-2xl shadow-black/60" />
+                              {fullscreenCurrentArtwork && (
+                                <img
+                                  key={`fullscreen-current-${fullscreenCurrentArtwork}`}
+                                  src={fullscreenCurrentArtwork}
+                                  alt=""
+                                  className="absolute inset-0 z-10 h-full w-full rounded-3xl object-cover transition-opacity duration-700"
+                                  style={{ opacity: fullscreenIncomingArtwork ? (incomingArtworkVisible ? 0 : 1) : 1 }}
+                                  onError={() => setArtworkFailed(true)}
+                                />
+                              )}
+                              {fullscreenIncomingArtwork && (
+                                <img
+                                  key={`fullscreen-incoming-${fullscreenIncomingArtwork}`}
+                                  src={fullscreenIncomingArtwork}
+                                  alt=""
+                                  className="absolute inset-0 z-20 h-full w-full rounded-3xl object-cover transition-opacity duration-700"
+                                  style={{ opacity: incomingArtworkVisible ? 1 : 0 }}
+                                  onError={() => setArtworkFailed(true)}
+                                />
+                              )}
+                            </div>
+                          ) : (
+                            <div className={`player-fallback-note player-fallback-cover flex items-center justify-center rounded-3xl border border-violet-300/30 ${
+                              showFullscreenChat
+                                ? "h-[54vw] w-[54vw] max-h-[52dvh] max-w-[52dvh] min-h-[170px] min-w-[170px] landscape:max-h-[45dvh] landscape:max-w-[45dvh]"
+                                : "h-[60vw] w-[60vw] max-h-[58dvh] max-w-[58dvh] min-h-[190px] min-w-[190px] landscape:max-h-[52dvh] landscape:max-w-[52dvh]"
+                            } md:h-[56vh] md:w-[56vh] md:max-h-[64vh] md:max-w-[64vh]`}>
+                              {artworkFallback}
+                            </div>
+                          )}
+                        </div>
+              
+                        <div className="w-full space-y-2">
+                          <div className="rounded-2xl border border-gray-700/70 bg-black/35 p-3 backdrop-blur-md md:p-5">
+                            <p className="text-[10px] uppercase tracking-[0.24em] text-gray-300">Nu live</p>
+                            <h2 className="mt-1.5 line-clamp-2 text-base font-bold leading-tight text-white landscape:text-sm md:text-3xl">
+                              {displayTitle || "Wacht op nummer..."}
+                            </h2>                  <p className="mt-1.5 line-clamp-1 text-xs text-violet-200 landscape:text-xs md:text-lg">
                     {displayArtist || "Radio stream"}
                   </p>
                   {isRadioMode && (

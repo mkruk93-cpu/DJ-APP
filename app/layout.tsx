@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import PwaRegistrar from "@/components/PwaRegistrar";
 import PwaRefreshButton from "@/components/PwaRefreshButton";
+import { AuthProvider } from "@/lib/authContext";
 
 export const metadata: Metadata = {
   title: "KrukkeX DJ Stream",
@@ -86,9 +87,11 @@ export default function RootLayout({
         }} />
       </head>
       <body className="min-h-dvh bg-gray-950 text-gray-100 antialiased" style={{ overscrollBehavior: 'none' }}>
-        <PwaRegistrar />
-        <PwaRefreshButton />
-        {children}
+        <AuthProvider>
+          <PwaRegistrar />
+          <PwaRefreshButton />
+          {children}
+        </AuthProvider>
       </body>
     </html>
   );

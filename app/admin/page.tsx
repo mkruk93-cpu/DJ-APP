@@ -17,9 +17,10 @@ import DurationVotePanel from "@/components/DurationVote";
 import GenreManager from "@/components/admin/GenreManager";
 import GenreManagerErrorBoundary from "@/components/admin/GenreManagerErrorBoundary";
 import SharedPlaylistManager from "@/components/admin/SharedPlaylistManager";
+import { useAuth } from "@/lib/authContext";
 import type { Track, QueueItem, Mode, ModeSettings as ModeSettingsType, VoteState, DurationVote } from "@/lib/types";
 
-const ADMIN_PASSWORD = process.env.NEXT_PUBLIC_ADMIN_PASSWORD;
+const ADMIN_PASSWORD = process.env.NEXT_PUBLIC_ADMIN_PASSWORD || "admin";
 
 interface AdminJingleItem {
   key: string;
@@ -37,12 +38,17 @@ function formatDuration(seconds: number | null): string {
 }
 
 export default function AdminPage() {
+  const { user, userAccount } = useAuth();
   const [authenticated, setAuthenticated] = useState(false);
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [autoApprove, setAutoApprove] = useState(false);
   const [radioServerUrl, setRadioServerUrl] = useState("");
   const [radioUrlSaved, setRadioUrlSaved] = useState(false);
+
+  // User approvals state
+  const [userApprovals, setUserApprovals] = useState<any[]>([]);
+  const [approvalsLoading, setApprovalsLoading] = useState(false);
 
   // Radio admin auth
   const [radioToken, setRadioTokenState] = useState("");
@@ -69,7 +75,12 @@ export default function AdminPage() {
     }
   }, []);
 
-  // Auto-authenticate radio when admin password matches the admin token
+  // Load user approvals when authenticated
+  useEffect(() => {
+    if (authenticated) {
+      loadUserApprovals();
+    }
+  }, [authenticated]);
   useEffect(() => {
     if (!authenticated || radioAuthed) return;
     const token = ADMIN_PASSWORD ?? "";
@@ -292,6 +303,109 @@ export default function AdminPage() {
     });
   }
 
+  async function loadUserApprovals() {
+    setApprovalsLoading(true);
+    try {
+      const { data, error } = await getSupabase()
+        .from('user_approvals')
+        .select('*')
+        .eq('approved', false)
+        .eq('rejected', false)
+        .order('requested_at', { ascending: false });
+
+      if (error) throw error;
+      setUserApprovals(data || []);
+    } catch (err) {
+      console.error('Error loading user approvals:', err);
+    } finally {
+      setApprovalsLoading(false);
+    }
+  }
+
+  async function approveUser(approvalId: string, userId: string) {
+    try {
+      const supabase = getSupabase();
+      
+      // Update approval
+      const { error: approvalError } = await supabase
+        .from('user_approvals')
+        .update({
+          approved: true,
+          approved_at: new Date().toISOString(),
+          approved_by: userAccount?.username || 'admin'
+        })
+        .eq('id', approvalId);
+
+      if (approvalError) throw approvalError;
+
+      // Update user account (it should already exist from signup)
+      const { error: accountError } = await supabase
+        .from('user_accounts')
+        .update({
+          approved: true,
+          approved_at: new Date().toISOString(),
+          approved_by: userAccount?.username || 'admin'
+        })
+        .eq('id', userId);
+
+      if (accountError) throw accountError;
+
+      // Reload approvals
+      await loadUserApprovals();
+    } catch (err) {
+      console.error('Error approving user:', err);
+      alert('Fout bij goedkeuren gebruiker');
+    }
+  }
+
+  async function rejectUser(approvalId: string, userId: string) {
+    try {
+      const supabase = getSupabase();
+
+      // 1. Verwijder data uit de database
+      const { error: approvalError } = await supabase
+        .from('user_approvals')
+        .delete()
+        .eq('id', approvalId);
+
+      if (approvalError) throw approvalError;
+
+      // 2. Verwijder het profiel
+      const { error: accountError } = await supabase
+        .from('user_accounts')
+        .delete()
+        .eq('id', userId);
+
+      if (accountError) {
+        console.warn('Kon user_account niet verwijderen (mogelijk bestaat deze niet):', accountError);
+        alert('Let op: Het profiel (user_accounts) kon niet volledig worden verwijderd. Mogelijk heeft deze gebruiker al data (chats/requests) gekoppeld. De gebruiker is hierdoor nog niet weg.');
+      }
+
+      // 3. Verwijder de login (Auth User) via de server API
+      // Dit voorkomt dat de gebruiker ingelogd blijft en het profiel automatisch terugkomt.
+      const res = await fetch('/api/admin/delete-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          userId, 
+          secret: ADMIN_PASSWORD 
+        })
+      });
+
+      if (!res.ok) {
+        console.error('Kon auth user niet verwijderen via API');
+        const data = await res.json();
+        alert('Let op: Data is weg, maar login account kon niet verwijderd worden: ' + (data.error || 'Onbekend'));
+      }
+
+      // Reload approvals
+      await loadUserApprovals();
+    } catch (err) {
+      console.error('Error deleting user data:', err);
+      alert('Fout bij verwijderen gegevens');
+    }
+  }
+
   async function handleRadioSkip() {
     try {
       await apiSkipTrack();
@@ -346,6 +460,51 @@ export default function AdminPage() {
       </header>
 
       <main className="mx-auto max-w-4xl space-y-4 p-6">
+        <details open className="overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
+          <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-semibold text-white transition hover:bg-gray-800/60">
+            Gebruiker Goedkeuringen
+            <span className="text-xs text-gray-400">Uitklappen</span>
+          </summary>
+          <div className="border-t border-gray-800 p-4">
+            {approvalsLoading ? (
+              <p className="text-sm text-gray-400">Laden...</p>
+            ) : userApprovals.length === 0 ? (
+              <p className="text-sm text-gray-400">Geen pending goedkeuringen.</p>
+            ) : (
+              <div className="space-y-3">
+                {userApprovals.map((approval) => (
+                  <div key={approval.id} className="flex items-center justify-between rounded-lg border border-gray-700 bg-gray-800 p-3">
+                    <div>
+                      <p className="text-sm font-medium text-white">{approval.email}</p>
+                      <p className="text-xs text-gray-400">
+                        Aangevraagd: {new Date(approval.requested_at).toLocaleString('nl-NL')}
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => approveUser(approval.id, approval.user_id)}
+                        className="rounded bg-green-600 px-3 py-1 text-xs font-medium text-white transition hover:bg-green-500"
+                      >
+                        Goedkeuren
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (confirm('Weet je zeker dat je deze aanvraag wilt verwijderen? Alle gegevens worden gewist.')) {
+                            rejectUser(approval.id, approval.user_id);
+                          }
+                        }}
+                        className="rounded bg-red-600 px-3 py-1 text-xs font-medium text-white transition hover:bg-red-500"
+                      >
+                        Afwijzen
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </details>
+
         <details open className="overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
           <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-semibold text-white transition hover:bg-gray-800/60">
             DJ verzoekjes intake

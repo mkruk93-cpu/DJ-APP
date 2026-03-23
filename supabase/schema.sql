@@ -188,3 +188,76 @@ CREATE INDEX IF NOT EXISTS idx_user_playlists_owner
 
 CREATE INDEX IF NOT EXISTS idx_user_playlist_tracks_position
   ON user_playlist_tracks(playlist_id, position);
+
+-- =====================================================================
+-- USER AUTHENTICATION & APPROVAL SYSTEM
+-- =====================================================================
+
+-- User accounts table (extends Supabase Auth)
+CREATE TABLE user_accounts (
+  id              uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  email           text UNIQUE NOT NULL,
+  username        text UNIQUE NOT NULL,
+  real_name       text,
+  approved        boolean DEFAULT false,
+  approved_at     timestamptz,
+  approved_by     text, -- admin username who approved
+  created_at      timestamptz DEFAULT now(),
+  last_login      timestamptz,
+  CONSTRAINT username_format CHECK (username ~ '^[a-zA-Z0-9_]{3,20}$')
+);
+
+-- Admin approval queue for new registrations
+CREATE TABLE user_approvals (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id         uuid REFERENCES auth.users(id) ON DELETE CASCADE,
+  email           text NOT NULL,
+  username        text,
+  real_name       text,
+  requested_at    timestamptz DEFAULT now(),
+  approved        boolean DEFAULT false,
+  approved_at     timestamptz,
+  approved_by     text,
+  rejected        boolean DEFAULT false,
+  rejected_at     timestamptz,
+  rejected_by     text,
+  rejection_reason text
+);
+
+-- Enable RLS (Row Level Security) on user tables
+ALTER TABLE user_accounts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_approvals ENABLE ROW LEVEL SECURITY;
+
+-- RLS Policies for user_accounts
+CREATE POLICY "Users can view their own account" ON user_accounts
+  FOR SELECT USING (auth.uid() = id OR auth.uid()::text = id::text);
+
+CREATE POLICY "Users can insert their own account" ON user_accounts
+  FOR INSERT WITH CHECK (auth.uid() = id);
+
+CREATE POLICY "Admins can view and update all accounts" ON user_accounts
+  FOR ALL USING (
+    EXISTS (
+      SELECT 1 FROM user_accounts ua
+      WHERE ua.id = auth.uid() AND ua.approved = true
+    )
+  );
+
+-- RLS Policies for user_approvals
+CREATE POLICY "Users can insert their own approval request" ON user_approvals
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can view their own approvals" ON user_approvals
+  FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Admins can manage all approvals" ON user_approvals
+  FOR ALL USING (
+    EXISTS (
+      SELECT 1 FROM user_accounts ua
+      WHERE ua.id = auth.uid() AND ua.approved = true
+    )
+  );
+
+-- Enable Realtime on new tables
+ALTER PUBLICATION supabase_realtime ADD TABLE user_accounts;
+ALTER PUBLICATION supabase_realtime ADD TABLE user_approvals;

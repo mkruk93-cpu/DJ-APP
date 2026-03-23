@@ -3,7 +3,9 @@
 import { useState, useEffect } from "react";
 import { useRadioStore } from "@/lib/radioStore";
 import { getSocket } from "@/lib/socket";
-import { getRadioToken, isRadioAdmin } from "@/lib/auth";
+import { useAuth } from "@/lib/authContext";
+import { getRadioToken } from "@/lib/auth";
+import { useIsAdmin } from "@/lib/useIsAdmin";
 
 const ANYONE_SKIP_AFTER = 300;
 
@@ -16,7 +18,7 @@ export default function SkipButton({ compact = false }: { compact?: boolean }) {
   const skipLocked = useRadioStore((s) => s.skipLocked);
   const [voted, setVoted] = useState(false);
   const [elapsed, setElapsed] = useState(0);
-  const admin = isRadioAdmin();
+  const admin = useIsAdmin();
 
   useEffect(() => {
     if (!currentTrack?.started_at) { setElapsed(0); return; }

@@ -24,6 +24,7 @@ import FallbackGenreSelector from "@/components/FallbackGenreSelector";
 import type { Track, QueueItem, Mode, ModeSettings, VoteState, DurationVote, UpcomingTrack } from "@/lib/types";
 import { parseTrackDisplay } from "@/lib/trackDisplay";
 import { useSyncedTrack } from "@/lib/useSyncedTrack";
+import { useAuth } from "@/lib/authContext";
 
 type StreamMode = "twitch" | "audio" | "radio" | "offline";
 type MobileTab = "chat" | "requests" | "radio" | "queue" | "requested";
@@ -127,6 +128,7 @@ class RadioPanelErrorBoundary extends Component<
 
 export default function StreamPage() {
   const router = useRouter();
+  const { user, userAccount, loading: authLoading, signOut } = useAuth();
   const [mode, setMode] = useState<StreamMode>("offline");
   const [twitchPlayerHidden, setTwitchPlayerHidden] = useState(false);
   const [icecastUrl, setIcecastUrl] = useState<string | null>(null);
@@ -563,10 +565,8 @@ export default function StreamPage() {
     setIsHydrated(true);
     // Give components time to initialize before hiding loading states
     const timer = setTimeout(() => setShowLoadingStates(false), 2000);
-    const nickname = localStorage.getItem("nickname");
-    if (!nickname) router.replace("/");
     return () => clearTimeout(timer);
-  }, [router]);
+  }, []);
 
   // PWA lifecycle event handlers for installed app
   useEffect(() => {
@@ -919,7 +919,7 @@ export default function StreamPage() {
     socket.on("queue:added", (data: { title?: string | null; added_by?: string | null }) => {
       const addedBy = (data.added_by ?? "").trim();
       if (!addedBy) return;
-      const me = (localStorage.getItem("nickname") ?? "").trim().toLowerCase();
+      const me = (userAccount?.username ?? "").trim().toLowerCase();
       const title = (data.title ?? "").trim() || "een nummer";
       if (me && addedBy.toLowerCase() === me) showInfoToast(`Toegevoegd aan wachtrij: ${title}`);
       else showInfoToast(`${addedBy} voegde toe: ${title}`);
@@ -1241,6 +1241,47 @@ export default function StreamPage() {
     });
   }
 
+  useEffect(() => {
+    // Redirect to login if auth is done and there's no user.
+    if (!authLoading && !user) {
+      router.replace("/login");
+    }
+  }, [authLoading, user, router]);
+
+  // Auth check: show loading screen while loading or if user is not yet determined.
+  if (authLoading || !user) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="text-white">Laden...</div>
+      </div>
+    );
+  }
+
+  if (!userAccount?.approved) {
+    return (
+      <div className="flex min-h-screen items-center justify-center p-4">
+        <div className="w-full max-w-md rounded-2xl border border-gray-800 bg-gray-900 p-8 shadow-lg shadow-violet-500/5 text-center">
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-yellow-600/20 text-3xl">
+            ⏳
+          </div>
+          <h1 className="text-2xl font-bold tracking-tight text-white mb-4">
+            Account in Behandeling
+          </h1>
+          <p className="text-gray-400 mb-6">
+            Je account is aangemaakt maar nog niet goedgekeurd door de admin.
+            Je ontvangt een notificatie zodra je toegang krijgt.
+          </p>
+          <button
+            onClick={() => router.push('/login')}
+            className="w-full rounded-lg bg-violet-600 px-4 py-3 font-semibold text-white transition hover:bg-violet-500"
+          >
+            Terug naar Login
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className="fixed inset-0 flex flex-col overflow-hidden"
@@ -1265,7 +1306,7 @@ export default function StreamPage() {
           <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1 sm:gap-3">
             {/* Always show header components, with fallback during loading */}
             <ModeIndicator />
-            <OnlineUsers />
+            <OnlineUsers username={userAccount?.username} />
             <button
               onClick={() => setStatsOpen((prev) => !prev)}
               className={`hidden whitespace-nowrap rounded-lg border px-2 py-1 text-xs transition sm:inline-flex sm:px-3 sm:text-sm ${
@@ -1277,11 +1318,9 @@ export default function StreamPage() {
               Stats
             </button>
             <button
-              onClick={() => {
-                if (typeof window !== 'undefined') {
-                  localStorage.removeItem("nickname");
-                  router.push("/");
-                }
+              onClick={async () => {
+                await signOut();
+                router.push("/login");
               }}
               className="hidden whitespace-nowrap rounded-lg border border-gray-700 px-2 py-1 text-xs text-gray-400 transition hover:border-gray-600 hover:text-white sm:inline-flex sm:px-3 sm:text-sm"
             >
@@ -1330,12 +1369,10 @@ export default function StreamPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
+                    onClick={async () => {
                       setMobileHeaderMenuOpen(false);
-                      if (typeof window !== 'undefined') {
-                        localStorage.removeItem("nickname");
-                        router.push("/");
-                      }
+                      await signOut();
+                      router.push("/login");
                     }}
                     className="mt-1 block w-full rounded px-2 py-1.5 text-left text-xs text-red-200 transition hover:bg-red-900/30"
                   >
@@ -1634,11 +1671,12 @@ export default function StreamPage() {
         {/* Content panels */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 lg:min-w-0 lg:flex-[2] lg:flex-row lg:gap-4">
           <div className={`min-h-0 min-w-0 flex-1 ${activeTab === "chat" ? "" : "hidden"} lg:block`}>
-            <ChatBox onNewMessage={() => { if (activeTabRef.current !== "chat") setChatBadge(true); }} />
+            <ChatBox username={userAccount?.username} onNewMessage={() => { if (activeTabRef.current !== "chat") setChatBadge(true); }} />
           </div>
           {showRequests && (
             <div className={`min-h-0 min-w-0 flex-1 ${activeTab === "requests" ? "" : "hidden"} lg:block`}>
               <RequestForm
+                username={userAccount?.username}
                 onNewRequest={() => { if (activeTabRef.current !== "requests") setRequestBadge(true); }}
                 onOwnRequestStatusUpdate={(update) => {
                   const trackLabel = [update.artist, update.title].filter(Boolean).join(" - ") || "je verzoekje";
@@ -1654,7 +1692,7 @@ export default function StreamPage() {
           {showRadioPanel && (
             <div className={`min-h-0 min-w-0 flex-1 overflow-hidden flex-col gap-2 ${activeTab === "radio" ? "flex" : "hidden"} lg:hidden`}>
               <RadioPanelErrorBoundary>
-                <QueueAdd />
+                <QueueAdd username={userAccount?.username} />
               </RadioPanelErrorBoundary>
             </div>
           )}
@@ -1745,7 +1783,7 @@ export default function StreamPage() {
                   {desktopAccordionTab === "radio" && (
                     <div className="overflow-visible p-2">
                       <RadioPanelErrorBoundary>
-                        <QueueAdd />
+                        <QueueAdd username={userAccount?.username} />
                       </RadioPanelErrorBoundary>
                     </div>
                   )}

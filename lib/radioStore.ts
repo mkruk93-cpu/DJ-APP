@@ -25,6 +25,8 @@ interface RadioStore extends RadioState {
   setServerUrl: (url: string | null) => void;
   skipLocked: boolean;
   setSkipLocked: (locked: boolean) => void;
+  playerPlaying: boolean;
+  setPlayerPlaying: (playing: boolean) => void;
   resetAll: () => void;
   initFromServer: (state: Partial<RadioState>) => void;
 }
@@ -72,6 +74,7 @@ export const useRadioStore = create<RadioStore>((set) => ({
   skipLocked: false,
   lockAutoplayFallback: false,
   hideLocalDiscovery: false,
+  playerPlaying: false,
 
   setConnected: (connected) => set({ connected }),
   setCurrentTrack: (currentTrack) => set({ currentTrack }),
@@ -95,6 +98,7 @@ export const useRadioStore = create<RadioStore>((set) => ({
   setHideLocalDiscovery: (hideLocalDiscovery) => set({ hideLocalDiscovery }),
   setServerUrl: (serverUrl) => set({ serverUrl }),
   setSkipLocked: (skipLocked) => set({ skipLocked }),
+  setPlayerPlaying: (playerPlaying) => set({ playerPlaying }),
   resetAll: () => set({
     connected: false,
     currentTrack: null,
@@ -115,6 +119,7 @@ export const useRadioStore = create<RadioStore>((set) => ({
     skipLocked: false,
     lockAutoplayFallback: false,
     hideLocalDiscovery: false,
+    playerPlaying: false,
   }),
   initFromServer: (state) => set(state),
 }));
