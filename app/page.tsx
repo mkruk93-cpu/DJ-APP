@@ -13,11 +13,10 @@ export default function HomePage() {
 
     if (user && userAccount?.approved) {
       router.replace("/stream");
-    } else if (user && !userAccount?.approved) {
-      // User logged in but not approved - they should see pending message on login page
-      router.replace("/login");
     } else {
-      router.replace("/login");
+      // Hard redirect naar login voor alle andere gevallen (uitgelogd, niet approved, etc.)
+      // Dit voorkomt dat oude cached versies van deze pagina zichtbaar blijven.
+      window.location.replace("/login");
     }
   }, [user, userAccount, loading, router]);
 

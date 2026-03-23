@@ -9,7 +9,15 @@ export default function PwaRegistrar() {
 
     const register = async () => {
       try {
-        await navigator.serviceWorker.register("/sw.js");
+        const registration = await navigator.serviceWorker.register("/sw.js");
+        
+        // Forceer update check bij laden
+        registration.update();
+
+        // Als er een nieuwe SW wacht, forceer activatie (skipWaiting wordt in sw.js vaak afgehandeld, maar hier kunnen we herladen triggeren)
+        if (registration.waiting) {
+          registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+        }
       } catch {
         // Ignore registration failures silently in the UI.
       }
