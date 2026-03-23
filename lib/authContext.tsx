@@ -137,7 +137,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             fullError: accountError,
             code: accountError?.code,
             message: accountError?.message,
-            status: accountError?.status,
             hint: accountError?.hint,
             details: accountError?.details,
           });
@@ -160,7 +159,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             fullError: approvalError,
             code: approvalError?.code,
             message: approvalError?.message,
-            status: approvalError?.status,
             hint: approvalError?.hint,
             details: approvalError?.details,
           });

@@ -32,7 +32,6 @@ export async function GET() {
       accountError: accountError ? {
         code: accountError.code,
         message: accountError.message,
-        status: accountError.status,
       } : null,
       suggestion: !account 
         ? `INSERT INTO user_accounts (id, email, username, approved, approved_at, approved_by, created_at, last_login) VALUES ('${user.id}', '${user.email}', '${user.email?.split('@')[0] || 'user'}', true, now(), 'system', now());`
