@@ -1320,7 +1320,7 @@ export default function StreamPage() {
             <button
               onClick={async () => {
                 await signOut();
-                router.push("/login");
+                window.location.href = "/login";
               }}
               className="hidden whitespace-nowrap rounded-lg border border-gray-700 px-2 py-1 text-xs text-gray-400 transition hover:border-gray-600 hover:text-white sm:inline-flex sm:px-3 sm:text-sm"
             >
@@ -1372,7 +1372,7 @@ export default function StreamPage() {
                     onClick={async () => {
                       setMobileHeaderMenuOpen(false);
                       await signOut();
-                      router.push("/login");
+                      window.location.href = "/login";
                     }}
                     className="mt-1 block w-full rounded px-2 py-1.5 text-left text-xs text-red-200 transition hover:bg-red-900/30"
                   >

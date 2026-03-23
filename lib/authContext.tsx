@@ -186,6 +186,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function signOut() {
     await supabase.auth.signOut();
+    setUser(null);
+    setSession(null);
+    setUserAccount(null);
+    // Verwijder legacy nickname om te voorkomen dat componenten terugvallen op 'anon' modus
+    if (typeof window !== 'undefined') localStorage.removeItem('nickname');
   }
 
   useEffect(() => {
