@@ -20,7 +20,7 @@ interface AuthContextType {
   session: Session | null;
   userAccount: UserAccount | null;
   loading: boolean;
-  signUp: (email: string, password: string) => Promise<{ error: AuthError | null }>;
+  signUp: (email: string, password: string, username?: string, realName?: string) => Promise<{ error: AuthError | null }>;
   signIn: (email: string, password: string) => Promise<{ error: AuthError | null }>;
   signOut: () => Promise<void>;
   refreshUserAccount: () => Promise<void>;
@@ -86,16 +86,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function signUp(email: string, password: string) {
+  async function signUp(email: string, password: string, providedUsername?: string, realName?: string) {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
+      options: {
+        data: {
+          full_name: realName,
+        },
+      },
     });
 
     // If signup successful, create user account and approval request
     if (!error && data.user) {
       // Generate a username from email (remove domain, sanitize)
-      const baseUsername = email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '_').substring(0, 15);
+      const baseUsername = providedUsername || email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '_').substring(0, 15);
       let username = baseUsername;
       let counter = 1;
       
