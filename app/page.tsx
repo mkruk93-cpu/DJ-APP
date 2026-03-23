@@ -16,7 +16,9 @@ export default function HomePage() {
     } else {
       // Hard redirect naar login voor alle andere gevallen (uitgelogd, niet approved, etc.)
       // Dit voorkomt dat oude cached versies van deze pagina zichtbaar blijven.
-      window.location.replace("/login");
+      setTimeout(() => {
+        window.location.href = "/login";
+      }, 100);
     }
   }, [user, userAccount, loading, router]);
 
