@@ -184,6 +184,21 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
   const [savedTracksHasMore, setSavedTracksHasMore] = useState(false);
   const [selectedSavedPlaylist, setSelectedSavedPlaylist] = useState<UserPlaylist | null>(null);
   const [savedTrackThumbs, setSavedTrackThumbs] = useState<Record<string, string>>({});
+  // Shared playlists and tracks state
+  const [sharedSortMode, setSharedSortMode] = useState<PlaylistSortMode>("name_asc");
+  const [sharedPlaylistViewMode, setSharedPlaylistViewMode] = useState<PlaylistViewMode>("grouped");
+  const [collapsedSharedGenres, setCollapsedSharedGenres] = useState<string[]>([]);
+  const [collapsedSharedSubgenres, setCollapsedSharedSubgenres] = useState<string[]>([]);
+  const [sharedPlaylists, setSharedPlaylists] = useState<SharedPlaylist[]>([]);
+  const [sharedPlaylistsLoading, setSharedPlaylistsLoading] = useState(false);
+  const [sharedUsage, setSharedUsage] = useState<any>(null); // Adjust type as needed
+  const [sharedTracks, setSharedTracks] = useState<UserPlaylistTrack[]>([]);
+  const [sharedTracksOffset, setSharedTracksOffset] = useState(0);
+  const [sharedTracksHasMore, setSharedTracksHasMore] = useState(false);
+  const [selectedSharedPlaylist, setSelectedSharedPlaylist] = useState<SharedPlaylist | null>(null);
+  const [sharedTracksError, setSharedTracksError] = useState<string | null>(null);
+  const [sharedTracksLoading, setSharedTracksLoading] = useState(false);
+  const [sharedTracksLoadingMore, setSharedTracksLoadingMore] = useState(false);
   const listRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
   // Nickname check
