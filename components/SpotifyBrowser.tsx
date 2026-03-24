@@ -1300,16 +1300,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
               </div>
             ))}
           </div>
-          )}
-
-          {showSpotifySection && !configured && (
-            <p className="mb-2 text-[10px] text-gray-500">
-              Spotify is niet geconfigureerd. Exportify import werkt wel.
-            </p>
-          )}
-          {showSpotifySection && configured && !connected && (
-            <div className="mb-2 rounded-md border border-green-700/40 bg-green-950/20 p-2">
-              <p className="text-[10px] text-gray-300">Spotify koppelen is optioneel voor browse/liked songs.</p>
+          )   <p className="text-[10px] text-gray-300">Spotify koppelen is optioneel voor browse/liked songs.</p>
               <button
                 type="button"
                 onClick={() => { void loginWithSpotify(); }}
@@ -1383,51 +1374,22 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
           )}
           <button
             className="mt-2 rounded bg-violet-600 px-2 py-1 text-[10px] font-semibold text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
-            onClick={handleImport}
-            disabled={importing}
-          >
-            {importing ? "Importeren..." : "Importeer bestand"}
-          </button>
-          {importStatus && <p className="mt-1 text-[10px] text-green-300">{importStatus}</p>}
-          {importError && <p className="mt-1 text-[10px] text-red-300">{importError}</p>}
-        </details>
-          )}
-          <div ref={loadMoreRef} className="h-10 w-full sm:h-2" />
+            onClick={handleImportExportify}
+          >en..." : "Importeer bestand"}
+          </button>sName="mt-1 text-[10px] text-green-300">{importStatus}</p>}
+          {importError && <p className="mt-1 text-[10px] text-red-300">{importError}</p>}lassName="h-10 w-full sm:h-2" />
         </div>
-      )}
-
-      {/* Track error */}
-      {trackError && view === "tracks" && !loading && (
-        <div className="shrink-0 rounded-md border border-yellow-500/30 bg-yellow-500/10 p-2">
-          <p className="text-[11px] text-yellow-400">{trackError}</p>
+      {trackError && view === "tracks" && !loading && (sp className="text-[11px] text-yellow-400">{trackError}</p>
+            type="button"c   if (trackSource === "liked") void loadLikedSongs(false);"playlist" && selectedPlaylist) void openPlaylist(selectedPlaylist);
+            }}N
+          </button>
+      {savedTracksError && view === "importedTracks" && !savedTracksLoading && (sp className="text-[11px] text-yellow-400">{savedTracksError}</p>
           <button
-            type="button"
-            onClick={() => {
-              if (trackSource === "liked") void loadLikedSongs(false);
-              if (trackSource === "playlist" && selectedPlaylist) void openPlaylist(selectedPlaylist);
+            type="button"c   if (selectedSavedPlaylist) void openSavedPlaylist(selectedSavedPlaylist);
             }}
-            className="mt-1 text-[11px] text-violet-400 transition hover:text-violet-300"
-          >
-            Opnieuw proberen
+            className="mt-1 text-[11px] text-violet-400 transition hover:text-violet-30 Opnieuw proberen
           </button>
         </div>
-      )}
-
-      {savedTracksError && view === "importedTracks" && !savedTracksLoading && (
-        <div className="shrink-0 rounded-md border border-yellow-500/30 bg-yellow-500/10 p-2">
-          <p className="text-[11px] text-yellow-400">{savedTracksError}</p>
-          <button
-            type="button"
-            onClick={() => {
-              if (selectedSavedPlaylist) void openSavedPlaylist(selectedSavedPlaylist);
-            }}
-            className="mt-1 text-[11px] text-violet-400 transition hover:text-violet-300"
-          >
-            Opnieuw proberen
-          </button>
-        </div>
-      )}
-
       {sharedTracksError && view === "sharedTracks" && !sharedTracksLoading && (
         <div className="shrink-0 rounded-md border border-yellow-500/30 bg-yellow-500/10 p-2">
           <p className="text-[11px] text-yellow-400">{sharedTracksError}</p>
