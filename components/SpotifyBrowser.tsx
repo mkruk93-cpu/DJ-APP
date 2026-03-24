@@ -1011,72 +1011,9 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
       {view === "playlists" && !loading && (
         <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto pb-14 sm:pb-2">
           {showPlaylistSections && (
-          <div className="mb-2 rounded-md border border-gray-700/70 bg-gray-900/50 p-2">
-            {/* Toevoegen van nieuwe persoonlijke playlist (Exportify import) */}
-            <div className="mb-2 rounded-md border border-violet-700/70 bg-violet-950/20 p-2">
-              <p className="mb-1 text-[11px] font-semibold text-violet-200">Nieuwe persoonlijke playlist importeren</p>
-              <input
-                type="file"
-                multiple
-                accept=".csv,.zip"
-                onChange={e => setImportFiles(e.target.files ? Array.from(e.target.files) : [])}
-                className="mb-1 w-full rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[10px] text-white"
-              />
-              <input
-                type="text"
-                value={importPlaylistName}
-                onChange={e => setImportPlaylistName(e.target.value)}
-                placeholder="Playlistnaam"
-                className="mb-1 w-full rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[10px] text-white"
-              />
-              <div className="mb-1 grid gap-1 sm:grid-cols-2">
-                <select
-                  value={importGenreGroup}
-                  onChange={e => setImportGenreGroup(e.target.value)}
-                  className="rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[10px] text-white"
-                >
-                  <option value="">Overkoepelend genre</option>
-                  {PLAYLIST_GENRE_GROUPS.map((group) => (
-                    <option key={group} value={group}>{group}</option>
-                  ))}
-                </select>
-                <input
-                  type="text"
-                  value={importSubgenre}
-                  onChange={e => setImportSubgenre(e.target.value)}
-                  placeholder="Subgenre"
-                  className="rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[10px] text-white placeholder-gray-500"
-                />
-              </div>
-              <input
-                type="text"
-                value={importCoverUrl}
-                onChange={e => setImportCoverUrl(e.target.value)}
-                placeholder="Cover URL (https...)"
-                className="mb-1 w-full rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[10px] text-white placeholder-gray-500"
-              />
-              <div className="mb-1 flex items-center gap-2">
-                <label className="flex items-center gap-1 text-[10px] text-gray-300">
-                  <input
-                    type="checkbox"
-                    checked={importAutoCover}
-                    onChange={e => setImportAutoCover(e.target.checked)}
-                  />
-                  Auto-cover
-                </label>
-              </div>
-              <button
-                className="mt-1 rounded bg-violet-600 px-2 py-1 text-[10px] font-semibold text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
-                onClick={handleImportExportify}
-                disabled={importing || !importFiles.length || !importPlaylistName.trim() || !username}
-              >
-                {importing ? "Importeren..." : "Importeer bestand"}
-              </button>
-              {importStatus && <p className="mt-1 text-[10px] text-green-300">{importStatus}</p>}
-              {importError && <p className="mt-1 text-[10px] text-red-300">{importError}</p>}
-            </div>
+          <div className="mb-2 rounded-md border border-violet-700/70 bg-violet-950/20 p-2">
             <div className="mb-1 flex items-center justify-between">
-              <p className="text-[11px] font-semibold text-gray-200">Persoonlijke playlists</p>
+              <p className="text-[11px] font-semibold text-violet-100">Persoonlijke playlists</p>
               <button
                 type="button"
                 onClick={() => { void loadSavedPlaylists(); }}
@@ -1102,7 +1039,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                 onClick={() => setSavedPlaylistViewMode("grouped")}
                 className={`rounded px-2 py-1 text-[10px] font-semibold transition ${
                   savedPlaylistViewMode === "grouped"
-                    ? "bg-violet-600/30 text-violet-100"
+                    ? "bg-violet-700/35 text-violet-100"
                     : "text-gray-300 hover:bg-gray-800"
                 }`}
               >
@@ -1113,7 +1050,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                 onClick={() => setSavedPlaylistViewMode("all")}
                 className={`rounded px-2 py-1 text-[10px] font-semibold transition ${
                   savedPlaylistViewMode === "all"
-                    ? "bg-violet-600/30 text-violet-100"
+                    ? "bg-violet-700/35 text-violet-100"
                     : "text-gray-300 hover:bg-gray-800"
                 }`}
               >
@@ -1121,7 +1058,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
               </button>
             </div>
             {groupedSavedPlaylists.length === 0 && !savedPlaylistsLoading && (
-              <p className="text-[10px] text-gray-500">Nog geen geïmporteerde playlists.</p>
+              <p className="text-[10px] text-gray-400">Nog geen persoonlijke playlists.</p>
             )}
             {savedPlaylistViewMode === "grouped" ? groupedSavedPlaylists.map((genreGroup) => (
               <details
@@ -1136,9 +1073,9 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                       : Array.from(new Set([...prev, genreGroup.genreLabel]))
                   ));
                 }}
-                className="mt-1 rounded border border-gray-800 bg-gray-900/40 p-1"
+                className="mt-1 rounded border border-violet-900/40 bg-violet-950/10 p-1"
               >
-                <summary className="cursor-pointer list-none text-[11px] font-semibold text-gray-200">
+                <summary className="cursor-pointer list-none text-[11px] font-semibold text-violet-100">
                   {genreGroup.genreLabel} ({genreGroup.subgroups.reduce((acc, subgroup) => acc + subgroup.items.length, 0)})
                 </summary>
                 <div className="mt-1 space-y-1">
@@ -1156,7 +1093,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                             : Array.from(new Set([...prev, key]))
                         ));
                       }}
-                      className="rounded border border-gray-800/80 bg-gray-900/50 p-1"
+                      className="rounded border border-gray-800/80 bg-gray-900/40 p-1"
                     >
                       <summary className="cursor-pointer list-none text-[10px] font-semibold text-gray-300">
                         {subgroup.subgenreLabel} ({subgroup.items.length})
@@ -1173,9 +1110,9 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                                   className="mr-2 h-8 w-8 shrink-0 rounded object-cover"
                                 />
                               ) : (
-                                <div className="mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded bg-gray-800">
-                                  <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V4.5A2.25 2.25 0 0016.5 2.25h-1.875a2.25 2.25 0 00-2.25 2.25v13.5m0 0a2.25 2.25 0 01-2.25 2.25H8.25a2.25 2.25 0 01-2.25-2.25V6.75" />
+                                <div className="mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded bg-violet-500/15">
+                                  <svg className="h-4 w-4 text-violet-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                                    <path d="M8 6h12M8 12h12M8 18h12M3 6h.01M3 12h.01M3 18h.01" />
                                   </svg>
                                 </div>
                               )}
@@ -1192,7 +1129,8 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                               <button
                                 type="button"
                                 onClick={() => { void removeSavedPlaylist(playlistWithCount); }}
-                                className="ml-2 text-[10px] text-red-300 transition hover:text-red-200"
+                                className="ml-2 shrink-0 rounded border border-gray-600 bg-gray-800 px-1.5 py-0.5 text-[10px] font-semibold text-gray-200 transition hover:border-red-500 hover:text-red-200"
+                                title="Verwijder playlist"
                               >
                                 Verwijder
                               </button>
@@ -1213,9 +1151,9 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                     className="mr-2 h-8 w-8 shrink-0 rounded object-cover"
                   />
                 ) : (
-                  <div className="mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded bg-gray-800">
-                    <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V4.5A2.25 2.25 0 0016.5 2.25h-1.875a2.25 2.25 0 00-2.25 2.25v13.5m0 0a2.25 2.25 0 01-2.25 2.25H8.25a2.25 2.25 0 01-2.25-2.25V6.75" />
+                  <div className="mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded bg-violet-500/15">
+                    <svg className="h-4 w-4 text-violet-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <path d="M8 6h12M8 12h12M8 18h12M3 6h.01M3 12h.01M3 18h.01" />
                     </svg>
                   </div>
                 )}
@@ -1226,10 +1164,14 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                 >
                   {playlist.name}
                 </button>
+                <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-300">
+                  {(playlist as UserPlaylistWithCount).track_count}
+                </span>
                 <button
                   type="button"
                   onClick={() => { void removeSavedPlaylist(playlist); }}
-                  className="ml-2 text-[10px] text-red-300 transition hover:text-red-200"
+                  className="ml-2 shrink-0 rounded border border-gray-600 bg-gray-800 px-1.5 py-0.5 text-[10px] font-semibold text-gray-200 transition hover:border-red-500 hover:text-red-200"
+                  title="Verwijder playlist"
                 >
                   Verwijder
                 </button>
@@ -1394,24 +1336,6 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
           </div>
           )*/}
 
-          {showSpotifySection && !configured && (
-            <p className="mb-2 text-[10px] text-gray-500">
-              Spotify is niet geconfigureerd. Exportify import werkt wel.
-            </p>
-          )}
-          {showSpotifySection && configured && !connected && (
-            <div className="mb-2 rounded-md border border-green-700/40 bg-green-950/20 p-2">
-              <p className="text-[10px] text-gray-300">Spotify koppelen is optioneel voor browse/liked songs.</p>
-              <button
-                type="button"
-                onClick={() => { void loginWithSpotify(); }}
-                className="mt-2 rounded bg-[#1DB954] px-2 py-1 text-[10px] font-semibold text-black transition hover:bg-[#1ed760]"
-              >
-                Koppel Spotify
-              </button>
-            </div>
-          )}
-
           {showSpotifySection && spotifyEnabled && (
             <>
               <button
@@ -1473,15 +1397,6 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
               )}
             </>
           )}
-          <button
-            className="mt-2 rounded bg-violet-600 px-2 py-1 text-[10px] font-semibold text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
-            onClick={handleImportExportify}
-            disabled={importing}
-          >
-            {importing ? "Importeren..." : "Importeer bestand"}
-          </button>
-          {importStatus && <p className="mt-1 text-[10px] text-green-300">{importStatus}</p>}
-          {importError && <p className="mt-1 text-[10px] text-red-300">{importError}</p>}
           <div ref={loadMoreRef} className="h-10 w-full sm:h-2" />
         </div>
       )}
