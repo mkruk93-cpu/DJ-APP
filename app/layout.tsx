@@ -3,6 +3,7 @@ import "./globals.css";
 import PwaRegistrar from "@/components/PwaRegistrar";
 import PwaRefreshButton from "@/components/PwaRefreshButton";
 import { AuthProvider } from "@/lib/authContext";
+import CacheClear from "@/components/CacheClear";
 
 export const metadata: Metadata = {
   title: "KrukkeX DJ Stream",
@@ -88,6 +89,7 @@ export default function RootLayout({
       </head>
       <body className="min-h-dvh bg-gray-950 text-gray-100 antialiased" style={{ overscrollBehavior: 'none' }}>
         <AuthProvider>
+          <CacheClear version="2024-03-24-v1" />
           <PwaRegistrar />
           <PwaRefreshButton />
           {children}

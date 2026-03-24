@@ -31,17 +31,29 @@ export function getNickname(): string {
 export function getUserIdentity(requireNickname = true): UserIdentity {
   const nickname = getNickname();
   if (requireNickname && !nickname) {
-    // Fallback: gebruik auth username of anonymous als geen nickname in localStorage
+    // Fallback: gebruik auth username uit localStorage of 'anonymous'
     if (typeof window !== 'undefined') {
-      const authUsername = window.location.search.includes('auth=true') ? null : null;
-      if (authUsername) {
-        return {
-          nickname: authUsername,
-          deviceId: getDeviceId(),
-        };
+      const authUser = localStorage.getItem('supabase.auth.token');
+      if (authUser) {
+        try {
+          const parsed = JSON.parse(authUser);
+          const username = parsed?.user?.user_metadata?.username || parsed?.user?.email?.split('@')[0];
+          if (username) {
+            return {
+              nickname: username,
+              deviceId: getDeviceId(),
+            };
+          }
+        } catch {
+          // Ignore parse errors
+        }
       }
     }
-    throw new Error('Nickname ontbreekt');
+    // Laatste fallback: gebruik anonymous
+    return {
+      nickname: 'anonymous',
+      deviceId: getDeviceId(),
+    };
   }
   return {
     nickname: nickname || 'anonymous',
