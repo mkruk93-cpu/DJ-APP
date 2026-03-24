@@ -4,7 +4,7 @@ import { useEffect } from "react";
 
 // Verhoog dit nummer wanneer je gebruikers wilt dwingen tot een schone start.
 // Dit wist caches, service workers en localStorage bij de eerstvolgende laadactie.
-const APP_VERSION = "2.3-auth-fix";
+const APP_VERSION = "2.4-force-refresh-march-2025";
 
 export default function PwaRegistrar() {
   useEffect(() => {
@@ -37,8 +37,12 @@ export default function PwaRegistrar() {
         localStorage.clear();
         localStorage.setItem("dj_app_version", APP_VERSION);
 
-        // Hard reload
-        window.location.reload();
+        // Force immediate reload for users with old cached versions
+        localStorage.setItem("dj_app_version", APP_VERSION);
+        localStorage.setItem("dj_app_updated_at", Date.now().toString());
+        
+        // Hard reload with cache bypass
+        window.location.href = window.location.href + (window.location.href.includes('?') ? '&' : '?') + '_nocache=' + Date.now();
         return true;
       }
       return false;

@@ -22,15 +22,36 @@ export default function AdminNotificationToast({ onApprovalComplete }: AdminNoti
   const [pendingApproval, setPendingApproval] = useState<UserApproval | null>(null);
   const [isVisible, setIsVisible] = useState(false);
 
-  // Check if current user is KrukkeX admin
-  const isAdmin = userAccount?.username === "KrukkeX" || user?.email?.includes("krukke");
+  // Check if current user is KrukkeX admin - more robust detection with fallback
+  const adminEmail = process.env.NEXT_PUBLIC_ADMIN_EMAIL || '';
+  const isAdmin = userAccount?.username === "KrukkeX" || 
+                  user?.email?.toLowerCase().includes("krukke") ||
+                  user?.email?.toLowerCase() === adminEmail.toLowerCase() ||
+                  userAccount?.username?.toLowerCase().includes("admin") ||
+                  false;
 
   useEffect(() => {
-    if (!isAdmin) return;
+    console.log('[AdminToast] Checking admin status:', { 
+      username: userAccount?.username, 
+      email: user?.email, 
+      isAdmin,
+      adminEmail
+    });
+  }, [user, userAccount, isAdmin, adminEmail]);
 
-    // Listen for new user approvals in real-time
-    const subscription = getSupabase()
-      .channel('user-approvals')
+  useEffect(() => {
+    console.log('[AdminToast] Setting up, isAdmin:', isAdmin);
+    if (!isAdmin) {
+      console.log('[AdminToast] Not admin, skipping');
+      return;
+    }
+
+    let intervalId: NodeJS.Timeout;
+    let isRealtimeWorking = false;
+
+    // Try realtime first
+    const channel = getSupabase()
+      .channel('admin-user-approvals')
       .on(
         'postgres_changes',
         {
@@ -40,34 +61,84 @@ export default function AdminNotificationToast({ onApprovalComplete }: AdminNoti
           filter: 'approved=eq.false'
         },
         async (payload) => {
-          console.log('[Admin] New user approval detected:', payload);
-          
-          // Get full user details
-          const { data: userData } = await getSupabase()
-            .from('user_accounts')
-            .select('username, real_name')
-            .eq('id', payload.new.user_id)
-            .single();
-
-          const approval: UserApproval = {
-            id: payload.new.id,
-            user_id: payload.new.user_id,
-            email: payload.new.email,
-            username: userData?.username || null,
-            real_name: userData?.real_name || null,
-            requested_at: payload.new.requested_at
-          };
-
-          setPendingApproval(approval);
-          setIsVisible(true);
+          console.log('[AdminToast] Realtime: New approval detected');
+          isRealtimeWorking = true;
+          await processApproval(payload.new);
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log('[AdminToast] Realtime status:', status);
+        if (status === 'SUBSCRIBED') {
+          isRealtimeWorking = true;
+        }
+      });
+
+    // Fallback polling every 10 seconds (in case realtime doesn't work)
+    const pollForApprovals = async () => {
+      if (isRealtimeWorking) return; // Skip polling if realtime is working
+      
+      try {
+        const { data, error } = await getSupabase()
+          .from('user_approvals')
+          .select('*')
+          .eq('approved', false)
+          .order('requested_at', { ascending: false })
+          .limit(1);
+
+        if (error) {
+          console.error('[AdminToast] Polling error:', error);
+          return;
+        }
+
+        if (data && data.length > 0 && !pendingApproval) {
+          console.log('[AdminToast] Polling: Found new approval');
+          await processApproval(data[0]);
+        }
+      } catch (err) {
+        console.error('[AdminToast] Polling failed:', err);
+      }
+    };
+
+    // Start polling
+    intervalId = setInterval(pollForApprovals, 10000);
+    // Initial poll
+    pollForApprovals();
 
     return () => {
-      subscription.unsubscribe();
+      clearInterval(intervalId);
+      getSupabase().removeChannel(channel);
     };
-  }, [isAdmin]);
+  }, [isAdmin, pendingApproval]);
+
+  const processApproval = async (approvalData: any) => {
+    try {
+      const { data: userData, error } = await getSupabase()
+        .from('user_accounts')
+        .select('username, real_name')
+        .eq('id', approvalData.user_id)
+        .single();
+
+      if (error) {
+        console.error('[AdminToast] Error fetching user details:', error);
+        return;
+      }
+
+      const approval: UserApproval = {
+        id: approvalData.id,
+        user_id: approvalData.user_id,
+        email: approvalData.email,
+        username: userData?.username || null,
+        real_name: userData?.real_name || null,
+        requested_at: approvalData.requested_at
+      };
+
+      console.log('[AdminToast] Showing approval:', approval);
+      setPendingApproval(approval);
+      setIsVisible(true);
+    } catch (err) {
+      console.error('[AdminToast] Error processing approval:', err);
+    }
+  };
 
   const handleApprove = async () => {
     if (!pendingApproval) return;
@@ -147,6 +218,14 @@ export default function AdminNotificationToast({ onApprovalComplete }: AdminNoti
   };
 
   if (!isAdmin || !isVisible || !pendingApproval) {
+    // Debug indicator - alleen zichtbaar voor admin testing
+    if (isAdmin) {
+      return (
+        <div className="fixed bottom-4 left-4 z-40 rounded bg-gray-800 px-2 py-1 text-xs text-gray-400">
+          Admin Mode Active - Waiting for registrations...
+        </div>
+      );
+    }
     return null;
   }
 

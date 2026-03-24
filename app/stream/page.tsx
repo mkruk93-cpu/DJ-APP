@@ -763,6 +763,11 @@ export default function StreamPage() {
       window.history.scrollRestoration = "manual";
     }
     const forceTop = () => {
+      // Skip if user is interacting with file inputs
+      const activeElement = document.activeElement;
+      if (activeElement?.tagName === 'INPUT' && (activeElement as HTMLInputElement).type === 'file') {
+        return;
+      }
       window.scrollTo({ top: 0, left: 0, behavior: "auto" });
       document.documentElement.scrollTop = 0;
       document.body.scrollTop = 0;
@@ -778,13 +783,28 @@ export default function StreamPage() {
     };
     const timers = [0, 60, 180, 420, 900, 1500, 2200].map((delay) => window.setTimeout(forceTop, delay));
     const guard = window.setInterval(() => {
+      // Skip scroll check if file input is active
+      const activeElement = document.activeElement;
+      if (activeElement?.tagName === 'INPUT' && (activeElement as HTMLInputElement).type === 'file') {
+        return;
+      }
       if (window.scrollY > 0 || document.documentElement.scrollTop > 0 || document.body.scrollTop > 0) {
         forceTop();
       }
     }, 300);
     window.setTimeout(() => window.clearInterval(guard), 3200);
     const onVisibility = () => {
-      if (document.visibilityState === "visible") forceTop();
+      if (document.visibilityState === "visible") {
+        // Delay to allow mobile file dialogs to close completely
+        // Mobile file pickers can take longer to close
+        setTimeout(() => {
+          // Double-check we're not in the middle of file selection
+          const activeInput = document.querySelector('input[type="file"]:focus');
+          if (!activeInput) {
+            forceTop();
+          }
+        }, 300);
+      }
     };
     forceTop();
     window.addEventListener("pageshow", forceTop);
@@ -1247,6 +1267,28 @@ export default function StreamPage() {
   }, [authLoading, user, router]);
 
   // Auth check: show loading screen while loading or if user is not yet determined.
+  // Use cached approval check to prevent unnecessary loading states
+  const [showApprovalCheck, setShowApprovalCheck] = useState(false);
+  
+  useEffect(() => {
+    if (authLoading || !user) {
+      // Still loading auth, show nothing or minimal loading
+      return;
+    }
+    
+    // Only check approval if we don't have a cached approved account
+    // The authContext now caches approval status, so this should be fast
+    if (!userAccount?.approved) {
+      // Give it a brief moment to load from cache before showing approval screen
+      const timer = setTimeout(() => {
+        setShowApprovalCheck(true);
+      }, 500);
+      return () => clearTimeout(timer);
+    } else {
+      setShowApprovalCheck(false);
+    }
+  }, [authLoading, user, userAccount]);
+
   if (authLoading || !user) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -1255,7 +1297,8 @@ export default function StreamPage() {
     );
   }
 
-  if (!userAccount?.approved) {
+  // Only show approval screen if we've confirmed the user is not approved (not just loading)
+  if (showApprovalCheck && !userAccount?.approved) {
     return (
       <div className="flex min-h-screen items-center justify-center p-4">
         <div className="w-full max-w-md rounded-2xl border border-gray-800 bg-gray-900 p-8 shadow-lg shadow-violet-500/5 text-center">
