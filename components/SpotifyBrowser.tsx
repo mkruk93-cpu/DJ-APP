@@ -1650,5 +1650,5 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
         </div>
       )}
     </div>
-  );
+  )
 }
