@@ -82,12 +82,13 @@ export async function importUserPlaylistFiles(
     throw new Error('Geen bestanden geselecteerd');
   }
   const { nickname, deviceId } = getUserIdentity(true);
+  const username = meta?.username || nickname;
   const url = `${getServerUrl()}/api/user-playlists/import`;
   const form = new FormData();
   for (const file of files) {
     form.append('files', file);
   }
-  form.append('nickname', nickname);
+  form.append('nickname', username);
   form.append('device_id', deviceId);
   const name = (playlistName ?? '').trim();
   if (name) form.append('playlist_name', name);
@@ -171,6 +172,7 @@ export interface PlaylistGenreMetaInput {
   related_parent_playlist_id?: string | null;
   cover_url?: string | null;
   auto_cover?: boolean | null;
+  username?: string | null;
 }
 
 export interface SharedPlaylistsResponse {

@@ -26,6 +26,7 @@ import {
   type UserPlaylist,
   type UserPlaylistTrack,
 } from "@/lib/userPlaylistsApi";
+import { useAuth } from "@/lib/authContext";
 
 interface SpotifyBrowserProps {
   onAddTrack: (track: {
@@ -141,6 +142,12 @@ function getLegacyStorageKey(): string {
 }
 
 export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }: SpotifyBrowserProps) {
+  const { userAccount } = useAuth();
+  const username = userAccount?.username || "";
+
+  // Locally extend UserPlaylist to include track_count for UI
+  type UserPlaylistWithCount = UserPlaylist & { track_count?: number };
+
   // Playlist view state direct onder elkaar voor patch-compatibiliteit
   const [savedSortMode, setSavedSortMode] = useState<PlaylistSortMode>("name_asc");
   const [savedPlaylistViewMode, setSavedPlaylistViewMode] = useState<PlaylistViewMode>("grouped");
@@ -201,13 +208,8 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
   const [sharedTracksLoadingMore, setSharedTracksLoadingMore] = useState(false);
   const listRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
-  // Nickname check
-  const [nickname, setNickname] = useState(() => (typeof window !== "undefined" ? (localStorage.getItem("nickname") ?? "").trim() : ""));
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      setNickname((localStorage.getItem("nickname") ?? "").trim());
-    }
-  }, []);
+  // Username from auth context
+
   const thumbnailLoadingRef = useRef<Set<string>>(new Set());
   const thumbnailQueueRef = useRef<string[]>([]);
   const thumbnailWorkersRef = useRef(0);
@@ -339,7 +341,18 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
     setSavedPlaylistsLoading(true);
     try {
       const items = await listUserPlaylists();
-      setSavedPlaylists(items);
+      // For each playlist, fetch the track count
+      const playlistsWithCount = await Promise.all(
+        items.map(async (playlist) => {
+          try {
+            const page = await getUserPlaylistTracksPage(playlist.id, 1, 0);
+            return { ...playlist, track_count: page.paging.total };
+          } catch {
+            return { ...playlist, track_count: 0 };
+          }
+        })
+      );
+      setSavedPlaylists(playlistsWithCount);
     } catch (err) {
       setImportError(err instanceof Error ? err.message : "Kon opgeslagen playlists niet laden.");
     } finally {
@@ -1052,26 +1065,10 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                   Auto-cover
                 </label>
               </div>
-              {/* Nickname check */}
-              {(!nickname || nickname.length < 2) && (
-                <div className="mb-1">
-                  <input
-                    type="text"
-                    value={nickname}
-                    onChange={e => {
-                      setNickname(e.target.value);
-                      if (typeof window !== "undefined") localStorage.setItem("nickname", e.target.value);
-                    }}
-                    placeholder="Gebruikersnaam (nickname)"
-                    className="w-full rounded border border-red-500 bg-gray-900 px-2 py-1 text-[10px] text-white placeholder-gray-500"
-                  />
-                  <span className="text-[10px] text-red-400">Vul je gebruikersnaam in</span>
-                </div>
-              )}
               <button
                 className="mt-1 rounded bg-violet-600 px-2 py-1 text-[10px] font-semibold text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
                 onClick={handleImportExportify}
-                disabled={importing || !importFiles.length || !importPlaylistName.trim() || (!nickname || nickname.length < 2)}
+                disabled={importing || !importFiles.length || !importPlaylistName.trim() || !username}
               >
                 {importing ? "Importeren..." : "Importeer bestand"}
               </button>
@@ -1165,37 +1162,43 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                         {subgroup.subgenreLabel} ({subgroup.items.length})
                       </summary>
                       <div className="mt-1 space-y-1">
-                        {subgroup.items.map((playlist) => (
-                          <div key={playlist.id} className="flex items-center justify-between rounded-lg border border-gray-800 bg-gray-900/70 px-2.5 py-1.5">
-                            {playlist.cover_url ? (
-                              <img
-                                src={playlist.cover_url}
-                                alt=""
-                                className="mr-2 h-8 w-8 shrink-0 rounded object-cover"
-                              />
-                            ) : (
-                              <div className="mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded bg-gray-800">
-                                <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V4.5A2.25 2.25 0 0016.5 2.25h-1.875a2.25 2.25 0 00-2.25 2.25v13.5m0 0a2.25 2.25 0 01-2.25 2.25H8.25a2.25 2.25 0 01-2.25-2.25V6.75" />
-                                </svg>
-                              </div>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => { void openSavedPlaylist(playlist); }}
-                              className="min-w-0 flex-1 truncate text-left text-[11px] font-semibold text-white transition hover:text-violet-300"
-                            >
-                              {playlist.name}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => { void removeSavedPlaylist(playlist); }}
-                              className="ml-2 text-[10px] text-red-300 transition hover:text-red-200"
-                            >
-                              Verwijder
-                            </button>
-                          </div>
-                        ))}
+                        {subgroup.items.map((playlist: UserPlaylist) => {
+                          const playlistWithCount = playlist as UserPlaylistWithCount;
+                          return (
+                            <div key={playlistWithCount.id} className="flex items-center justify-between rounded-lg border border-gray-800 bg-gray-900/70 px-2.5 py-1.5">
+                              {playlistWithCount.cover_url ? (
+                                <img
+                                  src={playlistWithCount.cover_url}
+                                  alt=""
+                                  className="mr-2 h-8 w-8 shrink-0 rounded object-cover"
+                                />
+                              ) : (
+                                <div className="mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded bg-gray-800">
+                                  <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V4.5A2.25 2.25 0 0016.5 2.25h-1.875a2.25 2.25 0 00-2.25 2.25v13.5m0 0a2.25 2.25 0 01-2.25 2.25H8.25a2.25 2.25 0 01-2.25-2.25V6.75" />
+                                  </svg>
+                                </div>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => { void openSavedPlaylist(playlistWithCount); }}
+                                className="min-w-0 flex-1 truncate text-left text-[11px] font-semibold text-white transition hover:text-violet-300"
+                              >
+                                {playlistWithCount.name}
+                              </button>
+                              <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-300">
+                                {playlistWithCount.track_count}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => { void removeSavedPlaylist(playlistWithCount); }}
+                                className="ml-2 text-[10px] text-red-300 transition hover:text-red-200"
+                              >
+                                Verwijder
+                              </button>
+                            </div>
+                          );
+                        })}
                       </div>
                     </details>
                   ))}
