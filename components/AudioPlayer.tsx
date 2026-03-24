@@ -217,6 +217,34 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const waitingSinceRef = useRef(0);
   const lastReconnectAtRef = useRef(0);
   const nicknameRef = useRef<string>("anonymous");
+  const healthCheckTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    // Health-check: controleer periodiek of audio nog speelt, anders forceer herstart
+    useEffect(() => {
+      if (!src) return;
+      function healthCheck() {
+        const audio = audioRef.current;
+        if (!audio) return;
+        // Als audio hoort te spelen, maar is gepauzeerd of heeft geen geluid, forceer herstart
+        if (
+          playingRef.current &&
+          !userPaused.current &&
+          (audio.paused || audio.ended || audio.readyState < 2)
+        ) {
+          // Forceer reload van de stream
+          audio.src = `${src}${src.includes("?") ? "&" : "?"}health=${Date.now()}`;
+          audio.play().catch(() => {
+            setAutoplayBlocked(true);
+          });
+        }
+      }
+      healthCheckTimerRef.current = setInterval(healthCheck, 10000); // elke 10s
+      return () => {
+        if (healthCheckTimerRef.current) {
+          clearInterval(healthCheckTimerRef.current);
+          healthCheckTimerRef.current = null;
+        }
+      };
+    }, [src]);
   const connected = useRadioStore((s) => s.connected);
   const radioMode = useRadioStore((s) => s.mode);
   const isFullscreen = nativeFullscreen || manualFullscreen;

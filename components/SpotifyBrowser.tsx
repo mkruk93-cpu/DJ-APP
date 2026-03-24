@@ -202,16 +202,19 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
   const thumbnailWorkersRef = useRef(0);
   const viewRef = useRef<View>("playlists");
 
-  const configured = isSpotifyConfigured();
-  const showPlaylistSections = mode !== "spotifyOnly";
-  const showSpotifySection = mode !== "playlistsOnly";
+  // Spotify functionaliteit
+  // const configured = isSpotifyConfigured();
+  // const showPlaylistSections = mode !== "spotifyOnly";
+  // const showSpotifySection = mode !== "playlistsOnly";
+  // const showSharedPlaylistsInSpotifyTab = false;
+  // Nieuwe logica: alleen persoonlijke en nieuwe playlists tonen, geen Spotify connect/koppel
+  const configured = false;
+  const showPlaylistSections = true;
+  const showSpotifySection = false;
   const showSharedPlaylistsInSpotifyTab = false;
 
-  const checkConnection = useCallback(() => {
-    const c = isSpotifyConnected();
-    setConnected(c);
-    return c;
-  }, []);
+  // Verwijder Spotify connect functionaliteit
+  const checkConnection = useCallback(() => false, []);
 
   const backToPlaylists = useCallback(() => {
     setView("playlists");
@@ -237,11 +240,8 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
       void loadSavedPlaylists();
       if (showSharedPlaylistsInSpotifyTab) void loadSharedPlaylists();
     }
-    if (!showSpotifySection) return;
-    if (!checkConnection()) return;
-    loadUser();
-    void loadPlaylists(false);
-  }, [checkConnection, showPlaylistSections, showSpotifySection, showSharedPlaylistsInSpotifyTab]);
+    // Spotify connectie niet meer nodig
+  }, [showPlaylistSections, showSharedPlaylistsInSpotifyTab]);
 
   useEffect(() => {
     viewRef.current = view;
@@ -258,22 +258,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
     return () => window.removeEventListener("popstate", handlePopState);
   }, [backToPlaylists]);
 
-  useEffect(() => {
-    function onStorage(e: StorageEvent) {
-      if ((e.key === "spotify_token" || e.key === "spotify_refresh_token") && e.newValue && showSpotifySection) {
-        setConnected(true);
-        setAuthStatus(null);
-        loadUser();
-        void loadPlaylists(false);
-        if (showPlaylistSections) {
-          void loadSavedPlaylists();
-          if (showSharedPlaylistsInSpotifyTab) void loadSharedPlaylists();
-        }
-      }
-    }
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, [showPlaylistSections, showSpotifySection, showSharedPlaylistsInSpotifyTab]);
+  // Spotify connectie niet meer nodig
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -337,15 +322,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
     hasStoredCollapseState,
   ]);
 
-  async function loadUser() {
-    try {
-      const data = await spotifyFetch<SpotifyUser>("/me");
-      if (data) setUser(data);
-      else setConnected(false);
-    } catch {
-      setConnected(false);
-    }
-  }
+  // Spotify connectie niet meer nodig
 
   async function loadSavedPlaylists() {
     setSavedPlaylistsLoading(true);
@@ -859,10 +836,8 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
     };
   }, [checkConnection, showPlaylistSections, showSpotifySection, view, trackSource, selectedPlaylist, showSharedPlaylistsInSpotifyTab]);
 
-  const spotifyEnabled = configured && connected;
-  const headerLabel = showSpotifySection
-    ? (spotifyEnabled ? (user?.display_name ?? "Spotify") : "Spotify")
-    : "Playlists";
+  const spotifyEnabled = false;
+  const headerLabel = "Playlists";
 
   const filteredPlaylists = playlists.filter((p) =>
     p?.name?.toLowerCase().includes(filter.toLowerCase()),
@@ -1170,7 +1145,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
           </div>
           )}
 
-          {showPlaylistSections && showSharedPlaylistsInSpotifyTab && (
+          {/* showPlaylistSections && showSharedPlaylistsInSpotifyTab && (
           <div className="mb-2 rounded-md border border-blue-700/70 bg-blue-950/20 p-2">
             <div className="mb-1 flex items-center justify-between">
               <p className="text-[11px] font-semibold text-blue-100">Gedeelde playlists</p>
@@ -1405,85 +1380,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
               )}
             </>
           )}
-          {showPlaylistSections && (
-          <details className="mb-2 rounded-md border border-gray-700/70 bg-gray-900/60 p-2">
-            <summary className="cursor-pointer list-none text-[11px] font-semibold text-gray-200">
-              Nieuwe playlist toevoegen
-            </summary>
-            <p className="mt-1 text-[10px] text-gray-500">
-              Upload één of meerdere .csv-bestanden (worden samengevoegd en dedupliceren) of één .zip. Exportify gebruikt
-              soms underscores in bestandsnamen; die worden weer als spaties getoond.
-            </p>
-            <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
-              <select
-                value={importGenreGroup}
-                onChange={(e) => setImportGenreGroup(e.target.value)}
-                onFocus={(e) => keepFieldVisibleOnMobile(e.currentTarget)}
-                className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white"
-              >
-                <option value="">Overkoepelend genre</option>
-                {PLAYLIST_GENRE_GROUPS.map((group) => (
-                  <option key={group} value={group}>{group}</option>
-                ))}
-              </select>
-              <input
-                value={importSubgenre}
-                onChange={(e) => setImportSubgenre(e.target.value)}
-                placeholder="Subgenre (optioneel)"
-                className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white placeholder-gray-500"
-              />
-            </div>
-            <div className="mt-2 grid gap-1.5 sm:grid-cols-[1fr_auto]">
-              <input
-                value={importCoverUrl}
-                onChange={(e) => setImportCoverUrl(e.target.value)}
-                placeholder="Playlist cover URL (optioneel)"
-                className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white placeholder-gray-500"
-              />
-              <label className="flex items-center gap-1.5 rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-gray-200">
-                <input
-                  type="checkbox"
-                  checked={importAutoCover}
-                  onChange={(e) => setImportAutoCover(e.target.checked)}
-                  className="h-3 w-3 accent-violet-500"
-                />
-                Auto cover
-              </label>
-            </div>
-            <input
-              type="text"
-              value={importPlaylistName}
-              onChange={(e) => setImportPlaylistName(e.target.value)}
-              placeholder="Playlistnaam (verplicht bij meerdere CSV's; optioneel bij 1 CSV)"
-              className="mt-2 w-full rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white placeholder-gray-500 outline-none focus:border-violet-500"
-            />
-            <input
-              type="file"
-              multiple
-              accept=".csv,.zip,text/csv,application/csv,application/vnd.ms-excel,application/zip,application/x-zip-compressed"
-              onChange={(e) => {
-                const files = Array.from(e.target.files ?? []).filter(
-                  (f) => /\.(csv|zip)$/i.test(f.name),
-                );
-                setImportFiles(files);
-                setImportError(null);
-              }}
-              className="mt-2 w-full text-[10px] text-gray-400 file:mr-2 file:rounded file:border-0 file:bg-gray-700 file:px-2 file:py-1 file:text-[10px] file:font-medium file:text-white"
-            />
-            {importFiles.length > 0 && (
-              <p className="mt-1 text-[10px] text-gray-400">
-                {importFiles.length} bestand(en) geselecteerd
-                {importFiles.length >= 2 ? " — vul een playlistnaam in" : ""}
-              </p>
-            )}
-            <button
-              type="button"
-              onClick={() => { void handleImportExportify(); }}
-              disabled={
-                importFiles.length === 0
-                || importing
-                || (importFiles.length >= 2 && !importPlaylistName.trim())
-              }
+          )*/}
               className="mt-2 rounded bg-violet-600 px-2 py-1 text-[10px] font-semibold text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {importing ? "Importeren..." : "Importeer bestand"}

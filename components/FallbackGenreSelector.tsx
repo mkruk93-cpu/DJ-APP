@@ -447,7 +447,21 @@ export default function FallbackGenreSelector() {
               <path fillRule="evenodd" d="M10 1a3 3 0 00-3 3v2H5a2 2 0 00-2 2v8a2 2 0 002 2h10a2 2 0 002-2V8a2 2 0 00-2-2h-2V4a3 3 0 00-3-3zM8 9a1 1 0 10-2 0v1a1 1 0 102 0V9zm4 0a1 1 0 10-2 0v1a1 1 0 102 0V9z" clipRule="evenodd" />
             </svg>
           )}
-          {activeLabel}
+          <span className="relative block w-full overflow-hidden" style={{ maxWidth: 180 }}>
+            <span
+              className="block whitespace-nowrap"
+              style={{
+                animation: activeLabel && activeLabel.length > 22 ? 'marquee-scroll 8s linear infinite' : undefined,
+                paddingLeft: activeLabel && activeLabel.length > 22 ? 24 : undefined,
+                paddingRight: activeLabel && activeLabel.length > 22 ? 24 : undefined,
+              }}
+            >
+              {activeLabel}
+            </span>
+          </span>
+        // Voeg marquee animatie toe
+        // Plaats dit onderaan het bestand of in een geschikt CSS-bestand
+        import "./marquee.css";
         </span>
         <span className="justify-self-end text-gray-400 transition group-open:rotate-180">▾</span>
       </summary>

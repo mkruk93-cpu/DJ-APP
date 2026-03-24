@@ -1269,25 +1269,39 @@ export default function StreamPage() {
   // Auth check: show loading screen while loading or if user is not yet determined.
   // Use cached approval check to prevent unnecessary loading states
   const [showApprovalCheck, setShowApprovalCheck] = useState(false);
+  const approvalTimerRef = useRef<NodeJS.Timeout | null>(null);
   
   useEffect(() => {
     if (authLoading || !user) {
-      // Still loading auth, show nothing or minimal loading
+      setShowApprovalCheck(false);
       return;
     }
     
-    // Only check approval if we don't have a cached approved account
-    // The authContext now caches approval status, so this should be fast
-    if (!userAccount?.approved) {
-      // Give it a brief moment to load from cache before showing approval screen
-      const timer = setTimeout(() => {
-        setShowApprovalCheck(true);
-      }, 500);
-      return () => clearTimeout(timer);
-    } else {
-      setShowApprovalCheck(false);
+    // Clear any pending timer
+    if (approvalTimerRef.current) {
+      clearTimeout(approvalTimerRef.current);
     }
-  }, [authLoading, user, userAccount]);
+    
+    // If approved, immediately hide approval screen
+    if (userAccount?.approved) {
+      setShowApprovalCheck(false);
+      return;
+    }
+    
+    // Only show approval screen after delay AND if we're sure user is not approved
+    approvalTimerRef.current = setTimeout(() => {
+      // Double check we're still not approved and user hasn't navigated away
+      if (!userAccount?.approved && user) {
+        setShowApprovalCheck(true);
+      }
+    }, 800);
+    
+    return () => {
+      if (approvalTimerRef.current) {
+        clearTimeout(approvalTimerRef.current);
+      }
+    };
+  }, [authLoading, user, userAccount?.approved]);
 
   if (authLoading || !user) {
     return (
@@ -1312,12 +1326,22 @@ export default function StreamPage() {
             Je account is aangemaakt maar nog niet goedgekeurd door de admin.
             Je ontvangt een notificatie zodra je toegang krijgt.
           </p>
-          <button
-            onClick={() => router.push('/login')}
-            className="w-full rounded-lg bg-violet-600 px-4 py-3 font-semibold text-white transition hover:bg-violet-500"
+          <a
+            href="/login"
+            onClick={async (e) => {
+              e.preventDefault();
+              console.log('[ApprovalScreen] Login link clicked');
+              try {
+                await signOut();
+              } catch (err) {
+                console.error('[ApprovalScreen] Signout error:', err);
+              }
+              window.location.href = '/login';
+            }}
+            className="block w-full rounded-lg bg-violet-600 px-4 py-3 font-semibold text-white transition hover:bg-violet-500 text-center no-underline"
           >
             Terug naar Login
-          </button>
+          </a>
         </div>
       </div>
     );

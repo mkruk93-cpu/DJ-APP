@@ -1,0 +1,20 @@
+@keyframes marquee-scroll {
+  0% {
+    transform: translateX(0%);
+  }
+  10% {
+    transform: translateX(0%);
+  }
+  90% {
+    transform: translateX(-60%);
+  }
+  100% {
+    transform: translateX(-60%);
+  }
+}
+
+.marquee {
+  animation: marquee-scroll 8s linear infinite;
+  white-space: nowrap;
+  display: inline-block;
+}

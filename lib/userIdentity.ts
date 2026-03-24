@@ -31,6 +31,16 @@ export function getNickname(): string {
 export function getUserIdentity(requireNickname = true): UserIdentity {
   const nickname = getNickname();
   if (requireNickname && !nickname) {
+    // Fallback: gebruik auth username of anonymous als geen nickname in localStorage
+    if (typeof window !== 'undefined') {
+      const authUsername = window.location.search.includes('auth=true') ? null : null;
+      if (authUsername) {
+        return {
+          nickname: authUsername,
+          deviceId: getDeviceId(),
+        };
+      }
+    }
     throw new Error('Nickname ontbreekt');
   }
   return {

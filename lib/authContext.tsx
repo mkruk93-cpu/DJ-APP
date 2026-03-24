@@ -15,7 +15,7 @@ interface UserAccount {
   last_login: string | null;
 }
 
-interface AuthContextType {
+export interface AuthContextType {
   user: User | null;
   session: Session | null;
   userAccount: UserAccount | null;
@@ -24,6 +24,8 @@ interface AuthContextType {
   signIn: (email: string, password: string) => Promise<{ error: AuthError | null }>;
   signOut: () => Promise<void>;
   refreshUserAccount: () => Promise<void>;
+  freezeAuthCheck: (frozen: boolean) => void;
+  isAuthCheckFrozen: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -34,7 +36,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [userAccount, setUserAccount] = useState<UserAccount | null>(null);
   const [loading, setLoading] = useState(true);
   const [approvalChecked, setApprovalChecked] = useState(false);
+  const [authCheckFrozen, setAuthCheckFrozen] = useState(false);
   const supabase = getSupabase();
+
+  function freezeAuthCheck(frozen: boolean) {
+    setAuthCheckFrozen(frozen);
+  }
 
   async function refreshUserAccount() {
     if (!user) {
@@ -248,11 +255,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user,
     session,
     userAccount,
-    loading,
+    loading: loading || authCheckFrozen, // Show loading while frozen
     signUp,
     signIn,
     signOut,
     refreshUserAccount,
+    freezeAuthCheck,
+    isAuthCheckFrozen: authCheckFrozen,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

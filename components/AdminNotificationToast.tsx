@@ -218,14 +218,6 @@ export default function AdminNotificationToast({ onApprovalComplete }: AdminNoti
   };
 
   if (!isAdmin || !isVisible || !pendingApproval) {
-    // Debug indicator - alleen zichtbaar voor admin testing
-    if (isAdmin) {
-      return (
-        <div className="fixed bottom-4 left-4 z-40 rounded bg-gray-800 px-2 py-1 text-xs text-gray-400">
-          Admin Mode Active - Waiting for registrations...
-        </div>
-      );
-    }
     return null;
   }
 
