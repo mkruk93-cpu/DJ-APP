@@ -1380,14 +1380,16 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
               )}
             </>
           )}
-          )*/}
-              className="mt-2 rounded bg-violet-600 px-2 py-1 text-[10px] font-semibold text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {importing ? "Importeren..." : "Importeer bestand"}
-            </button>
-            {importStatus && <p className="mt-1 text-[10px] text-green-300">{importStatus}</p>}
-            {importError && <p className="mt-1 text-[10px] text-red-300">{importError}</p>}
-          </details>
+          <button
+            className="mt-2 rounded bg-violet-600 px-2 py-1 text-[10px] font-semibold text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={handleImport}
+            disabled={importing}
+          >
+            {importing ? "Importeren..." : "Importeer bestand"}
+          </button>
+          {importStatus && <p className="mt-1 text-[10px] text-green-300">{importStatus}</p>}
+          {importError && <p className="mt-1 text-[10px] text-red-300">{importError}</p>}
+        </details>
           )}
           <div ref={loadMoreRef} className="h-10 w-full sm:h-2" />
         </div>
