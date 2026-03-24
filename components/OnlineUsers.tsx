@@ -14,6 +14,7 @@ export default function OnlineUsers({ username }: { username?: string } = {}) {
 
   useEffect(() => {
     const supabase = getSupabase();
+    // Use authenticated username if available, fallback to legacy nickname for anon users
     const myNickname = username || (typeof window !== "undefined" ? localStorage.getItem("nickname") : "anon");
     
     const channel = supabase.channel('online_users');

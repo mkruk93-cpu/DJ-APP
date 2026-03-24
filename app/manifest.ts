@@ -5,7 +5,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "KrukkeX DJ Stream",
     short_name: "KrukkeX",
     description: "KrukkeX live stream met chat en muziekverzoekjes",
-    start_url: "/stream",
+    start_url: "/stream?v=1.1.0",
     scope: "/",
     display: "standalone",
     orientation: "portrait",

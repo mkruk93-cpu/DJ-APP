@@ -33,11 +33,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [userAccount, setUserAccount] = useState<UserAccount | null>(null);
   const [loading, setLoading] = useState(true);
+  const [approvalChecked, setApprovalChecked] = useState(false);
   const supabase = getSupabase();
 
   async function refreshUserAccount() {
     if (!user) {
       setUserAccount(null);
+      setApprovalChecked(false);
+      return;
+    }
+
+    // If we already have a cached approved account, don't refetch unless user changed
+    if (userAccount?.approved && approvalChecked) {
       return;
     }
 
@@ -64,6 +71,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           details: error.details,
         });
         setUserAccount(null);
+        setApprovalChecked(false);
         return;
       }
 
@@ -71,18 +79,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (noRowsError) {
         console.warn('No user account found for user:', user.id, '- user may need to complete setup or be approved');
         setUserAccount(null);
+        setApprovalChecked(false);
         return;
       }
 
       if (!data) {
         setUserAccount(null);
+        setApprovalChecked(false);
         return;
       }
 
       setUserAccount(data);
+      setApprovalChecked(true);
     } catch (err) {
       console.error('Error in refreshUserAccount:', err);
       setUserAccount(null);
+      setApprovalChecked(false);
     }
   }
 
@@ -189,6 +201,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setSession(null);
     setUserAccount(null);
+    setApprovalChecked(false);
     // Verwijder legacy nickname om te voorkomen dat componenten terugvallen op 'anon' modus
     if (typeof window !== 'undefined') localStorage.removeItem('nickname');
   }
@@ -212,6 +225,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await refreshUserAccount();
       } else {
         setUserAccount(null);
+        setApprovalChecked(false);
       }
 
       setLoading(false);
@@ -220,10 +234,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
-  // Refresh user account when user changes
+  // Refresh user account when user changes, but reset approval cache when user changes
   useEffect(() => {
     if (user) {
+      setApprovalChecked(false); // Reset cache when user changes
       refreshUserAccount();
+    } else {
+      setApprovalChecked(false);
     }
   }, [user]);
 

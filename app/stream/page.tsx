@@ -21,6 +21,7 @@ import QueuePushVotePanel from "@/components/QueuePushVotePanel";
 import LivePollCard from "@/components/LivePollCard";
 import ShoutoutBanner from "@/components/ShoutoutBanner";
 import FallbackGenreSelector from "@/components/FallbackGenreSelector";
+import AdminNotificationToast from "@/components/AdminNotificationToast";
 import type { Track, QueueItem, Mode, ModeSettings, VoteState, DurationVote, UpcomingTrack } from "@/lib/types";
 import { parseTrackDisplay } from "@/lib/trackDisplay";
 import { useSyncedTrack } from "@/lib/useSyncedTrack";
@@ -568,32 +569,29 @@ export default function StreamPage() {
     return () => clearTimeout(timer);
   }, []);
 
-  // PWA lifecycle event handlers for installed app
+  // PWA lifecycle event handlers for installed app - optimized to prevent unnecessary re-renders
   useEffect(() => {
     function handleVisibilityChange() {
       if (document.visibilityState === 'visible') {
-        console.log('[PWA] App became visible, forcing re-render');
-        // Force re-render when PWA becomes visible
-        setIsHydrated(false);
-        setTimeout(() => {
+        console.log('[PWA] App became visible, but avoiding unnecessary re-render');
+        // Only re-render if we really need to - avoid stream interruption
+        // Don't force complete re-initialization, just ensure components are responsive
+        if (!isHydrated) {
           setIsHydrated(true);
-          setShowLoadingStates(true);
-          setTimeout(() => setShowLoadingStates(false), 2000);
-        }, 100);
+        }
       }
     }
 
     function handleAppStateChange() {
-      console.log('[PWA] App state change detected');
-      // Force components to re-initialize
-      setShowLoadingStates(true);
-      setTimeout(() => setShowLoadingStates(false), 2000);
+      console.log('[PWA] App state change detected, but avoiding stream interruption');
+      // Minimal handling - don't force full re-initialization that would interrupt stream
+      // Only ensure UI is responsive without breaking audio/stream
     }
 
     // Listen for PWA visibility changes
     document.addEventListener('visibilitychange', handleVisibilityChange);
     
-    // Listen for PWA app state changes
+    // Listen for PWA app state changes - but be less aggressive
     window.addEventListener('focus', handleAppStateChange);
     window.addEventListener('pageshow', handleAppStateChange);
     
@@ -610,7 +608,7 @@ export default function StreamPage() {
         navigator.serviceWorker.removeEventListener('message', handleAppStateChange);
       }
     };
-  }, []);
+  }, [isHydrated]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1282,6 +1280,12 @@ export default function StreamPage() {
     );
   }
 
+  const handleApprovalComplete = () => {
+    // Refresh user approvals in admin if admin page is open
+    // This will be handled by the admin page's own refresh mechanism
+    console.log('[Stream] User approval completed');
+  };
+
   return (
     <div
       className="fixed inset-0 flex flex-col overflow-hidden"
@@ -1291,6 +1295,9 @@ export default function StreamPage() {
         <div className="player-ambient absolute -left-20 top-10 h-72 w-72 rounded-full bg-violet-500/15 blur-3xl" />
         <div className="player-ambient absolute bottom-0 right-0 h-80 w-80 rounded-full bg-fuchsia-500/10 blur-3xl" />
       </div>
+      
+      {/* Admin Notification Toast */}
+      <AdminNotificationToast onApprovalComplete={handleApprovalComplete} />
       {/* Header */}
       <header
         className="relative z-50 border-b border-gray-800 bg-gray-900/80 px-2 py-1.5 backdrop-blur-sm sm:px-6 sm:py-3"

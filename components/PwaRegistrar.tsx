@@ -4,7 +4,7 @@ import { useEffect } from "react";
 
 // Verhoog dit nummer wanneer je gebruikers wilt dwingen tot een schone start.
 // Dit wist caches, service workers en localStorage bij de eerstvolgende laadactie.
-const APP_VERSION = "2.2-fix-website";
+const APP_VERSION = "2.3-auth-fix";
 
 export default function PwaRegistrar() {
   useEffect(() => {
