@@ -1397,6 +1397,86 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
               )}
             </>
           )}
+          <details className="mb-2 rounded-lg border border-violet-700/70 bg-gradient-to-br from-violet-900 to-violet-900/70 p-2.5">
+            <summary className="cursor-pointer list-none text-[11px] font-semibold text-violet-200">
+              Nieuwe playlist toevoegen
+            </summary>
+            <p className="mt-1 text-[10px] text-violet-500">
+              Upload meerdere Exportify CSV&apos;s of ZIP bestanden tegelijk (Ctrl/Shift in bestandsdialoog). We voegen samen en dedupliceren
+              zoals bij admin-import. Naam is verplicht; daarna kun je je eigen playlist nog bewerken.
+            </p>
+            <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+              <select
+                value={importGenreGroup}
+                onChange={(e) => setImportGenreGroup(e.target.value)}
+                onFocus={(e) => keepFieldVisibleOnMobile(e.currentTarget)}
+                className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white"
+              >
+                <option value="">Overkoepelend genre</option>
+                {PLAYLIST_GENRE_GROUPS.map((group) => (
+                  <option key={group} value={group}>{group}</option>
+                ))}
+              </select>
+              <input
+                type="text"
+                value={importSubgenre}
+                onChange={(e) => setImportSubgenre(e.target.value)}
+                placeholder="Subgenre (optioneel)"
+                className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white placeholder-gray-500"
+              />
+            </div>
+            <div className="mt-2 grid gap-1.5 sm:grid-cols-[1fr_auto]">
+              <input
+                type="text"
+                value={importCoverUrl}
+                onChange={(e) => setImportCoverUrl(e.target.value)}
+                placeholder="Playlist cover URL (optioneel)"
+                className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white placeholder-gray-500"
+              />
+              <label className="flex items-center gap-1.5 rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-gray-200">
+                <input
+                  type="checkbox"
+                  checked={importAutoCover}
+                  onChange={(e) => setImportAutoCover(e.target.checked)}
+                  className="h-3 w-3 accent-violet-500"
+                />
+                Auto cover
+              </label>
+            </div>
+            <input
+              type="text"
+              value={importPlaylistName}
+              onChange={(e) => setImportPlaylistName(e.target.value)}
+              placeholder="Playlist naam (verplicht; underscores → spaties in titel)"
+              className="mt-2 w-full rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[11px] text-white placeholder-gray-500 outline-none focus:border-violet-500"
+            />
+            <input
+              type="file"
+              multiple
+              accept=".csv,.zip,text/csv,application/csv,application/vnd.ms-excel,application/zip"
+              onChange={(e) => {
+                const files = Array.from(e.target.files ?? []).filter((file) => 
+                  file.name.toLowerCase().endsWith(".csv") || file.name.toLowerCase().endsWith(".zip")
+                );
+                setImportFiles(files);
+                setImportError(null);
+              }}
+              className="mt-2 w-full text-[10px] text-gray-400 file:mr-2 file:rounded file:border-0 file:bg-gray-700 file:px-2 file:py-1 file:text-[10px] file:font-medium file:text-white"
+            />
+            {importFiles.length > 0 && (
+              <p className="mt-1 text-[10px] text-gray-400">{importFiles.length} bestand(en) geselecteerd</p>
+            )}
+            <button
+              type="button"
+              onClick={() => { void handleImportExportify(); }}
+              disabled={importFiles.length === 0 || !importPlaylistName.trim() || importing}
+              className="mt-2 rounded bg-violet-600 px-2 py-1 text-[10px] font-semibold text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {importing ? "Importeren..." : "Importeer bestand"}
+            </button>
+            {importStatus && <p className="mt-1 text-[10px] text-green-300">{importStatus}</p>}
+            {importError && <p className="mt-1 text-[10px] text-red-300">{importError}</p>}
+          </details>
           <div ref={loadMoreRef} className="h-10 w-full sm:h-2" />
         </div>
       )}
