@@ -141,6 +141,13 @@ function getLegacyStorageKey(): string {
 }
 
 export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }: SpotifyBrowserProps) {
+  // Playlist view state direct onder elkaar voor patch-compatibiliteit
+  const [savedSortMode, setSavedSortMode] = useState<PlaylistSortMode>("name_asc");
+  const [savedPlaylistViewMode, setSavedPlaylistViewMode] = useState<PlaylistViewMode>("grouped");
+  const [collapsedSavedGenres, setCollapsedSavedGenres] = useState<string[]>([]);
+  const [collapsedSavedSubgenres, setCollapsedSavedSubgenres] = useState<string[]>([]);
+  const [hasStoredCollapseState, setHasStoredCollapseState] = useState(false);
+  // ...rest van de bestaande state
   const [connected, setConnected] = useState(false);
   const [user, setUser] = useState<SpotifyUser | null>(null);
   const [playlists, setPlaylists] = useState<SpotifyPlaylist[]>([]);
@@ -163,15 +170,10 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
   const [importFiles, setImportFiles] = useState<File[]>([]);
   const [importPlaylistName, setImportPlaylistName] = useState("");
   const [showHelp, setShowHelp] = useState(false);
-  const [savedSortMode, setSavedSortMode] = useState<PlaylistSortMode>("name_asc");
-  const [sharedSortMode, setSharedSortMode] = useState<PlaylistSortMode>("name_asc");
-  const [savedPlaylistViewMode, setSavedPlaylistViewMode] = useState<PlaylistViewMode>("grouped");
-  const [sharedPlaylistViewMode, setSharedPlaylistViewMode] = useState<PlaylistViewMode>("grouped");
-  const [collapsedSavedGenres, setCollapsedSavedGenres] = useState<string[]>([]);
-  const [collapsedSavedSubgenres, setCollapsedSavedSubgenres] = useState<string[]>([]);
-  const [collapsedSharedGenres, setCollapsedSharedGenres] = useState<string[]>([]);
-  const [collapsedSharedSubgenres, setCollapsedSharedSubgenres] = useState<string[]>([]);
-  const [hasStoredCollapseState, setHasStoredCollapseState] = useState(false);
+  const [importGenreGroup, setImportGenreGroup] = useState("");
+  const [importSubgenre, setImportSubgenre] = useState("");
+  const [importCoverUrl, setImportCoverUrl] = useState("");
+  const [importAutoCover, setImportAutoCover] = useState(true);
   const [savedPlaylists, setSavedPlaylists] = useState<UserPlaylist[]>([]);
   const [savedPlaylistsLoading, setSavedPlaylistsLoading] = useState(false);
   const [savedTracks, setSavedTracks] = useState<UserPlaylistTrack[]>([]);
@@ -181,23 +183,16 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
   const [savedTracksOffset, setSavedTracksOffset] = useState(0);
   const [savedTracksHasMore, setSavedTracksHasMore] = useState(false);
   const [selectedSavedPlaylist, setSelectedSavedPlaylist] = useState<UserPlaylist | null>(null);
-  const [sharedPlaylists, setSharedPlaylists] = useState<SharedPlaylist[]>([]);
-  const [sharedPlaylistsLoading, setSharedPlaylistsLoading] = useState(false);
-  const [sharedTracks, setSharedTracks] = useState<UserPlaylistTrack[]>([]);
-  const [sharedTracksLoading, setSharedTracksLoading] = useState(false);
-  const [sharedTracksLoadingMore, setSharedTracksLoadingMore] = useState(false);
-  const [sharedTracksError, setSharedTracksError] = useState<string | null>(null);
-  const [sharedTracksOffset, setSharedTracksOffset] = useState(0);
-  const [sharedTracksHasMore, setSharedTracksHasMore] = useState(false);
-  const [selectedSharedPlaylist, setSelectedSharedPlaylist] = useState<SharedPlaylist | null>(null);
-  const [sharedUsage, setSharedUsage] = useState<{ playlists: number; tracks: number } | null>(null);
-  const [importGenreGroup, setImportGenreGroup] = useState("");
-  const [importSubgenre, setImportSubgenre] = useState("");
-  const [importCoverUrl, setImportCoverUrl] = useState("");
-  const [importAutoCover, setImportAutoCover] = useState(true);
   const [savedTrackThumbs, setSavedTrackThumbs] = useState<Record<string, string>>({});
   const listRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  // Nickname check
+  const [nickname, setNickname] = useState(() => (typeof window !== "undefined" ? (localStorage.getItem("nickname") ?? "").trim() : ""));
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setNickname((localStorage.getItem("nickname") ?? "").trim());
+    }
+  }, []);
   const thumbnailLoadingRef = useRef<Set<string>>(new Set());
   const thumbnailQueueRef = useRef<string[]>([]);
   const thumbnailWorkersRef = useRef(0);
@@ -989,6 +984,85 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
         <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto pb-14 sm:pb-2">
           {showPlaylistSections && (
           <div className="mb-2 rounded-md border border-gray-700/70 bg-gray-900/50 p-2">
+            {/* Toevoegen van nieuwe persoonlijke playlist (Exportify import) */}
+            <div className="mb-2 rounded-md border border-violet-700/70 bg-violet-950/20 p-2">
+              <p className="mb-1 text-[11px] font-semibold text-violet-200">Nieuwe persoonlijke playlist importeren</p>
+              <input
+                type="file"
+                multiple
+                accept=".csv,.zip"
+                onChange={e => setImportFiles(e.target.files ? Array.from(e.target.files) : [])}
+                className="mb-1 w-full rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[10px] text-white"
+              />
+              <input
+                type="text"
+                value={importPlaylistName}
+                onChange={e => setImportPlaylistName(e.target.value)}
+                placeholder="Playlistnaam"
+                className="mb-1 w-full rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[10px] text-white"
+              />
+              <div className="mb-1 grid gap-1 sm:grid-cols-2">
+                <select
+                  value={importGenreGroup}
+                  onChange={e => setImportGenreGroup(e.target.value)}
+                  className="rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[10px] text-white"
+                >
+                  <option value="">Overkoepelend genre</option>
+                  {PLAYLIST_GENRE_GROUPS.map((group) => (
+                    <option key={group} value={group}>{group}</option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  value={importSubgenre}
+                  onChange={e => setImportSubgenre(e.target.value)}
+                  placeholder="Subgenre"
+                  className="rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[10px] text-white placeholder-gray-500"
+                />
+              </div>
+              <input
+                type="text"
+                value={importCoverUrl}
+                onChange={e => setImportCoverUrl(e.target.value)}
+                placeholder="Cover URL (https...)"
+                className="mb-1 w-full rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[10px] text-white placeholder-gray-500"
+              />
+              <div className="mb-1 flex items-center gap-2">
+                <label className="flex items-center gap-1 text-[10px] text-gray-300">
+                  <input
+                    type="checkbox"
+                    checked={importAutoCover}
+                    onChange={e => setImportAutoCover(e.target.checked)}
+                  />
+                  Auto-cover
+                </label>
+              </div>
+              {/* Nickname check */}
+              {(!nickname || nickname.length < 2) && (
+                <div className="mb-1">
+                  <input
+                    type="text"
+                    value={nickname}
+                    onChange={e => {
+                      setNickname(e.target.value);
+                      if (typeof window !== "undefined") localStorage.setItem("nickname", e.target.value);
+                    }}
+                    placeholder="Gebruikersnaam (nickname)"
+                    className="w-full rounded border border-red-500 bg-gray-900 px-2 py-1 text-[10px] text-white placeholder-gray-500"
+                  />
+                  <span className="text-[10px] text-red-400">Vul je gebruikersnaam in</span>
+                </div>
+              )}
+              <button
+                className="mt-1 rounded bg-violet-600 px-2 py-1 text-[10px] font-semibold text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={handleImportExportify}
+                disabled={importing || !importFiles.length || !importPlaylistName.trim() || (!nickname || nickname.length < 2)}
+              >
+                {importing ? "Importeren..." : "Importeer bestand"}
+              </button>
+              {importStatus && <p className="mt-1 text-[10px] text-green-300">{importStatus}</p>}
+              {importError && <p className="mt-1 text-[10px] text-red-300">{importError}</p>}
+            </div>
             <div className="mb-1 flex items-center justify-between">
               <p className="text-[11px] font-semibold text-gray-200">Persoonlijke playlists</p>
               <button

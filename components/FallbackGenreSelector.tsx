@@ -236,7 +236,13 @@ export default function FallbackGenreSelector() {
   const shouldRender = connected && sortedGenres.length > 0;
   const activeLabel = useMemo(() => {
     if (selectedSharedGenres.length > 1) {
-      return `${selectedSharedGenres.length} playlists actief`;
+      // Toon alleen de naam van de eerste geselecteerde playlist
+      const first = sortedGenres.find((g) => g.id === selectedSharedGenres[0]);
+      return first?.label ?? "Playlist";
+    }
+    // Als actieve genre een playlist is, toon alleen de naam
+    if (activeGenre?.startsWith("shared:")) {
+      return sortedGenres.find((g) => g.id === activeGenre)?.label ?? "Playlist";
     }
     return sortedGenres.find((g) => g.id === activeGenre)?.label ?? activeGenre ?? "Kies genre";
   }, [sortedGenres, activeGenre, selectedSharedGenres]);
@@ -459,9 +465,6 @@ export default function FallbackGenreSelector() {
               {activeLabel}
             </span>
           </span>
-        // Voeg marquee animatie toe
-        // Plaats dit onderaan het bestand of in een geschikt CSS-bestand
-        import "./marquee.css";
         </span>
         <span className="justify-self-end text-gray-400 transition group-open:rotate-180">▾</span>
       </summary>
