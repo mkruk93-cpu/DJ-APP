@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import { getSupabase } from "@/lib/supabaseClient";
 import { useRadioStore } from "@/lib/radioStore";
+import { useAuth } from "@/lib/authContext";
 
 export default function OnlineUsers({ username }: { username?: string } = {}) {
   const [onlineUsers, setOnlineUsers] = useState<Array<{ nickname: string; listening: boolean }>>([]);
@@ -10,12 +11,13 @@ export default function OnlineUsers({ username }: { username?: string } = {}) {
   const [isLoading, setIsLoading] = useState(true);
   // We gebruiken 'any' voor state om type-errors te voorkomen als playerPlaying niet in de store-definitie staat
   const playerPlaying = useRadioStore((s: any) => s.playerPlaying);
+  const { userAccount } = useAuth();
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const supabase = getSupabase();
     // Use authenticated username if available, fallback to legacy nickname for anon users
-    const myNickname = username || (typeof window !== "undefined" ? localStorage.getItem("nickname") : "anon");
+    const myNickname = username || userAccount?.username || (typeof window !== "undefined" ? localStorage.getItem("nickname") : "anon");
     
     const channel = supabase.channel('online_users');
 
@@ -28,8 +30,9 @@ export default function OnlineUsers({ username }: { username?: string } = {}) {
           users.push(...newState[id]);
         }
         
-        // Filter dubbele gebruikers op basis van nickname
-        const distinctUsers = Array.from(new Map(users.map(u => [u.nickname, u])).values());
+        // Filter dubbele gebruikers op basis van nickname en ghosts zonder nickname
+        const distinctUsers = Array.from(new Map(users.map(u => [u.nickname, u])).values())
+          .filter(u => u.nickname && u.nickname.trim() !== '');
         
         setOnlineUsers(distinctUsers.map(u => ({
           nickname: u.nickname,
@@ -41,7 +44,7 @@ export default function OnlineUsers({ username }: { username?: string } = {}) {
         if (status === 'SUBSCRIBED') {
           await channel.track({
             nickname: myNickname,
-            listening: true,
+            listening: playerPlaying,
             online_at: new Date().toISOString(),
           });
         }
@@ -50,7 +53,24 @@ export default function OnlineUsers({ username }: { username?: string } = {}) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [username]);
+  }, [username, userAccount?.username, playerPlaying]);
+
+  // Update listening status when playing state changes
+  useEffect(() => {
+    const supabase = getSupabase();
+    const myNickname = username || userAccount?.username || (typeof window !== "undefined" ? localStorage.getItem("nickname") : "anon");
+    
+    const channel = supabase.channel('online_users');
+    channel.track({
+      nickname: myNickname,
+      listening: playerPlaying,
+      online_at: new Date().toISOString(),
+    });
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [username, userAccount?.username, playerPlaying]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -99,7 +119,7 @@ export default function OnlineUsers({ username }: { username?: string } = {}) {
             ) : (
               onlineUsers.map((user, idx) => (
                 <div key={`${user.nickname}-${idx}`} className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-gray-800">
-                  <div className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                  <div className={`h-1.5 w-1.5 rounded-full ${user.listening ? "bg-green-500" : "bg-red-500"}`} />
                   <span className="truncate text-xs text-gray-200">{user.nickname}</span>
                 </div>
               ))

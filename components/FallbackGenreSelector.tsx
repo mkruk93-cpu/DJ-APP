@@ -5,6 +5,7 @@ import { getSocket } from "@/lib/socket";
 import { useRadioStore } from "@/lib/radioStore";
 import { useIsAdmin } from "@/lib/useIsAdmin";
 import { getRadioToken } from "@/lib/auth";
+import { useAuth } from "@/lib/authContext";
 import {
   buildGroupedGenreSections,
   GENRE_FALLBACK_OPTIONS,
@@ -121,6 +122,7 @@ function normalizeAutoGenreId(raw: string): string {
 }
 
 export default function FallbackGenreSelector() {
+  const { userAccount } = useAuth();
   const connected = useRadioStore((s) => s.connected);
   const genres = useRadioStore((s) => s.fallbackGenres);
   const activeGenre = useRadioStore((s) => s.activeFallbackGenre);
@@ -235,8 +237,12 @@ export default function FallbackGenreSelector() {
   }
   const shouldRender = connected && sortedGenres.length > 0;
   const activeLabel = useMemo(() => {
+    // Als er meerdere playlists geselecteerd zijn, toon het aantal
     if (selectedSharedGenres.length > 1) {
-      // Toon alleen de naam van de eerste geselecteerde playlist
+      return `${selectedSharedGenres.length} playlists`;
+    }
+    // Als er 1 playlist geselecteerd is, toon de naam
+    if (selectedSharedGenres.length === 1) {
       const first = sortedGenres.find((g) => g.id === selectedSharedGenres[0]);
       return first?.label ?? "Playlist";
     }
@@ -273,7 +279,7 @@ export default function FallbackGenreSelector() {
 
   function emitSharedSelection(nextSelected: string[]): void {
     if (fallbackChangeBlocked) return;
-    const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
+    const selectedBy = userAccount?.username?.trim() || localStorage.getItem("nickname")?.trim() || "onbekend";
     const normalized = Array.from(new Set(nextSelected.filter((id) => id.startsWith("shared:"))));
     const primary = normalized[0] ?? activeGenre ?? null;
     if (!primary) return;
@@ -290,7 +296,7 @@ export default function FallbackGenreSelector() {
 
   function emitSelection(nextSelected: string[]): void {
     if (fallbackChangeBlocked) return;
-    const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
+    const selectedBy = userAccount?.username?.trim() || localStorage.getItem("nickname")?.trim() || "onbekend";
     const normalized = Array.from(new Set(nextSelected.map((id) => id.trim()).filter(Boolean)));
     const primary = normalized[0] ?? activeGenre ?? null;
     if (!primary) return;
@@ -327,23 +333,44 @@ export default function FallbackGenreSelector() {
       const randomFallback = pickRandomSectionId(section);
       if (randomFallback) next = [randomFallback];
     }
+    
+    // Immediate optimistic update
+    const allSelected = selectedGenreIds.filter((entry) => getSectionForGenreId(entry) !== section);
+    const newSelected = [...allSelected, ...next];
+    setSelectedGenreIds(newSelected);
+    
+    // Apply to server
     applySectionSelection(section, next);
   }
 
   function setAllForSection(section: FallbackSection, enabled: boolean): void {
     const sectionIds = getSectionIds(section);
     if (sectionIds.length === 0) return;
+    
     if (enabled) {
+      // Immediate optimistic update
+      const allSelected = selectedGenreIds.filter((entry) => getSectionForGenreId(entry) !== section);
+      const newSelected = [...allSelected, ...sectionIds];
+      setSelectedGenreIds(newSelected);
+      
       applySectionSelection(section, sectionIds);
       return;
     }
+    
     const fallbackId = pickRandomSectionId(section);
-    if (fallbackId) applySectionSelection(section, [fallbackId]);
+    if (fallbackId) {
+      // Immediate optimistic update
+      const allSelected = selectedGenreIds.filter((entry) => getSectionForGenreId(entry) !== section);
+      const newSelected = [...allSelected, fallbackId];
+      setSelectedGenreIds(newSelected);
+      
+      applySectionSelection(section, [fallbackId]);
+    }
   }
 
   function applyPreset(preset: SharedFallbackPreset): void {
     if (fallbackChangeBlocked) return;
-    const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
+    const selectedBy = userAccount?.username?.trim() || localStorage.getItem("nickname")?.trim() || "onbekend";
     const baseSection = preset.genreIds[0] ? getSectionForGenreId(preset.genreIds[0]) : null;
     if (!baseSection) return;
     const sameSectionIds = preset.genreIds.filter((id) => getSectionForGenreId(id) === baseSection);
@@ -362,7 +389,7 @@ export default function FallbackGenreSelector() {
     const name = presetName.trim();
     const currentSectionSelected = selectedGenreIds.filter((id) => getSectionForGenreId(id) === activeSection);
     if (!name || currentSectionSelected.length === 0) return;
-    const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
+    const selectedBy = userAccount?.username?.trim() || localStorage.getItem("nickname")?.trim() || "onbekend";
     getSocket().emit("fallback:preset:save", {
       name,
       genreIds: currentSectionSelected,
@@ -457,9 +484,7 @@ export default function FallbackGenreSelector() {
             <span
               className="block whitespace-nowrap"
               style={{
-                animation: activeLabel && activeLabel.length > 22 ? 'marquee-scroll 8s linear infinite' : undefined,
-                paddingLeft: activeLabel && activeLabel.length > 22 ? 24 : undefined,
-                paddingRight: activeLabel && activeLabel.length > 22 ? 24 : undefined,
+                animation: activeLabel && activeLabel.length > 20 ? 'marquee-scroll 6s linear infinite' : undefined,
               }}
             >
               {activeLabel}
@@ -476,15 +501,29 @@ export default function FallbackGenreSelector() {
             : undefined
         }
       >
-        <div className="mb-1 rounded-md border border-gray-800 bg-gray-900/70 px-2 py-1 text-[10px] text-gray-300">
-          <span className="font-semibold text-gray-200">Actief:</span>{" "}
-          {selectedGenreIds.length > 0
-            ? selectedGenreIds
-              .map((id) => sortedGenres.find((genre) => genre.id === id)?.label ?? id)
-              .slice(0, 4)
-              .join(" · ")
-            : "geen selectie"}
-          {selectedGenreIds.length > 4 ? ` (+${selectedGenreIds.length - 4})` : ""}
+        <div className="mb-1 rounded-md border border-gray-800 bg-gray-900/70 px-2 py-1">
+          <div className="mb-1 text-[10px] font-semibold text-gray-200">Actief:</div>
+          {selectedGenreIds.length > 0 ? (
+            <div className="flex flex-col gap-0.5">
+              {selectedGenreIds
+                .slice(0, 4)
+                .map((id) => {
+                  const label = sortedGenres.find((genre) => genre.id === id)?.label ?? id;
+                  return (
+                    <div key={id} className="text-[10px] text-gray-300 truncate">
+                      {label}
+                    </div>
+                  );
+                })}
+              {selectedGenreIds.length > 4 && (
+                <div className="text-[9px] text-gray-400">
+                  +{selectedGenreIds.length - 4} meer
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="text-[10px] text-gray-300">geen selectie</div>
+          )}
         </div>
         {activeGenreBy && (
           <p className="mb-1 px-2 py-0.5 text-[10px] text-gray-400">
@@ -730,7 +769,7 @@ export default function FallbackGenreSelector() {
                       type="button"
                       onClick={() => {
                         if (fallbackChangeBlocked) return;
-                        const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
+                        const selectedBy = userAccount?.username?.trim() || localStorage.getItem("nickname")?.trim() || "onbekend";
                         getSocket().emit("fallback:shared:mode:set", {
                           mode: "random",
                           selectedBy,
@@ -750,7 +789,7 @@ export default function FallbackGenreSelector() {
                       type="button"
                       onClick={() => {
                         if (fallbackChangeBlocked) return;
-                        const selectedBy = localStorage.getItem("nickname")?.trim() || "onbekend";
+                        const selectedBy = userAccount?.username?.trim() || localStorage.getItem("nickname")?.trim() || "onbekend";
                         getSocket().emit("fallback:shared:mode:set", {
                           mode: "ordered",
                           selectedBy,
@@ -811,6 +850,11 @@ export default function FallbackGenreSelector() {
                                         ? selectedSharedGenres.filter((id) => id !== playlist.id)
                                         : [...selectedSharedGenres, playlist.id];
                                       const safeNext = next.length > 0 ? next : [playlist.id];
+                                      
+                                      // Immediate optimistic update
+                                      setSelectedSharedGenres(safeNext);
+                                      
+                                      // Apply to server
                                       emitSharedSelection(safeNext);
                                     }}
                                     className="h-3.5 w-3.5 cursor-pointer accent-violet-500 disabled:cursor-not-allowed disabled:opacity-50"

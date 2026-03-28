@@ -250,19 +250,35 @@ export default function NowPlaying({ radioTrack, showFallback = false, preferSup
       </div>
 
       {showNextTrack && (
-        <div className="truncate border-t border-gray-700/50 pt-1 text-[10px] text-gray-400 sm:text-xs">
-          <span className="mr-1 uppercase tracking-wider text-gray-500">Volgende:</span>
-          {displayNextTrack?.artist && <span className="text-violet-400">{displayNextTrack.artist}</span>}
-          {displayNextTrack?.artist && displayNextTrack?.title && <span className="text-gray-500"> — </span>}
-          {displayNextTrack?.title && <span className="text-gray-300">{displayNextTrack.title}</span>}
-          {displayNextTrack?.isFallback && (
-            <span className="ml-1 text-gray-500">(random)</span>
-          )}
-          {displayNextTrack?.requestedBy && (
-            <span className="ml-1 text-gray-500">
-              · door <span className="text-violet-300">{displayNextTrack.requestedBy}</span>
-            </span>
-          )}
+        <div className="border-t border-gray-700/50 pt-1">
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] uppercase tracking-wider text-gray-500 sm:text-xs">Volgende:</span>
+            <div className="flex flex-col gap-0.5">
+              {displayNextTrack?.artist && (
+                <div className="truncate text-[10px] text-violet-400 sm:text-xs">
+                  {displayNextTrack.artist}
+                </div>
+              )}
+              {displayNextTrack?.title && (
+                <div className="truncate text-[10px] text-gray-300 sm:text-xs">
+                  {displayNextTrack.title}
+                </div>
+              )}
+              <div className="flex items-center gap-1 truncate text-[9px] text-gray-500 sm:text-xs">
+                {displayNextTrack?.isFallback && (
+                  <span className="shrink-0 text-gray-500">(random)</span>
+                )}
+                {displayNextTrack?.requestedBy && (
+                  <>
+                    {displayNextTrack?.isFallback && <span className="shrink-0">·</span>}
+                    <span className="shrink-0">
+                      door <span className="text-violet-300">{displayNextTrack.requestedBy}</span>
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

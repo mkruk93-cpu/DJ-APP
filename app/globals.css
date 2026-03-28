@@ -1,5 +1,14 @@
 @import "tailwindcss";
 
+@keyframes marquee-scroll {
+  0% {
+    transform: translateX(100%);
+  }
+  100% {
+    transform: translateX(-100%);
+  }
+}
+
 :root {
   --background: #111111;
   --foreground: #e5e5e5;
