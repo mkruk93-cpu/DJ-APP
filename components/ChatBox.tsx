@@ -361,9 +361,16 @@ export default function ChatBox({ onNewMessage, username }: { onNewMessage?: () 
     setPickerTab(tab);
     setMediaError("");
     if (tab === "emoji") return;
-    setMediaQuery("");
-    setMediaItems([]);
-    setMediaNextPos(null);
+    // Don't clear search query when switching between sticker/gif tabs
+    if (mediaQuery.trim() && (tab === "sticker" || tab === "gif")) {
+      // Keep existing search and just fetch new media type
+      setMediaItems([]);
+      setMediaNextPos(null);
+    } else {
+      setMediaQuery("");
+      setMediaItems([]);
+      setMediaNextPos(null);
+    }
   }
 
   return (
@@ -448,6 +455,8 @@ export default function ChatBox({ onNewMessage, username }: { onNewMessage?: () 
         </button>
         <input
           type="text"
+          id="chat-message-input"
+          name="chat-message"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           maxLength={MAX_LENGTH}
@@ -463,7 +472,7 @@ export default function ChatBox({ onNewMessage, username }: { onNewMessage?: () 
         </button>
 
         {pickerOpen && (
-          <div className="absolute bottom-[calc(100%+8px)] left-1/2 z-20 w-[min(95vw,26rem)] -translate-x-1/2 rounded-xl border border-gray-700 bg-gray-900 p-2 shadow-2xl shadow-black/40 sm:left-4 sm:w-80 sm:translate-x-0">
+          <div className="fixed inset-x-4 bottom-[calc(100%+8px)] z-[60] mx-auto w-[min(92vw,26rem)] rounded-xl border border-gray-700 bg-gray-900 p-2 shadow-2xl shadow-black/40 sm:fixed sm:inset-x-auto sm:left-4 sm:bottom-[calc(100%+8px)] sm:mx-0 sm:w-80">
             <div className="mb-2 flex gap-1 rounded-lg bg-gray-800 p-1">
               <button
                 type="button"
@@ -513,13 +522,15 @@ export default function ChatBox({ onNewMessage, username }: { onNewMessage?: () 
               <div>
                 <input
                   type="text"
+                  id="media-search-input"
+                  name="media-search"
                   value={mediaQuery}
                   onChange={(e) => setMediaQuery(e.target.value)}
                   placeholder={pickerTab === "gif" ? "Zoek GIF's..." : "Zoek stickers..."}
                   className="mb-2 w-full rounded-lg border border-gray-700 bg-gray-800 px-2.5 py-1.5 text-xs text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
                 />
                 {mediaError && <p className="mb-2 text-[11px] text-red-300">{mediaError}</p>}
-                <div className="chat-scroll grid h-64 grid-cols-3 gap-1.5 overflow-y-auto pr-1 sm:gap-2">
+                <div className="chat-scroll grid min-h-64 max-h-64 grid-cols-3 gap-1.5 overflow-y-auto pr-1 sm:gap-2">
                   {mediaLoading && mediaItems.length === 0 ? (
                     <p className="col-span-3 text-[11px] text-gray-400">Media laden...</p>
                   ) : mediaItems.length === 0 ? (
