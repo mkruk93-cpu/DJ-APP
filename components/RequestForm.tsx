@@ -498,6 +498,11 @@ export default function RequestForm(
     setFeedback(null);
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
+    // Always show results dropdown when typing and we have results
+    if (results.length > 0) {
+      setShowResults(true);
+    }
+
     if (URL_REGEX.test(value.trim()) || source === "spotify" || source === "genres" || source === "playlists") {
       setResults([]);
       setShowResults(false);
@@ -522,8 +527,11 @@ export default function RequestForm(
 
   async function selectResult(result: SearchResult) {
     setInput(result.title);
-    setResults([]);
-    setShowResults(false);
+    // Don't clear results immediately, let the user see what was selected
+    setTimeout(() => {
+      setResults([]);
+      setShowResults(false);
+    }, 100);
     const preferredSource = source === "soundcloud" ? "soundcloud" : "youtube";
     const resolvedSource = result.url.startsWith("local://") ? "local" : preferredSource;
     await submitRequest(result.url, preferredSource, {
@@ -891,14 +899,25 @@ export default function RequestForm(
           </div>
         ) : (
           <>
-            <div className="relative">
+            <div className="relative z-10">
               <input
                 type="text"
                 value={input}
                 onChange={(e) => handleInputChange(e.target.value)}
                 onFocus={() => { if (results.length > 0) setShowResults(true); }}
+                onTouchStart={() => { if (results.length > 0) setShowResults(true); }}
+                onBlur={() => {
+                  // Don't hide immediately on blur, let the click handler or touch end manage it
+                  if (!showResults) return;
+                  setTimeout(() => setShowResults(false), 150);
+                }}
+                onTouchEnd={() => {
+                  // Handle touch end for mobile
+                  if (!showResults) return;
+                  setTimeout(() => setShowResults(false), 300);
+                }}
                 placeholder={source === "youtube" ? "Zoek op YouTube of plak een link..." : "Zoek op SoundCloud of plak een link..."}
-                className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 pr-28 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
+                className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 pr-28 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500 focus:ring-1 focus:ring-violet-500/20"
               />
               {!hideLocalDiscovery && (
               <button
@@ -923,7 +942,23 @@ export default function RequestForm(
               {showResults && results.length > 0 && (
                 <div
                   data-prevent-pull-refresh="1"
-                  className="absolute left-0 right-0 top-full z-40 mt-1 max-h-[45dvh] overscroll-contain overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50 sm:max-h-80"
+                  className="fixed inset-x-4 top-20 z-50 max-h-[50dvh] overscroll-contain overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50 sm:absolute sm:left-0 sm:right-0 sm:top-full sm:inset-x-auto sm:max-h-80"
+                  onMouseDown={(e) => {
+                    // Prevent the blur from hiding results when clicking inside
+                    e.preventDefault();
+                  }}
+                  onTouchStart={(e) => {
+                    // Prevent mobile scroll when touching dropdown
+                    e.preventDefault();
+                  }}
+                  onMouseLeave={() => {
+                    // Hide when mouse leaves the dropdown
+                    setTimeout(() => setShowResults(false), 200);
+                  }}
+                  onTouchEnd={() => {
+                    // Hide when touch ends on mobile
+                    setTimeout(() => setShowResults(false), 300);
+                  }}
                 >
                   {results.map((r) => (
                     <button
