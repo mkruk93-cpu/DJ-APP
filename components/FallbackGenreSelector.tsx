@@ -355,9 +355,9 @@ export default function FallbackGenreSelector() {
     const fallbackId = pickRandomSectionId(section);
     if (fallbackId) {
       // Immediate optimistic update
-      const allSelected = selectedGenreIds.filter((entry) => getSectionForGenreId(entry) !== section);
+      const allSelected = selectedSharedGenres.filter((entry) => getSectionForGenreId(entry) !== section);
       const newSelected = [...allSelected, fallbackId];
-      setSelectedGenreIds(newSelected);
+      setSelectedSharedGenres(newSelected);
       
       applySectionSelection(section, [fallbackId]);
     }
