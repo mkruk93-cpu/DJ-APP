@@ -47,7 +47,7 @@ export default function SkipButton({ compact = false }: { compact?: boolean }) {
   const timeUntilSkip = ANYONE_SKIP_AFTER - elapsed;
 
   function handleAdminSkip() {
-    if (skipLocked) return;
+    // Admins can always skip, regardless of skip lock
     getSocket().emit("track:skip", { isAdmin: true, token: getRadioToken() });
   }
 
@@ -66,10 +66,10 @@ export default function SkipButton({ compact = false }: { compact?: boolean }) {
   }
 
   const threshold = modeSettings.democracy_threshold;
-  // Gebruik de unieke onlineUserCount (van Supabase Presence) voor de drempelwaarde,
-   // aangezien dit overeenkomt met de "username logica" van unieke gebruikers.
-   const activeCount = onlineUserCount > 0 ? onlineUserCount : Math.max(1, listenerCount);
-   const needed = voteState?.required ?? Math.max(1, Math.ceil(activeCount * threshold / 100));
+  // De server stuurt al de juiste 'required' waarde die rekening houdt met luisterstatus
+  // Als fallback, gebruiken we een conservatieve schatting
+  const activeCount = onlineUserCount > 0 ? onlineUserCount : Math.max(1, listenerCount);
+  const needed = voteState?.required ?? Math.max(1, Math.ceil(activeCount * threshold / 100));
   const currentVotes = voteState?.votes ?? 0;
 
   if (compact) {
@@ -115,12 +115,7 @@ export default function SkipButton({ compact = false }: { compact?: boolean }) {
             {admin && (
               <button
                 onClick={handleAdminSkip}
-                disabled={skipLocked}
-                className={`rounded-md px-2 py-1 text-xs font-medium transition ${
-                  skipLocked
-                    ? "bg-gray-800/50 text-gray-600 cursor-not-allowed"
-                    : "bg-red-600/20 text-red-400 hover:bg-red-600/30"
-                }`}
+                className={`rounded-md px-2 py-1 text-xs font-medium transition bg-red-600/20 text-red-400 hover:bg-red-600/30`}
               >
                 Skip
               </button>
@@ -231,12 +226,7 @@ export default function SkipButton({ compact = false }: { compact?: boolean }) {
           {admin && (
             <button
               onClick={handleAdminSkip}
-              disabled={skipLocked}
-              className={`rounded-lg px-3 py-2 text-sm font-medium transition ${
-                skipLocked
-                  ? "bg-gray-800/50 text-gray-600 cursor-not-allowed"
-                  : "bg-red-600/20 text-red-400 hover:bg-red-600/30"
-              }`}
+              className={`rounded-lg px-3 py-2 text-sm font-medium transition bg-red-600/20 text-red-400 hover:bg-red-600/30`}
             >
               Skip
             </button>
@@ -313,12 +303,7 @@ export default function SkipButton({ compact = false }: { compact?: boolean }) {
           {admin && (
             <button
               onClick={handleAdminSkip}
-              disabled={skipLocked}
-              className={`rounded-lg px-3 py-2 text-sm font-medium transition ${
-                skipLocked
-                  ? "bg-gray-800/50 text-gray-600 cursor-not-allowed"
-                  : "bg-red-600/20 text-red-400 hover:bg-red-600/30"
-              }`}
+              className={`rounded-lg px-3 py-2 text-sm font-medium transition bg-red-600/20 text-red-400 hover:bg-red-600/30`}
             >
               Skip (admin)
             </button>
@@ -359,12 +344,7 @@ export default function SkipButton({ compact = false }: { compact?: boolean }) {
         {admin && (
           <button
             onClick={handleAdminSkip}
-            disabled={skipLocked}
-            className={`rounded-lg px-3 py-2 text-sm font-medium transition ${
-              skipLocked
-                ? "bg-gray-800/50 text-gray-600 cursor-not-allowed"
-                : "bg-red-600/20 text-red-400 hover:bg-red-600/30"
-            }`}
+            className={`rounded-lg px-3 py-2 text-sm font-medium transition bg-red-600/20 text-red-400 hover:bg-red-600/30`}
           >
             Skip (admin)
           </button>

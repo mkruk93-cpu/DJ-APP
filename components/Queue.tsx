@@ -36,22 +36,14 @@ export default function Queue() {
   const [deferredQueue, setDeferredQueue] = useState<DeferredQueueItem[]>([]);
   const canRequestPush = mode !== "dj";
 
-  function normalizeForMatch(value: string | null | undefined): string {
-    return (value ?? "")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-  }
-
   function isOwnItem(item: { added_by?: string | null }): boolean {
-    const itemOwner = normalizeForMatch(item.added_by);
-    const currentUser = normalizeForMatch(nickname);
-    return itemOwner === currentUser && itemOwner !== "";
+    const itemOwner = (item.added_by ?? "").toLowerCase().trim();
+    const currentUser = nickname.toLowerCase();
+    return itemOwner === currentUser && currentUser !== "";
   }
 
   function isAdminUser(): boolean {
-    return normalizeForMatch(nickname) === "krukkex";
+    return nickname.toLowerCase() === "krukkex";
   }
 
   useEffect(() => {

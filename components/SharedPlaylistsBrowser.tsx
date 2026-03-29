@@ -578,7 +578,7 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
             <select
               value={playlistSortMode}
               onChange={(e) => setPlaylistSortMode(e.target.value as PlaylistSortMode)}
-              className="mb-1 w-full rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white"
+              className="mb-1 w-full sm:w-auto rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white max-w-full"
             >
               <option value="name_asc">Sortering: Naam A-Z</option>
               <option value="name_desc">Sortering: Naam Z-A</option>

@@ -769,6 +769,8 @@ export default function RequestForm(
             <div className="shrink-0">
               <input
                 type="text"
+                id="genre-search-input"
+                name="genre-search"
                 value={genreQuery}
                 onChange={(e) => setGenreQuery(e.target.value)}
                 onFocus={() => {
@@ -908,6 +910,8 @@ export default function RequestForm(
             <div className="relative z-10">
               <input
                 type="text"
+                id="request-search-input"
+                name="request-search"
                 value={input}
                 onChange={(e) => handleInputChange(e.target.value)}
                 onFocus={() => { if (results.length > 0) setShowResults(true); }}
