@@ -143,6 +143,7 @@ export default function FallbackGenreSelector() {
   const [presets, setPresets] = useState<SharedFallbackPreset[]>([]);
   const [presetName, setPresetName] = useState("");
   const [showPresetsPanel, setShowPresetsPanel] = useState(false);
+  const [selectedSharedGenres, setSelectedSharedGenres] = useState<string[]>([]);
 
   const sortedGenres = useMemo(
     () => [...genres].sort((a, b) => a.label.localeCompare(b.label, "nl")),
@@ -205,12 +206,6 @@ export default function FallbackGenreSelector() {
     return buildGroupedGenreSections(Array.from(optionMap.values()), "");
   }, [autoGenres]);
 
-  const selectedSharedGenres = useMemo(() => {
-    const explicit = Array.from(new Set((activeGenres ?? []).filter((id) => id.startsWith("shared:"))));
-    if (explicit.length > 0) return explicit;
-    if (activeGenre?.startsWith("shared:")) return [activeGenre];
-    return [];
-  }, [activeGenres, activeGenre]);
   const selectedGenreIds = useMemo(() => {
     const explicit = Array.from(new Set(activeGenres ?? []));
     if (explicit.length > 0) return explicit;
@@ -335,9 +330,9 @@ export default function FallbackGenreSelector() {
     }
     
     // Immediate optimistic update
-    const allSelected = selectedGenreIds.filter((entry) => getSectionForGenreId(entry) !== section);
+    const allSelected = selectedSharedGenres.filter((entry) => getSectionForGenreId(entry) !== section);
     const newSelected = [...allSelected, ...next];
-    setSelectedGenreIds(newSelected);
+    setSelectedSharedGenres(newSelected);
     
     // Apply to server
     applySectionSelection(section, next);
@@ -349,9 +344,9 @@ export default function FallbackGenreSelector() {
     
     if (enabled) {
       // Immediate optimistic update
-      const allSelected = selectedGenreIds.filter((entry) => getSectionForGenreId(entry) !== section);
+      const allSelected = selectedSharedGenres.filter((entry) => getSectionForGenreId(entry) !== section);
       const newSelected = [...allSelected, ...sectionIds];
-      setSelectedGenreIds(newSelected);
+      setSelectedSharedGenres(newSelected);
       
       applySectionSelection(section, sectionIds);
       return;
