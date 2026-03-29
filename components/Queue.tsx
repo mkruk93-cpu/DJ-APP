@@ -36,6 +36,24 @@ export default function Queue() {
   const [deferredQueue, setDeferredQueue] = useState<DeferredQueueItem[]>([]);
   const canRequestPush = mode !== "dj";
 
+  function normalizeForMatch(value: string | null | undefined): string {
+    return (value ?? "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function isOwnItem(item: { added_by?: string | null }): boolean {
+    const itemOwner = normalizeForMatch(item.added_by);
+    const currentUser = normalizeForMatch(nickname);
+    return itemOwner === currentUser && itemOwner !== "";
+  }
+
+  function isAdminUser(): boolean {
+    return normalizeForMatch(nickname) === "krukkex";
+  }
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     setNickname((localStorage.getItem("nickname") ?? "").trim());
@@ -162,15 +180,16 @@ export default function Queue() {
                 </button>
               )}
 
-              {mode !== "dj" && (item.added_by === nickname || !!getRadioToken()) && (
+              {mode !== "dj" && (isOwnItem(item) || isAdminUser()) && (
                 <button
-                  onClick={() =>
+                  onClick={() => {
+                    const token = isAdminUser() ? getRadioToken() : undefined;
                     getSocket().emit("queue:remove", {
                       id: item.id,
-                      token: getRadioToken(),
+                      token: token ?? undefined,
                       added_by: nickname || "onbekend",
-                    })
-                  }
+                    });
+                  }}
                   className="rounded p-1 text-gray-500 transition hover:bg-red-500/10 hover:text-red-400"
                   title="Verwijderen"
                 >
