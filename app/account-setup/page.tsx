@@ -90,7 +90,7 @@ export default function AccountSetupPage() {
     }
   }
 
-  if (!isMounted || !user || (isMounted && !userAccount)) {
+  if (!isMounted || !user || !userAccount) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="text-white">Laden... (account check)</div>
