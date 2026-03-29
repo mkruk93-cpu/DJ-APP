@@ -134,4 +134,8 @@ export interface ServerState {
   lockAutoplayFallback: boolean;
   /** When true, hide local genre catalog in fallback UI and omit local slices in search APIs */
   hideLocalDiscovery: boolean;
+  /** Push notification message for all users */
+  pushMessage: string | null;
+  /** Unix timestamp when push message expires (0 = no expiry) */
+  pushMessageExpiry: number;
 }

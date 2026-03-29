@@ -131,6 +131,8 @@ export interface RadioState {
   serverUrl: string | null;
   lockAutoplayFallback: boolean;
   hideLocalDiscovery: boolean;
+  pushMessage: string | null;
+  pushMessageExpiry: number;
 }
 
 export const MODE_LABELS: Record<Mode, string> = {

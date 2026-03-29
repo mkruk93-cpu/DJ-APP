@@ -66,6 +66,12 @@ export default function AdminPage() {
   const hideLocalDiscovery = useRadioStore((s) => s.hideLocalDiscovery);
   const store = useRadioStore;
 
+  // Push notification state
+  const [pushMessage, setPushMessageState] = useState("");
+  const [pushExpiryMinutes, setPushExpiryMinutes] = useState(0);
+  const [pushSending, setPushSending] = useState(false);
+  const [pushError, setPushError] = useState("");
+
   useEffect(() => {
     if (sessionStorage.getItem("admin_auth") === "true") {
       setAuthenticated(true);
@@ -614,6 +620,88 @@ export default function AdminPage() {
               <div className="grid gap-4 border-t border-gray-800 p-4 sm:grid-cols-2">
                 <ListenerCount />
                 <StreamStatus />
+              </div>
+            </details>
+
+            {/* Push notification */}
+            <details open className="overflow-hidden rounded-xl border border-amber-900/40 bg-amber-950/20">
+              <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-semibold text-amber-200 transition hover:bg-amber-900/30">
+                <span className="flex items-center gap-2">
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                  </svg>
+                  Push bericht sturen
+                </span>
+                <span className="text-xs text-amber-400/70">Uitklappen</span>
+              </summary>
+              <div className="space-y-3 border-t border-amber-900/30 p-4">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-amber-200/80">
+                    Bericht
+                  </label>
+                  <textarea
+                    value={pushMessage}
+                    onChange={(e) => setPushMessageState(e.target.value)}
+                    placeholder="Typ een bericht voor alle luisteraars..."
+                    rows={3}
+                    className="w-full rounded-lg border border-amber-700/50 bg-amber-950/50 px-3 py-2 text-sm text-amber-100 placeholder-amber-700/50 outline-none transition focus:border-amber-500"
+                  />
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-amber-200/80">Vervalt na:</label>
+                    <select
+                      value={pushExpiryMinutes}
+                      onChange={(e) => setPushExpiryMinutes(Number(e.target.value))}
+                      className="rounded-lg border border-amber-700/50 bg-amber-950/50 px-2 py-1 text-xs text-amber-100 outline-none transition focus:border-amber-500"
+                    >
+                      <option value={0}>Nooit</option>
+                      <option value={5}>5 minuten</option>
+                      <option value={15}>15 minuten</option>
+                      <option value={30}>30 minuten</option>
+                      <option value={60}>1 uur</option>
+                      <option value={120}>2 uur</option>
+                      <option value={240}>4 uur</option>
+                    </select>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      if (!pushMessage.trim()) {
+                        setPushError("Vul een bericht in");
+                        return;
+                      }
+                      setPushSending(true);
+                      setPushError("");
+                      try {
+                        const res = await fetch(`${effectiveServerUrl}/api/push-message`, {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            message: pushMessage.trim(),
+                            expiryMinutes: pushExpiryMinutes,
+                            token: radioToken,
+                          }),
+                        });
+                        if (!res.ok) throw new Error("Failed to send push message");
+                        setPushMessageState("");
+                        setPushExpiryMinutes(0);
+                      } catch (err) {
+                        setPushError("Kon bericht niet versturen");
+                        console.error("[admin] push message error:", err);
+                      } finally {
+                        setPushSending(false);
+                      }
+                    }}
+                    disabled={pushSending || !pushMessage.trim() || !radioConnected}
+                    className="ml-auto rounded-lg bg-amber-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-amber-500 disabled:opacity-50"
+                  >
+                    {pushSending ? "Versturen..." : "Bericht sturen"}
+                  </button>
+                </div>
+                {pushError && <p className="text-xs text-red-400">{pushError}</p>}
+                <p className="text-[10px] text-amber-400/60">
+                  Alle luisteraars (online of die binnen de vervaltijd online komen) ontvangen dit bericht. Het verdwijnt pas als ze het zelf weg klikken.
+                </p>
               </div>
             </details>
 

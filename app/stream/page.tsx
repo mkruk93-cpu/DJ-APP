@@ -22,6 +22,7 @@ import LivePollCard from "@/components/LivePollCard";
 import ShoutoutBanner from "@/components/ShoutoutBanner";
 import FallbackGenreSelector from "@/components/FallbackGenreSelector";
 import AdminNotificationToast from "@/components/AdminNotificationToast";
+import PushNotification from "@/components/PushNotification";
 import type { Track, QueueItem, Mode, ModeSettings, VoteState, DurationVote, UpcomingTrack } from "@/lib/types";
 import { parseTrackDisplay } from "@/lib/trackDisplay";
 import { useSyncedTrack } from "@/lib/useSyncedTrack";
@@ -2275,6 +2276,7 @@ export default function StreamPage() {
           </div>
         </div>
       )}
+      <PushNotification />
     </div>
   );
 }

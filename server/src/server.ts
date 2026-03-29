@@ -151,12 +151,31 @@ const io = new IOServer(httpServer, {
   },
 });
 
-app.use((_req, res, next) => {
-  const origin = _req.headers.origin ?? '*';
-  res.header('Access-Control-Allow-Origin', origin);
+app.use((req, res, next) => {
+  // Enhanced CORS middleware for all endpoints
+  const origin = req.headers.origin;
+  const allowedOrigins = [
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:3001',
+    // Add your production domain here when deployed
+  ];
+  
+  // Allow specific origins or fallback to wildcard for development
+  const allowedOrigin = allowedOrigins.includes(origin) || (!origin && process.env.NODE_ENV !== 'production') 
+    ? (origin || '*') 
+    : allowedOrigins[0];
+    
+  res.header('Access-Control-Allow-Origin', allowedOrigin);
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, X-Admin-Token, x-admin-token');
-  if (_req.method === 'OPTIONS') { res.sendStatus(204); return; }
+  res.header('Access-Control-Allow-Headers', 'Content-Type, X-Admin-Token, x-admin-token, Authorization');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  
+  if (req.method === 'OPTIONS') { 
+    res.sendStatus(204); 
+    return; 
+  }
   next();
 });
 app.use(express.json());
@@ -275,6 +294,9 @@ let lastStateErrorLogAt = 0;
 let stateTransientFailureStreak = 0;
 let stateCircuitOpenUntil = 0;
 let lastStateCircuitLogAt = 0;
+
+let pushMessage: string | null = null;
+let pushMessageExpiry: number = 0;
 
 function normalizeFallbackGenreId(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -1442,6 +1464,8 @@ async function getServerState(): Promise<ServerState> {
       : null,
     queuePushLocked,
     skipLocked: isSkipLocked(),
+    pushMessage,
+    pushMessageExpiry,
   };
 }
 
@@ -1535,6 +1559,8 @@ function buildDegradedServerState(): ServerState {
       : null,
     queuePushLocked,
     skipLocked: isSkipLocked(),
+    pushMessage,
+    pushMessageExpiry,
   };
 }
 
@@ -2113,7 +2139,13 @@ async function soundcloudSearchLocal(query: string, limit = 12): Promise<SearchR
 
 // ── REST Endpoints ───────────────────────────────────────────────────────────
 
-app.get('/state', async (_req, res) => {
+app.get('/state', async (req, res) => {
+  // Explicit CORS headers for /state endpoint
+  const origin = req.headers.origin ?? '*';
+  res.header('Access-Control-Allow-Origin', origin);
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, X-Admin-Token, x-admin-token');
+  
   const now = Date.now();
   if (now < stateCircuitOpenUntil) {
     const degraded = buildDegradedServerState();
@@ -2142,7 +2174,13 @@ app.get('/state', async (_req, res) => {
   }
 });
 
-app.get('/health', (_req, res) => {
+app.get('/health', (req, res) => {
+  // Explicit CORS headers for /health endpoint
+  const origin = req.headers.origin ?? '*';
+  res.header('Access-Control-Allow-Origin', origin);
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, X-Admin-Token, x-admin-token');
+  
   res.json({
     status: 'ok',
     uptime: Math.floor((Date.now() - startTime) / 1000),
@@ -2150,7 +2188,13 @@ app.get('/health', (_req, res) => {
   });
 });
 
-app.get('/api/stream-health', async (_req, res) => {
+app.get('/api/stream-health', async (req, res) => {
+  // Explicit CORS headers for /api/stream-health endpoint
+  const origin = req.headers.origin ?? '*';
+  res.header('Access-Control-Allow-Origin', origin);
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, X-Admin-Token, x-admin-token');
+  
   const mode = await getActiveMode(sb).catch(() => 'radio' as Mode);
   const listeners = getEffectiveListenerCount();
   const streamOnline = isStreamOnlineForStatus();
@@ -3212,6 +3256,12 @@ app.get('/api/genre-hits', async (req, res) => {
 });
 
 app.get('/api/genre-health', async (req, res) => {
+  // Explicit CORS headers for /api/genre-health endpoint
+  const origin = req.headers.origin ?? '*';
+  res.header('Access-Control-Allow-Origin', origin);
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, X-Admin-Token, x-admin-token');
+  
   const requestedGenre = String(req.query.genre ?? '').trim();
   const doProbe = String(req.query.probe ?? '0') === '1';
   const probeLimitRaw = parseInt(String(req.query.probeLimit ?? '12'), 10);
@@ -3640,10 +3690,7 @@ app.get('/api/jingles', async (req, res) => {
 app.post('/api/skip', async (req, res) => {
   const { token } = req.body ?? {};
   if (!isAdmin(token)) return res.status(403).json({ error: 'Unauthorized' });
-  if (isSkipLocked()) return res.status(429).json({ error: 'Skip bezig — wacht tot het nieuwe nummer speelt' });
-  const waitSeconds = getSkipCooldownRemainingSeconds();
-  if (waitSeconds > 0) return res.status(429).json({ error: `Wacht nog ${waitSeconds}s tot je opnieuw kunt skippen` });
-
+  // Admins can always skip via API, bypassing skip lock and cooldown
   skipCurrentTrack();
   markSkipTriggered();
   console.log('[rest] Track skipped by admin');
@@ -3658,6 +3705,34 @@ app.post('/api/keep-files', async (req, res) => {
   io.emit('settings:keepFilesChanged', { keep: !!keep });
   console.log(`[rest] Keep files: ${keep}`);
   res.json({ ok: true, keep: !!keep });
+});
+
+app.post('/api/push-message', async (req, res) => {
+  const { message, expiryMinutes, token } = req.body ?? {};
+  if (!isAdmin(token)) return res.status(403).json({ error: 'Unauthorized' });
+
+  const msg = typeof message === 'string' ? message.trim() : '';
+  if (!msg) {
+    return res.status(400).json({ error: 'Message is required' });
+  }
+
+  const expiry = typeof expiryMinutes === 'number' ? Math.max(0, expiryMinutes) : 0;
+  pushMessage = msg;
+  pushMessageExpiry = expiry > 0 ? Date.now() + expiry * 60 * 1000 : 0;
+  io.emit('push:message', { message: pushMessage, expiry: pushMessageExpiry });
+  console.log(`[rest] Push message sent: "${msg}" (expires: ${pushMessageExpiry > 0 ? new Date(pushMessageExpiry).toISOString() : 'never'})`);
+  res.json({ ok: true, message: pushMessage, expiry: pushMessageExpiry });
+});
+
+app.delete('/api/push-message', async (req, res) => {
+  const { token } = req.body ?? {};
+  if (!isAdmin(token)) return res.status(403).json({ error: 'Unauthorized' });
+
+  pushMessage = null;
+  pushMessageExpiry = 0;
+  io.emit('push:message', { message: null, expiry: 0 });
+  console.log('[rest] Push message dismissed');
+  res.json({ ok: true });
 });
 
 app.post('/api/tunnel-url', async (req, res) => {
@@ -4855,12 +4930,14 @@ io.on('connection', (socket) => {
       const admin = isAdmin(data.token, socketNicknameById.get(socket.id));
 
       const track = getCurrentTrack();
-      if (isSkipLocked()) {
+      // Admins can always skip, regardless of skip lock
+      if (!admin && isSkipLocked()) {
         socket.emit('error:toast', { message: 'Skip bezig — wacht tot het nieuwe nummer speelt' });
         return;
       }
       const waitSeconds = getSkipCooldownRemainingSeconds();
-      if (waitSeconds > 0) {
+      // Admins can skip immediately, bypassing cooldown
+      if (!admin && waitSeconds > 0) {
         socket.emit('error:toast', { message: `Wacht nog ${waitSeconds}s tot je opnieuw kunt skippen` });
         return;
       }
@@ -5224,6 +5301,36 @@ io.on('connection', (socket) => {
     emitStreamStatus();
     getActiveMode(sb).then((mode) => evaluateIdlePlayback(mode)).catch(() => {});
     void emitSkipVoteState();
+  });
+
+  // ── push:send (admin only) ──
+  socket.on('push:send', (data: { message?: string; expiryMinutes?: number; token?: string }) => {
+    if (!isAdmin(data.token, socketNicknameById.get(socket.id))) {
+      socket.emit('error:toast', { message: 'Geen admin rechten' });
+      return;
+    }
+    const message = typeof data.message === 'string' ? data.message.trim() : '';
+    if (!message) {
+      socket.emit('error:toast', { message: 'Bericht mag niet leeg zijn' });
+      return;
+    }
+    const expiryMinutes = typeof data.expiryMinutes === 'number' ? Math.max(0, data.expiryMinutes) : 0;
+    pushMessage = message;
+    pushMessageExpiry = expiryMinutes > 0 ? Date.now() + expiryMinutes * 60 * 1000 : 0;
+    io.emit('push:message', { message: pushMessage, expiry: pushMessageExpiry });
+    console.log(`[push] Message sent: "${message}" (expires: ${pushMessageExpiry > 0 ? new Date(pushMessageExpiry).toISOString() : 'never'})`);
+  });
+
+  // ── push:dismiss (clear push message) ──
+  socket.on('push:dismiss', (data: { token?: string }) => {
+    if (!isAdmin(data.token, socketNicknameById.get(socket.id))) {
+      socket.emit('error:toast', { message: 'Geen admin rechten' });
+      return;
+    }
+    pushMessage = null;
+    pushMessageExpiry = 0;
+    io.emit('push:message', { message: null, expiry: 0 });
+    console.log('[push] Message dismissed');
   });
 });
 

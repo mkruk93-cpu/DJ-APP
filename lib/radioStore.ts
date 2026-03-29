@@ -29,6 +29,10 @@ interface RadioStore extends RadioState {
   setPlayerPlaying: (playing: boolean) => void;
   onlineUserCount: number;
   setOnlineUserCount: (count: number) => void;
+  pushMessage: string | null;
+  setPushMessage: (message: string | null) => void;
+  pushMessageExpiry: number;
+  setPushMessageExpiry: (expiry: number) => void;
   resetAll: () => void;
   initFromServer: (state: Partial<RadioState>) => void;
 }
@@ -78,6 +82,8 @@ export const useRadioStore = create<RadioStore>((set) => ({
   lockAutoplayFallback: false,
   hideLocalDiscovery: false,
   playerPlaying: false,
+  pushMessage: null,
+  pushMessageExpiry: 0,
 
   setConnected: (connected) => set({ connected }),
   setCurrentTrack: (currentTrack) => set({ currentTrack }),
@@ -103,6 +109,8 @@ export const useRadioStore = create<RadioStore>((set) => ({
   setServerUrl: (serverUrl) => set({ serverUrl }),
   setSkipLocked: (skipLocked) => set({ skipLocked }),
   setPlayerPlaying: (playerPlaying) => set({ playerPlaying }),
+  setPushMessage: (pushMessage) => set({ pushMessage }),
+  setPushMessageExpiry: (pushMessageExpiry) => set({ pushMessageExpiry }),
   resetAll: () => set({
     connected: false,
     currentTrack: null,
@@ -125,6 +133,8 @@ export const useRadioStore = create<RadioStore>((set) => ({
     lockAutoplayFallback: false,
     hideLocalDiscovery: false,
     playerPlaying: false,
+    pushMessage: null,
+    pushMessageExpiry: 0,
   }),
   initFromServer: (state) => set(state),
 }));
