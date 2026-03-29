@@ -481,14 +481,17 @@ export default function FallbackGenreSelector() {
               <path fillRule="evenodd" d="M10 1a3 3 0 00-3 3v2H5a2 2 0 00-2 2v8a2 2 0 002 2h10a2 2 0 002-2V8a2 2 0 00-2-2h-2V4a3 3 0 00-3-3zM8 9a1 1 0 10-2 0v1a1 1 0 102 0V9zm4 0a1 1 0 10-2 0v1a1 1 0 102 0V9z" clipRule="evenodd" />
             </svg>
           )}
-          <span className="relative block w-full overflow-hidden" style={{ maxWidth: 180 }}>
+          <span className="marquee-container relative block" style={{ maxWidth: 180 }}>
             <span
-              className="block whitespace-nowrap"
+              className="marquee-text block whitespace-nowrap"
               style={{
-                animation: activeLabel && activeLabel.length > 20 ? 'marquee-scroll 6s linear infinite' : undefined,
+                animation: activeLabel && activeLabel.length > 20 ? 'marquee-scroll-slow 14s linear infinite' : undefined,
               }}
             >
               {activeLabel}
+              {activeLabel && activeLabel.length > 20 && (
+                <span className="mx-8" aria-hidden="true">{activeLabel}</span>
+              )}
             </span>
           </span>
         </span>
@@ -822,7 +825,7 @@ export default function FallbackGenreSelector() {
                   <select
                     value={playlistSortMode}
                     onChange={(e) => setPlaylistSortMode(e.target.value as PlaylistSortMode)}
-                    className="w-full rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white"
+                    className="w-full sm:w-auto rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white max-w-full"
                   >
                     <option value="name_asc">Sortering: Naam A-Z</option>
                     <option value="name_desc">Sortering: Naam Z-A</option>

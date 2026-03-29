@@ -9,6 +9,28 @@
   }
 }
 
+@keyframes marquee-scroll-slow {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.marquee-container {
+  overflow: hidden;
+  mask-image: linear-gradient(to right, transparent, black 12px, black calc(100% - 12px), transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 12px, black calc(100% - 12px), transparent);
+}
+
+.marquee-text {
+  animation: marquee-scroll-slow 14s linear infinite;
+  will-change: transform;
+  display: inline-block;
+  padding-right: 2rem;
+}
+
 :root {
   --background: #111111;
   --foreground: #e5e5e5;
