@@ -13,8 +13,14 @@ export default function AccountSetupPage() {
   const [username, setUsername] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isMounted) return;
     if (!user) {
       router.replace("/login");
       return;
@@ -31,7 +37,7 @@ export default function AccountSetupPage() {
       router.replace("/login");
       return;
     }
-  }, [user, userAccount, router]);
+  }, [user, userAccount, router, isMounted]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -84,10 +90,30 @@ export default function AccountSetupPage() {
     }
   }
 
-  if (!user || !userAccount?.approved || userAccount.username) {
+  if (!isMounted || !user || (isMounted && !userAccount)) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <div className="text-white">Laden...</div>
+        <div className="text-white">Laden... (account check)</div>
+      </div>
+    );
+  }
+
+  if (userAccount && !userAccount.approved) {
+    // Should have been redirected to /login by useEffect, but show message just in case
+    return (
+      <div className="flex min-h-screen items-center justify-center p-4">
+        <div className="text-white text-center">
+          <p>Je account is nog niet goedgekeurd.</p>
+          <button onClick={() => router.push('/login')} className="mt-4 text-violet-500 underline">Terug naar login</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (userAccount.username) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="text-white">Je hebt al een username ingesteld. Doorsturen naar stream...</div>
       </div>
     );
   }

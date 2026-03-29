@@ -11,6 +11,11 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
   const [error, setError] = useState("");
+  const [isClient, setIsClient] = useState(false);
+
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
 
   // Redirect if already logged in and approved
   useEffect(() => {
@@ -20,15 +25,15 @@ export default function LoginPage() {
       setLoginLoading(false);
     }
 
-    if (!loading && user && userAccount?.approved) {
+    if (isClient && !loading && user && userAccount?.approved) {
       if (userAccount.username) {
         router.replace("/stream");
       } else {
         router.replace("/account-setup");
       }
     }
-  }, [user, userAccount, loading, router, signOut]);
-
+  }, [user, userAccount, loading, router, signOut, isClient]);
+ 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
@@ -61,11 +66,47 @@ export default function LoginPage() {
   }
 
   // Show loading while checking auth state
-  // Show loading during initial auth check, during login process, or while user profile is loading.
-  if (loading || loginLoading || (user && !userAccount)) {
+  if (!isClient || (loading && !user) || loginLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <div className="text-white">Laden...</div>
+        <div className="text-white">Laden... (auth check)</div>
+      </div>
+    );
+  }
+
+  // Handle case where user is logged in but profile is still loading
+  if (user && loading && !userAccount) {
+     return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="text-white">Account profiel laden...</div>
+      </div>
+    );
+  }
+
+  // If logged in but somehow userAccount is still missing after loading finished
+  if (user && !loading && !userAccount) {
+    return (
+      <div className="flex min-h-screen items-center justify-center p-4">
+        <div className="w-full max-w-md rounded-2xl border border-gray-800 bg-gray-900 p-8 shadow-lg shadow-violet-500/5 text-center">
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-red-600/20 text-3xl">
+            ⚠️
+          </div>
+          <h1 className="text-2xl font-bold tracking-tight text-white mb-4">
+            Profiel Fout
+          </h1>
+          <p className="text-gray-400 mb-6">
+            We konden je accountgegevens niet ophalen. Probeer het opnieuw.
+          </p>
+          <button
+            onClick={async () => {
+              await signOut();
+              window.location.reload();
+            }}
+            className="w-full rounded-lg bg-red-600 px-4 py-3 font-semibold text-white transition hover:bg-red-500"
+          >
+            Opnieuw Proberen
+          </button>
+        </div>
       </div>
     );
   }

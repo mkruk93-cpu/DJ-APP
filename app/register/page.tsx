@@ -2,13 +2,21 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useAuth } from "@/lib/authContext";
+import { useAuth, AuthProvider } from "@/lib/authContext";
 import { getSupabase } from "@/lib/supabaseClient";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const USERNAME_REGEX = /^[a-zA-Z0-9_]{3,20}$/;
 
 export default function RegisterPage() {
+  return (
+    <AuthProvider>
+      <RegisterContent />
+    </AuthProvider>
+  );
+}
+
+function RegisterContent() {
   const router = useRouter();
   const { signUp } = useAuth();
   const [username, setUsername] = useState("");

@@ -23,7 +23,7 @@ export interface AuthContextType {
   signUp: (email: string, password: string, username?: string, realName?: string) => Promise<{ error: AuthError | null }>;
   signIn: (email: string, password: string) => Promise<{ error: AuthError | null }>;
   signOut: () => Promise<void>;
-  refreshUserAccount: () => Promise<void>;
+  refreshUserAccount: (overrideUser?: User | null) => Promise<void>;
   freezeAuthCheck: (frozen: boolean) => void;
   isAuthCheckFrozen: boolean;
 }
@@ -35,7 +35,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [userAccount, setUserAccount] = useState<UserAccount | null>(null);
   const [loading, setLoading] = useState(true);
-  const [approvalChecked, setApprovalChecked] = useState(false);
   const [authCheckFrozen, setAuthCheckFrozen] = useState(false);
   const supabase = getSupabase();
 
@@ -43,65 +42,59 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAuthCheckFrozen(frozen);
   }
 
-  async function refreshUserAccount() {
-    if (!user) {
+  async function refreshUserAccount(overrideUser?: User | null) {
+    const currentUser = overrideUser !== undefined ? overrideUser : user;
+    if (!currentUser) {
       setUserAccount(null);
-      setApprovalChecked(false);
-      return;
-    }
-
-    // If we already have a cached approved account, don't refetch unless user changed
-    if (userAccount?.approved && approvalChecked) {
       return;
     }
 
     try {
-      const { data, error } = await supabase
+      // Add a timeout to prevent hanging the auth initialization
+      const accountPromise = supabase
         .from('user_accounts')
         .select('*')
-        .eq('id', user.id)
+        .eq('id', currentUser.id)
         .single();
-
-      // Check if this is a "no rows found" error (different error formats from Supabase)
-      const noRowsError = !!error && (
-        (error.code && error.code === 'PGRST116') ||
-        (typeof error.message === 'string' && /no rows/i.test(error.message)) ||
-        (Object.keys(error).length === 0) // Empty error object = no rows
+      
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Refresh account timeout')), 5000)
       );
 
-      if (error && !noRowsError) {
-        console.error('Error fetching user account:', {
-          fullError: error,
-          code: error.code,
-          message: error.message,
-          hint: error.hint,
-          details: error.details,
-        });
-        setUserAccount(null);
-        setApprovalChecked(false);
-        return;
-      }
+      const { data, error } = await Promise.race([accountPromise, timeoutPromise]) as any;
 
-      // Handle no rows found - user doesn't have account yet
-      if (noRowsError) {
-        console.warn('No user account found for user:', user.id, '- user may need to complete setup or be approved');
-        setUserAccount(null);
-        setApprovalChecked(false);
-        return;
-      }
+      if (error) {
+        if (error.code === 'PGRST116') { // Record not found
+          const baseUsername = currentUser.email?.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '_').substring(0, 15) || 'user';
+          const { data: newAccount, error: createError } = await supabase
+            .from('user_accounts')
+            .insert({
+              id: currentUser.id,
+              email: currentUser.email,
+              username: baseUsername,
+              approved: false,
+              created_at: new Date().toISOString(),
+            })
+            .select()
+            .single();
 
-      if (!data) {
-        setUserAccount(null);
-        setApprovalChecked(false);
+          if (createError) {
+            console.error('Failed to create missing account:', createError);
+            setUserAccount(null);
+          } else {
+            setUserAccount(newAccount);
+          }
+        } else {
+          console.error('refreshUserAccount error:', error);
+          setUserAccount(null);
+        }
         return;
       }
 
       setUserAccount(data);
-      setApprovalChecked(true);
     } catch (err) {
-      console.error('Error in refreshUserAccount:', err);
+      console.error('refreshUserAccount unexpected error or timeout:', err);
       setUserAccount(null);
-      setApprovalChecked(false);
     }
   }
 
@@ -116,79 +109,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
     });
 
-    // If signup successful, create user account and approval request
     if (!error && data.user) {
-      // Generate a username from email (remove domain, sanitize)
       const baseUsername = providedUsername || email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '_').substring(0, 15);
       let username = baseUsername;
-      let counter = 1;
       
-      // Ensure unique username
-      let isUnique = false;
-      while (!isUnique && counter < 50) {
-        try {
-          const { data: existing, error: checkError } = await supabase
-            .from('user_accounts')
-            .select('id')
-            .eq('username', username)
-            .single();
-          
-          if (checkError || !existing) {
-            isUnique = true;
-          } else {
-            username = `${baseUsername}_${counter}`;
-            counter++;
-          }
-        } catch {
-          // If query fails, assume username is available
-          isUnique = true;
-        }
-      }
-
-      // Create user account
       try {
         const { error: accountError } = await supabase
           .from('user_accounts')
           .insert({
             id: data.user.id,
-            email: email.toLowerCase(),
-            username: username,
+            email,
+            username,
             approved: false,
+            created_at: new Date().toISOString(),
           });
 
         if (accountError) {
-          console.error('User account creation error:', {
-            fullError: accountError,
-            code: accountError?.code,
-            message: accountError?.message,
-            hint: accountError?.hint,
-            details: accountError?.details,
-          });
+          console.error('Error creating user account:', accountError);
         }
       } catch (err) {
-        console.error('User account creation exception:', err);
-      }
-
-      // Create approval request
-      try {
-        const { error: approvalError } = await supabase
-          .from('user_approvals')
-          .insert({
-            user_id: data.user.id,
-            email: email.toLowerCase(),
-          });
-
-        if (approvalError) {
-          console.error('Approval creation error:', {
-            fullError: approvalError,
-            code: approvalError?.code,
-            message: approvalError?.message,
-            hint: approvalError?.hint,
-            details: approvalError?.details,
-          });
-        }
-      } catch (err) {
-        console.error('Approval creation exception:', err);
+        console.error('Error creating user account:', err);
       }
     }
 
@@ -208,54 +148,57 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setSession(null);
     setUserAccount(null);
-    setApprovalChecked(false);
-    // Verwijder legacy nickname om te voorkomen dat componenten terugvallen op 'anon' modus
     if (typeof window !== 'undefined') localStorage.removeItem('nickname');
   }
 
   useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      setLoading(false);
-    });
+    const initializeAuth = async () => {
+      // Safety timeout for loading state
+      const safetyTimeout = setTimeout(() => {
+        if (loading) {
+          setLoading(false);
+        }
+      }, 8000);
 
-    // Listen for auth changes
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
-      setSession(session);
-      setUser(session?.user ?? null);
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        setSession(session);
+        const currentUser = session?.user ?? null;
+        setUser(currentUser);
 
-      if (session?.user) {
-        await refreshUserAccount();
+        if (currentUser) {
+          await refreshUserAccount(currentUser);
+        }
+      } catch (error) {
+        console.error('Auth initialization error:', error);
+      } finally {
+        clearTimeout(safetyTimeout);
+        setLoading(false);
+      }
+    };
+
+    initializeAuth();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      setSession(session);
+      const currentUser = session?.user ?? null;
+      setUser(currentUser);
+
+      if (currentUser) {
+        await refreshUserAccount(currentUser);
       } else {
         setUserAccount(null);
-        setApprovalChecked(false);
       }
-
-      setLoading(false);
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  // Refresh user account when user changes, but reset approval cache when user changes
-  useEffect(() => {
-    if (user) {
-      setApprovalChecked(false); // Reset cache when user changes
-      refreshUserAccount();
-    } else {
-      setApprovalChecked(false);
-    }
-  }, [user]);
-
   const value: AuthContextType = {
     user,
     session,
     userAccount,
-    loading: loading || authCheckFrozen, // Show loading while frozen
+    loading: loading || authCheckFrozen,
     signUp,
     signIn,
     signOut,

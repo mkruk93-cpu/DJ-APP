@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase-server'
 import { NextResponse, type NextRequest } from 'next/server'
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { supabase, response } = createClient(request)
 
   // Refresh session if expired - required for Server Components
@@ -13,7 +13,7 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   // Public routes that don't require authentication
-  const publicRoutes = ['/login', '/register', '/manifest.ts'] // .webmanifest was wrong extension
+  const publicRoutes = ['/login', '/register', '/manifest.ts', '/sw.js'] // .webmanifest was wrong extension
 
   const isPublicRoute = publicRoutes.some((route) => pathname.startsWith(route))
 
@@ -40,7 +40,8 @@ export const config = {
      * - _next/static (static files)
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
+     * - sw.js (Service Worker)
      */
-    '/((?!api|_next/static|_next/image|favicon.ico).*)',
+    '/((?!api|_next/static|_next/image|favicon.ico|sw.js).*)',
   ],
 }

@@ -212,6 +212,12 @@ export default function FallbackGenreSelector() {
     return activeGenre ? [activeGenre] : [];
   }, [activeGenres, activeGenre]);
 
+  // Sync selectedSharedGenres with store
+  useEffect(() => {
+    const sharedIds = selectedGenreIds.filter((id) => id.startsWith("shared:"));
+    setSelectedSharedGenres(sharedIds);
+  }, [selectedGenreIds]);
+
   function getSectionForGenreId(id: string): FallbackSection {
     if (id.startsWith("shared:")) return "playlists";
     if (id.startsWith("auto:")) return "auto";
@@ -825,7 +831,7 @@ export default function FallbackGenreSelector() {
                         </p>
                         <div className="mt-1 space-y-0.5">
                           {subgroup.items.map((playlist) => {
-                            const isActive = selectedSharedGenres.includes(playlist.id);
+                            const isActive = selectedGenreIds.includes(playlist.id);
                             return (
                               <label
                                 key={playlist.id}
@@ -840,10 +846,12 @@ export default function FallbackGenreSelector() {
                                     type="checkbox"
                                     checked={isActive}
                                     disabled={fallbackChangeBlocked}
-                                    onChange={() => {
+                                    onChange={(e) => {
+                                      e.stopPropagation(); // Prevent label click double-triggering
+                                      const sharedIds = selectedGenreIds.filter(id => id.startsWith("shared:"));
                                       const next = isActive
-                                        ? selectedSharedGenres.filter((id) => id !== playlist.id)
-                                        : [...selectedSharedGenres, playlist.id];
+                                        ? sharedIds.filter((id) => id !== playlist.id)
+                                        : [...sharedIds, playlist.id];
                                       const safeNext = next.length > 0 ? next : [playlist.id];
                                       
                                       // Immediate optimistic update
@@ -852,7 +860,7 @@ export default function FallbackGenreSelector() {
                                       // Apply to server
                                       emitSharedSelection(safeNext);
                                     }}
-                                    className="h-3.5 w-3.5 cursor-pointer accent-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+                                    className="h-4 w-4 cursor-pointer accent-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
                                   />
                                   <span className="truncate">{playlist.label.replace(/^Playlist ·\s*/i, "")}</span>
                                 </span>
@@ -866,7 +874,7 @@ export default function FallbackGenreSelector() {
                   </div>
                 </div>
               )) : sortedSharedPlaylists.map((playlist) => {
-                const isActive = selectedSharedGenres.includes(playlist.id);
+                const isActive = selectedGenreIds.includes(playlist.id);
                 return (
                   <label
                     key={playlist.id}
@@ -881,14 +889,21 @@ export default function FallbackGenreSelector() {
                         type="checkbox"
                         checked={isActive}
                         disabled={fallbackChangeBlocked}
-                        onChange={() => {
+                        onChange={(e) => {
+                          e.stopPropagation(); // Prevent label click double-triggering
+                          const sharedIds = selectedGenreIds.filter(id => id.startsWith("shared:"));
                           const next = isActive
-                            ? selectedSharedGenres.filter((id) => id !== playlist.id)
-                            : [...selectedSharedGenres, playlist.id];
+                            ? sharedIds.filter((id) => id !== playlist.id)
+                            : [...sharedIds, playlist.id];
                           const safeNext = next.length > 0 ? next : [playlist.id];
+                          
+                          // Immediate optimistic update
+                          setSelectedSharedGenres(safeNext);
+                          
+                          // Apply to server
                           emitSharedSelection(safeNext);
                         }}
-                        className="h-3.5 w-3.5 cursor-pointer accent-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="h-4 w-4 cursor-pointer accent-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
                       />
                       <span className="truncate">{playlist.label.replace(/^Playlist ·\s*/i, "")}</span>
                     </span>

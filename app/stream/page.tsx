@@ -1261,10 +1261,10 @@ export default function StreamPage() {
 
   useEffect(() => {
     // Redirect to login if auth is done and there's no user.
-    if (!authLoading && !user) {
+    if (isHydrated && !authLoading && !user) {
       router.replace("/login");
     }
-  }, [authLoading, user, router]);
+  }, [isHydrated, authLoading, user, router]);
 
   // Auth check: show loading screen while loading or if user is not yet determined.
   // Use cached approval check to prevent unnecessary loading states

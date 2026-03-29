@@ -3,24 +3,32 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/authContext";
+import { useState } from "react";
 
 export default function HomePage() {
   const router = useRouter();
   const { user, userAccount, loading } = useAuth();
+  const [isClient, setIsClient] = useState(false);
 
   useEffect(() => {
-    if (loading) return;
+    setIsClient(true);
+    // Safety redirect if hanging too long
+    const timeout = setTimeout(() => {
+      console.log("[HomePage] Safety timeout redirect to /login");
+      router.replace("/login");
+    }, 12000);
+    return () => clearTimeout(timeout);
+  }, [router]);
 
+  useEffect(() => {
+    if (!isClient || loading) return;
+    
     if (user && userAccount?.approved) {
       router.replace("/stream");
     } else {
-      // Hard redirect naar login voor alle andere gevallen (uitgelogd, niet approved, etc.)
-      // Dit voorkomt dat oude cached versies van deze pagina zichtbaar blijven.
-      setTimeout(() => {
-        window.location.href = "/login";
-      }, 100);
+      router.replace("/login");
     }
-  }, [user, userAccount, loading, router]);
+  }, [isClient, user, userAccount, loading, router]);
 
   return (
     <div className="flex min-h-screen items-center justify-center">
