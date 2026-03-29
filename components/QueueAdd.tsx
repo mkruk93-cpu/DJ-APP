@@ -1142,14 +1142,14 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
 
   return (
     <QueueAddErrorBoundary>
-      <div ref={wrapperRef} className="relative z-[90] overflow-visible">
-      <form onSubmit={handleSubmit} className="relative z-[90] space-y-2 overflow-visible rounded-xl border border-gray-800 bg-gray-900 p-3 shadow-lg shadow-violet-500/5 sm:p-4">
-        <label className="block text-xs font-semibold uppercase tracking-wider text-violet-400">
+      <div ref={wrapperRef} className="relative z-[100] flex min-h-0 flex-1 flex-col overflow-visible">
+      <form onSubmit={handleSubmit} className="relative z-[100] flex min-h-0 flex-1 flex-col gap-2 overflow-visible rounded-xl border border-gray-800 bg-gray-900 p-3 shadow-lg shadow-violet-500/5 sm:p-4">
+        <label className="block shrink-0 text-xs font-semibold uppercase tracking-wider text-violet-400">
           Nummer toevoegen
         </label>
 
         {/* Source tabs */}
-        <div className="flex items-center gap-1 rounded-lg bg-gray-800 p-0.5">
+        <div className="flex shrink-0 items-center gap-1 rounded-lg bg-gray-800 p-0.5">
           <button
             type="button"
             onClick={() => switchSource("youtube")}
@@ -1256,29 +1256,35 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
         </div>
 
         {source === "spotify" ? (
-          <SpotifyErrorBoundary onReset={() => switchSource("youtube")}>
-            <SpotifyBrowser onAddTrack={handleSpotifyAdd} submitting={submitting} />
-          </SpotifyErrorBoundary>
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <SpotifyErrorBoundary onReset={() => switchSource("youtube")}>
+              <SpotifyBrowser onAddTrack={handleSpotifyAdd} submitting={submitting} />
+            </SpotifyErrorBoundary>
+          </div>
         ) : source === "playlists" ? (
-          <SharedPlaylistsBrowser onAddTrack={handleSpotifyAdd} submitting={submitting} />
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <SharedPlaylistsBrowser onAddTrack={handleSpotifyAdd} submitting={submitting} />
+          </div>
         ) : source === "genres" ? (
-          <div className="flex min-h-0 flex-col gap-2">
-            <input
-              type="text"
-              value={genreQuery}
-              onChange={(e) => {
-                setGenreQuery(e.target.value);
-                if (genreMenuRef.current) genreMenuRef.current.open = true;
-              }}
-              onFocus={() => {
-                if (genreMenuRef.current) genreMenuRef.current.open = true;
-              }}
-              placeholder="Zoek genre (hardstyle, trance, rock, metal...)"
-              className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-fuchsia-500"
-            />
+          <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
+            <div className="shrink-0">
+              <input
+                type="text"
+                value={genreQuery}
+                onChange={(e) => {
+                  setGenreQuery(e.target.value);
+                  if (genreMenuRef.current) genreMenuRef.current.open = true;
+                }}
+                onFocus={() => {
+                  if (genreMenuRef.current) genreMenuRef.current.open = true;
+                }}
+                placeholder="Zoek genre (hardstyle, trance, rock, metal...)"
+                className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-fuchsia-500"
+              />
+            </div>
             <details
               ref={genreMenuRef}
-              className="group relative z-20"
+              className="group shrink-0 relative z-20"
               onToggle={() => {
                 if (!genreMenuRef.current?.open || !isMobile || !genreSummaryRef.current) {
                   setMobileGenreMenuTop(null);
@@ -1301,7 +1307,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                 <span className="justify-self-end text-gray-400 transition group-open:rotate-180">▾</span>
               </summary>
               <div
-                className={`${isMobile ? "fixed left-2 right-2 mt-0" : "relative mt-1"} z-30 overflow-y-auto rounded-md border border-gray-700 bg-gray-900/95 p-1 shadow-lg shadow-black/40 sm:relative sm:mt-1 sm:left-auto sm:right-auto sm:max-h-60`}
+                className={`${isMobile ? "fixed left-2 right-2 mt-0" : "relative mt-1"} z-[150] overflow-y-auto rounded-md border border-gray-700 bg-gray-900/95 p-1 shadow-lg shadow-black/40 sm:relative sm:mt-1 sm:left-auto sm:right-auto sm:max-h-60`}
                 style={
                   isMobile && mobileGenreMenuTop !== null
                     ? { top: mobileGenreMenuTop, maxHeight: `calc(100dvh - ${mobileGenreMenuTop + 8}px)` }
@@ -1376,20 +1382,20 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
               </div>
             </details>
             {genresLoading && (
-              <p className="text-xs text-gray-400">Genres laden...</p>
+              <p className="shrink-0 text-xs text-gray-400">Genres laden...</p>
             )}
             {genreError && (
-              <p className="text-xs text-amber-300">{genreError}</p>
+              <p className="shrink-0 text-xs text-amber-300">{genreError}</p>
             )}
             {!genresLoading && groupedGenreSections.length === 0 && (
-              <p className="text-xs text-gray-400">Geen genres gevonden. Probeer een andere zoekterm.</p>
+              <p className="shrink-0 text-xs text-gray-400">Geen genres gevonden. Probeer een andere zoekterm.</p>
             )}
 
             {showGenreHitsPanel && (
               <div
                 ref={genreListRef}
                 onScroll={handleGenreListScroll}
-                className="min-h-[14rem] max-h-[70dvh] overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70"
+                className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70"
               >
               {genreHitsLoading ? (
                 <p className="px-3 py-3 text-xs text-gray-400">Laden...</p>
@@ -1491,7 +1497,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
             )}
           </div>
         ) : (
-          <>
+          <div className="shrink-0 space-y-2">
             <div className="relative">
               <input
                 type="text"
@@ -1545,7 +1551,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                   onScroll={handleSearchListScroll}
                   onTouchEnd={handleSearchListTouch}
                   onTouchMove={handleSearchListTouchMove}
-                  className="absolute left-0 right-0 top-full z-[95] mt-1 overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50"
+                  className="absolute left-0 right-0 top-full z-[150] mt-1 overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50"
                   style={{ 
                     WebkitOverflowScrolling: 'touch',
                     transform: 'translateZ(0)', // Force hardware acceleration
@@ -1616,7 +1622,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
             >
               {submitting ? "Checken..." : isUrl ? "Toevoegen" : "Zoeken"}
             </button>
-          </>
+          </div>
         )}
         {feedback && (
           <p className={`text-sm ${feedback.ok ? "text-green-400" : "text-red-400"}`}>

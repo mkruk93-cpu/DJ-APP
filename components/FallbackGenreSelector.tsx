@@ -330,15 +330,17 @@ export default function FallbackGenreSelector() {
     let next = isActive
       ? sectionSelected.filter((entry) => entry !== id)
       : [...sectionSelected, id];
+    
+    // Safety check: if unselecting the last item, pick a random one in the same section
     if (next.length === 0) {
       const randomFallback = pickRandomSectionId(section);
       if (randomFallback) next = [randomFallback];
     }
     
-    // Immediate optimistic update
-    const allSelected = selectedSharedGenres.filter((entry) => getSectionForGenreId(entry) !== section);
-    const newSelected = [...allSelected, ...next];
-    setSelectedSharedGenres(newSelected);
+    // Optimistic UI update
+    if (section === "playlists") {
+      setSelectedSharedGenres(next);
+    }
     
     // Apply to server
     applySectionSelection(section, next);
@@ -349,22 +351,20 @@ export default function FallbackGenreSelector() {
     if (sectionIds.length === 0) return;
     
     if (enabled) {
-      // Immediate optimistic update
-      const allSelected = selectedSharedGenres.filter((entry) => getSectionForGenreId(entry) !== section);
-      const newSelected = [...allSelected, ...sectionIds];
-      setSelectedSharedGenres(newSelected);
-      
+      // Optimistic UI update
+      if (section === "playlists") {
+        setSelectedSharedGenres(sectionIds);
+      }
       applySectionSelection(section, sectionIds);
       return;
     }
     
     const fallbackId = pickRandomSectionId(section);
     if (fallbackId) {
-      // Immediate optimistic update
-      const allSelected = selectedSharedGenres.filter((entry) => getSectionForGenreId(entry) !== section);
-      const newSelected = [...allSelected, fallbackId];
-      setSelectedSharedGenres(newSelected);
-      
+      // Optimistic UI update
+      if (section === "playlists") {
+        setSelectedSharedGenres([fallbackId]);
+      }
       applySectionSelection(section, [fallbackId]);
     }
   }
@@ -453,7 +453,7 @@ export default function FallbackGenreSelector() {
   return (
     <details
       ref={menuRef}
-      className="group relative z-[130]"
+      className="group relative z-[200]"
       onToggle={(e) => {
         if (fallbackChangeBlocked) {
           e.preventDefault();
@@ -495,13 +495,25 @@ export default function FallbackGenreSelector() {
         <span className="justify-self-end text-gray-400 transition group-open:rotate-180">▾</span>
       </summary>
       <div
-        className={`${isMobile ? "fixed left-2 right-2 mt-0" : "absolute left-0 right-0 top-full mt-1"} z-[140] overflow-y-auto rounded-md border border-gray-700 bg-gray-900/95 p-1 shadow-lg shadow-black/40 sm:max-h-60`}
+        className={`${isMobile ? "fixed left-2 right-2 mt-0" : "absolute left-0 right-0 top-full mt-1"} z-[210] overflow-y-auto rounded-md border border-gray-700 bg-gray-900/95 p-1 shadow-lg shadow-black/40 sm:max-h-60`}
         style={
           isMobile && mobileMenuTop !== null
             ? { top: mobileMenuTop, maxHeight: `calc(100dvh - ${mobileMenuTop + 8}px)` }
             : undefined
         }
       >
+        <div className="sticky top-0 z-10 mb-1 flex items-center justify-between rounded-md border border-gray-800 bg-gray-900 px-2 py-1.5 shadow-sm">
+          <div className="text-[10px] font-semibold text-gray-200">Fallback instellen</div>
+          {isMobile && (
+            <button
+              type="button"
+              onClick={() => { if (menuRef.current) menuRef.current.open = false; }}
+              className="rounded bg-gray-800 px-2 py-0.5 text-[10px] font-bold text-violet-300"
+            >
+              Sluiten
+            </button>
+          )}
+        </div>
         <div className="mb-1 rounded-md border border-gray-800 bg-gray-900/70 px-2 py-1">
           <div className="mb-1 text-[10px] font-semibold text-gray-200">Actief:</div>
           {selectedGenreIds.length > 0 ? (
@@ -846,21 +858,8 @@ export default function FallbackGenreSelector() {
                                     type="checkbox"
                                     checked={isActive}
                                     disabled={fallbackChangeBlocked}
-                                    onChange={(e) => {
-                                      e.stopPropagation(); // Prevent label click double-triggering
-                                      const sharedIds = selectedGenreIds.filter(id => id.startsWith("shared:"));
-                                      const next = isActive
-                                        ? sharedIds.filter((id) => id !== playlist.id)
-                                        : [...sharedIds, playlist.id];
-                                      const safeNext = next.length > 0 ? next : [playlist.id];
-                                      
-                                      // Immediate optimistic update
-                                      setSelectedSharedGenres(safeNext);
-                                      
-                                      // Apply to server
-                                      emitSharedSelection(safeNext);
-                                    }}
-                                    className="h-4 w-4 cursor-pointer accent-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+                                    onChange={() => toggleSelection(playlist.id)}
+                                    className="h-3.5 w-3.5 cursor-pointer accent-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
                                   />
                                   <span className="truncate">{playlist.label.replace(/^Playlist ·\s*/i, "")}</span>
                                 </span>
@@ -889,21 +888,8 @@ export default function FallbackGenreSelector() {
                         type="checkbox"
                         checked={isActive}
                         disabled={fallbackChangeBlocked}
-                        onChange={(e) => {
-                          e.stopPropagation(); // Prevent label click double-triggering
-                          const sharedIds = selectedGenreIds.filter(id => id.startsWith("shared:"));
-                          const next = isActive
-                            ? sharedIds.filter((id) => id !== playlist.id)
-                            : [...sharedIds, playlist.id];
-                          const safeNext = next.length > 0 ? next : [playlist.id];
-                          
-                          // Immediate optimistic update
-                          setSelectedSharedGenres(safeNext);
-                          
-                          // Apply to server
-                          emitSharedSelection(safeNext);
-                        }}
-                        className="h-4 w-4 cursor-pointer accent-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+                        onChange={() => toggleSelection(playlist.id)}
+                        className="h-3.5 w-3.5 cursor-pointer accent-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
                       />
                       <span className="truncate">{playlist.label.replace(/^Playlist ·\s*/i, "")}</span>
                     </span>

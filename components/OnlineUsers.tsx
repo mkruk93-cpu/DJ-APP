@@ -11,6 +11,7 @@ export default function OnlineUsers({ username }: { username?: string } = {}) {
   const [isLoading, setIsLoading] = useState(true);
   // We gebruiken 'any' voor state om type-errors te voorkomen als playerPlaying niet in de store-definitie staat
   const playerPlaying = useRadioStore((s: any) => s.playerPlaying);
+  const setOnlineUserCount = useRadioStore((s: any) => s.setOnlineUserCount);
   const { userAccount } = useAuth();
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -38,6 +39,7 @@ export default function OnlineUsers({ username }: { username?: string } = {}) {
           nickname: u.nickname,
           listening: u.listening ?? true
         })));
+        setOnlineUserCount(distinctUsers.length);
         setIsLoading(false);
       })
       .subscribe(async (status) => {

@@ -14,6 +14,7 @@ export default function SkipButton({ compact = false }: { compact?: boolean }) {
   const voteState = useRadioStore((s) => s.voteState);
   const currentTrack = useRadioStore((s) => s.currentTrack);
   const listenerCount = useRadioStore((s) => s.listenerCount);
+  const onlineUserCount = useRadioStore((s) => s.onlineUserCount);
   const modeSettings = useRadioStore((s) => s.modeSettings);
   const skipLocked = useRadioStore((s) => s.skipLocked);
   const [voted, setVoted] = useState(false);
@@ -65,8 +66,10 @@ export default function SkipButton({ compact = false }: { compact?: boolean }) {
   }
 
   const threshold = modeSettings.democracy_threshold;
-  // Use server-provided required value if available, otherwise calculate locally
-  const needed = voteState?.required ?? Math.max(1, Math.ceil(listenerCount * threshold / 100));
+  // Gebruik de unieke onlineUserCount (van Supabase Presence) voor de drempelwaarde,
+   // aangezien dit overeenkomt met de "username logica" van unieke gebruikers.
+   const activeCount = onlineUserCount > 0 ? onlineUserCount : Math.max(1, listenerCount);
+   const needed = voteState?.required ?? Math.max(1, Math.ceil(activeCount * threshold / 100));
   const currentVotes = voteState?.votes ?? 0;
 
   if (compact) {

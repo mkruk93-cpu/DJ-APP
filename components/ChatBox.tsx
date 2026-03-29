@@ -367,7 +367,7 @@ export default function ChatBox({ onNewMessage, username }: { onNewMessage?: () 
   }
 
   return (
-    <div className="flex h-full flex-col rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5">
+    <div className="flex h-full w-full min-w-0 flex-1 flex-col rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5">
       <div className="border-b border-gray-800 px-3 py-2 sm:px-4 sm:py-3">
         <h2 className="text-xs font-semibold uppercase tracking-wider text-violet-400 sm:text-sm">Chat</h2>
       </div>

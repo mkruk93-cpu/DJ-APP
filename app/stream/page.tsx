@@ -450,6 +450,25 @@ export default function StreamPage() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    
+    const checkInstalled = async () => {
+      if ("getInstalledRelatedApps" in navigator) {
+        try {
+          const apps = await (navigator as any).getInstalledRelatedApps();
+          if (apps && apps.length > 0) {
+            setInstallBannerDismissed(true);
+          }
+        } catch (err) {
+          console.log("[PWA] Error checking installed apps:", err);
+        }
+      }
+    };
+    
+    void checkInstalled();
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
 
     const onBeforeInstallPrompt = (event: Event) => {
       const promptEvent = event as BeforeInstallPromptEvent;
@@ -1249,6 +1268,64 @@ export default function StreamPage() {
     return true;
   });
 
+  const handleClearCache = async () => {
+    if (typeof window === "undefined") return;
+    
+    if (!confirm("Weet je zeker dat je de cache wilt wissen? De pagina wordt daarna opnieuw geladen. Je instellingen en afspeellijsten blijven behouden.")) {
+      return;
+    }
+
+    try {
+      // 1. Unregister service workers
+      if ("serviceWorker" in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        for (const registration of registrations) {
+          await registration.unregister();
+        }
+      }
+
+      // 2. Clear Cache Storage
+      if ("caches" in window) {
+        const keys = await caches.keys();
+        for (const key of keys) {
+          await caches.delete(key);
+        }
+      }
+
+      // 3. Selective LocalStorage clear
+      const whitelist = [
+        /^spotify-browser:/,
+        /^shared-playlists-browser:/,
+        /^fallback-selector:/,
+        /^radio_nickname$/,
+        /^dj_radio_nickname$/,
+        /^sb-.*-auth-token$/, // Supabase auth
+        /^admin_auth$/,
+        /^radio_admin_token$/,
+        /^dj_app_version$/
+      ];
+
+      const keysToKeep: Record<string, string | null> = {};
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && whitelist.some(pattern => pattern.test(key))) {
+          keysToKeep[key] = localStorage.getItem(key);
+        }
+      }
+
+      localStorage.clear();
+      for (const [key, value] of Object.entries(keysToKeep)) {
+        if (value !== null) localStorage.setItem(key, value);
+      }
+
+      // 4. Reload with cache bust
+      window.location.href = window.location.origin + window.location.pathname + "?reload=" + Date.now();
+    } catch (err) {
+      console.error("Cache clear failed:", err);
+      alert("Wissen van cache mislukt. Probeer het handmatig via de browserinstellingen.");
+    }
+  };
+
   function applyStatsFilter(
     kind: "requester" | "genre" | "source" | "artist" | "playlist",
     value: string,
@@ -1270,6 +1347,11 @@ export default function StreamPage() {
   // Use cached approval check to prevent unnecessary loading states
   const [showApprovalCheck, setShowApprovalCheck] = useState(false);
   const approvalTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const wasApprovedRef = useRef(false);
+  
+  if (userAccount?.approved) {
+    wasApprovedRef.current = true;
+  }
   
   useEffect(() => {
     if (authLoading || !user) {
@@ -1282,26 +1364,29 @@ export default function StreamPage() {
       clearTimeout(approvalTimerRef.current);
     }
     
-    // If approved, immediately hide approval screen
-    if (userAccount?.approved) {
+    // If approved or was previously approved in this session, immediately hide approval screen
+    if (userAccount?.approved || wasApprovedRef.current) {
       setShowApprovalCheck(false);
       return;
     }
     
     // Only show approval screen after delay AND if we're sure user is not approved
-    approvalTimerRef.current = setTimeout(() => {
-      // Double check we're still not approved and user hasn't navigated away
-      if (!userAccount?.approved && user) {
-        setShowApprovalCheck(true);
-      }
-    }, 800);
+    // BUT we must make sure we have a userAccount first to avoid false positives during load
+    if (userAccount) {
+      approvalTimerRef.current = setTimeout(() => {
+        // Double check we're still not approved and user hasn't navigated away
+        if (!userAccount?.approved && !wasApprovedRef.current && user) {
+          setShowApprovalCheck(true);
+        }
+      }, 1500);
+    }
     
     return () => {
       if (approvalTimerRef.current) {
         clearTimeout(approvalTimerRef.current);
       }
     };
-  }, [authLoading, user, userAccount?.approved]);
+  }, [authLoading, user, userAccount, userAccount?.approved]);
 
   if (authLoading || !user) {
     return (
@@ -1355,7 +1440,7 @@ export default function StreamPage() {
 
   return (
     <div
-      className="fixed inset-0 flex flex-col overflow-hidden"
+      className="fixed inset-0 flex flex-col overflow-hidden bg-gray-950"
       style={{ height: "var(--app-dvh, 100dvh)", maxHeight: "var(--app-dvh, 100dvh)" }}
     >
       <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
@@ -1367,10 +1452,10 @@ export default function StreamPage() {
       <AdminNotificationToast onApprovalComplete={handleApprovalComplete} />
       {/* Header */}
       <header
-        className="relative z-50 border-b border-gray-800 bg-gray-900/80 px-2 py-1.5 backdrop-blur-sm sm:px-6 sm:py-3"
+        className="relative z-50 shrink-0 border-b border-gray-800 bg-gray-900/80 px-2 py-1.5 backdrop-blur-sm sm:px-6 sm:py-3"
         style={{ 
           paddingTop: "max(env(safe-area-inset-top), 0px)",
-          minHeight: "60px"
+          minHeight: "56px"
         }}
       >
         <div className="flex w-full items-center gap-1.5">
@@ -1410,6 +1495,13 @@ export default function StreamPage() {
             >
               Info
             </button>
+            <button
+              onClick={handleClearCache}
+              className="hidden whitespace-nowrap rounded-lg border border-gray-700 px-2 py-1 text-xs text-gray-400 transition hover:border-gray-600 hover:text-white sm:inline-flex sm:px-3 sm:text-sm"
+              title="Wist caches en herlaadt de pagina (behoudt instellingen)"
+            >
+              Cache wissen
+            </button>
             <div ref={mobileHeaderMenuRef} className="relative sm:hidden">
               <button
                 type="button"
@@ -1440,6 +1532,16 @@ export default function StreamPage() {
                     className="mt-1 block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 transition hover:bg-gray-800"
                   >
                     {appInfoOpen ? "Sluit info" : "Open info"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobileHeaderMenuOpen(false);
+                      void handleClearCache();
+                    }}
+                    className="mt-1 block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 transition hover:bg-gray-800"
+                  >
+                    Cache wissen
                   </button>
                   <button
                     type="button"
@@ -1548,23 +1650,23 @@ export default function StreamPage() {
         )}
       </header>
 
-      <main className="flex min-h-0 flex-1 flex-col gap-1.5 p-1.5 sm:gap-4 sm:p-4 lg:flex-row">
+      <main className="flex min-h-0 flex-1 flex-col gap-1 p-1 sm:gap-4 sm:p-4 lg:flex-row">
         {/* Player */}
-        <div className="min-h-0 shrink-0 max-h-[38dvh] overflow-hidden lg:min-w-0 lg:flex-1 lg:max-h-none lg:min-h-0 lg:overflow-visible">
+        <div className="min-h-0 shrink-0 basis-auto overflow-hidden lg:min-w-0 lg:flex-1 lg:basis-auto lg:max-h-none lg:min-h-0 lg:overflow-visible">
           {shouldPollCommunityWidgets && <ShoutoutBanner />}
           {mode === "twitch" && twitchLive && (
-            <div className="space-y-2">
-              <div className="flex justify-end">
+            <div className="space-y-1.5 sm:space-y-2">
+              <div className="flex justify-end px-1">
                 <button
                   type="button"
                   onClick={() => setTwitchPlayerHidden((prev) => !prev)}
-                  className="rounded-md border border-gray-700 bg-gray-900/80 px-2.5 py-1 text-[11px] font-semibold text-violet-200 transition hover:border-violet-500/70 hover:text-white"
+                  className="rounded-md border border-gray-700 bg-gray-900/80 px-2.5 py-1 text-[10px] font-semibold text-violet-200 transition hover:border-violet-500/70 hover:text-white sm:text-[11px]"
                 >
-                  {twitchPlayerHidden ? "Toon Twitch player" : "Verberg Twitch player"}
+                  {twitchPlayerHidden ? "Toon Twitch" : "Verberg Twitch"}
                 </button>
               </div>
               {twitchPlayerHidden ? (
-                <div className="rounded-xl border border-gray-800 bg-gray-900 px-4 py-6 text-center text-sm text-gray-400">
+                <div className="rounded-xl border border-gray-800 bg-gray-900 px-4 py-4 text-center text-xs text-gray-400 sm:py-6 sm:text-sm">
                   Twitch player verborgen
                 </div>
               ) : (
@@ -1651,17 +1753,19 @@ export default function StreamPage() {
 
           {/* Skip / vote button below player */}
           {radioConnected && radioMode !== "dj" && !showRadioOfflineState && (
-            <div className="mt-1.5 space-y-1.5">
+            <div className="mt-1.5 shrink-0 space-y-1.5">
               <div className="flex min-w-0 flex-wrap items-center gap-1.5 pb-0.5">
-                <div className="relative z-[130] min-w-0 flex-[1.2] overflow-visible">
+                <div className="relative z-[150] min-w-0 flex-[1.2] overflow-visible">
                   <FallbackGenreSelector />
                 </div>
                 <div className="min-w-0 flex-1">
                   <SkipButton compact />
                 </div>
               </div>
-              <DurationVotePanel />
-              <QueuePushVotePanel />
+              <div className="hidden sm:block">
+                <DurationVotePanel />
+                <QueuePushVotePanel />
+              </div>
             </div>
           )}
           {shouldPollCommunityWidgets && (
@@ -1672,7 +1776,7 @@ export default function StreamPage() {
         </div>
 
         {/* Mobile: tab bar */}
-        <div className="flex shrink-0 gap-1 rounded-lg bg-gray-800/60 p-1 lg:hidden">
+        <div className="z-[140] flex shrink-0 gap-1 rounded-lg bg-gray-800/60 p-1 lg:hidden">
           <button
             onClick={() => { setActiveTab("chat"); setChatBadge(false); }}
             className={`relative flex-1 rounded-md px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition ${
@@ -1683,7 +1787,7 @@ export default function StreamPage() {
           >
             Chat
             {chatBadge && activeTab !== "chat" && (
-              <span className="absolute right-2 top-1/2 -translate-y-1/2 h-2 w-2 rounded-full bg-violet-400 animate-pulse" />
+              <span className="absolute right-2 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-violet-400 animate-pulse" />
             )}
           </button>
           {showRequests && (
@@ -1695,9 +1799,9 @@ export default function StreamPage() {
                   : "text-gray-400 hover:text-white"
               }`}
             >
-              Verzoekjes
+              Verzoek
               {requestBadge && activeTab !== "requests" && (
-                <span className="absolute right-2 top-1/2 -translate-y-1/2 h-2 w-2 rounded-full bg-violet-400 animate-pulse" />
+                <span className="absolute right-2 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-violet-400 animate-pulse" />
               )}
             </button>
           )}
@@ -1722,9 +1826,9 @@ export default function StreamPage() {
                   : "text-gray-400 hover:text-white"
               }`}
             >
-              Wachtrij{queue.length > 0 ? ` (${queue.length})` : ""}
+              Wachtrij
               {queueBadge && activeTab !== "queue" && (
-                <span className="absolute right-2 top-1/2 -translate-y-1/2 h-2 w-2 rounded-full bg-violet-400 animate-pulse" />
+                <span className="absolute right-2 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-violet-400 animate-pulse" />
               )}
             </button>
           )}
@@ -1737,18 +1841,18 @@ export default function StreamPage() {
                   : "text-gray-400 hover:text-white"
               }`}
             >
-              Aangevraagd{requestedItems.length > 0 ? ` (${requestedItems.length})` : ""}
+              Lijst
             </button>
           )}
         </div>
 
         {/* Content panels */}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 lg:min-w-0 lg:flex-[2] lg:flex-row lg:gap-4">
-          <div className={`min-h-0 min-w-0 flex-1 ${activeTab === "chat" ? "" : "hidden"} lg:block`}>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 lg:min-w-0 lg:flex-[3.5] lg:flex-row lg:gap-4 lg:basis-auto">
+          <div className={`min-h-0 min-w-0 flex-1 lg:flex-[1.5] ${activeTab === "chat" ? "flex" : "hidden"} lg:flex lg:flex-col`}>
             <ChatBox username={userAccount?.username} onNewMessage={() => { if (activeTabRef.current !== "chat") setChatBadge(true); }} />
           </div>
           {showRequests && (
-            <div className={`min-h-0 min-w-0 flex-1 ${activeTab === "requests" ? "" : "hidden"} lg:block`}>
+            <div className={`min-h-0 min-w-0 flex-1 lg:flex-[1.5] ${activeTab === "requests" ? "flex" : "hidden"} lg:flex lg:flex-col`}>
               <RequestForm
                 username={userAccount?.username}
                 onNewRequest={() => { if (activeTabRef.current !== "requests") setRequestBadge(true); }}
@@ -1764,14 +1868,14 @@ export default function StreamPage() {
             </div>
           )}
           {showRadioPanel && (
-            <div className={`min-h-0 min-w-0 flex-1 overflow-hidden flex-col gap-2 ${activeTab === "radio" ? "flex" : "hidden"} lg:hidden`}>
+            <div className={`min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden ${activeTab === "radio" ? "flex" : "hidden"} lg:hidden`}>
               <RadioPanelErrorBoundary>
                 <QueueAdd username={userAccount?.username} />
               </RadioPanelErrorBoundary>
             </div>
           )}
           {showQueuePanel && (
-            <div className={`min-h-0 min-w-0 flex-1 overflow-hidden flex-col gap-2 ${activeTab === "queue" ? "flex" : "hidden"} lg:hidden`}>
+            <div className={`min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden ${activeTab === "queue" ? "flex" : "hidden"} lg:hidden`}>
               <RadioPanelErrorBoundary>
                 <Queue />
               </RadioPanelErrorBoundary>
@@ -1839,23 +1943,23 @@ export default function StreamPage() {
             </div>
           )}
           {(showRadioPanel || showQueuePanel) && (
-            <div className="hidden min-h-0 min-w-0 flex-1 flex-col gap-2 lg:flex">
+            <div className="hidden min-h-0 min-w-0 flex-1 flex-col gap-2 lg:flex lg:flex-[2.5]">
               {showRadioPanel && (
                 <div className={`relative flex min-h-0 min-w-0 flex-col rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5 ${
-                  desktopAccordionTab === "radio" ? "z-40 overflow-visible" : "z-20 overflow-hidden"
+                  desktopAccordionTab === "radio" ? "z-40 overflow-visible flex-1" : "z-20 overflow-hidden"
                 }`}>
                   <button
                     type="button"
                     onClick={() => setDesktopAccordionTab("radio")}
-                    className={`flex w-full items-center justify-between border-b border-gray-800 px-3 py-2 text-left text-sm font-semibold transition ${
+                    className={`flex shrink-0 items-center justify-between border-b border-gray-800 px-3 py-2 text-left text-sm font-semibold transition ${
                       desktopAccordionTab === "radio" ? "text-white bg-gray-800/40" : "text-gray-200 hover:bg-gray-800/60"
                     }`}
                   >
-                    <span>Nummer toevoegen</span>
+                    <span>Aanvragen</span>
                     <span className={`text-xs text-gray-400 transition ${desktopAccordionTab === "radio" ? "rotate-180" : ""}`}>▾</span>
                   </button>
                   {desktopAccordionTab === "radio" && (
-                    <div className="overflow-visible p-2">
+                    <div className="min-h-0 flex-1 overflow-visible p-2">
                       <RadioPanelErrorBoundary>
                         <QueueAdd username={userAccount?.username} />
                       </RadioPanelErrorBoundary>
@@ -1865,12 +1969,12 @@ export default function StreamPage() {
               )}
               {showQueuePanel && (
                 <div className={`relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5 ${
-                  desktopAccordionTab === "queue" ? "z-30" : "z-10"
+                  desktopAccordionTab === "queue" ? "z-30 flex-1" : "z-10"
                 }`}>
                   <button
                     type="button"
                     onClick={() => setDesktopAccordionTab("queue")}
-                    className={`flex w-full items-center justify-between border-b border-gray-800 px-3 py-2 text-left text-sm font-semibold transition ${
+                    className={`flex shrink-0 items-center justify-between border-b border-gray-800 px-3 py-2 text-left text-sm font-semibold transition ${
                       desktopAccordionTab === "queue" ? "text-white bg-gray-800/40" : "text-gray-200 hover:bg-gray-800/60"
                     }`}
                   >
@@ -1878,7 +1982,7 @@ export default function StreamPage() {
                     <span className={`text-xs text-gray-400 transition ${desktopAccordionTab === "queue" ? "rotate-180" : ""}`}>▾</span>
                   </button>
                   {desktopAccordionTab === "queue" && (
-                    <div className="max-h-[56dvh] overflow-y-auto p-2">
+                    <div className="min-h-0 flex-1 overflow-y-auto p-2">
                       <RadioPanelErrorBoundary>
                         <Queue />
                       </RadioPanelErrorBoundary>

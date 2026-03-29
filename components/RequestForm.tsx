@@ -644,13 +644,13 @@ export default function RequestForm(
   }
 
   return (
-    <div ref={wrapperRef} className="relative flex h-full flex-col overflow-hidden rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5">
-      <form onSubmit={handleSubmit} className="m-3 space-y-2 rounded-xl border border-gray-800 bg-gray-900 p-3 shadow-lg shadow-violet-500/5 sm:m-4 sm:p-4">
-        <label className="block text-xs font-semibold uppercase tracking-wider text-violet-400">
+    <div ref={wrapperRef} className="relative z-[100] flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5">
+      <form onSubmit={handleSubmit} className="m-3 flex min-h-0 flex-1 flex-col gap-2 rounded-xl border border-gray-800 bg-gray-900 p-3 shadow-lg shadow-violet-500/5 sm:m-4 sm:p-4">
+        <label className="block shrink-0 text-xs font-semibold uppercase tracking-wider text-violet-400">
           Nummer aanvragen
         </label>
 
-        <div className="flex items-center gap-1 rounded-lg bg-gray-800 p-0.5">
+        <div className="flex shrink-0 items-center gap-1 rounded-lg bg-gray-800 p-0.5">
           <button
             type="button"
             onClick={() => switchSource("youtube")}
@@ -757,22 +757,28 @@ export default function RequestForm(
         </div>
 
         {source === "spotify" ? (
-          <SpotifyBrowser onAddTrack={handleSpotifyAdd} submitting={submitting} />
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <SpotifyBrowser onAddTrack={handleSpotifyAdd} submitting={submitting} />
+          </div>
         ) : source === "playlists" ? (
-          <SharedPlaylistsBrowser onAddTrack={handlePlaylistAdd} submitting={submitting} />
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <SharedPlaylistsBrowser onAddTrack={handlePlaylistAdd} submitting={submitting} />
+          </div>
         ) : source === "genres" ? (
-          <div className="space-y-2">
-            <input
-              type="text"
-              value={genreQuery}
-              onChange={(e) => setGenreQuery(e.target.value)}
-              onFocus={() => {
-                if (genreMenuRef.current) genreMenuRef.current.open = true;
-              }}
-              placeholder="Zoek genre (hardstyle, trance, rock, metal...)"
-              className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-fuchsia-500"
-            />
-            <details ref={genreMenuRef} className="group relative z-20">
+          <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
+            <div className="shrink-0">
+              <input
+                type="text"
+                value={genreQuery}
+                onChange={(e) => setGenreQuery(e.target.value)}
+                onFocus={() => {
+                  if (genreMenuRef.current) genreMenuRef.current.open = true;
+                }}
+                placeholder="Zoek genre (hardstyle, trance, rock, metal...)"
+                className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-fuchsia-500"
+              />
+            </div>
+            <details ref={genreMenuRef} className="group shrink-0 relative z-20">
               <summary className="grid cursor-pointer list-none grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-gray-700 bg-gray-900/75 px-2.5 py-1.5 text-xs text-gray-200 transition hover:border-violet-500/60">
                 <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] font-semibold text-gray-300">
                   Genre
@@ -849,13 +855,13 @@ export default function RequestForm(
                 })}
               </div>
             </details>
-            {genresLoading && <p className="text-xs text-gray-400">Genres laden...</p>}
-            {genreError && <p className="text-xs text-amber-300">{genreError}</p>}
+            {genresLoading && <p className="shrink-0 text-xs text-gray-400">Genres laden...</p>}
+            {genreError && <p className="shrink-0 text-xs text-amber-300">{genreError}</p>}
             {!genresLoading && groupedGenreSections.length === 0 && (
-              <p className="text-xs text-gray-400">Geen genres gevonden.</p>
+              <p className="shrink-0 text-xs text-gray-400">Geen genres gevonden.</p>
             )}
 
-            <div ref={genreListRef} className="min-h-[14rem] max-h-[56dvh] overscroll-contain overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70">
+            <div ref={genreListRef} className="min-h-0 flex-1 overscroll-contain overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70">
               {genreHitsLoading ? (
                 <p className="px-3 py-3 text-xs text-gray-400">Hitlijst laden...</p>
               ) : genreHits.length === 0 ? (
@@ -898,7 +904,7 @@ export default function RequestForm(
             </div>
           </div>
         ) : (
-          <>
+          <div className="shrink-0 space-y-2">
             <div className="relative z-10">
               <input
                 type="text"
@@ -942,7 +948,7 @@ export default function RequestForm(
               {showResults && results.length > 0 && (
                 <div
                   data-prevent-pull-refresh="1"
-                  className="fixed inset-x-4 top-20 z-50 max-h-[50dvh] overscroll-contain overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50 sm:absolute sm:left-0 sm:right-0 sm:top-full sm:inset-x-auto sm:max-h-80"
+                  className="fixed inset-x-4 top-20 z-[150] max-h-[50dvh] overscroll-contain overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50 sm:absolute sm:left-0 sm:right-0 sm:top-full sm:inset-x-auto sm:max-h-80"
                   onMouseDown={(e) => {
                     // Prevent the blur from hiding results when clicking inside
                     e.preventDefault();
@@ -997,7 +1003,7 @@ export default function RequestForm(
             >
               {submitting ? "Checken..." : "Verzoek sturen"}
             </button>
-          </>
+          </div>
         )}
         {feedback && (
           <p className={`text-sm ${feedback.ok ? "text-green-400" : "text-red-400"}`}>

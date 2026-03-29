@@ -4,7 +4,7 @@ import { useEffect } from "react";
 
 // Verhoog dit nummer wanneer je gebruikers wilt dwingen tot een schone start.
 // Dit wist caches, service workers en localStorage bij de eerstvolgende laadactie.
-const APP_VERSION = "2.4-force-refresh-march-2025";
+const APP_VERSION = "2.5-force-refresh-march-2025-v2";
 
 export default function PwaRegistrar() {
   useEffect(() => {
@@ -33,8 +33,30 @@ export default function PwaRegistrar() {
           }
         }
 
-        // Wis localStorage (verwijdert oude sessies/fouten)
+        // Wis localStorage selectief (behou instellingen en afspeellijsten)
+        const whitelist = [
+          /^spotify-browser:/,
+          /^shared-playlists-browser:/,
+          /^fallback-selector:/,
+          /^radio_nickname$/,
+          /^dj_radio_nickname$/,
+          /^sb-.*-auth-token$/, // Supabase auth
+          /^admin_auth$/,
+          /^radio_admin_token$/
+        ];
+
+        const keysToKeep: Record<string, string | null> = {};
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && whitelist.some(pattern => pattern.test(key))) {
+            keysToKeep[key] = localStorage.getItem(key);
+          }
+        }
+
         localStorage.clear();
+        for (const [key, value] of Object.entries(keysToKeep)) {
+          if (value !== null) localStorage.setItem(key, value);
+        }
         localStorage.setItem("dj_app_version", APP_VERSION);
 
         // Force immediate reload for users with old cached versions

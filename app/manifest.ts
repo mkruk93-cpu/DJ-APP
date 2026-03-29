@@ -5,12 +5,13 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "KrukkeX DJ Stream",
     short_name: "KrukkeX",
     description: "KrukkeX live stream met chat en muziekverzoekjes",
-    start_url: "/stream?v=1.1.0",
+    start_url: "/stream?v=1.1.1",
     scope: "/",
     display: "standalone",
+    display_override: ["standalone", "fullscreen", "minimal-ui"],
     orientation: "portrait",
     background_color: "#0b0618",
-    theme_color: "#7c3aed",
+    theme_color: "#030712",
     icons: [
       {
         src: "/icons/krukkex-icon.svg",

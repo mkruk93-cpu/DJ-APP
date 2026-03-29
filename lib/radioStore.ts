@@ -27,6 +27,8 @@ interface RadioStore extends RadioState {
   setSkipLocked: (locked: boolean) => void;
   playerPlaying: boolean;
   setPlayerPlaying: (playing: boolean) => void;
+  onlineUserCount: number;
+  setOnlineUserCount: (count: number) => void;
   resetAll: () => void;
   initFromServer: (state: Partial<RadioState>) => void;
 }
@@ -64,6 +66,7 @@ export const useRadioStore = create<RadioStore>((set) => ({
     party_queue_listener_step: 2,
   },
   listenerCount: 0,
+  onlineUserCount: 0,
   streamOnline: false,
   pausedForIdle: false,
   voteState: null,
@@ -88,6 +91,7 @@ export const useRadioStore = create<RadioStore>((set) => ({
   setMode: (mode, modeSettings) => set({ mode, modeSettings }),
   setModeSettings: (modeSettings) => set({ modeSettings }),
   setListenerCount: (listenerCount) => set({ listenerCount }),
+  setOnlineUserCount: (onlineUserCount) => set({ onlineUserCount }),
   setStreamOnline: (streamOnline) => set({ streamOnline }),
   setPausedForIdle: (pausedForIdle) => set({ pausedForIdle }),
   setVoteState: (voteState) => set({ voteState }),
@@ -110,6 +114,7 @@ export const useRadioStore = create<RadioStore>((set) => ({
     activeFallbackGenreBy: null,
     activeFallbackSharedMode: "random",
     listenerCount: 0,
+    onlineUserCount: 0,
     streamOnline: false,
     pausedForIdle: false,
     voteState: null,

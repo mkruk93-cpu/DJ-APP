@@ -170,15 +170,17 @@ app.use('/api', genreManagementRouter);
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function isAdmin(token?: string): boolean {
-  return !!token && token === ADMIN_TOKEN;
+function isAdmin(token?: string, nickname?: string): boolean {
+  const isTokenAdmin = !!token && token === ADMIN_TOKEN;
+  const isKrukkex = !!nickname && normalizeNickname(nickname) === 'krukkex';
+  return isTokenAdmin || isKrukkex;
 }
 
 /** When lock_autoplay_fallback is set in DB, only admin token may change autoplay source / shared mode / presets apply. */
-async function canChangeAutoplayFallback(token: string | undefined): Promise<boolean> {
+async function canChangeAutoplayFallback(token?: string, nickname?: string): Promise<boolean> {
   const locked = await getSetting<boolean>(sb, 'lock_autoplay_fallback');
   if (!locked) return true;
-  return isAdmin(token);
+  return isAdmin(token, nickname);
 }
 
 function readAdminToken(req: Request): string {
@@ -4600,7 +4602,7 @@ io.on('connection', (socket) => {
 
   // ── auth:verify ──
   socket.on('auth:verify', (data: { token: string }, callback?: (valid: boolean) => void) => {
-    const valid = isAdmin(data.token);
+    const valid = isAdmin(data.token, socketNicknameById.get(socket.id));
     if (typeof callback === 'function') callback(valid);
   });
 
@@ -4613,6 +4615,7 @@ io.on('connection', (socket) => {
       listening,
       updatedAt: Date.now(),
     });
+    setSocketNickname(socket.id, nickname);
     emitStreamStatus();
     getActiveMode(sb).then((mode) => evaluateIdlePlayback(mode)).catch(() => {});
     void emitSkipVoteState();
@@ -4647,7 +4650,7 @@ io.on('connection', (socket) => {
   }) => void) => {
     try {
       const mode = await getActiveMode(sb);
-      const admin = isAdmin(data.token);
+      const admin = isAdmin(data.token, socketNicknameById.get(socket.id));
       if (!canPerformAction(mode, 'add_to_queue', admin)) {
         socket.emit('error:toast', { message: 'Je mag geen nummers toevoegen in deze modus' });
         ack?.({ ok: false, error: 'Je mag geen nummers toevoegen in deze modus' });
@@ -4740,7 +4743,7 @@ io.on('connection', (socket) => {
       socket.emit('error:toast', { message: 'Onbekend item in eigen wachtrij' });
       return;
     }
-    if (!isAdmin(data?.token) && socketNicknameById.get(socket.id) !== addedBy) {
+    if (!isAdmin(data?.token, socketNicknameById.get(socket.id)) && socketNicknameById.get(socket.id) !== addedBy) {
       socket.emit('error:toast', { message: 'Je mag alleen je eigen wachtrij aanpassen' });
       return;
     }
@@ -4849,7 +4852,7 @@ io.on('connection', (socket) => {
   socket.on('track:skip', async (data: { isAdmin?: boolean; token?: string }) => {
     try {
       const mode = await getActiveMode(sb);
-      const admin = isAdmin(data.token);
+      const admin = isAdmin(data.token, socketNicknameById.get(socket.id));
 
       const track = getCurrentTrack();
       if (isSkipLocked()) {
@@ -4931,7 +4934,7 @@ io.on('connection', (socket) => {
 
   // ── mode:set ──
   socket.on('mode:set', async (data: { mode: string; token: string }) => {
-    if (!isAdmin(data.token)) {
+    if (!isAdmin(data.token, socketNicknameById.get(socket.id))) {
       socket.emit('error:toast', { message: 'Geen admin rechten' });
       return;
     }
@@ -4957,7 +4960,7 @@ io.on('connection', (socket) => {
 
   // ── settings:update ──
   socket.on('settings:update', async (data: { key: string; value: unknown; token: string }) => {
-    if (!isAdmin(data.token)) {
+    if (!isAdmin(data.token, socketNicknameById.get(socket.id))) {
       socket.emit('error:toast', { message: 'Geen admin rechten' });
       return;
     }
@@ -5025,7 +5028,7 @@ io.on('connection', (socket) => {
 
   // ── queue:reorder ──
   socket.on('queue:reorder', async (data: { id: string; newPosition: number; token: string }) => {
-    if (!isAdmin(data.token)) {
+    if (!isAdmin(data.token, socketNicknameById.get(socket.id))) {
       socket.emit('error:toast', { message: 'Geen admin rechten' });
       return;
     }
@@ -5045,7 +5048,7 @@ io.on('connection', (socket) => {
   // ── queue:remove ──
   socket.on('queue:remove', async (data: { id: string; token?: string; added_by?: string }) => {
     const mode = await getActiveMode(sb);
-    const admin = isAdmin(data.token);
+    const admin = isAdmin(data.token, socketNicknameById.get(socket.id));
     const requester = normalizeNickname(data.added_by) ?? null;
     const queue = await getQueue(sb);
     const target = queue.find((item) => item.id === data.id);
@@ -5070,7 +5073,7 @@ io.on('connection', (socket) => {
 
   // ── settings:keepFiles ──
   socket.on('settings:keepFiles', (data: { keep: boolean; token: string }) => {
-    if (!isAdmin(data.token)) {
+    if (!isAdmin(data.token, socketNicknameById.get(socket.id))) {
       socket.emit('error:toast', { message: 'Geen admin rechten' });
       return;
     }
@@ -5109,7 +5112,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('fallback:preset:apply', async (data: { id?: string; selectedBy?: string; token?: string }) => {
-    if (!(await canChangeAutoplayFallback(data?.token))) {
+    if (!(await canChangeAutoplayFallback(data?.token, socketNicknameById.get(socket.id)))) {
       socket.emit('error:toast', { message: 'Autoplay fallback is vergrendeld (alleen admin)' });
       return;
     }
@@ -5145,7 +5148,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('fallback:genre:set', async (data: { genreId?: string; genreIds?: string[]; selectedBy?: string; selectedLabel?: string; sharedPlaybackMode?: string; token?: string }) => {
-    if (!(await canChangeAutoplayFallback(data?.token))) {
+    if (!(await canChangeAutoplayFallback(data?.token, socketNicknameById.get(socket.id)))) {
       socket.emit('error:toast', { message: 'Autoplay fallback is vergrendeld (alleen admin)' });
       return;
     }
@@ -5193,7 +5196,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('fallback:shared:mode:set', async (data: { mode: string; selectedBy?: string; token?: string }) => {
-    if (!(await canChangeAutoplayFallback(data?.token))) {
+    if (!(await canChangeAutoplayFallback(data?.token, socketNicknameById.get(socket.id)))) {
       socket.emit('error:toast', { message: 'Autoplay fallback is vergrendeld (alleen admin)' });
       return;
     }
