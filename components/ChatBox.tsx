@@ -13,6 +13,12 @@ interface ChatMessage {
   created_at: string;
 }
 
+interface ChatBoxProps {
+  username?: string;
+  onNewMessage?: () => void;
+  onUserClick?: (username: string) => void;
+}
+
 interface MediaSearchItem {
   id: string;
   title: string | null;
@@ -67,7 +73,7 @@ function normalizeName(value: string): string {
   return value.trim().toLowerCase();
 }
 
-export default function ChatBox({ onNewMessage, username }: { onNewMessage?: () => void; username?: string } = {}) {
+export default function ChatBox({ onNewMessage, username, onUserClick }: ChatBoxProps = {}) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [cooldown, setCooldown] = useState(false);
@@ -83,6 +89,7 @@ export default function ChatBox({ onNewMessage, username }: { onNewMessage?: () 
   const [deletingMessageId, setDeletingMessageId] = useState<string | null>(null);
   const [deleteMenuMessageId, setDeleteMenuMessageId] = useState<string | null>(null);
   const [adminToken, setAdminToken] = useState<string>("");
+  const [userColors, setUserColors] = useState<Record<string, string>>({});
   const lastMsgRef = useRef<{ text: string; time: number }>({ text: "", time: 0 });
   const messagesRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
@@ -93,6 +100,21 @@ export default function ChatBox({ onNewMessage, username }: { onNewMessage?: () 
   const nickname = username || (typeof window !== "undefined" ? localStorage.getItem("nickname") ?? "Gast" : "Gast");
   const activeMediaType: MediaType | null = pickerTab === "gif" || pickerTab === "sticker" ? pickerTab : null;
   const isAdmin = !!adminToken;
+
+  // Fetch user colors when messages change
+  useEffect(() => {
+    const uniqueNicknames = [...new Set(messages.map(m => m.nickname))];
+    if (uniqueNicknames.length === 0) return;
+    
+    fetch(`/api/profile/colors?usernames=${encodeURIComponent(uniqueNicknames.join(","))}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.colors) {
+          setUserColors(data.colors);
+        }
+      })
+      .catch(() => {});
+  }, [messages]);
 
   const scrollToBottom = useCallback((smooth = false) => {
     const host = messagesRef.current;
@@ -407,7 +429,14 @@ export default function ChatBox({ onNewMessage, username }: { onNewMessage?: () 
           >
             <div className="flex items-start gap-1.5">
               <div className="min-w-0 flex-1">
-                <span className="font-semibold text-violet-400">{m.nickname}</span>
+                <button
+                  type="button"
+                  onClick={() => onUserClick?.(m.nickname)}
+                  className="font-semibold hover:underline"
+                  style={{ color: userColors[m.nickname.toLowerCase()] || "#a78bfa" }}
+                >
+                  {m.nickname}
+                </button>
                 <span className="mx-1 text-gray-600 sm:mx-1.5">{timeStr(m.created_at)}</span>
                 <span className="text-gray-300">{renderContent(m.content)}</span>
               </div>

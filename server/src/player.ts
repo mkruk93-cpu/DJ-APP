@@ -3770,6 +3770,7 @@ async function playNext(
     pendingQueueUpcoming = null;
     pendingAutoUpcoming = null;
     io.emit('track:change', currentTrack);
+    playerEvents.emit('track:played', currentTrack);
     lastTrackAnnouncedAt = Date.now();
     if (isFallback) {
       lastFallbackFile = audioFile;

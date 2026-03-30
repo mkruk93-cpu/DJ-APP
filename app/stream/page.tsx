@@ -23,6 +23,8 @@ import ShoutoutBanner from "@/components/ShoutoutBanner";
 import FallbackGenreSelector from "@/components/FallbackGenreSelector";
 import AdminNotificationToast from "@/components/AdminNotificationToast";
 import PushNotification from "@/components/PushNotification";
+import ProfileModal from "@/components/ProfileModal";
+import Leaderboard from "@/components/Leaderboard";
 import type { Track, QueueItem, Mode, ModeSettings, VoteState, DurationVote, UpcomingTrack } from "@/lib/types";
 import { parseTrackDisplay } from "@/lib/trackDisplay";
 import { useSyncedTrack } from "@/lib/useSyncedTrack";
@@ -146,6 +148,8 @@ export default function StreamPage() {
   const [appInfoOpen, setAppInfoOpen] = useState(false);
   const [mobileHeaderMenuOpen, setMobileHeaderMenuOpen] = useState(false);
   const [adminOverlayOpen, setAdminOverlayOpen] = useState(false);
+  const [profileModalUser, setProfileModalUser] = useState<string | null>(null);
+  const [leaderboardOpen, setLeaderboardOpen] = useState(false);
   const [statsLoading, setStatsLoading] = useState(false);
   const [statsError, setStatsError] = useState<string | null>(null);
   const [statsSummary, setStatsSummary] = useState<PublicStatsSummary | null>(null);
@@ -1481,7 +1485,7 @@ export default function StreamPage() {
           <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1 sm:gap-3">
             {/* Always show header components, with fallback during loading */}
             <ModeIndicator />
-            <OnlineUsers username={userAccount?.username} />
+            <OnlineUsers username={userAccount?.username} onUserClick={(username) => setProfileModalUser(username)} />
             <button
               onClick={() => setStatsOpen((prev) => !prev)}
               className={`hidden whitespace-nowrap rounded-lg border px-2 py-1 text-xs transition sm:inline-flex sm:px-3 sm:text-sm ${
@@ -1492,6 +1496,21 @@ export default function StreamPage() {
             >
               Stats
             </button>
+            <button
+              onClick={() => setLeaderboardOpen(true)}
+              className={`hidden whitespace-nowrap rounded-lg border border-gray-700 px-2 py-1 text-xs text-gray-400 hover:border-gray-600 hover:text-white transition sm:inline-flex sm:px-3 sm:text-sm`}
+            >
+              🏆 Ranking
+            </button>
+            {userAccount?.username && (
+              <button
+                onClick={() => setProfileModalUser(userAccount?.username || null)}
+                className="flex items-center gap-1.5 rounded-lg border border-gray-700 bg-gray-800 px-2 py-1 text-xs text-gray-400 hover:border-gray-600 hover:text-white transition"
+              >
+                <span>👤</span>
+                <span className="hidden sm:inline">{userAccount.username}</span>
+              </button>
+            )}
             <button
               onClick={async () => {
                 await signOut();
@@ -1877,7 +1896,7 @@ export default function StreamPage() {
         {/* Content panels */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 lg:min-w-0 lg:flex-[4.5] lg:flex-row lg:gap-4 lg:basis-auto">
           <div className={`min-h-0 min-w-0 flex-1 lg:flex-[2.2] ${activeTab === "chat" ? "flex" : "hidden"} lg:flex lg:flex-col`}>
-            <ChatBox username={userAccount?.username} onNewMessage={() => { if (activeTabRef.current !== "chat") setChatBadge(true); }} />
+            <ChatBox username={userAccount?.username} onNewMessage={() => { if (activeTabRef.current !== "chat") setChatBadge(true); }} onUserClick={(username) => setProfileModalUser(username)} />
           </div>
           {showRequests && (
             <div className={`min-h-0 min-w-0 flex-1 lg:flex-[1.5] ${activeTab === "requests" ? "flex" : "hidden"} lg:flex lg:flex-col`}>
@@ -2337,6 +2356,40 @@ export default function StreamPage() {
           </div>
         </div>
       )}
+      
+      {/* Profile Modal */}
+      {profileModalUser && (
+        <ProfileModal
+          username={profileModalUser}
+          isOwnProfile={profileModalUser === userAccount?.username}
+          onClose={() => setProfileModalUser(null)}
+        />
+      )}
+      
+      {/* Leaderboard Modal */}
+      {leaderboardOpen && (
+        <div className="fixed inset-0 z-[140] flex items-end justify-center bg-black/45 p-2 sm:items-center sm:p-4">
+          <div className="flex h-[78dvh] w-full max-w-md flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50 sm:h-[80vh]">
+            <div className="flex items-center justify-between border-b border-gray-800 px-3 py-2">
+              <p className="text-sm font-semibold text-white">🏆 Ranking</p>
+              <button
+                type="button"
+                onClick={() => setLeaderboardOpen(false)}
+                className="rounded border border-gray-700 px-2 py-1 text-xs text-gray-300 transition hover:text-white"
+              >
+                Sluit
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2 pb-8">
+              <Leaderboard onUserClick={(username) => {
+                setLeaderboardOpen(false);
+                setProfileModalUser(username);
+              }} />
+            </div>
+          </div>
+        </div>
+      )}
+      
       <PushNotification />
     </div>
   );

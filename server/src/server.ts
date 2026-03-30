@@ -18,7 +18,7 @@ import { youtubeSearch, soundcloudSearch, spotdlSearch } from './services/search
 import { startBridge } from './bridge.js';
 import { startNowPlayingWatcher } from './nowPlaying.js';
 import { StreamHub } from './streamHub.js';
-import type { Mode, ModeSettings, ServerState, DurationVote, QueuePushVote, FallbackGenre } from './types.js';
+import type { Mode, ModeSettings, ServerState, DurationVote, QueuePushVote, FallbackGenre, Track } from './types.js';
 import {
   searchGenres,
   getTopTracksByGenre,
@@ -178,6 +178,81 @@ function isAdmin(token?: string, nickname?: string): boolean {
   return isTokenAdmin || isKrukkex;
 }
 
+// Points system
+const POINTS = {
+  REQUEST_ADDED: 5,      // Points for adding a request
+  REQUEST_PLAYED: 10,    // Points when your request plays
+  VOTE_SKIP: 1,         // Points for voting to skip
+  SKIP_SUCCESS: 5,       // Points when skip succeeds (all voters get this)
+  LISTEN_PER_MINUTE: 1, // Points per minute listened (calculated on track change)
+};
+
+async function awardPoints(nickname: string, points: number, reason: string): Promise<void> {
+  try {
+    // Get user_id from user_accounts by username
+    const { data: account, error: accountError } = await sb
+      .from('user_accounts')
+      .select('id')
+      .ilike('username', nickname.trim())
+      .single();
+
+    if (accountError || !account) {
+      console.log(`[points] User not found: ${nickname}`);
+      return;
+    }
+
+    // Get current profile
+    const { data: profile } = await sb
+      .from('user_profiles')
+      .select('points')
+      .eq('user_id', account.id)
+      .single();
+
+    const newPoints = (profile?.points || 0) + points;
+
+    // Update or insert profile with points
+    const { error: upsertError } = await sb
+      .from('user_profiles')
+      .upsert({
+        user_id: account.id,
+        points: newPoints,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'user_id' });
+
+    if (upsertError) {
+      console.log(`[points] Error awarding ${points} points to ${nickname}:`, upsertError.message);
+    } else {
+      console.log(`[points] Awarded ${points} points to ${nickname}: ${reason}`);
+    }
+  } catch (err) {
+    console.log(`[points] Error:`, err);
+  }
+}
+
+async function awardListenTimePoints(): Promise<void> {
+  try {
+    // Award points to all actively listening users based on listen time
+    const listeners = new Map<string, number>(); // nickname -> seconds
+    
+    for (const [socketId, presence] of listenerPresenceBySocket.entries()) {
+      if (!presence.listening) continue;
+      const nick = (presence.nickname ?? '').trim();
+      if (!nick) continue;
+      const current = listeners.get(nick) || 0;
+      listeners.set(nick, current + 60); // Add 60 seconds (1 minute)
+    }
+
+    for (const [nickname, seconds] of listeners.entries()) {
+      const points = Math.floor(seconds / 60) * POINTS.LISTEN_PER_MINUTE;
+      if (points > 0) {
+        await awardPoints(nickname, points, 'listening');
+      }
+    }
+  } catch (err) {
+    console.log(`[points] Listen time error:`, err);
+  }
+}
+
 /** When lock_autoplay_fallback is set in DB, only admin token may change autoplay source / shared mode / presets apply. */
 async function canChangeAutoplayFallback(token?: string, nickname?: string): Promise<boolean> {
   const locked = await getSetting<boolean>(sb, 'lock_autoplay_fallback');
@@ -230,6 +305,17 @@ function applyPlaybackForMode(mode: Mode): void {
   }
   const encoderTarget = internalPlayerUseIcecast ? ICECAST : null;
   startPlayCycle(sb, io, CACHE_DIR, encoderTarget, streamHub);
+  
+  // Award points when a track plays
+  playerEvents.on('track:played', async (track: any) => {
+    // Award points to requester
+    if (track?.added_by && track.added_by.toLowerCase() !== 'admin' && track.added_by.toLowerCase() !== 'krukkex') {
+      await awardPoints(track.added_by, POINTS.REQUEST_PLAYED, 'request played');
+    }
+    
+    // Award listen time points
+    await awardListenTimePoints();
+  });
 }
 
 function evaluateIdlePlayback(mode: Mode): void {
@@ -4772,6 +4858,12 @@ io.on('connection', (socket) => {
       const queue = await getQueue(sb);
       io.emit('queue:added', { id: item.id, title: item.title ?? item.youtube_id, added_by: item.added_by ?? addedBy ?? 'onbekend' });
       io.emit('queue:update', { items: queue });
+      
+      // Award points for adding a request
+      if (addedBy && addedBy.toLowerCase() !== 'admin' && addedBy.toLowerCase() !== 'krukkex') {
+        void awardPoints(addedBy, POINTS.REQUEST_ADDED, 'request added');
+      }
+      
       void recordRequestEvent({
         added_by: addedBy,
         title: item.title ?? null,
@@ -4974,6 +5066,13 @@ io.on('connection', (socket) => {
       }
 
       voteSkipSet.add(socket.id);
+      
+      // Award points for voting to skip
+      const voterNickname = socketNicknameById.get(socket.id);
+      if (voterNickname) {
+        void awardPoints(voterNickname, POINTS.VOTE_SKIP, 'voted to skip');
+      }
+      
       const settings = await getModeSettings(sb);
       const timerSeconds = settings.democracy_timer;
 

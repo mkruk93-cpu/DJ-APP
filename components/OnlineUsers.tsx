@@ -5,7 +5,7 @@ import { getSupabase } from "@/lib/supabaseClient";
 import { useRadioStore } from "@/lib/radioStore";
 import { useAuth } from "@/lib/authContext";
 
-export default function OnlineUsers({ username }: { username?: string } = {}) {
+export default function OnlineUsers({ username, onUserClick }: { username?: string; onUserClick?: (username: string) => void } = {}) {
   const [onlineUsers, setOnlineUsers] = useState<Array<{ nickname: string; listening: boolean }>>([]);
   const [expanded, setExpanded] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -165,10 +165,14 @@ export default function OnlineUsers({ username }: { username?: string } = {}) {
               <p className="px-2 py-1 text-xs text-gray-500">Niemand online.</p>
             ) : (
               onlineUsers.map((user, idx) => (
-                <div key={`${user.nickname}-${idx}`} className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-gray-800">
+                <button
+                  key={`${user.nickname}-${idx}`}
+                  onClick={() => onUserClick?.(user.nickname)}
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 hover:bg-gray-800 text-left"
+                >
                   <div className={`h-1.5 w-1.5 rounded-full ${user.listening ? "bg-green-500" : "bg-red-500"}`} />
                   <span className="truncate text-xs text-gray-200">{user.nickname}</span>
-                </div>
+                </button>
               ))
             )}
           </div>
