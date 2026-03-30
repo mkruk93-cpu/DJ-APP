@@ -85,6 +85,7 @@ export default function ChatBox({ onNewMessage, username }: { onNewMessage?: () 
   const lastMsgRef = useRef<{ text: string; time: number }>({ text: "", time: 0 });
   const messagesRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
+  const pickerRef = useRef<HTMLDivElement>(null);
   const mediaAbortRef = useRef<AbortController | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
   const channelId = useId();
@@ -258,7 +259,11 @@ export default function ChatBox({ onNewMessage, username }: { onNewMessage?: () 
   useEffect(() => {
     function handleOutsideClick(e: MouseEvent) {
       if (!pickerOpen) return;
-      if (formRef.current && !formRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      const clickedInForm = formRef.current?.contains(target);
+      const clickedInPicker = pickerRef.current?.contains(target);
+      
+      if (!clickedInForm && !clickedInPicker) {
         setPickerOpen(false);
       }
     }
@@ -456,7 +461,11 @@ export default function ChatBox({ onNewMessage, username }: { onNewMessage?: () 
         <input
           type="text"
           id="chat-message-input"
-          name="chat-message"
+          name={`chat-message-${Math.random().toString(36).substring(7)}`}
+          autoComplete="off"
+          data-lpignore="true"
+          data-form-type="other"
+          spellCheck="false"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           maxLength={MAX_LENGTH}
@@ -471,102 +480,101 @@ export default function ChatBox({ onNewMessage, username }: { onNewMessage?: () 
           Stuur
         </button>
 
-        {pickerOpen && (
-          <div className="fixed inset-x-4 bottom-[calc(100%+8px)] z-[60] mx-auto w-[min(92vw,26rem)] rounded-xl border border-gray-700 bg-gray-900 p-2 shadow-2xl shadow-black/40 sm:fixed sm:inset-x-auto sm:left-4 sm:bottom-[calc(100%+8px)] sm:mx-0 sm:w-80">
-            <div className="mb-2 flex gap-1 rounded-lg bg-gray-800 p-1">
-              <button
-                type="button"
-                onClick={() => switchTab("emoji")}
-                className={`flex-1 rounded-md px-2 py-1 text-xs font-semibold transition ${
-                  pickerTab === "emoji" ? "bg-violet-600 text-white" : "text-gray-300 hover:text-white"
-                }`}
-              >
-                Emoji
-              </button>
-              <button
-                type="button"
-                onClick={() => switchTab("sticker")}
-                className={`flex-1 rounded-md px-2 py-1 text-xs font-semibold transition ${
-                  pickerTab === "sticker" ? "bg-violet-600 text-white" : "text-gray-300 hover:text-white"
-                }`}
-              >
-                Stickers
-              </button>
-              <button
-                type="button"
-                onClick={() => switchTab("gif")}
-                className={`flex-1 rounded-md px-2 py-1 text-xs font-semibold transition ${
-                  pickerTab === "gif" ? "bg-violet-600 text-white" : "text-gray-300 hover:text-white"
-                }`}
-              >
-                GIF
-              </button>
-            </div>
+      </form>
 
-            {pickerTab === "emoji" ? (
-              <div className="overflow-hidden rounded-lg border border-gray-700">
-                <EmojiPicker
-                  width="100%"
-                  height={360}
-                  lazyLoadEmojis
-                  searchDisabled={false}
-                  skinTonesDisabled
-                  autoFocusSearch={false}
-                  theme={Theme.DARK}
-                  previewConfig={{ showPreview: false }}
-                  searchPlaceHolder="Zoek emoji..."
-                  onEmojiClick={addEmoji}
-                />
-              </div>
-            ) : (
-              <div>
-                <input
-                  type="text"
-                  id="media-search-input"
-                  name="media-search"
-                  value={mediaQuery}
-                  onChange={(e) => setMediaQuery(e.target.value)}
-                  placeholder={pickerTab === "gif" ? "Zoek GIF's..." : "Zoek stickers..."}
-                  className="mb-2 w-full rounded-lg border border-gray-700 bg-gray-800 px-2.5 py-1.5 text-xs text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
-                />
-                {mediaError && <p className="mb-2 text-[11px] text-red-300">{mediaError}</p>}
-                <div className="chat-scroll grid min-h-64 max-h-64 grid-cols-3 gap-1.5 overflow-y-auto pr-1 sm:gap-2">
-                  {mediaLoading && mediaItems.length === 0 ? (
-                    <p className="col-span-3 text-[11px] text-gray-400">Media laden...</p>
-                  ) : mediaItems.length === 0 ? (
-                    <p className="col-span-3 text-[11px] text-gray-400">Geen resultaten gevonden.</p>
-                  ) : (
-                    mediaItems.map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() => sendMedia(activeMediaType ?? "gif", item.mediaUrl)}
-                        className="rounded-lg bg-gray-800 p-1.5 transition hover:bg-gray-700"
-                        title={item.title ?? "Media"}
-                      >
-                        <img src={item.previewUrl} alt={item.title ?? "Media"} className="h-12 w-full rounded-md object-cover sm:h-14" loading="lazy" />
-                      </button>
-                    ))
-                  )}
-                </div>
-                {mediaNextPos && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!activeMediaType || mediaLoadingMore) return;
-                      void fetchMedia(activeMediaType, mediaQuery, { append: true, pos: mediaNextPos });
-                    }}
-                    className="mt-2 w-full rounded-lg border border-gray-700 bg-gray-800/80 px-2 py-1.5 text-xs text-gray-200 transition hover:bg-gray-700 disabled:opacity-50"
-                    disabled={mediaLoadingMore}
-                  >
-                    {mediaLoadingMore ? "Laden..." : "Meer laden"}
-                  </button>
+      {/* Emoji/Media Picker - Moved outside form for better positioning on mobile */}
+      {pickerOpen && (
+        <div 
+          ref={pickerRef}
+          className="fixed inset-x-2 bottom-20 z-[200] mx-auto w-auto max-w-[calc(100vw-1rem)] rounded-xl border border-gray-700 bg-gray-900 p-2 shadow-2xl shadow-black/40 sm:bottom-[calc(100%+8px)] sm:left-4 sm:inset-x-auto sm:mx-0 sm:w-80 sm:max-w-none"
+        >
+          <div className="mb-2 flex gap-1 rounded-lg bg-gray-800 p-1">
+            {(['emoji', 'sticker', 'gif'] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => switchTab(tab)}
+                className={`flex-1 rounded-md px-2 py-1 text-xs font-semibold transition ${
+                  pickerTab === tab ? "bg-violet-600 text-white" : "text-gray-300 hover:text-white"
+                }`}
+              >
+                {tab === "emoji" ? "Emoji" : tab === "sticker" ? "Stickers" : "GIF"}
+              </button>
+            ))}
+          </div>
+
+          {pickerTab === "emoji" ? (
+            <div className="overflow-hidden rounded-lg border border-gray-700">
+              <EmojiPicker
+                width="100%"
+                height={360}
+                lazyLoadEmojis
+                searchDisabled={false}
+                skinTonesDisabled
+                autoFocusSearch={false}
+                theme={Theme.DARK}
+                previewConfig={{ showPreview: false }}
+                searchPlaceHolder="Zoek emoji..."
+                onEmojiClick={addEmoji}
+              />
+            </div>
+          ) : (
+            <div>
+              <input
+                type="text"
+                id="media-search-input"
+                name={`media-search-${Math.random().toString(36).substring(7)}`}
+                autoComplete="off"
+                data-lpignore="true"
+                data-form-type="other"
+                spellCheck="false"
+                value={mediaQuery}
+                onChange={(e) => setMediaQuery(e.target.value)}
+                placeholder={pickerTab === "gif" ? "Zoek GIF's..." : "Zoek stickers..."}
+                className="mb-2 w-full rounded-lg border border-gray-700 bg-gray-800 px-2.5 py-1.5 text-xs text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
+              />
+              {mediaError && <p className="mb-2 text-[11px] text-red-300">{mediaError}</p>}
+              <div className="chat-scroll grid min-h-64 max-h-64 grid-cols-3 gap-1.5 overflow-y-auto pr-1 sm:gap-2">
+                {mediaLoading && mediaItems.length === 0 ? (
+                  <p className="col-span-3 text-[11px] text-gray-400">Media laden...</p>
+                ) : mediaItems.length === 0 ? (
+                  <p className="col-span-3 text-[11px] text-gray-400">Geen resultaten gevonden.</p>
+                ) : (
+                  mediaItems.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => sendMedia(activeMediaType ?? "gif", item.mediaUrl)}
+                      className="rounded-lg bg-gray-800 p-1.5 transition hover:bg-gray-700"
+                      title={item.title ?? "Media"}
+                    >
+                      <img src={item.previewUrl} alt={item.title ?? "Media"} className="h-12 w-full rounded-md object-cover sm:h-14" loading="lazy" />
+                    </button>
+                  ))
+                )}
+                {mediaLoading && mediaItems.length > 0 && (
+                  <div className="col-span-3 py-2 text-center">
+                    <div className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-violet-500 border-t-transparent" />
+                  </div>
                 )}
               </div>
-            )}
-          </div>
-        )}
-      </form>
+              {mediaNextPos && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!activeMediaType || mediaLoadingMore) return;
+                    void fetchMedia(activeMediaType, mediaQuery, { append: true, pos: mediaNextPos });
+                  }}
+                  className="mt-2 w-full rounded-lg border border-gray-700 bg-gray-800/80 px-2 py-1.5 text-xs text-gray-200 transition hover:bg-gray-700 disabled:opacity-50"
+                  disabled={mediaLoadingMore}
+                >
+                  {mediaLoadingMore ? "Laden..." : "Meer laden"}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -638,16 +638,23 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
     
     // Check if we have enough space below (need at least 200px for meaningful dropdown)
     if (spaceBelow >= 200) {
-      // Position normally below input
+      // Position normally below input using fixed to bypass overflow-hidden
       setDropdownStyle({
+        position: 'fixed',
+        top: `${Math.round(rect.bottom + 4)}px`,
+        left: `${Math.round(rect.left)}px`,
+        width: `${Math.round(rect.width)}px`,
         maxHeight: `${Math.max(140, spaceBelow - 8)}px`
       });
     } else if (spaceAbove >= 200) {
-      // Position above input if more space there
+      // Position above input using fixed to bypass overflow-hidden
+      const bottom = viewportHeight - rect.top;
       setDropdownStyle({
-        bottom: '100%',
+        position: 'fixed',
+        bottom: `${Math.round(bottom + 4)}px`,
         top: 'auto',
-        marginBottom: '4px',
+        left: `${Math.round(rect.left)}px`,
+        width: `${Math.round(rect.width)}px`,
         marginTop: '0',
         maxHeight: `${Math.max(140, spaceAbove - 8)}px`
       });
@@ -1501,6 +1508,11 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
             <div className="relative">
               <input
                 type="text"
+                name={`search-input-${Math.random().toString(36).substring(7)}`}
+                autoComplete="off"
+                data-lpignore="true"
+                data-form-type="other"
+                spellCheck="false"
                 value={input}
                 onChange={(e) => handleInputChange(e.target.value)}
                 onFocus={() => { if (results.length > 0) setShowResults(true); }}
@@ -1551,7 +1563,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                   onScroll={handleSearchListScroll}
                   onTouchEnd={handleSearchListTouch}
                   onTouchMove={handleSearchListTouchMove}
-                  className="absolute left-0 right-0 top-full z-[150] mt-1 overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50"
+                  className="absolute left-0 right-0 top-full z-[300] mt-1 overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50"
                   style={{ 
                     WebkitOverflowScrolling: 'touch',
                     transform: 'translateZ(0)', // Force hardware acceleration

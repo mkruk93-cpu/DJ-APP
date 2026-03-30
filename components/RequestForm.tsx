@@ -911,7 +911,11 @@ export default function RequestForm(
               <input
                 type="text"
                 id="request-search-input"
-                name="request-search"
+                name={`request-search-${Math.random().toString(36).substring(7)}`}
+                autoComplete="off"
+                data-lpignore="true"
+                data-form-type="other"
+                spellCheck="false"
                 value={input}
                 onChange={(e) => handleInputChange(e.target.value)}
                 onFocus={() => { if (results.length > 0) setShowResults(true); }}

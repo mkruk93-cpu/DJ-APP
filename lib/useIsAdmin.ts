@@ -9,6 +9,6 @@ import { isRadioAdmin } from '@/lib/auth';
 export function useIsAdmin(): boolean {
   const { userAccount } = useAuth();
   const hasToken = isRadioAdmin();
-  // TODO: Make 'KrukkeX' a configurable value
-  return hasToken || userAccount?.username === 'KrukkeX';
+  const username = (userAccount?.username ?? "").trim().toLowerCase();
+  return hasToken || username === 'krukkex';
 }

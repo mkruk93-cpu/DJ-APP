@@ -173,7 +173,8 @@ app.use('/api', genreManagementRouter);
 
 function isAdmin(token?: string, nickname?: string): boolean {
   const isTokenAdmin = !!token && token === ADMIN_TOKEN;
-  const isKrukkex = !!nickname && normalizeNickname(nickname) === 'krukkex';
+  const normalizedNick = (nickname ?? '').trim().toLowerCase();
+  const isKrukkex = normalizedNick === 'krukkex';
   return isTokenAdmin || isKrukkex;
 }
 

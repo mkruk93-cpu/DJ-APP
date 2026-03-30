@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRadioStore } from "@/lib/radioStore";
 import { getSocket } from "@/lib/socket";
 import { getRadioToken } from "@/lib/auth";
+import { useAuth } from "@/lib/authContext";
 
 function deriveTitleFromId(sourceId: string): string {
   if (!sourceId) return "Nummer wordt geladen...";
@@ -32,31 +33,28 @@ export default function Queue() {
   const queue = useRadioStore((s) => s.queue);
   const mode = useRadioStore((s) => s.mode);
   const queuePushVote = useRadioStore((s) => s.queuePushVote);
-  const [nickname, setNickname] = useState<string>("");
+  const { userAccount } = useAuth();
+  const nickname = userAccount?.username || "";
   const [deferredQueue, setDeferredQueue] = useState<DeferredQueueItem[]>([]);
   const canRequestPush = mode !== "dj";
 
   function isOwnItem(item: { added_by?: string | null }): boolean {
     const itemOwner = (item.added_by ?? "").toLowerCase().trim();
-    const currentUser = nickname.toLowerCase();
+    const currentUser = nickname.toLowerCase().trim();
     return itemOwner === currentUser && currentUser !== "";
   }
 
   function isAdminUser(): boolean {
-    return nickname.toLowerCase() === "krukkex";
+    const user = nickname.toLowerCase().trim();
+    return user === "krukkex";
   }
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    setNickname((localStorage.getItem("nickname") ?? "").trim());
-  }, []);
 
   useEffect(() => {
     if (!nickname) return;
     const socket = getSocket();
     function onDeferredQueueUpdate(data: { added_by?: string; items?: DeferredQueueItem[] }) {
       const owner = (data?.added_by ?? "").trim().toLowerCase();
-      if (owner !== nickname.toLowerCase()) return;
+      if (owner !== nickname.toLowerCase().trim()) return;
       setDeferredQueue(Array.isArray(data?.items) ? data.items : []);
     }
     socket.on("deferredQueue:update", onDeferredQueueUpdate);

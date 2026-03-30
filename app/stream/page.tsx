@@ -839,8 +839,31 @@ export default function StreamPage() {
     };
   }, []);
 
+  // Sync nickname with server for admin rights and presence
+  useEffect(() => {
+    const socket = getSocket();
+    if (!userAccount?.username) return;
+    
+    const emitState = () => {
+      socket.emit("listener:state", { 
+        nickname: userAccount.username,
+        listening: true 
+      });
+    };
+
+    if (socket.connected) {
+      emitState();
+    }
+
+    socket.on("connect", emitState);
+    return () => {
+      socket.off("connect", emitState);
+    };
+  }, [userAccount?.username]);
+
   // Handle Spotify OAuth callback (code in URL after redirect)
   useEffect(() => {
+    if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     if (params.has("code")) {
       void handleSpotifyCallback();
@@ -1947,7 +1970,7 @@ export default function StreamPage() {
             <div className="hidden min-h-0 min-w-0 flex-1 flex-col gap-2 lg:flex lg:flex-[2.5]">
               {showRadioPanel && (
                 <div className={`relative flex min-h-0 min-w-0 flex-col rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5 ${
-                  desktopAccordionTab === "radio" ? "z-40 overflow-visible flex-1" : "z-20 overflow-hidden"
+                  desktopAccordionTab === "radio" ? "z-40 flex-1 overflow-visible" : "z-20 overflow-hidden"
                 }`}>
                   <button
                     type="button"
@@ -1983,7 +2006,7 @@ export default function StreamPage() {
                     <span className={`text-xs text-gray-400 transition ${desktopAccordionTab === "queue" ? "rotate-180" : ""}`}>▾</span>
                   </button>
                   {desktopAccordionTab === "queue" && (
-                    <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                    <div className="min-h-0 flex-1 overflow-hidden p-2">
                       <RadioPanelErrorBoundary>
                         <Queue />
                       </RadioPanelErrorBoundary>

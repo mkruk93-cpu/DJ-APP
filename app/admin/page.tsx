@@ -194,6 +194,28 @@ export default function AdminPage() {
     return () => disconnectSocket();
   }, [authenticated, effectiveServerUrl, store]);
 
+  // Sync nickname with server for admin rights
+  useEffect(() => {
+    if (!authenticated || !userAccount?.username) return;
+    const socket = getSocket();
+    
+    const emitState = () => {
+      socket.emit("listener:state", { 
+        nickname: userAccount.username,
+        listening: false // Admin page doesn't count as listening
+      });
+    };
+
+    if (socket.connected) {
+      emitState();
+    }
+
+    socket.on("connect", emitState);
+    return () => {
+      socket.off("connect", emitState);
+    };
+  }, [authenticated, userAccount?.username]);
+
   useEffect(() => {
     const nextUrl = radioServerUrl.trim().replace(/\/+$/, "");
     store.getState().setServerUrl(nextUrl || null);
