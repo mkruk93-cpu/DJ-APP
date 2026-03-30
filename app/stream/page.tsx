@@ -1498,7 +1498,7 @@ export default function StreamPage() {
             </button>
             <button
               onClick={() => setLeaderboardOpen(true)}
-              className={`hidden whitespace-nowrap rounded-lg border border-gray-700 px-2 py-1 text-xs text-gray-400 hover:border-gray-600 hover:text-white transition sm:inline-flex sm:px-3 sm:text-sm`}
+              className="whitespace-nowrap rounded-lg border border-gray-700 px-2 py-1 text-xs text-gray-400 hover:border-gray-600 hover:text-white transition sm:px-3 sm:text-sm"
             >
               🏆 Ranking
             </button>
@@ -2061,7 +2061,7 @@ export default function StreamPage() {
         </div>
       )}
       {statsOpen && (
-        <div className="fixed inset-0 z-[140] flex items-end justify-center bg-black/45 p-2 sm:items-center sm:p-4">
+        <div className="fixed inset-0 z-[300] flex items-end justify-center bg-black/45 p-2 sm:items-center sm:p-4">
           <div className="flex h-[78dvh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50 sm:h-[80vh]">
             <div className="flex items-center justify-between border-b border-gray-800 px-3 py-2">
               <div>
@@ -2368,7 +2368,7 @@ export default function StreamPage() {
       
       {/* Leaderboard Modal */}
       {leaderboardOpen && (
-        <div className="fixed inset-0 z-[140] flex items-end justify-center bg-black/45 p-2 sm:items-center sm:p-4">
+        <div className="fixed inset-0 z-[300] flex items-end justify-center bg-black/45 p-2 sm:items-center sm:p-4">
           <div className="flex h-[78dvh] w-full max-w-md flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50 sm:h-[80vh]">
             <div className="flex items-center justify-between border-b border-gray-800 px-3 py-2">
               <p className="text-sm font-semibold text-white">🏆 Ranking</p>

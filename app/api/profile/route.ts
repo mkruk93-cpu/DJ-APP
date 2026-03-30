@@ -102,23 +102,50 @@ export async function POST(request: NextRequest) {
 
     const sb = getSupabaseServerClient();
 
-    // Update or insert profile
-    const { data: profile, error } = await sb
+    // First try to get existing profile
+    const { data: existing } = await sb
       .from("user_profiles")
-      .upsert({
-        user_id,
-        avatar_url: avatar_url ?? null,
-        name_color: name_color ?? "#ffffff",
-        updated_at: new Date().toISOString(),
-      }, { onConflict: "user_id" })
-      .select()
+      .select("*")
+      .eq("user_id", user_id)
       .single();
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
+    if (existing) {
+      // Update existing
+      const { data: profile, error } = await sb
+        .from("user_profiles")
+        .update({
+          avatar_url: avatar_url ?? existing.avatar_url,
+          name_color: name_color ?? existing.name_color,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("user_id", user_id)
+        .select()
+        .single();
 
-    return NextResponse.json({ profile });
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+      return NextResponse.json({ profile });
+    } else {
+      // Insert new
+      const { data: profile, error } = await sb
+        .from("user_profiles")
+        .insert({
+          user_id,
+          avatar_url: avatar_url ?? null,
+          name_color: name_color ?? "#ffffff",
+          points: 0,
+          total_listen_seconds: 0,
+          total_requests: 0,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+      return NextResponse.json({ profile });
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to update profile";
     return NextResponse.json({ error: message }, { status: 500 });
