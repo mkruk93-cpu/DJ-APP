@@ -216,7 +216,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const waitingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const waitingSinceRef = useRef(0);
   const lastReconnectAtRef = useRef(0);
-  const nicknameRef = useRef<string>("anonymous");
+  const nicknameRef = useRef<string>("Gast");
   const healthCheckTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
 
@@ -350,7 +350,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   }
   useEffect(() => {
     if (typeof window === "undefined") return;
-    nicknameRef.current = (localStorage.getItem("nickname") ?? "anonymous").trim() || "anonymous";
+    nicknameRef.current = (localStorage.getItem("nickname") ?? "Gast").trim() || "Gast";
     const storedVolume = loadStoredVolume();
     if (storedVolume !== null) {
       setVolume(storedVolume);

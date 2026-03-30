@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getSupabase } from "@/lib/supabaseClient";
 import { useRadioStore } from "@/lib/radioStore";
 import { useAuth } from "@/lib/authContext";
@@ -9,70 +9,109 @@ export default function OnlineUsers({ username }: { username?: string } = {}) {
   const [onlineUsers, setOnlineUsers] = useState<Array<{ nickname: string; listening: boolean }>>([]);
   const [expanded, setExpanded] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  // We gebruiken 'any' voor state om type-errors te voorkomen als playerPlaying niet in de store-definitie staat
-  const playerPlaying = useRadioStore((s: any) => s.playerPlaying);
-  const setOnlineUserCount = useRadioStore((s: any) => s.setOnlineUserCount);
+  const playerPlaying = useRadioStore((s) => s.playerPlaying);
+  const setOnlineUserCount = useRadioStore((s) => s.setOnlineUserCount);
   const { userAccount } = useAuth();
   const menuRef = useRef<HTMLDivElement>(null);
+  const channelRef = useRef<ReturnType<ReturnType<typeof getSupabase>["channel"]> | null>(null);
+  const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  useEffect(() => {
-    const supabase = getSupabase();
-    // Use authenticated username if available, fallback to legacy nickname for anon users
-    const myNickname = username || userAccount?.username || (typeof window !== "undefined" ? localStorage.getItem("nickname") : "anon");
-    
-    const channel = supabase.channel('online_users');
+  const myNickname = useMemo(() => {
+    const candidate = (username ?? userAccount?.username ?? "").trim();
+    if (candidate) return candidate;
+    if (typeof window === "undefined") return "Gast";
+    const saved = (localStorage.getItem("nickname") ?? "").trim();
+    return saved || "Gast";
+  }, [username, userAccount?.username]);
 
-    channel
-      .on('presence', { event: 'sync' }, () => {
-        const newState = channel.presenceState();
-        const users: any[] = [];
-        
-        for (const id in newState) {
-          users.push(...newState[id]);
-        }
-        
-        // Filter dubbele gebruikers op basis van nickname en ghosts zonder nickname
-        const distinctUsers = Array.from(new Map(users.map(u => [u.nickname, u])).values())
-          .filter(u => u.nickname && u.nickname.trim() !== '');
-        
-        setOnlineUsers(distinctUsers.map(u => ({
-          nickname: u.nickname,
-          listening: u.listening ?? true
-        })));
-        setOnlineUserCount(distinctUsers.length);
-        setIsLoading(false);
-      })
-      .subscribe(async (status) => {
-        if (status === 'SUBSCRIBED') {
-          await channel.track({
-            nickname: myNickname,
-            listening: playerPlaying,
-            online_at: new Date().toISOString(),
-          });
-        }
+  const presenceKey = useMemo(() => {
+    const key = (userAccount?.id ?? "").trim();
+    if (key) return key;
+    if (typeof window === "undefined") return "guest";
+    const saved = localStorage.getItem("djapp:presence-key");
+    if (saved) return saved;
+    const next = `guest:${Math.random().toString(36).slice(2, 10)}`;
+    localStorage.setItem("djapp:presence-key", next);
+    return next;
+  }, [userAccount?.id]);
+
+  const trackPresence = useCallback(async () => {
+    const channel = channelRef.current;
+    if (!channel) return;
+    try {
+      await channel.track({
+        nickname: myNickname,
+        listening: !!playerPlaying,
+        online_at: new Date().toISOString(),
       });
+    } catch {
+      // Ignore presence track errors; reconnect will retry.
+    }
+  }, [myNickname, playerPlaying]);
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [username, userAccount?.username, playerPlaying]);
-
-  // Update listening status when playing state changes
   useEffect(() => {
     const supabase = getSupabase();
-    const myNickname = username || userAccount?.username || (typeof window !== "undefined" ? localStorage.getItem("nickname") : "anon");
-    
-    const channel = supabase.channel('online_users');
-    channel.track({
-      nickname: myNickname,
-      listening: playerPlaying,
-      online_at: new Date().toISOString(),
+
+    if (heartbeatRef.current) {
+      clearInterval(heartbeatRef.current);
+      heartbeatRef.current = null;
+    }
+    if (channelRef.current) {
+      supabase.removeChannel(channelRef.current);
+      channelRef.current = null;
+    }
+
+    const channel = supabase.channel("online_users", {
+      config: { presence: { key: presenceKey } },
+    });
+    channelRef.current = channel;
+
+    channel.on("presence", { event: "sync" }, () => {
+      const state = channel.presenceState() as Record<string, Array<{ nickname?: string; listening?: boolean }>>;
+      const distinctByKey = new Map<string, { nickname: string; listening: boolean }>();
+      for (const key of Object.keys(state)) {
+        const entries = Array.isArray(state[key]) ? state[key] : [];
+        for (const entry of entries) {
+          const nick = (entry.nickname ?? "").trim();
+          if (!nick) continue;
+          distinctByKey.set(key, { nickname: nick, listening: entry.listening !== false });
+        }
+      }
+      const users = Array.from(distinctByKey.values());
+      setOnlineUsers(users);
+      setOnlineUserCount(users.length);
+      setIsLoading(false);
     });
 
-    return () => {
-      supabase.removeChannel(channel);
+    channel.subscribe((status) => {
+      if (status === "SUBSCRIBED") {
+        void trackPresence();
+      }
+    });
+
+    heartbeatRef.current = setInterval(() => {
+      void trackPresence();
+    }, 25_000);
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void trackPresence();
     };
-  }, [username, userAccount?.username, playerPlaying]);
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      if (heartbeatRef.current) {
+        clearInterval(heartbeatRef.current);
+        heartbeatRef.current = null;
+      }
+      supabase.removeChannel(channel);
+      channelRef.current = null;
+    };
+  }, [presenceKey, setOnlineUserCount, trackPresence]);
+
+  useEffect(() => {
+    void trackPresence();
+  }, [trackPresence]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {

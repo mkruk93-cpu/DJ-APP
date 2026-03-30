@@ -549,7 +549,7 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
       <input
         type="text"
         name={`shared-filter-${Math.random().toString(36).substring(7)}`}
-        autoComplete="off"
+        autoComplete="new-password"
         data-lpignore="true"
         data-form-type="other"
         spellCheck="false"

@@ -27,6 +27,7 @@ import type { Track, QueueItem, Mode, ModeSettings, VoteState, DurationVote, Upc
 import { parseTrackDisplay } from "@/lib/trackDisplay";
 import { useSyncedTrack } from "@/lib/useSyncedTrack";
 import { useAuth } from "@/lib/authContext";
+import { useIsAdmin } from "@/lib/useIsAdmin";
 
 type StreamMode = "twitch" | "audio" | "radio" | "offline";
 type MobileTab = "chat" | "requests" | "radio" | "queue" | "requested";
@@ -144,6 +145,7 @@ export default function StreamPage() {
   const [statsOpen, setStatsOpen] = useState(false);
   const [appInfoOpen, setAppInfoOpen] = useState(false);
   const [mobileHeaderMenuOpen, setMobileHeaderMenuOpen] = useState(false);
+  const [adminOverlayOpen, setAdminOverlayOpen] = useState(false);
   const [statsLoading, setStatsLoading] = useState(false);
   const [statsError, setStatsError] = useState<string | null>(null);
   const [statsSummary, setStatsSummary] = useState<PublicStatsSummary | null>(null);
@@ -171,6 +173,7 @@ export default function StreamPage() {
   const pausedForIdle = useRadioStore((s) => s.pausedForIdle);
   const skipLocked = useRadioStore((s) => s.skipLocked);
   const store = useRadioStore;
+  const isAdminUser = useIsAdmin();
 
   const [suppressFallback, setSuppressFallback] = useState(false);
   const [twitchLive, setTwitchLive] = useState(false);
@@ -838,6 +841,13 @@ export default function StreamPage() {
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const next = (userAccount?.username ?? "").trim();
+    if (!next) return;
+    localStorage.setItem("nickname", next);
+  }, [userAccount?.username]);
 
   // Sync presence with server for listener count
   useEffect(() => {
@@ -1536,6 +1546,18 @@ export default function StreamPage() {
               </button>
               {mobileHeaderMenuOpen && (
                 <div className="absolute right-0 top-full z-50 mt-1.5 w-36 rounded-lg border border-gray-700 bg-gray-900 p-1.5 shadow-xl shadow-black/40">
+                  {isAdminUser && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAdminOverlayOpen(true);
+                        setMobileHeaderMenuOpen(false);
+                      }}
+                      className="block w-full rounded px-2 py-1.5 text-left text-xs text-amber-200 transition hover:bg-gray-800"
+                    >
+                      Admin overlay
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => {
@@ -2295,6 +2317,40 @@ export default function StreamPage() {
               <p><span className="font-semibold text-violet-300">4. Skip en stemmen:</span> afhankelijk van de modus kan admin skippen of kunnen luisteraars stemmen om te skippen.</p>
               <p><span className="font-semibold text-violet-300">5. Statistieken:</span> via Stats zie je top-aanvragers, genres, bronnen en recente verzoeken.</p>
             </div>
+          </div>
+        </div>
+      )}
+      {adminOverlayOpen && (
+        <div className="fixed inset-0 z-[210] flex flex-col bg-black/80">
+          <div
+            className="flex shrink-0 items-center justify-between gap-2 border-b border-gray-700 bg-gray-950/90 px-3 py-2 backdrop-blur-sm"
+            style={{ paddingTop: "max(env(safe-area-inset-top), 0px)" }}
+          >
+            <p className="min-w-0 truncate text-sm font-semibold text-amber-200">Admin overlay</p>
+            <div className="flex shrink-0 items-center gap-2">
+              <a
+                href="/admin"
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-md border border-gray-700 px-2 py-1 text-[11px] text-gray-200 transition hover:border-gray-600 hover:text-white"
+              >
+                Open apart
+              </a>
+              <button
+                type="button"
+                onClick={() => setAdminOverlayOpen(false)}
+                className="rounded-md border border-gray-700 px-2 py-1 text-[11px] text-gray-200 transition hover:border-gray-600 hover:text-white"
+              >
+                Sluiten
+              </button>
+            </div>
+          </div>
+          <div className="min-h-0 flex-1">
+            <iframe
+              title="Admin"
+              src="/admin?embed=1"
+              className="h-full w-full bg-gray-950"
+            />
           </div>
         </div>
       )}

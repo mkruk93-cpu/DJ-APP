@@ -123,7 +123,7 @@ export default function RequestForm(
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const ownRequestStatusRef = useRef<Map<string, string>>(new Map());
   const didInitOwnStatusRef = useRef(false);
-  const nickname = username || (typeof window !== "undefined" ? localStorage.getItem("nickname") ?? "anon" : "anon");
+  const nickname = username || (typeof window !== "undefined" ? localStorage.getItem("nickname") ?? "Gast" : "Gast");
   const serverUrl = useRadioStore((s) => s.serverUrl) ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
   const hideLocalDiscovery = useRadioStore((s) => s.hideLocalDiscovery);
   const activeGenreLabel = resolveGenreLabel(activeGenre, genres);
@@ -912,7 +912,7 @@ export default function RequestForm(
                 type="text"
                 id="request-search-input"
                 name={`request-search-${Math.random().toString(36).substring(7)}`}
-                autoComplete="off"
+                autoComplete="new-password"
                 data-lpignore="true"
                 data-form-type="other"
                 spellCheck="false"

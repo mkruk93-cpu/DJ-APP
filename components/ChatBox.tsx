@@ -89,7 +89,7 @@ export default function ChatBox({ onNewMessage, username }: { onNewMessage?: () 
   const mediaAbortRef = useRef<AbortController | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
   const channelId = useId();
-  const nickname = username || (typeof window !== "undefined" ? localStorage.getItem("nickname") ?? "anon" : "anon");
+  const nickname = username || (typeof window !== "undefined" ? localStorage.getItem("nickname") ?? "Gast" : "Gast");
   const activeMediaType: MediaType | null = pickerTab === "gif" || pickerTab === "sticker" ? pickerTab : null;
   const isAdmin = !!adminToken;
 
@@ -463,7 +463,7 @@ export default function ChatBox({ onNewMessage, username }: { onNewMessage?: () 
           type="text"
           id="chat-message-input"
           name={`chat-message-${Math.random().toString(36).substring(7)}`}
-          autoComplete="off"
+          autoComplete="new-password"
           data-lpignore="true"
           data-form-type="other"
           spellCheck="false"
@@ -525,7 +525,7 @@ export default function ChatBox({ onNewMessage, username }: { onNewMessage?: () 
                 type="text"
                 id="media-search-input"
                 name={`media-search-${Math.random().toString(36).substring(7)}`}
-                autoComplete="off"
+                autoComplete="new-password"
                 data-lpignore="true"
                 data-form-type="other"
                 spellCheck="false"

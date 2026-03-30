@@ -290,8 +290,8 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
 
   function getNickname(): string {
     return username || (typeof window !== "undefined"
-      ? localStorage.getItem("nickname") ?? "anonymous"
-      : "anonymous");
+      ? (localStorage.getItem("nickname") ?? "Gast")
+      : "Gast");
   }
 
   function normalizeForMatch(value: string | null | undefined): string {
@@ -1509,7 +1509,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
               <input
                 type="text"
                 name={`search-input-${Math.random().toString(36).substring(7)}`}
-                autoComplete="off"
+                autoComplete="new-password"
                 data-lpignore="true"
                 data-form-type="other"
                 spellCheck="false"
