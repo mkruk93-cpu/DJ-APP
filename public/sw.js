@@ -1,13 +1,10 @@
-const CACHE_NAME = "krukkex-shell-v4";
+const CACHE_NAME = "krukkex-shell-v5";
 const APP_SHELL = [
-  "/", 
-  "/stream", 
-  "/icons/krukkex-icon-192x192.png", 
+  "/icons/krukkex-icon-192x192.png",
   "/icons/krukkex-icon-512x512.png",
   "/icons/krukkex-icon-maskable-192x192.png",
   "/icons/krukkex-icon-maskable-512x512.png",
-  "/manifest.webmanifest", 
-  "/stream?v=1.1.1"
+  "/manifest.webmanifest",
 ];
 
 self.addEventListener("install", (event) => {
@@ -46,12 +43,37 @@ self.addEventListener("fetch", (event) => {
   // Skip cross-origin requests
   if (!event.request.url.startsWith(self.location.origin)) return;
 
+  const url = new URL(event.request.url);
+  const pathname = url.pathname;
+  const accept = event.request.headers.get("accept") || "";
+  const isNavigation = event.request.mode === "navigate" || accept.includes("text/html");
+
+  if (isNavigation) {
+    event.respondWith(
+      fetch(event.request).catch(async () => {
+        const cachedStream = await caches.match("/stream");
+        if (cachedStream) return cachedStream;
+        const cachedRoot = await caches.match("/");
+        if (cachedRoot) return cachedRoot;
+        return new Response("Offline", { status: 503, headers: { "Content-Type": "text/plain" } });
+      }),
+    );
+    return;
+  }
+
+  const shouldCache =
+    APP_SHELL.includes(pathname)
+    || pathname.startsWith("/_next/static/")
+    || pathname.startsWith("/icons/")
+    || pathname === "/manifest.webmanifest";
+
+  if (!shouldCache) return;
+
   event.respondWith(
     caches.match(event.request).then((cached) => {
       if (cached) return cached;
       return fetch(event.request).then((response) => {
-        // Cache successful GET requests for shell resources
-        if (response && response.status === 200 && APP_SHELL.includes(new URL(event.request.url).pathname)) {
+        if (response && response.status === 200) {
           const responseToCache = response.clone();
           caches.open(CACHE_NAME).then((cache) => {
             cache.put(event.request, responseToCache);
@@ -59,9 +81,6 @@ self.addEventListener("fetch", (event) => {
         }
         return response;
       });
-    }).catch(() => {
-      // Fallback if network fails
-      return caches.match("/");
     }),
   );
 });
