@@ -1983,7 +1983,7 @@ export default function StreamPage() {
                     <span className={`text-xs text-gray-400 transition ${desktopAccordionTab === "radio" ? "rotate-180" : ""}`}>▾</span>
                   </button>
                   {desktopAccordionTab === "radio" && (
-                    <div className="min-h-0 flex-1 overflow-hidden p-2">
+                    <div className="flex min-h-0 flex-1 flex-col p-2">
                       <RadioPanelErrorBoundary>
                         <QueueAdd username={userAccount?.username} />
                       </RadioPanelErrorBoundary>

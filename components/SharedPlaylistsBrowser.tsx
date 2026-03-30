@@ -573,7 +573,7 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                 Pool: {sharedUsage.playlists} playlists · {sharedUsage.tracks} tracks
               </p>
             )}
-            <div className="mb-1 flex flex-wrap items-center gap-1.5">
+            <div className="mb-1 flex flex-wrap items-center justify-between gap-1.5">
               <button
                 type="button"
                 onClick={() => { void loadSharedPlaylists(); }}

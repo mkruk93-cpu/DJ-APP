@@ -449,7 +449,8 @@ export default function ChatBox({ onNewMessage, username }: { onNewMessage?: () 
       >
         <button
           type="button"
-          onClick={() => {
+          onClick={(e) => {
+            e.stopPropagation();
             setPickerOpen((prev) => !prev);
             setPickerTab("emoji");
           }}
