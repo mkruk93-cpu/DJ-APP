@@ -757,11 +757,11 @@ export default function RequestForm(
         </div>
 
         {source === "spotify" ? (
-          <div className="min-h-0 flex-1 overflow-hidden">
+          <div className="min-h-0 flex-1">
             <SpotifyBrowser onAddTrack={handleSpotifyAdd} submitting={submitting} />
           </div>
         ) : source === "playlists" ? (
-          <div className="min-h-0 flex-1 overflow-hidden">
+          <div className="min-h-0 flex-1">
             <SharedPlaylistsBrowser onAddTrack={handlePlaylistAdd} submitting={submitting} />
           </div>
         ) : source === "genres" ? (

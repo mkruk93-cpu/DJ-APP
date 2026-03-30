@@ -1256,13 +1256,13 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
         </div>
 
         {source === "spotify" ? (
-          <div className="min-h-0 flex-1 overflow-hidden">
+          <div className="min-h-0 flex-1">
             <SpotifyErrorBoundary onReset={() => switchSource("youtube")}>
               <SpotifyBrowser onAddTrack={handleSpotifyAdd} submitting={submitting} />
             </SpotifyErrorBoundary>
           </div>
         ) : source === "playlists" ? (
-          <div className="min-h-0 flex-1 overflow-hidden">
+          <div className="min-h-0 flex-1">
             <SharedPlaylistsBrowser onAddTrack={handleSpotifyAdd} submitting={submitting} />
           </div>
         ) : source === "genres" ? (

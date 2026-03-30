@@ -1653,7 +1653,7 @@ export default function StreamPage() {
 
       <main className="flex min-h-0 flex-1 flex-col gap-1 p-1 sm:gap-4 sm:p-4 lg:flex-row">
         {/* Player */}
-        <div className="min-h-0 shrink-0 basis-auto overflow-hidden lg:min-w-0 lg:flex-1 lg:basis-auto lg:max-h-none lg:min-h-0 lg:overflow-visible">
+        <div className="min-h-0 shrink-0 overflow-hidden lg:w-full lg:max-w-3xl lg:shrink-0">
           {shouldPollCommunityWidgets && <ShoutoutBanner />}
           {mode === "twitch" && twitchLive && (
             <div className="space-y-1.5 sm:space-y-2">

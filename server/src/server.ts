@@ -152,30 +152,12 @@ const io = new IOServer(httpServer, {
 });
 
 app.use((req, res, next) => {
-  // Enhanced CORS middleware for all endpoints
   const origin = req.headers.origin;
-  const allowedOrigins = [
-    'http://localhost:3000',
-    'http://localhost:3001',
-    'http://127.0.0.1:3000',
-    'http://127.0.0.1:3001',
-    // Add your production domain here when deployed
-  ];
-  
-  // Allow specific origins or fallback to wildcard for development
-  const allowedOrigin = allowedOrigins.includes(origin) || (!origin && process.env.NODE_ENV !== 'production') 
-    ? (origin || '*') 
-    : allowedOrigins[0];
-    
-  res.header('Access-Control-Allow-Origin', allowedOrigin);
+  res.header('Access-Control-Allow-Origin', origin ?? '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, X-Admin-Token, x-admin-token, Authorization');
   res.header('Access-Control-Allow-Credentials', 'true');
-  
-  if (req.method === 'OPTIONS') { 
-    res.sendStatus(204); 
-    return; 
-  }
+  if (req.method === 'OPTIONS') { res.sendStatus(204); return; }
   next();
 });
 app.use(express.json());
@@ -5129,7 +5111,8 @@ io.on('connection', (socket) => {
     const requester = normalizeNickname(data.added_by) ?? null;
     const queue = await getQueue(sb);
     const target = queue.find((item) => item.id === data.id);
-    const isOwner = mode !== 'dj' && !!(target && requester && normalizeNickname(target.added_by) === requester);
+    const targetOwner = target ? normalizeNickname(target.added_by) : null;
+    const isOwner = mode !== 'dj' && !!(target && requester && targetOwner && targetOwner.toLowerCase() === requester.toLowerCase());
     if (!isOwner && !canPerformAction(mode, 'remove_from_queue', admin)) {
       socket.emit('error:toast', { message: 'Je mag geen nummers verwijderen in deze modus' });
       return;
