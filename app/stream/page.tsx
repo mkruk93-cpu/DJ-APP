@@ -1500,17 +1500,16 @@ export default function StreamPage() {
               onClick={() => setLeaderboardOpen(true)}
               className="whitespace-nowrap rounded-lg border border-gray-700 px-2 py-1 text-xs text-gray-400 hover:border-gray-600 hover:text-white transition sm:px-3 sm:text-sm"
             >
-              🏆 Ranking
+              <span className="sm:hidden">🏆</span>
+              <span className="hidden sm:inline">🏆 Ranking</span>
             </button>
-            {userAccount?.username && (
-              <button
-                onClick={() => setProfileModalUser(userAccount?.username || null)}
-                className="flex items-center gap-1.5 rounded-lg border border-gray-700 bg-gray-800 px-2 py-1 text-xs text-gray-400 hover:border-gray-600 hover:text-white transition"
-              >
-                <span>👤</span>
-                <span className="hidden sm:inline">{userAccount.username}</span>
-              </button>
-            )}
+            <button
+              onClick={() => setProfileModalUser(userAccount?.username || (typeof window !== 'undefined' ? (localStorage.getItem('nickname') ?? '') : ''))}
+              className="flex items-center gap-1.5 rounded-lg border border-gray-700 bg-gray-800 px-2 py-1 text-xs text-gray-400 hover:border-gray-600 hover:text-white transition"
+            >
+              <span>👤</span>
+              <span className="hidden sm:inline">{userAccount?.username || 'Profiel'}</span>
+            </button>
             <button
               onClick={async () => {
                 await signOut();

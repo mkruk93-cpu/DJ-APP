@@ -188,16 +188,20 @@ const POINTS = {
 };
 
 async function awardPoints(nickname: string, points: number, reason: string): Promise<void> {
+  if (!nickname || !nickname.trim()) return;
+  
   try {
-    // Get user_id from user_accounts by username
+    const normalizedNick = nickname.trim();
+    
+    // Get user_id from user_accounts by username (case-insensitive)
     const { data: account, error: accountError } = await sb
       .from('user_accounts')
       .select('id')
-      .ilike('username', nickname.trim())
+      .ilike('username', normalizedNick)
       .single();
 
     if (accountError || !account) {
-      console.log(`[points] User not found: ${nickname}`);
+      console.log(`[points] User not found in user_accounts: "${normalizedNick}"`);
       return;
     }
 
@@ -208,24 +212,41 @@ async function awardPoints(nickname: string, points: number, reason: string): Pr
       .eq('user_id', account.id)
       .single();
 
-    const newPoints = (profile?.points || 0) + points;
+    const currentPoints = profile?.points || 0;
+    const newPoints = currentPoints + points;
 
-    // Update or insert profile with points
-    const { error: upsertError } = await sb
-      .from('user_profiles')
-      .upsert({
-        user_id: account.id,
-        points: newPoints,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'user_id' });
-
-    if (upsertError) {
-      console.log(`[points] Error awarding ${points} points to ${nickname}:`, upsertError.message);
+    // Try update first, if it fails (no row), insert
+    if (profile) {
+      const { error: updateError } = await sb
+        .from('user_profiles')
+        .update({ points: newPoints, updated_at: new Date().toISOString() })
+        .eq('user_id', account.id);
+      
+      if (updateError) {
+        console.log(`[points] Update error for ${normalizedNick}:`, updateError.message);
+      } else {
+        console.log(`[points] Awarded ${points} points to ${normalizedNick} (total: ${newPoints}): ${reason}`);
+      }
     } else {
-      console.log(`[points] Awarded ${points} points to ${nickname}: ${reason}`);
+      // Insert new profile
+      const { error: insertError } = await sb
+        .from('user_profiles')
+        .insert({
+          user_id: account.id,
+          points: newPoints,
+          name_color: '#ffffff',
+          total_listen_seconds: 0,
+          total_requests: 0,
+        });
+      
+      if (insertError) {
+        console.log(`[points] Insert error for ${normalizedNick}:`, insertError.message);
+      } else {
+        console.log(`[points] Created profile & awarded ${points} points to ${normalizedNick}: ${reason}`);
+      }
     }
   } catch (err) {
-    console.log(`[points] Error:`, err);
+    console.log(`[points] Error awarding points to "${nickname}":`, err);
   }
 }
 
