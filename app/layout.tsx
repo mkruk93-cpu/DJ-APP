@@ -17,10 +17,13 @@ export const metadata: Metadata = {
   },
   icons: {
     icon: [
-      { url: "/icons/krukkex-icon.svg", type: "image/svg+xml" },
-      { url: "/icons/krukkex-icon-maskable.svg", type: "image/svg+xml" },
+      { url: "/icons/krukkex-icon-192x192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/krukkex-icon-512x512.png", sizes: "512x512", type: "image/png" },
     ],
-    apple: [{ url: "/icons/krukkex-icon.svg", type: "image/svg+xml" }],
+    apple: [
+      { url: "/icons/krukkex-icon-152x152.png", sizes: "152x152", type: "image/png" },
+      { url: "/icons/krukkex-icon-192x192.png", sizes: "192x192", type: "image/png" },
+    ],
   },
 };
 
@@ -89,7 +92,7 @@ export default function RootLayout({
       </head>
       <body className="min-h-dvh bg-gray-950 text-gray-100 antialiased" style={{ overscrollBehavior: 'none' }}>
         <AuthProvider>
-          <CacheClear version="2024-03-24-v1" />
+          <CacheClear version="2024-03-30-v1" />
           <PwaRegistrar />
           <PwaRefreshButton />
           {children}

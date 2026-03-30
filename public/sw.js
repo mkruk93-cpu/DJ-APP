@@ -1,5 +1,14 @@
-const CACHE_NAME = "krukkex-shell-v2";
-const APP_SHELL = ["/", "/stream", "/icons/krukkex-icon.svg", "/manifest.webmanifest", "/stream?v=1.1.1"];
+const CACHE_NAME = "krukkex-shell-v4";
+const APP_SHELL = [
+  "/", 
+  "/stream", 
+  "/icons/krukkex-icon-192x192.png", 
+  "/icons/krukkex-icon-512x512.png",
+  "/icons/krukkex-icon-maskable-192x192.png",
+  "/icons/krukkex-icon-maskable-512x512.png",
+  "/manifest.webmanifest", 
+  "/stream?v=1.1.1"
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
