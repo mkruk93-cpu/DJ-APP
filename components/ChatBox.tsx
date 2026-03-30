@@ -267,8 +267,8 @@ export default function ChatBox({ onNewMessage, username }: { onNewMessage?: () 
         setPickerOpen(false);
       }
     }
-    document.addEventListener("mousedown", handleOutsideClick);
-    return () => document.removeEventListener("mousedown", handleOutsideClick);
+    document.addEventListener("click", handleOutsideClick);
+    return () => document.removeEventListener("click", handleOutsideClick);
   }, [pickerOpen]);
 
   const sendMessage = useCallback(async (content?: string) => {
@@ -486,7 +486,7 @@ export default function ChatBox({ onNewMessage, username }: { onNewMessage?: () 
       {pickerOpen && (
         <div 
           ref={pickerRef}
-          className="fixed inset-x-2 bottom-20 z-[200] mx-auto w-auto max-w-[calc(100vw-1rem)] rounded-xl border border-gray-700 bg-gray-900 p-2 shadow-2xl shadow-black/40 sm:bottom-[calc(100%+8px)] sm:left-4 sm:inset-x-auto sm:mx-0 sm:w-80 sm:max-w-none"
+          className="fixed inset-x-2 bottom-20 z-[250] mx-auto w-auto max-w-[calc(100vw-1rem)] rounded-xl border border-gray-700 bg-gray-900 p-2 shadow-2xl shadow-black/40 sm:bottom-[calc(100%+8px)] sm:left-4 sm:inset-x-auto sm:mx-0 sm:w-80 sm:max-w-none"
         >
           <div className="mb-2 flex gap-1 rounded-lg bg-gray-800 p-1">
             {(['emoji', 'sticker', 'gif'] as const).map((tab) => (

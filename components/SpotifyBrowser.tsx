@@ -1017,27 +1017,27 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
         <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto pb-14 sm:pb-2">
           {showPlaylistSections && (
           <div className="mb-2 rounded-md border border-violet-700/70 bg-violet-950/20 p-2">
-            <div className="mb-1 flex items-center justify-between">
-              <p className="text-[11px] font-semibold text-violet-100">Persoonlijke playlists</p>
+            <div className="mb-1 flex flex-wrap items-center gap-1.5">
+              <p className="text-[11px] font-semibold text-violet-100 mr-auto">Persoonlijke playlists</p>
               <button
                 type="button"
                 onClick={() => { void loadSavedPlaylists(); }}
                 disabled={savedPlaylistsLoading}
-                className="text-[10px] text-violet-300 transition hover:text-violet-200 disabled:opacity-40"
+                className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] font-semibold text-violet-300 transition hover:border-violet-500 hover:text-violet-200 disabled:opacity-40"
               >
                 {savedPlaylistsLoading ? "Laden..." : "Ververs"}
               </button>
+              <select
+                value={savedSortMode}
+                onChange={(e) => setSavedSortMode(e.target.value as PlaylistSortMode)}
+                className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white outline-none focus:border-violet-500"
+              >
+                <option value="name_asc">Naam A-Z</option>
+                <option value="name_desc">Naam Z-A</option>
+                <option value="tracks_desc">Meeste tracks</option>
+                <option value="newest">Nieuwste import</option>
+              </select>
             </div>
-            <select
-              value={savedSortMode}
-              onChange={(e) => setSavedSortMode(e.target.value as PlaylistSortMode)}
-              className="mb-1 w-full sm:w-auto rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white max-w-full"
-            >
-              <option value="name_asc">Sortering: Naam A-Z</option>
-              <option value="name_desc">Sortering: Naam Z-A</option>
-              <option value="tracks_desc">Sortering: Meeste tracks</option>
-              <option value="newest">Sortering: Nieuwste import</option>
-            </select>
             <div className="mb-1 grid grid-cols-2 gap-1">
               <button
                 type="button"

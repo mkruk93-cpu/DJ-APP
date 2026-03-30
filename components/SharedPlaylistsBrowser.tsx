@@ -573,23 +573,26 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                 Pool: {sharedUsage.playlists} playlists · {sharedUsage.tracks} tracks
               </p>
             )}
-            <button
-              type="button"
-              onClick={() => { void loadSharedPlaylists(); }}
-              className="mb-1 text-[10px] text-blue-300 transition hover:text-blue-200"
-            >
-              Ververs
-            </button>
-            <select
-              value={playlistSortMode}
-              onChange={(e) => setPlaylistSortMode(e.target.value as PlaylistSortMode)}
-              className="mb-1 w-full sm:w-auto rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white max-w-full"
-            >
-              <option value="name_asc">Sortering: Naam A-Z</option>
-              <option value="name_desc">Sortering: Naam Z-A</option>
-              <option value="tracks_desc">Sortering: Meeste tracks</option>
-              <option value="newest">Sortering: Nieuwste import</option>
-            </select>
+            <div className="mb-1 flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => { void loadSharedPlaylists(); }}
+                disabled={loading}
+                className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] font-semibold text-violet-300 transition hover:border-violet-500 hover:text-violet-200 disabled:opacity-40"
+              >
+                {loading ? "Laden..." : "Ververs"}
+              </button>
+              <select
+                value={playlistSortMode}
+                onChange={(e) => setPlaylistSortMode(e.target.value as PlaylistSortMode)}
+                className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white outline-none focus:border-violet-500"
+              >
+                <option value="name_asc">Naam A-Z</option>
+                <option value="name_desc">Naam Z-A</option>
+                <option value="tracks_desc">Meeste tracks</option>
+                <option value="newest">Nieuwste import</option>
+              </select>
+            </div>
             <div className="mb-1 grid grid-cols-2 gap-1">
               <button
                 type="button"
