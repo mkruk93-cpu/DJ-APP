@@ -22,19 +22,26 @@ export default function Leaderboard({ onUserClick }: LeaderboardProps) {
   const [type, setType] = useState<LeaderboardType>("points");
   const [loading, setLoading] = useState(true);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadLeaderboard() {
       setLoading(true);
+      setError(null);
       try {
         const res = await fetch(`/api/leaderboard?type=${type}&limit=20`);
         const data = await res.json();
+        
+        if (data.error) {
+          setError(data.error);
+        }
         
         if (data.leaderboard) {
           setLeaderboard(data.leaderboard);
         }
       } catch (err) {
         console.error("Failed to load leaderboard:", err);
+        setError("Kon ranking niet laden");
       } finally {
         setLoading(false);
       }
@@ -84,9 +91,13 @@ export default function Leaderboard({ onUserClick }: LeaderboardProps) {
         <div className="flex justify-center py-8">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-violet-500"></div>
         </div>
+      ) : error ? (
+        <div className="text-center py-8 text-red-400">
+          {error}
+        </div>
       ) : leaderboard.length === 0 ? (
         <div className="text-center py-8 text-gray-500">
-          Nog geen data beschikbaar
+          Nog geen punten verdient. Voeg verzoeken toe of luister mee om punten te krijgen!
         </div>
       ) : (
         <div className="space-y-2">

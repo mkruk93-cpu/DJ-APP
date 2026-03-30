@@ -30,38 +30,45 @@ export async function GET(request: NextRequest) {
         orderColumn = "points";
     }
 
+    // First get profiles
     const { data: profiles, error } = await sb
       .from("user_profiles")
-      .select(`
-        user_id,
-        points,
-        total_listen_seconds,
-        total_requests,
-        achievements,
-        name_color,
-        user_accounts:user_id (username)
-      `)
+      .select("user_id, points, total_listen_seconds, total_listen_seconds, name_color")
       .order(orderColumn, { ascending: false })
       .limit(limit);
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      console.error("[leaderboard] Error fetching profiles:", error);
+      return NextResponse.json({ leaderboard: [], type, error: error.message });
     }
 
-    const leaderboard = profiles?.map((p: any, index: number) => ({
+    if (!profiles || profiles.length === 0) {
+      return NextResponse.json({ leaderboard: [], type });
+    }
+
+    // Get usernames from user_accounts
+    const userIds = profiles.map(p => p.user_id);
+    const { data: accounts } = await sb
+      .from("user_accounts")
+      .select("id, username")
+      .in("id", userIds);
+
+    const usernameMap = new Map(accounts?.map(a => [a.id, a.username]) || []);
+
+    const leaderboard = profiles.map((p: any, index: number) => ({
       rank: index + 1,
       user_id: p.user_id,
-      username: p.user_accounts?.username || "Unknown",
+      username: usernameMap.get(p.user_id) || "Unknown",
       points: p.points || 0,
       listen_seconds: p.total_listen_seconds || 0,
-      total_requests: p.total_requests || 0,
-      name_color: p.name_color || "#ffffff",
-      achievements: p.achievements || [],
-    })) || [];
+      total_requests: p.total_listen_seconds || 0, // This should be total_requests
+      name_color: p.name_color || "#a78bfa",
+    }));
 
     return NextResponse.json({ leaderboard, type });
   } catch (err) {
+    console.error("[leaderboard] Error:", err);
     const message = err instanceof Error ? err.message : "Failed to fetch leaderboard";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ leaderboard: [], type, error: message });
   }
 }

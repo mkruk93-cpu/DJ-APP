@@ -57,7 +57,7 @@ export default function ProfileModal({ username, isOwnProfile = false, onClose }
         setProfile(data.profile);
         
         if (data.profile) {
-          setNameColor(data.profile.name_color || "#ffffff");
+          setNameColor(data.profile.name_color || "#a78bfa");
           setAvatar(data.profile.avatar_url || "🎵");
         }
       } catch (err) {

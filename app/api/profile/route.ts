@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
         .insert({
           user_id: account.id,
           avatar_url: null,
-          name_color: "#ffffff",
+          name_color: "#a78bfa",
           points: 0,
           total_listen_seconds: 0,
           total_requests: 0,
@@ -133,7 +133,7 @@ export async function POST(request: NextRequest) {
         .insert({
           user_id,
           avatar_url: avatar_url ?? null,
-          name_color: name_color ?? "#ffffff",
+          name_color: name_color ?? "#a78bfa",
           points: 0,
           total_listen_seconds: 0,
           total_requests: 0,

@@ -234,7 +234,7 @@ async function awardPoints(nickname: string, points: number, reason: string): Pr
         .insert({
           user_id: account.id,
           points: newPoints,
-          name_color: '#ffffff',
+          name_color: '#a78bfa',
           total_listen_seconds: 0,
           total_requests: 0,
         });
