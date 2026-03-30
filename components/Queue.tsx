@@ -34,14 +34,18 @@ export default function Queue() {
   const mode = useRadioStore((s) => s.mode);
   const queuePushVote = useRadioStore((s) => s.queuePushVote);
   const { userAccount } = useAuth();
-  const nickname = userAccount?.username || "";
+  // Use userAccount username, but also check localStorage for nickname fallback
+  const storedNickname = typeof window !== "undefined" ? (localStorage.getItem("nickname") ?? "").trim() : "";
+  const nickname = userAccount?.username || storedNickname || "";
   const [deferredQueue, setDeferredQueue] = useState<DeferredQueueItem[]>([]);
   const canRequestPush = mode !== "dj";
 
   function isOwnItem(item: { added_by?: string | null }): boolean {
     const itemOwner = (item.added_by ?? "").toLowerCase().trim();
     const currentUser = nickname.toLowerCase().trim();
-    return itemOwner === currentUser && currentUser !== "";
+    // Also check stored nickname for legacy items
+    const storedUser = storedNickname.toLowerCase().trim();
+    return (itemOwner === currentUser || itemOwner === storedUser) && currentUser !== "";
   }
 
   function isAdminUser(): boolean {

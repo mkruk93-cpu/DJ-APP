@@ -68,16 +68,22 @@ export default function OnlineUsers({ username }: { username?: string } = {}) {
 
     channel.on("presence", { event: "sync" }, () => {
       const state = channel.presenceState() as Record<string, Array<{ nickname?: string; listening?: boolean }>>;
-      const distinctByKey = new Map<string, { nickname: string; listening: boolean }>();
+      // Deduplicate by nickname, keeping the one with highest listening status
+      const distinctByNickname = new Map<string, { nickname: string; listening: boolean }>();
       for (const key of Object.keys(state)) {
         const entries = Array.isArray(state[key]) ? state[key] : [];
         for (const entry of entries) {
-          const nick = (entry.nickname ?? "").trim();
+          const nick = (entry.nickname ?? "").trim().toLowerCase();
           if (!nick) continue;
-          distinctByKey.set(key, { nickname: nick, listening: entry.listening !== false });
+          const isListening = entry.listening !== false;
+          const existing = distinctByNickname.get(nick);
+          // Only update if this entry is listening and existing is not, or if this is the first entry
+          if (!existing || (isListening && !existing.listening)) {
+            distinctByNickname.set(nick, { nickname: entry.nickname ?? nick, listening: isListening });
+          }
         }
       }
-      const users = Array.from(distinctByKey.values());
+      const users = Array.from(distinctByNickname.values());
       setOnlineUsers(users);
       setOnlineUserCount(users.length);
       setIsLoading(false);

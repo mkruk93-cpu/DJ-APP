@@ -3974,9 +3974,10 @@ function getSkipVoteEligibleListenerCount(): number {
     const key = presence.nickname.trim().toLowerCase() || `socket:${socketId}`;
     activeWebListeners.add(key);
   }
+  // Only count active web listeners (green dot) - don't fall back to stream listeners
+  // This ensures only users with green dot count for skip votes
   if (activeWebListeners.size > 0) return activeWebListeners.size;
-  if (streamHub.listenerCount > 0) return streamHub.listenerCount;
-  // Prevent phantom extra sockets from forcing unnecessary second votes.
+  // If no active web listeners, require at least 1 vote to skip (solo listener scenario)
   return Math.max(1, voteSkipSet.size);
 }
 

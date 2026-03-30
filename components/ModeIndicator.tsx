@@ -54,7 +54,39 @@ export default function ModeIndicator() {
   const mode = useRadioStore((s) => s.mode);
   const connected = useRadioStore((s) => s.connected);
   const [open, setOpen] = useState(false);
+  const [positionAbove, setPositionAbove] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    
+    // Check if there's enough space below the button, otherwise show above
+    // Also check if popover would go off-screen to the right
+    const checkPosition = () => {
+      if (!buttonRef.current) return;
+      const buttonRect = buttonRef.current.getBoundingClientRect();
+      const viewportHeight = window.innerHeight;
+      const viewportWidth = window.innerWidth;
+      const popoverWidth = 256; // w-64 = 256px
+      
+      // If button is in the lower half of screen, show popover above
+      if (buttonRect.bottom > viewportHeight / 2) {
+        setPositionAbove(true);
+      } else {
+        setPositionAbove(false);
+      }
+      
+      // If popover would go off-screen to the right, align it to the right edge
+      if (buttonRect.left + popoverWidth > viewportWidth) {
+        setPositionAbove(false); // Reset to use right alignment instead
+      }
+    };
+    
+    checkPosition();
+    window.addEventListener("resize", checkPosition);
+    return () => window.removeEventListener("resize", checkPosition);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -84,6 +116,7 @@ export default function ModeIndicator() {
   return (
     <div ref={popoverRef} className="relative">
       <button
+        ref={buttonRef}
         onClick={() => setOpen((v) => !v)}
         className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-semibold transition hover:brightness-125 sm:px-2.5 sm:text-xs ${color}`}
       >
@@ -92,7 +125,11 @@ export default function ModeIndicator() {
       </button>
 
       {open && info && (
-        <div className="absolute left-0 top-full z-50 mt-2 w-64 rounded-xl border border-gray-700 bg-gray-900 p-4 shadow-2xl shadow-black/50">
+        <div 
+          className={`absolute z-50 w-64 max-w-[calc(100vw-2rem)] rounded-xl border border-gray-700 bg-gray-900 p-4 shadow-2xl shadow-black/50 ${
+            positionAbove ? "bottom-full left-0 mb-2" : "top-full left-0 mt-2"
+          }`}
+        >
           <div className="mb-2 flex items-center gap-2">
             <span className="text-xl">{info.icon}</span>
             <span className={`text-sm font-bold ${color.split(" ")[1]}`}>{label}</span>
