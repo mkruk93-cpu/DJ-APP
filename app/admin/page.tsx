@@ -86,18 +86,32 @@ export default function AdminPage() {
     return new URLSearchParams(window.location.search).get("embed") === "1";
   }, []);
 
+  // Restore auth state from sessionStorage on mount and on every render
+  useEffect(() => {
+    if (sessionStorage.getItem("admin_auth") === "true") {
+      setAuthenticated(true);
+    }
+    const token = getRadioToken();
+    if (token) {
+      setRadioTokenState(token);
+      setRadioAuthed(true);
+    }
+  }, []);
+
+  // Keep radioToken in sync with sessionStorage
+  useEffect(() => {
+    const token = getRadioToken();
+    if (token && token !== radioToken) {
+      setRadioTokenState(token);
+    }
+  }, [radioToken]);
+
+  // Check if user is KrukkeX admin
   useEffect(() => {
     const username = (userAccount?.username ?? "").trim().toLowerCase();
     if (username === "krukkex") {
       setAuthenticated(true);
       sessionStorage.setItem("admin_auth", "true");
-      return;
-    }
-    if (sessionStorage.getItem("admin_auth") === "true") {
-      setAuthenticated(true);
-    }
-    if (getRadioToken()) {
-      setRadioAuthed(true);
     }
   }, [userAccount?.username]);
 

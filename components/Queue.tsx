@@ -45,8 +45,10 @@ export default function Queue() {
   }
 
   function isAdminUser(): boolean {
+    // Check both username and radio token for admin status
     const user = nickname.toLowerCase().trim();
-    return user === "krukkex";
+    const hasRadioToken = getRadioToken() !== null;
+    return user === "krukkex" || hasRadioToken;
   }
 
   useEffect(() => {

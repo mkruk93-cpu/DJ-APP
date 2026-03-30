@@ -910,13 +910,11 @@ export default function RequestForm(
           <div className="shrink-0 space-y-2">
             <div className="relative z-10">
               <NoAutofillInput
-                type="text"
+                type="search"
                 id="request-search-input"
                 name={`request-search-${Math.random().toString(36).substring(7)}`}
                 autoComplete="off"
-                data-lpignore="true"
-                data-form-type="other"
-                spellCheck="false"
+                spellCheck={false}
                 value={input}
                 onChange={(e) => handleInputChange(e.target.value)}
                 onFocus={() => { if (results.length > 0) setShowResults(true); }}

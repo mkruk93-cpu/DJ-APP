@@ -1508,12 +1508,10 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
           <div className="shrink-0 space-y-2">
             <div className="relative">
               <NoAutofillInput
-                type="text"
+                type="search"
                 name={`search-input-${Math.random().toString(36).substring(7)}`}
                 autoComplete="off"
-                data-lpignore="true"
-                data-form-type="other"
-                spellCheck="false"
+                spellCheck={false}
                 value={input}
                 onChange={(e) => handleInputChange(e.target.value)}
                 onFocus={() => { if (results.length > 0) setShowResults(true); }}

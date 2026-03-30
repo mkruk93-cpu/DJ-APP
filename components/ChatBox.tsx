@@ -461,13 +461,11 @@ export default function ChatBox({ onNewMessage, username }: { onNewMessage?: () 
           🙂
         </button>
         <NoAutofillInput
-          type="text"
+          type="search"
           id="chat-message-input"
           name={`chat-message-${Math.random().toString(36).substring(7)}`}
           autoComplete="off"
-          data-lpignore="true"
-          data-form-type="other"
-          spellCheck="false"
+          spellCheck={false}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           maxLength={MAX_LENGTH}
@@ -523,13 +521,11 @@ export default function ChatBox({ onNewMessage, username }: { onNewMessage?: () 
           ) : (
             <div>
               <NoAutofillInput
-                type="text"
+                type="search"
                 id="media-search-input"
                 name={`media-search-${Math.random().toString(36).substring(7)}`}
                 autoComplete="off"
-                data-lpignore="true"
-                data-form-type="other"
-                spellCheck="false"
+                spellCheck={false}
                 value={mediaQuery}
                 onChange={(e) => setMediaQuery(e.target.value)}
                 placeholder={pickerTab === "gif" ? "Zoek GIF's..." : "Zoek stickers..."}

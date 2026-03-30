@@ -548,12 +548,10 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
       )}
 
       <NoAutofillInput
-        type="text"
+        type="search"
         name={`shared-filter-${Math.random().toString(36).substring(7)}`}
         autoComplete="off"
-        data-lpignore="true"
-        data-form-type="other"
-        spellCheck="false"
+        spellCheck={false}
         value={filter}
         onChange={(e) => setFilter(e.target.value)}
         placeholder={view === "playlists" ? "Filter playlists..." : "Filter tracks..."}

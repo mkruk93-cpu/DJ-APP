@@ -281,14 +281,26 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
 
     const handleOnline = () => {
       console.log("[AudioPlayer] Network back online, attempting to resume...");
-      if (playingRef.current && !userPaused.current) {
+      // Try to resume if user hasn't manually paused
+      if (!userPaused.current) {
         const audio = audioRef.current;
-        if (audio && (audio.paused || audio.readyState < 2)) {
-          const freshUrl = src ? `${src}${src.includes("?") ? "&" : "?"}live=${Date.now()}` : "";
-          if (freshUrl) {
+        if (audio && src) {
+          // If audio is paused or not in ready state, try to resume
+          const needsReload = audio.paused || audio.readyState < 2 || audio.networkState === HTMLMediaElement.NETWORK_NO_SOURCE;
+          if (needsReload) {
+            const freshUrl = `${src}${src.includes("?") ? "&" : "?"}live=${Date.now()}`;
             audio.src = freshUrl;
+            audio.load();
           }
-          audio.play().catch(() => setAutoplayBlocked(true));
+          audio.play()
+            .then(() => {
+              console.log("[AudioPlayer] Successfully resumed after network recovery");
+              setPlaying(true);
+            })
+            .catch(() => {
+              console.log("[AudioPlayer] Auto-resume failed, waiting for user interaction");
+              setAutoplayBlocked(true);
+            });
         }
       }
     };
@@ -651,9 +663,16 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
 
     const updateMetadata = () => {
-      const castTitle = track.title ?? "KrukkeX Live";
-      const castArtist = track.artist ?? "Live radio";
-      const castArtwork = currentArtwork ?? (preferSupabase ? track.artwork_url : null) ?? "/icons/krukkex-icon-512x512.png";
+      // Use syncedRadioTrack for live track info, fallback to track from Supabase
+      const syncedRadio = syncedRadioTrack;
+      const castTitle = syncedRadio?.title ?? track.title ?? "KrukkeX Live";
+      const castArtist = syncedRadio?.added_by 
+        ? `Live • ${syncedRadio.added_by}`
+        : (track.artist ?? "Live radio");
+      const castArtwork = currentArtwork 
+        ?? (syncedRadio?.thumbnail ?? null) 
+        ?? (preferSupabase ? track.artwork_url : null) 
+        ?? "/icons/krukkex-icon-512x512.png";
 
       navigator.mediaSession.metadata = new MediaMetadata({
         title: castTitle,
@@ -718,7 +737,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
         // Ignore Media Session cleanup failures on unsupported browsers.
       }
     };
-  }, [buildFreshStreamUrl, clearReconnectTimer, clearWaitingTimer, src, track, currentArtwork, preferSupabase]);
+  }, [buildFreshStreamUrl, clearReconnectTimer, clearWaitingTimer, src, track, currentArtwork, preferSupabase, syncedRadioTrack]);
 
   // Synchronize mediaSession playbackState with component state
   useEffect(() => {
