@@ -284,7 +284,10 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
       if (playingRef.current && !userPaused.current) {
         const audio = audioRef.current;
         if (audio && (audio.paused || audio.readyState < 2)) {
-          audio.src = buildFreshStreamUrl(src);
+          const freshUrl = src ? `${src}${src.includes("?") ? "&" : "?"}live=${Date.now()}` : "";
+          if (freshUrl) {
+            audio.src = freshUrl;
+          }
           audio.play().catch(() => setAutoplayBlocked(true));
         }
       }
@@ -292,7 +295,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
 
     window.addEventListener("online", handleOnline);
     return () => window.removeEventListener("online", handleOnline);
-  }, [src, buildFreshStreamUrl]);
+  }, [src]);
 
   const connected = useRadioStore((s) => s.connected);
   const radioMode = useRadioStore((s) => s.mode);
