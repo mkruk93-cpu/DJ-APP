@@ -665,32 +665,38 @@ export default function AdminPage() {
                     </select>
                   </div>
                   <button
-                    onClick={async () => {
+                    onClick={() => {
                       if (!pushMessage.trim()) {
                         setPushError("Vul een bericht in");
                         return;
                       }
                       setPushSending(true);
                       setPushError("");
-                      try {
-                        const res = await fetch(`${effectiveServerUrl}/api/push-message`, {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({
-                            message: pushMessage.trim(),
-                            expiryMinutes: pushExpiryMinutes,
-                            token: radioToken,
-                          }),
-                        });
-                        if (!res.ok) throw new Error("Failed to send push message");
-                        setPushMessageState("");
-                        setPushExpiryMinutes(0);
-                      } catch (err) {
-                        setPushError("Kon bericht niet versturen");
-                        console.error("[admin] push message error:", err);
-                      } finally {
+                      
+                      const socket = getSocket();
+                      socket.emit('push:send', {
+                        message: pushMessage.trim(),
+                        expiryMinutes: pushExpiryMinutes,
+                        token: radioToken,
+                      });
+                      
+                      socket.once('push:message', (data: { message: string | null }) => {
                         setPushSending(false);
-                      }
+                        if (data.message) {
+                          setPushMessageState("");
+                          setPushExpiryMinutes(0);
+                          setPushError("");
+                        }
+                      });
+                      
+                      socket.once('error:toast', (data: { message: string }) => {
+                        setPushSending(false);
+                        setPushError(data.message || "Fout bij versturen");
+                      });
+                      
+                      setTimeout(() => {
+                        setPushSending(false);
+                      }, 5000);
                     }}
                     disabled={pushSending || !pushMessage.trim() || !radioConnected}
                     className="ml-auto rounded-lg bg-amber-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-amber-500 disabled:opacity-50"
@@ -699,6 +705,11 @@ export default function AdminPage() {
                   </button>
                 </div>
                 {pushError && <p className="text-xs text-red-400">{pushError}</p>}
+                {!radioConnected && (
+                  <p className="text-[10px] text-amber-400/60">
+                    Verbind eerst met de radio server via het URL veld hierboven.
+                  </p>
+                )}
                 <p className="text-[10px] text-amber-400/60">
                   Alle luisteraars (online of die binnen de vervaltijd online komen) ontvangen dit bericht. Het verdwijnt pas als ze het zelf weg klikken.
                 </p>
