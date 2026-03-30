@@ -1510,7 +1510,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
               <NoAutofillInput
                 type="text"
                 name={`search-input-${Math.random().toString(36).substring(7)}`}
-                autoComplete="new-password"
+                autoComplete="off"
                 data-lpignore="true"
                 data-form-type="other"
                 spellCheck="false"

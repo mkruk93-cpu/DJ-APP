@@ -913,7 +913,7 @@ export default function RequestForm(
                 type="text"
                 id="request-search-input"
                 name={`request-search-${Math.random().toString(36).substring(7)}`}
-                autoComplete="new-password"
+                autoComplete="off"
                 data-lpignore="true"
                 data-form-type="other"
                 spellCheck="false"

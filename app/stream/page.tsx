@@ -1377,9 +1377,8 @@ export default function StreamPage() {
   }, [isHydrated, authLoading, user, router]);
 
   // Auth check: show loading screen while loading or if user is not yet determined.
-  // Use cached approval check to prevent unnecessary loading states
+  // Show approval check immediately for unapproved users
   const [showApprovalCheck, setShowApprovalCheck] = useState(false);
-  const approvalTimerRef = useRef<NodeJS.Timeout | null>(null);
   const wasApprovedRef = useRef(false);
   
   if (userAccount?.approved) {
@@ -1392,33 +1391,17 @@ export default function StreamPage() {
       return;
     }
     
-    // Clear any pending timer
-    if (approvalTimerRef.current) {
-      clearTimeout(approvalTimerRef.current);
-    }
-    
     // If approved or was previously approved in this session, immediately hide approval screen
     if (userAccount?.approved || wasApprovedRef.current) {
       setShowApprovalCheck(false);
       return;
     }
     
-    // Only show approval screen after delay AND if we're sure user is not approved
-    // BUT we must make sure we have a userAccount first to avoid false positives during load
-    if (userAccount) {
-      approvalTimerRef.current = setTimeout(() => {
-        // Double check we're still not approved and user hasn't navigated away
-        if (!userAccount?.approved && !wasApprovedRef.current && user) {
-          setShowApprovalCheck(true);
-        }
-      }, 1500);
+    // Show approval screen immediately if user is not approved
+    if (userAccount && !userAccount.approved && !wasApprovedRef.current) {
+      setShowApprovalCheck(true);
+      return;
     }
-    
-    return () => {
-      if (approvalTimerRef.current) {
-        clearTimeout(approvalTimerRef.current);
-      }
-    };
   }, [authLoading, user, userAccount, userAccount?.approved]);
 
   if (authLoading || !user) {

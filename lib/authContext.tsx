@@ -109,28 +109,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
     });
 
-    if (!error && data.user) {
-      const baseUsername = providedUsername || email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '_').substring(0, 15);
-      let username = baseUsername;
-      
-      try {
-        const { error: accountError } = await supabase
-          .from('user_accounts')
-          .insert({
-            id: data.user.id,
-            email,
-            username,
-            approved: false,
-            created_at: new Date().toISOString(),
-          });
-
-        if (accountError) {
-          console.error('Error creating user account:', accountError);
-        }
-      } catch (err) {
-        console.error('Error creating user account:', err);
-      }
-    }
+     if (!error && data.user) {
+       const baseUsername = providedUsername || email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '_').substring(0, 15);
+       let username = baseUsername;
+       
+       try {
+         // Create user account (unapproved)
+         const { error: accountError } = await supabase
+           .from('user_accounts')
+           .insert({
+             id: data.user.id,
+             email,
+             username,
+             approved: false,
+             created_at: new Date().toISOString(),
+           });
+ 
+         if (accountError) {
+           console.error('Error creating user account:', accountError);
+         }
+         
+         // Create approval request for admin
+         const { error: approvalError } = await supabase
+           .from('user_approvals')
+           .insert({
+             user_id: data.user.id,
+             email: email.toLowerCase(),
+             requested_at: new Date().toISOString(),
+           });
+           
+         if (approvalError) {
+           console.error('Error creating user approval:', approvalError);
+         }
+       } catch (err) {
+         console.error('Error creating user account:', err);
+       }
+     }
 
     return { error };
   }

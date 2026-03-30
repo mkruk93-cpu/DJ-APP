@@ -464,7 +464,7 @@ export default function ChatBox({ onNewMessage, username }: { onNewMessage?: () 
           type="text"
           id="chat-message-input"
           name={`chat-message-${Math.random().toString(36).substring(7)}`}
-          autoComplete="new-password"
+          autoComplete="off"
           data-lpignore="true"
           data-form-type="other"
           spellCheck="false"
@@ -526,7 +526,7 @@ export default function ChatBox({ onNewMessage, username }: { onNewMessage?: () 
                 type="text"
                 id="media-search-input"
                 name={`media-search-${Math.random().toString(36).substring(7)}`}
-                autoComplete="new-password"
+                autoComplete="off"
                 data-lpignore="true"
                 data-form-type="other"
                 spellCheck="false"

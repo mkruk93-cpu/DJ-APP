@@ -993,7 +993,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
       <NoAutofillInput
         type="text"
         name={`spotify-filter-${Math.random().toString(36).substring(7)}`}
-        autoComplete="new-password"
+        autoComplete="off"
         data-lpignore="true"
         data-form-type="other"
         spellCheck="false"
