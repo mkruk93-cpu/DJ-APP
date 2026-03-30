@@ -7,6 +7,7 @@ import { getGenres, getGenreHits, type GenreOption, type GenreHit } from "@/lib/
 import { buildGroupedGenreSections, GENRE_FALLBACK_OPTIONS, getGenreGroupMembers, isGroupedParentGenre, resolveGenreLabel } from "@/lib/genreDropdown";
 import SpotifyBrowser from "@/components/SpotifyBrowser";
 import SharedPlaylistsBrowser from "@/components/SharedPlaylistsBrowser";
+import { NoAutofillInput } from "@/components/NoAutofillInput";
 
 interface Request {
   id: string;
@@ -908,7 +909,7 @@ export default function RequestForm(
         ) : (
           <div className="shrink-0 space-y-2">
             <div className="relative z-10">
-              <input
+              <NoAutofillInput
                 type="text"
                 id="request-search-input"
                 name={`request-search-${Math.random().toString(36).substring(7)}`}

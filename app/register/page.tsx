@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth, AuthProvider } from "@/lib/authContext";
 import { getSupabase } from "@/lib/supabaseClient";
+import { NoAutofillInput } from "@/components/NoAutofillInput";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const USERNAME_REGEX = /^[a-zA-Z0-9_]{3,20}$/;
@@ -162,13 +163,17 @@ function RegisterContent() {
             <label htmlFor="username" className="block text-sm font-medium text-gray-300 mb-2">
               Username
             </label>
-            <input
+            <NoAutofillInput
               id="username"
               type="text"
+              name={`register-username-${Math.random().toString(36).slice(2)}`}
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               placeholder="Kies een unieke username"
-              autoComplete="username"
+              autoComplete="new-password"
+              data-lpignore="true"
+              data-form-type="other"
+              spellCheck="false"
               required
               className="w-full rounded-lg border border-gray-700 bg-gray-800 px-4 py-3 text-white placeholder-gray-500 outline-none transition focus:border-violet-500 focus:ring-1 focus:ring-violet-500"
             />
@@ -178,13 +183,17 @@ function RegisterContent() {
             <label htmlFor="realName" className="block text-sm font-medium text-gray-300 mb-2">
               Echte Voornaam
             </label>
-            <input
+            <NoAutofillInput
               id="realName"
               type="text"
+              name={`register-realname-${Math.random().toString(36).slice(2)}`}
               value={realName}
               onChange={(e) => setRealName(e.target.value)}
               placeholder="Je voornaam"
-              autoComplete="given-name"
+              autoComplete="new-password"
+              data-lpignore="true"
+              data-form-type="other"
+              spellCheck="false"
               required
               className="w-full rounded-lg border border-gray-700 bg-gray-800 px-4 py-3 text-white placeholder-gray-500 outline-none transition focus:border-violet-500 focus:ring-1 focus:ring-violet-500"
             />
@@ -194,13 +203,17 @@ function RegisterContent() {
             <label htmlFor="email" className="block text-sm font-medium text-gray-300 mb-2">
               Email Adres
             </label>
-            <input
+            <NoAutofillInput
               id="email"
               type="email"
+              name={`register-email-${Math.random().toString(36).slice(2)}`}
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="jouw@email.nl"
-              autoComplete="email"
+              autoComplete="new-password"
+              data-lpignore="true"
+              data-form-type="other"
+              spellCheck="false"
               required
               className="w-full rounded-lg border border-gray-700 bg-gray-800 px-4 py-3 text-white placeholder-gray-500 outline-none transition focus:border-violet-500 focus:ring-1 focus:ring-violet-500"
             />

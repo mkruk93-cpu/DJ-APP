@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/authContext";
 import { getSupabase } from "@/lib/supabaseClient";
+import { NoAutofillInput } from "@/components/NoAutofillInput";
 
 const USERNAME_REGEX = /^[a-zA-Z0-9_]{3,20}$/;
 
@@ -138,9 +139,14 @@ export default function AccountSetupPage() {
             <label htmlFor="username" className="block text-sm font-medium text-gray-300 mb-2">
               Username
             </label>
-            <input
+            <NoAutofillInput
               id="username"
               type="text"
+              name={`account-username-${Math.random().toString(36).slice(2)}`}
+              autoComplete="new-password"
+              data-lpignore="true"
+              data-form-type="other"
+              spellCheck="false"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               placeholder="Jouw username"

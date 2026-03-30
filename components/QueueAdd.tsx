@@ -11,6 +11,7 @@ import { getGenres, getGenreHits, addPriorityArtistToGenre, blockArtistForGenre,
 import { buildGroupedGenreSections, GENRE_FALLBACK_OPTIONS, getGenreGroupMembers, isGroupedParentGenre, resolveGenreLabel } from "@/lib/genreDropdown";
 import SpotifyBrowser from "@/components/SpotifyBrowser";
 import SharedPlaylistsBrowser from "@/components/SharedPlaylistsBrowser";
+import { NoAutofillInput } from "@/components/NoAutofillInput";
 
 class SpotifyErrorBoundary extends Component<
   { children: ReactNode; onReset: () => void },
@@ -1506,7 +1507,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
         ) : (
           <div className="shrink-0 space-y-2">
             <div className="relative">
-              <input
+              <NoAutofillInput
                 type="text"
                 name={`search-input-${Math.random().toString(36).substring(7)}`}
                 autoComplete="new-password"

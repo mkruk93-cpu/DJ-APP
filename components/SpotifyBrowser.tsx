@@ -26,6 +26,7 @@ import {
   type UserPlaylist,
   type UserPlaylistTrack,
 } from "@/lib/userPlaylistsApi";
+import { NoAutofillInput } from "@/components/NoAutofillInput";
 import { useAuth } from "@/lib/authContext";
 
 interface SpotifyBrowserProps {
@@ -989,7 +990,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
       )}
 
       {/* Filter */}
-      <input
+      <NoAutofillInput
         type="text"
         name={`spotify-filter-${Math.random().toString(36).substring(7)}`}
         autoComplete="new-password"

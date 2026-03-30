@@ -14,6 +14,7 @@ import {
 import { getSocket } from "@/lib/socket";
 import { getRadioToken } from "@/lib/auth";
 import { useRadioStore } from "@/lib/radioStore";
+import { NoAutofillInput } from "@/components/NoAutofillInput";
 
 interface SharedPlaylistsBrowserProps {
   onAddTrack: (track: {
@@ -546,7 +547,7 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
         </p>
       )}
 
-      <input
+      <NoAutofillInput
         type="text"
         name={`shared-filter-${Math.random().toString(36).substring(7)}`}
         autoComplete="new-password"

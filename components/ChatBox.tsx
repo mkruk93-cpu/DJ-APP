@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback, useId } from "react";
 import { getSupabase } from "@/lib/supabaseClient";
 import { getRadioToken } from "@/lib/auth";
 import EmojiPicker, { Theme, type EmojiClickData } from "emoji-picker-react";
+import { NoAutofillInput } from "@/components/NoAutofillInput";
 
 interface ChatMessage {
   id: string;
@@ -459,7 +460,7 @@ export default function ChatBox({ onNewMessage, username }: { onNewMessage?: () 
         >
           🙂
         </button>
-        <input
+        <NoAutofillInput
           type="text"
           id="chat-message-input"
           name={`chat-message-${Math.random().toString(36).substring(7)}`}
@@ -521,7 +522,7 @@ export default function ChatBox({ onNewMessage, username }: { onNewMessage?: () 
             </div>
           ) : (
             <div>
-              <input
+              <NoAutofillInput
                 type="text"
                 id="media-search-input"
                 name={`media-search-${Math.random().toString(36).substring(7)}`}
