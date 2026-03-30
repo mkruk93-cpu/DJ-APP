@@ -448,6 +448,23 @@ export default function FallbackGenreSelector() {
     };
   }, []);
 
+  const [shouldScroll, setShouldScroll] = useState(false);
+  const marqueeContainerRef = useRef<HTMLSpanElement>(null);
+  const marqueeTextRef = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    const checkScroll = () => {
+      if (marqueeContainerRef.current && marqueeTextRef.current) {
+        const containerWidth = marqueeContainerRef.current.offsetWidth;
+        const textWidth = marqueeTextRef.current.scrollWidth;
+        setShouldScroll(textWidth > containerWidth);
+      }
+    };
+    checkScroll();
+    window.addEventListener("resize", checkScroll);
+    return () => window.removeEventListener("resize", checkScroll);
+  }, [activeLabel]);
+
   if (!shouldRender) return null;
 
   return (
@@ -481,15 +498,16 @@ export default function FallbackGenreSelector() {
               <path fillRule="evenodd" d="M10 1a3 3 0 00-3 3v2H5a2 2 0 00-2 2v8a2 2 0 002 2h10a2 2 0 002-2V8a2 2 0 00-2-2h-2V4a3 3 0 00-3-3zM8 9a1 1 0 10-2 0v1a1 1 0 102 0V9zm4 0a1 1 0 10-2 0v1a1 1 0 102 0V9z" clipRule="evenodd" />
             </svg>
           )}
-          <span className="marquee-container relative block" style={{ maxWidth: 180 }}>
+          <span ref={marqueeContainerRef} className="marquee-container relative block flex-1 overflow-hidden">
             <span
-              className="marquee-text block whitespace-nowrap"
+              ref={marqueeTextRef}
+              className={`block whitespace-nowrap ${shouldScroll ? "marquee-text" : ""}`}
               style={{
-                animation: activeLabel && activeLabel.length > 20 ? 'marquee-scroll-slow 14s linear infinite' : undefined,
+                animation: shouldScroll ? 'marquee-scroll-slow 14s linear infinite' : 'none',
               }}
             >
               {activeLabel}
-              {activeLabel && activeLabel.length > 20 && (
+              {shouldScroll && (
                 <span className="mx-8" aria-hidden="true">{activeLabel}</span>
               )}
             </span>

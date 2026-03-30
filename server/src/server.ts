@@ -4667,7 +4667,7 @@ io.on('connection', (socket) => {
   socket.on('listener:state', (data: { nickname?: string; listening?: boolean }) => {
     const prev = listenerPresenceBySocket.get(socket.id);
     const nickname = normalizeNickname(data?.nickname) ?? prev?.nickname ?? '';
-    const listening = !!data?.listening;
+    const listening = data?.listening !== false; // Default to true if not explicitly false
     listenerPresenceBySocket.set(socket.id, {
       nickname,
       listening,

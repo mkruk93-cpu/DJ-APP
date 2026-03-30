@@ -839,14 +839,13 @@ export default function StreamPage() {
     };
   }, []);
 
-  // Sync nickname with server for admin rights and presence
+  // Sync presence with server for listener count
   useEffect(() => {
     const socket = getSocket();
-    if (!userAccount?.username) return;
     
     const emitState = () => {
       socket.emit("listener:state", { 
-        nickname: userAccount.username,
+        nickname: userAccount?.username || "",
         listening: true 
       });
     };
@@ -1676,7 +1675,7 @@ export default function StreamPage() {
 
       <main className="flex min-h-0 flex-1 flex-col gap-1 p-1 sm:gap-4 sm:p-4 lg:flex-row">
         {/* Player */}
-        <div className="min-h-0 shrink-0 overflow-hidden lg:w-full lg:max-w-3xl lg:shrink-0">
+        <div className="min-h-0 shrink-0 overflow-hidden lg:w-full lg:max-w-2xl lg:shrink-0">
           {shouldPollCommunityWidgets && <ShoutoutBanner />}
           {mode === "twitch" && twitchLive && (
             <div className="space-y-1.5 sm:space-y-2">
@@ -1871,8 +1870,8 @@ export default function StreamPage() {
         </div>
 
         {/* Content panels */}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 lg:min-w-0 lg:flex-[3.5] lg:flex-row lg:gap-4 lg:basis-auto">
-          <div className={`min-h-0 min-w-0 flex-1 lg:flex-[1.5] ${activeTab === "chat" ? "flex" : "hidden"} lg:flex lg:flex-col`}>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 lg:min-w-0 lg:flex-[4.5] lg:flex-row lg:gap-4 lg:basis-auto">
+          <div className={`min-h-0 min-w-0 flex-1 lg:flex-[2.2] ${activeTab === "chat" ? "flex" : "hidden"} lg:flex lg:flex-col`}>
             <ChatBox username={userAccount?.username} onNewMessage={() => { if (activeTabRef.current !== "chat") setChatBadge(true); }} />
           </div>
           {showRequests && (

@@ -54,6 +54,15 @@ export default function AdminPage() {
   const [radioToken, setRadioTokenState] = useState("");
   const [radioAuthError, setRadioAuthError] = useState("");
   const [radioAuthed, setRadioAuthed] = useState(false);
+
+  // Initialize radio token from storage
+  useEffect(() => {
+    const token = getRadioToken();
+    if (token) {
+      setRadioTokenState(token);
+      setRadioAuthed(true);
+    }
+  }, []);
   const [keepFiles, setKeepFiles] = useState(false);
   const [jingleEnabled, setJingleEnabled] = useState(true);
   const [jingleEveryTracks, setJingleEveryTracks] = useState(4);
@@ -696,10 +705,11 @@ export default function AdminPage() {
                       setPushError("");
                       
                       const socket = getSocket();
+                      const tokenToUse = getRadioToken() || radioToken;
                       socket.emit('push:send', {
                         message: pushMessage.trim(),
                         expiryMinutes: pushExpiryMinutes,
-                        token: radioToken,
+                        token: tokenToUse,
                       });
                       
                       socket.once('push:message', (data: { message: string | null }) => {

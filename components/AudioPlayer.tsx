@@ -218,33 +218,82 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const lastReconnectAtRef = useRef(0);
   const nicknameRef = useRef<string>("anonymous");
   const healthCheckTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-    // Health-check: controleer periodiek of audio nog speelt, anders forceer herstart
-    useEffect(() => {
-      if (!src) return;
-      function healthCheck() {
+  const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
+
+  // Single-instance playback coordination
+  useEffect(() => {
+    if (typeof window === "undefined" || !("BroadcastChannel" in window)) return;
+    
+    const channel = new BroadcastChannel("djapp_audio_sync");
+    broadcastChannelRef.current = channel;
+
+    channel.onmessage = (event) => {
+      if (event.data === "play_started" && playingRef.current) {
+        // Another tab started playing, pause this one
+        console.log("[AudioPlayer] Another tab started playing, pausing this one.");
         const audio = audioRef.current;
-        if (!audio) return;
-        // Als audio hoort te spelen, maar is gepauzeerd of heeft geen geluid, forceer herstart
-        if (
-          playingRef.current &&
-          !userPaused.current &&
-          (audio.paused || audio.ended || audio.readyState < 2)
-        ) {
-          // Forceer reload van de stream
-          audio.src = `${src}${src.includes("?") ? "&" : "?"}health=${Date.now()}`;
-          audio.play().catch(() => {
-            setAutoplayBlocked(true);
-          });
+        if (audio) {
+          audio.pause();
+          setPlaying(false);
+          userPaused.current = true;
         }
       }
-      healthCheckTimerRef.current = setInterval(healthCheck, 10000); // elke 10s
-      return () => {
-        if (healthCheckTimerRef.current) {
-          clearInterval(healthCheckTimerRef.current);
-          healthCheckTimerRef.current = null;
+    };
+
+    return () => {
+      channel.close();
+    };
+  }, []);
+
+  // Health-check: controleer periodiek of audio nog speelt, anders forceer herstart
+  useEffect(() => {
+    if (!src) return;
+    function healthCheck() {
+      const audio = audioRef.current;
+      if (!audio) return;
+      // Als audio hoort te spelen, maar is gepauzeerd of heeft geen geluid, forceer herstart
+      if (
+        playingRef.current &&
+        !userPaused.current &&
+        (audio.paused || audio.ended || audio.readyState < 2)
+      ) {
+        if (navigator.onLine === false) return; // Don't try if we're offline
+        // Forceer reload van de stream
+        console.log("[AudioPlayer] Health check failed, restarting stream...");
+        audio.src = `${src}${src.includes("?") ? "&" : "?"}health=${Date.now()}`;
+        audio.play().catch(() => {
+          setAutoplayBlocked(true);
+        });
+      }
+    }
+    healthCheckTimerRef.current = setInterval(healthCheck, 10000); // elke 10s
+    return () => {
+      if (healthCheckTimerRef.current) {
+        clearInterval(healthCheckTimerRef.current);
+        healthCheckTimerRef.current = null;
+      }
+    };
+  }, [src]);
+
+  // Network status recovery
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleOnline = () => {
+      console.log("[AudioPlayer] Network back online, attempting to resume...");
+      if (playingRef.current && !userPaused.current) {
+        const audio = audioRef.current;
+        if (audio && (audio.paused || audio.readyState < 2)) {
+          audio.src = buildFreshStreamUrl(src);
+          audio.play().catch(() => setAutoplayBlocked(true));
         }
-      };
-    }, [src]);
+      }
+    };
+
+    window.addEventListener("online", handleOnline);
+    return () => window.removeEventListener("online", handleOnline);
+  }, [src, buildFreshStreamUrl]);
+
   const connected = useRadioStore((s) => s.connected);
   const radioMode = useRadioStore((s) => s.mode);
   const isFullscreen = nativeFullscreen || manualFullscreen;
@@ -598,6 +647,24 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   useEffect(() => {
     if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
 
+    const updateMetadata = () => {
+      const castTitle = track.title ?? "KrukkeX Live";
+      const castArtist = track.artist ?? "Live radio";
+      const castArtwork = currentArtwork ?? (preferSupabase ? track.artwork_url : null) ?? "/icons/krukkex-icon-512x512.png";
+
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: castTitle,
+        artist: castArtist,
+        album: "KrukkeX Radio",
+        artwork: [
+          { src: castArtwork, sizes: "512x512", type: "image/png" },
+          { src: "/icons/krukkex-icon-192x192.png", sizes: "192x192", type: "image/png" },
+        ],
+      });
+    };
+
+    updateMetadata();
+
     navigator.mediaSession.setActionHandler("pause", () => {
       const audio = audioRef.current;
       if (!audio) return;
@@ -606,11 +673,16 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
       clearWaitingTimer();
       audio.pause();
       setPlaying(false);
+      navigator.mediaSession.playbackState = "paused";
     });
 
     navigator.mediaSession.setActionHandler("play", () => {
       const audio = audioRef.current;
       if (!audio || !src) return;
+      
+      // Notify other tabs that we started playing
+      broadcastChannelRef.current?.postMessage("play_started");
+      
       userPaused.current = false;
       audio.src = buildFreshStreamUrl(src);
       audio.play()
@@ -619,19 +691,38 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
           waitingSinceRef.current = 0;
           setPlaying(true);
           setAutoplayBlocked(false);
+          navigator.mediaSession.playbackState = "playing";
         })
         .catch(() => setAutoplayBlocked(true));
+    });
+
+    navigator.mediaSession.setActionHandler("stop", () => {
+      const audio = audioRef.current;
+      if (!audio) return;
+      userPaused.current = true;
+      audio.pause();
+      audio.src = ""; // Clear source to stop buffering
+      setPlaying(false);
+      navigator.mediaSession.playbackState = "none";
     });
 
     return () => {
       try {
         navigator.mediaSession.setActionHandler("pause", null);
         navigator.mediaSession.setActionHandler("play", null);
+        navigator.mediaSession.setActionHandler("stop", null);
       } catch {
         // Ignore Media Session cleanup failures on unsupported browsers.
       }
     };
-  }, [buildFreshStreamUrl, clearReconnectTimer, clearWaitingTimer, src]);
+  }, [buildFreshStreamUrl, clearReconnectTimer, clearWaitingTimer, src, track, currentArtwork, preferSupabase]);
+
+  // Synchronize mediaSession playbackState with component state
+  useEffect(() => {
+    if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+      navigator.mediaSession.playbackState = playing ? "playing" : "paused";
+    }
+  }, [playing]);
 
   useEffect(() => {
     return () => {
