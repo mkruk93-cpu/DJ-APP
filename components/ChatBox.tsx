@@ -269,6 +269,21 @@ export default function ChatBox({ onNewMessage, username, onUserClick }: ChatBox
     scrollToBottom(messages.length > 1);
   }, [messages, scrollToBottom]);
 
+  // Scroll to bottom when new messages arrive - multiple passes to handle lazy-loaded images
+  useEffect(() => {
+    if (messages.length === 0) return;
+    // First scroll - immediate
+    scrollToBottom(false);
+    // Second scroll - after images/gifs may have loaded
+    const timeout1 = setTimeout(() => scrollToBottom(false), 100);
+    // Third scroll - for slower loads
+    const timeout2 = setTimeout(() => scrollToBottom(false), 500);
+    return () => {
+      clearTimeout(timeout1);
+      clearTimeout(timeout2);
+    };
+  }, [messages.length, scrollToBottom]);
+
   useEffect(() => {
     const host = messagesRef.current;
     if (!host) return;

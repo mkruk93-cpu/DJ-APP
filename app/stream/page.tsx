@@ -6,6 +6,7 @@ import { getSupabase } from "@/lib/supabaseClient";
 import { connectSocket, disconnectSocket, getSocket } from "@/lib/socket";
 import { useRadioStore } from "@/lib/radioStore";
 import { handleSpotifyCallback } from "@/lib/spotify";
+import { registerOverlayCloseHandler, getCloseTopmostOverlay } from "@/lib/useBackButton";
 import TwitchPlayer from "@/components/TwitchPlayer";
 import AudioPlayer from "@/components/AudioPlayer";
 import ChatBox from "@/components/ChatBox";
@@ -640,6 +641,81 @@ export default function StreamPage() {
     };
   }, [isHydrated]);
 
+  // Back button handling for Android PWA
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    // Register overlay close handlers
+    const closeProfileModal = registerOverlayCloseHandler(() => {
+      setProfileModalUser(null);
+    });
+    const closeLeaderboard = registerOverlayCloseHandler(() => {
+      setLeaderboardOpen(false);
+    });
+    const closeStats = registerOverlayCloseHandler(() => {
+      setStatsOpen(false);
+    });
+    const closeAppInfo = registerOverlayCloseHandler(() => {
+      setAppInfoOpen(false);
+    });
+    const closeAdminOverlay = registerOverlayCloseHandler(() => {
+      setAdminOverlayOpen(false);
+    });
+
+    // Also handle mobile header menu
+    const closeMobileMenu = registerOverlayCloseHandler(() => {
+      setMobileHeaderMenuOpen(false);
+    });
+
+    const handleBackPress = () => {
+      // Priority: close overlays in reverse order (most recent first)
+      const closeOverlay = getCloseTopmostOverlay();
+      if (closeOverlay) {
+        closeOverlay();
+        return;
+      }
+
+      // If no overlays, handle exit confirmation
+      const now = Date.now();
+      const lastPress = parseInt(sessionStorage.getItem("backPressTime") || "0", 10);
+      
+      if (now - lastPress < 2000) {
+        // Double press - exit app
+        sessionStorage.removeItem("backPressTime");
+        showToast("Tot ziens!", 2000);
+        // Use history to clear the page or minimize
+        if (navigator.app && navigator.app.exitApp) {
+          navigator.app.exitApp();
+        } else {
+          window.history.go(-window.history.length);
+        }
+      } else {
+        // First press - show confirmation
+        sessionStorage.setItem("backPressTime", String(now));
+        showToast("Druk nogmaals op back om af te sluiten", 2500);
+      }
+    };
+
+    // Set up popstate listener for back button
+    window.history.pushState({ handled: true }, "");
+    const handlePopState = (e: PopStateEvent) => {
+      e.preventDefault();
+      handleBackPress();
+      window.history.pushState({ handled: true }, "");
+    };
+    window.addEventListener("popstate", handlePopState);
+
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+      closeProfileModal();
+      closeLeaderboard();
+      closeStats();
+      closeAppInfo();
+      closeAdminOverlay();
+      closeMobileMenu();
+    };
+  }, []);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const navStandalone = (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
@@ -1067,13 +1143,16 @@ export default function StreamPage() {
     });
 
     socket.on("durationVote:update", (data: DurationVote & { voters: string[] }) => {
-      const voted = data.voters?.includes(socket.id ?? "") ?? false;
+      const voted = data.voters?.includes(getSocketId()) ?? false;
       store.getState().setDurationVote({ ...data, voted });
     });
 
     socket.on("durationVote:end", () => {
       store.getState().setDurationVote(null);
     });
+
+    // Helper to get current socket id (may change on reconnect)
+    const getSocketId = () => socket.id ?? "";
 
     socket.on("queuePushVote:update", (data: {
       id: string;
@@ -1088,7 +1167,7 @@ export default function StreamPage() {
       voters: string[];
       expires_at: number;
     }) => {
-      const voted = data.voters?.includes(socket.id ?? "") ?? false;
+      const voted = data.voters?.includes(getSocketId()) ?? false;
       store.getState().setQueuePushVote({ ...data, voted });
       if (lastQueuePushVoteIdRef.current !== data.id) {
         lastQueuePushVoteIdRef.current = data.id;

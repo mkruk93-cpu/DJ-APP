@@ -5,7 +5,7 @@ import { getSupabase } from "@/lib/supabaseClient";
 import { useRadioStore } from "@/lib/radioStore";
 import AudioVisualizer from "@/components/AudioVisualizer";
 import SkipButton from "@/components/SkipButton";
-import { parseTrackDisplay } from "@/lib/trackDisplay";
+import { parseTrackDisplay, decodeHtmlEntities } from "@/lib/trackDisplay";
 import { useSyncedTrack } from "@/lib/useSyncedTrack";
 import { dislikeCurrentAutoTrack, likeCurrentAutoTrack } from "@/lib/radioApi";
 import { getSocket } from "@/lib/socket";
@@ -306,7 +306,34 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     };
 
     window.addEventListener("online", handleOnline);
-    return () => window.removeEventListener("online", handleOnline);
+    
+    // Also handle connection changes - when switching from WiFi to 4G, the browser may not trigger "online"
+    // but the socket will reconnect, so we can use that as a trigger
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible" && !userPaused.current) {
+        const audio = audioRef.current;
+        if (audio && src && (audio.paused || audio.readyState < 2 || audio.networkState === HTMLMediaElement.NETWORK_NO_SOURCE)) {
+          console.log("[AudioPlayer] Tab became visible, attempting to resume...");
+          const freshUrl = `${src}${src.includes("?") ? "&" : "?"}live=${Date.now()}`;
+          audio.src = freshUrl;
+          audio.load();
+          audio.play()
+            .then(() => {
+              console.log("[AudioPlayer] Resumed after tab visibility");
+              setPlaying(true);
+            })
+            .catch(() => {
+              setAutoplayBlocked(true);
+            });
+        }
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, [src]);
 
   const connected = useRadioStore((s) => s.connected);
@@ -666,9 +693,16 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
       // Use syncedRadioTrack for live track info, fallback to track from Supabase
       const syncedRadio = syncedRadioTrack;
       const castTitle = syncedRadio?.title ?? track.title ?? "KrukkeX Live";
-      const castArtist = syncedRadio?.added_by 
-        ? `Live • ${syncedRadio.added_by}`
-        : (track.artist ?? "Live radio");
+      
+      // Only show added_by when it's a requested track, not for DJ mode (Rekordbox) tracks
+      let castArtist: string;
+      if (syncedRadio) {
+        // For DJ mode (no added_by), don't show artist to avoid showing stale data
+        castArtist = syncedRadio.added_by ? `Live • ${syncedRadio.added_by}` : "Live radio";
+      } else {
+        castArtist = track.artist ?? "Live radio";
+      }
+      
       const castArtwork = currentArtwork 
         ?? (syncedRadio?.thumbnail ?? null) 
         ?? (preferSupabase ? track.artwork_url : null) 
@@ -1074,8 +1108,8 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     ? (fallbackGenres.find((genre) => genre.id === selectionKey)?.label ?? null)
     : null;
   const selectionPlaylistLabel = syncedRadioTrack?.selection_playlist ?? sharedSelectionLabel ?? null;
-  const displayTitle = syncedRadioTrack ? radioTitle : (showSupabaseData ? track.title : null);
-  const displayArtist = syncedRadioTrack ? radioArtist : (showSupabaseData ? track.artist : null);
+  const displayTitle = syncedRadioTrack ? decodeHtmlEntities(radioTitle) : (showSupabaseData ? decodeHtmlEntities(track.title) : null);
+  const displayArtist = syncedRadioTrack ? decodeHtmlEntities(radioArtist) : (showSupabaseData ? decodeHtmlEntities(track.artist) : null);
   const syncedRadioArtwork = syncedRadioTrack?.thumbnail ?? null;
   const immediateRadioArtwork = radioTrack?.thumbnail ?? null;
   // Outside DJ mode we never render Supabase artwork to avoid Rekordbox exporter covers flashing in.

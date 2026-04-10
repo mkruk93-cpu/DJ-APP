@@ -5,6 +5,7 @@ import { useRadioStore } from "@/lib/radioStore";
 import { isSpotifyConfigured } from "@/lib/spotify";
 import { getGenres, getGenreHits, type GenreOption, type GenreHit } from "@/lib/radioApi";
 import { buildGroupedGenreSections, GENRE_FALLBACK_OPTIONS, getGenreGroupMembers, isGroupedParentGenre, resolveGenreLabel } from "@/lib/genreDropdown";
+import { parseTrackDisplay } from "@/lib/trackDisplay";
 import SpotifyBrowser from "@/components/SpotifyBrowser";
 import SharedPlaylistsBrowser from "@/components/SharedPlaylistsBrowser";
 import { NoAutofillInput } from "@/components/NoAutofillInput";
@@ -535,12 +536,23 @@ export default function RequestForm(
     }, 100);
     const preferredSource = source === "soundcloud" ? "soundcloud" : "youtube";
     const resolvedSource = result.url.startsWith("local://") ? "local" : preferredSource;
+    
+    // For SoundCloud: use channel (uploader) as artist only if title doesn't have artist info
+    let artist = result.channel;
+    if (source === "soundcloud" && result.channel) {
+      const parsed = parseTrackDisplay(result.title);
+      if (parsed.artist) {
+        // Title already has artist, use that instead of uploader
+        artist = parsed.artist;
+      }
+    }
+    
     await submitRequest(result.url, preferredSource, {
       providedThumb: result.thumbnail || undefined,
       duration: result.duration,
       source: resolvedSource,
       title: result.title,
-      artist: result.channel,
+      artist: artist,
     });
   }
 

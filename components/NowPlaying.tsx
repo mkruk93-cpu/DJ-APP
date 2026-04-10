@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import { getSupabase } from "@/lib/supabaseClient";
 import { useRadioStore } from "@/lib/radioStore";
-import { parseTrackDisplay } from "@/lib/trackDisplay";
+import { parseTrackDisplay, decodeHtmlEntities } from "@/lib/trackDisplay";
 import { useSyncedTrack } from "@/lib/useSyncedTrack";
 import type { Track } from "@/lib/types";
 
@@ -115,8 +115,8 @@ export default function NowPlaying({ radioTrack, showFallback = false, preferSup
   const radioArtist = isJingleTrack ? null : parsedRadio.artist;
   const currentRequestedBy = isJingleTrack ? null : (syncedRadioTrack?.added_by ?? null);
   const currentIsRandom = syncedRadioTrack?.youtube_id === "local";
-  const displayTitle = syncedRadioTrack ? radioTitle : (showSupabaseData ? track.title : null);
-  const displayArtist = syncedRadioTrack ? radioArtist : (showSupabaseData ? track.artist : null);
+  const displayTitle = syncedRadioTrack ? radioTitle : (showSupabaseData ? decodeHtmlEntities(track.title) : null);
+  const displayArtist = syncedRadioTrack ? radioArtist : (showSupabaseData ? decodeHtmlEntities(track.artist) : null);
   const displayArtwork = isJingleTrack ? null : (syncedRadioTrack?.thumbnail ?? (showSupabaseData ? track.artwork_url : null));
   const hasData = displayTitle || displayArtist;
   const nextQueueItem = (queue.find((item) => {
@@ -127,8 +127,8 @@ export default function NowPlaying({ radioTrack, showFallback = false, preferSup
     ? upcomingTrack
     : null;
   const nextSourceTitle = firstNonEmpty(
-    nextQueueItem?.title,
-    visibleUpcomingTrack?.title,
+    decodeHtmlEntities(nextQueueItem?.title),
+    decodeHtmlEntities(visibleUpcomingTrack?.title),
     nextQueueItem?.youtube_id,
     visibleUpcomingTrack?.youtube_id,
   );

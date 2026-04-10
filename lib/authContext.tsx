@@ -58,7 +58,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .single();
       
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Refresh account timeout')), 10000)
+        setTimeout(() => reject(new Error('Refresh account timeout')), 3000)
       );
 
       const { data, error } = await Promise.race([accountPromise, timeoutPromise]) as any;
@@ -94,7 +94,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUserAccount(data);
     } catch (err) {
       console.error('refreshUserAccount unexpected error or timeout:', err);
-      setUserAccount(null);
+      // Don't reset userAccount to null on timeout/error - keep existing value
+      // This prevents losing admin status due to network issues
     }
   }
 
@@ -167,12 +168,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const initializeAuth = async () => {
-      // Safety timeout for loading state
+      // Safety timeout for loading state - shorter for faster UX
       const safetyTimeout = setTimeout(() => {
         if (loading) {
           setLoading(false);
         }
-      }, 8000);
+      }, 3000);
 
       try {
         const { data: { session } } = await supabase.auth.getSession();

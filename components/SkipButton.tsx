@@ -65,11 +65,9 @@ export default function SkipButton({ compact = false }: { compact?: boolean }) {
     getSocket().emit("track:skip", { token: getRadioToken() });
   }
 
-  const threshold = modeSettings.democracy_threshold;
-  // De server stuurt al de juiste 'required' waarde die rekening houdt met luisterstatus
-  // Als fallback, gebruiken we een conservatieve schatting
-  const activeCount = onlineUserCount > 0 ? onlineUserCount : Math.max(1, listenerCount);
-  const needed = voteState?.required ?? Math.max(1, Math.ceil(activeCount * threshold / 100));
+  // Server already sends the correct 'required' value based on listening users (green dot)
+  // Use server's required value directly, fallback to calculation only if not available
+  const needed = voteState?.required ?? 1;
   const currentVotes = voteState?.votes ?? 0;
 
   if (compact) {

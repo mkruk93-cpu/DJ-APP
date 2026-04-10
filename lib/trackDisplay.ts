@@ -21,10 +21,24 @@ function stripPresentationNoise(input: string): string {
   return normalize(next);
 }
 
+export function decodeHtmlEntities(input: string | null | undefined): string {
+  if (!input) return "";
+  return input
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+}
+
 export function parseTrackDisplay(rawTitle: string | null | undefined): ParsedTrackDisplay {
   if (!rawTitle) return { artist: null, title: null };
 
-  const cleaned = stripPresentationNoise(rawTitle);
+  const decoded = decodeHtmlEntities(rawTitle);
+  const cleaned = stripPresentationNoise(decoded);
   if (!cleaned) return { artist: null, title: null };
 
   for (const separator of SEPARATORS) {

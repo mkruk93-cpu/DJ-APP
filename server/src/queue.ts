@@ -197,16 +197,34 @@ export function fetchVideoInfo(url: string): Promise<VideoInfo> {
       '--print', '%(title)s\n%(duration)s\n%(thumbnail)s',
       '--no-warnings',
       '--no-playlist',
+      '--no-check-certificate',
+      '--socket-timeout', '15',
       url,
     ], { timeout: 20_000 });
 
     let output = '';
+    let stderr = '';
     proc.stdout.on('data', (chunk: Buffer) => {
       output += chunk.toString();
+    });
+    proc.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
     });
 
     proc.on('close', (code) => {
       if (code !== 0) {
+        console.log(`[queue] fetchVideoInfo failed for ${url}, code=${code}, stderr=${stderr.slice(0, 200)}`);
+        // Try fallback: extract video ID from URL and use YouTube thumbnail as last resort
+        const ytMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/);
+        if (ytMatch) {
+          const videoId = ytMatch[1];
+          resolve({
+            title: `YouTube Video ${videoId}`,
+            duration: null,
+            thumbnail: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
+          });
+          return;
+        }
         resolve({ title: null, duration: null, thumbnail: null });
         return;
       }
@@ -219,6 +237,20 @@ export function fetchVideoInfo(url: string): Promise<VideoInfo> {
       resolve({ title, duration: Number.isFinite(duration) ? duration : null, thumbnail });
     });
 
-    proc.on('error', () => resolve({ title: null, duration: null, thumbnail: null }));
+    proc.on('error', (err) => {
+      console.log(`[queue] fetchVideoInfo error for ${url}: ${err.message}`);
+      // Fallback to YouTube thumbnail
+      const ytMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/);
+      if (ytMatch) {
+        const videoId = ytMatch[1];
+        resolve({
+          title: `YouTube Video ${videoId}`,
+          duration: null,
+          thumbnail: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
+        });
+        return;
+      }
+      resolve({ title: null, duration: null, thumbnail: null });
+    });
   });
 }

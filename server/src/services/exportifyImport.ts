@@ -21,7 +21,7 @@ export interface ExportifyParseOptions {
 }
 
 const DEFAULT_MAX_PLAYLISTS = 20;
-const DEFAULT_MAX_TRACKS_PER_PLAYLIST = 1500;
+const DEFAULT_MAX_TRACKS_PER_PLAYLIST = 3000;
 
 function normalizeHeader(value: string): string {
   return value
@@ -124,9 +124,38 @@ function detectCsvDelimiter(text: string): ',' | ';' | '\t' {
 }
 
 function parseCsvBuffer(fileName: string, buffer: Buffer, maxTracks: number): ExportifyPlaylistImport {
-  const text = decodeCsvText(buffer)
+  let text = decodeCsvText(buffer)
     .replace(/\u0000/g, '')
     .replace(/\r\n/g, '\n');
+  
+  // Fix unescaped quotes and apostrophes that break CSV parsing
+  // The error "invalid closing quote: found non trimable byte after quote" happens when
+  // a quote character appears inside a field but isn't properly escaped with another quote
+  // We fix this by doubling any quote that appears to be inside a field
+  let result = '';
+  let inQuote = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (char === '"') {
+      if (inQuote && text[i + 1] === '"') {
+        // Already escaped quote, keep as-is
+        result += '""';
+        i++; // skip next quote
+      } else if (inQuote) {
+        // Closing quote
+        inQuote = false;
+        result += '"';
+      } else {
+        // Opening quote
+        inQuote = true;
+        result += '"';
+      }
+    } else {
+      result += char;
+    }
+  }
+  text = result;
+  
   const delimiter = detectCsvDelimiter(text);
   const records = parse(text, {
     columns: true,
@@ -136,6 +165,8 @@ function parseCsvBuffer(fileName: string, buffer: Buffer, maxTracks: number): Ex
     relax_quotes: true,
     trim: true,
     delimiter,
+    escape: '"',
+    quote: '"',
   }) as Record<string, unknown>[];
 
   const dedupe = new Set<string>();
