@@ -180,11 +180,11 @@ function isAdmin(token?: string, nickname?: string): boolean {
 
 // Points system
 const POINTS = {
-  REQUEST_ADDED: 5,      // Points for adding a request
-  REQUEST_PLAYED: 10,    // Points when your request plays
-  VOTE_SKIP: 1,         // Points for voting to skip
+  REQUEST_ADDED: 2,      // Points for adding a request
+  REQUEST_PLAYED: 3,     // Points when your request plays
+  VOTE_SKIP: 1,          // Points for voting to skip
   SKIP_SUCCESS: 5,       // Points when skip succeeds (all voters get this)
-  LISTEN_PER_MINUTE: 1, // Points per minute listened (calculated on track change)
+  LISTEN_PER_MINUTE: 1,  // Points per minute listened
 };
 
 async function awardPoints(nickname: string, points: number, reason: string): Promise<void> {

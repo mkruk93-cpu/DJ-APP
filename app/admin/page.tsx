@@ -74,15 +74,11 @@ export default function AdminPage() {
 
   const effectiveServerUrl = radioServerUrl || process.env.NEXT_PUBLIC_CONTROL_SERVER_URL || "";
 
+  // All hooks must be called before any early returns
   useEffect(() => {
     setMounted(true);
   }, []);
 
-  if (!mounted) {
-    return null;
-  }
-
-  // Restore auth state from sessionStorage on mount and on every render
   useEffect(() => {
     if (sessionStorage.getItem("admin_auth") === "true") {
       setAuthenticated(true);
@@ -94,7 +90,6 @@ export default function AdminPage() {
     }
   }, []);
 
-  // Keep radioToken in sync with sessionStorage
   useEffect(() => {
     const token = getRadioToken();
     if (token && token !== radioToken) {
@@ -102,7 +97,6 @@ export default function AdminPage() {
     }
   }, [radioToken]);
 
-  // Check if user is KrukkeX admin
   useEffect(() => {
     const username = (userAccount?.username ?? "").trim().toLowerCase();
     if (username === "krukkex") {
@@ -111,18 +105,23 @@ export default function AdminPage() {
     }
   }, [userAccount?.username]);
 
-  // Load user approvals when authenticated
   useEffect(() => {
     if (authenticated) {
       loadUserApprovals();
     }
   }, [authenticated]);
+
   useEffect(() => {
     if (!authenticated || radioAuthed) return;
     const token = ADMIN_PASSWORD ?? "";
     setRadioToken(token);
     setRadioAuthed(true);
   }, [authenticated, radioAuthed]);
+
+  // Render nothing until mounted (prevents SSR hydration issues)
+  if (!mounted) {
+    return null;
+  }
 
   // Initialize Socket.io for radio admin
   useEffect(() => {
