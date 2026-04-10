@@ -684,8 +684,9 @@ export default function StreamPage() {
         sessionStorage.removeItem("backPressTime");
         showToast("Tot ziens!", 2000);
         // Use history to clear the page or minimize
-        if (navigator.app && navigator.app.exitApp) {
-          navigator.app.exitApp();
+        const cordovaNav = navigator as Navigator & { app?: { exitApp: () => void } };
+        if (cordovaNav.app && cordovaNav.app.exitApp) {
+          cordovaNav.app.exitApp();
         } else {
           window.history.go(-window.history.length);
         }
