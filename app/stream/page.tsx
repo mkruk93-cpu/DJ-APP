@@ -150,6 +150,9 @@ export default function StreamPage() {
   const [adminOverlayOpen, setAdminOverlayOpen] = useState(false);
   const [profileModalUser, setProfileModalUser] = useState<string | null>(null);
   const [leaderboardOpen, setLeaderboardOpen] = useState(false);
+
+  // Current user's nickname for profile comparison (combines auth account with localStorage fallback)
+  const myNickname = userAccount?.username ?? (typeof window !== 'undefined' ? localStorage.getItem('nickname') ?? '' : '');
   const [statsLoading, setStatsLoading] = useState(false);
   const [statsError, setStatsError] = useState<string | null>(null);
   const [statsSummary, setStatsSummary] = useState<PublicStatsSummary | null>(null);
@@ -856,10 +859,13 @@ export default function StreamPage() {
   // Sync presence with server for listener count
   useEffect(() => {
     const socket = getSocket();
+    const username = userAccount?.username;
+    
+    if (!username) return;
     
     const emitState = () => {
       socket.emit("listener:state", { 
-        nickname: userAccount?.username || "",
+        nickname: username,
         listening: true 
       });
     };
@@ -946,6 +952,9 @@ export default function StreamPage() {
       setSuppressFallback(false);
       setTunnelRecoveryUntil(null);
       fetchState();
+      if (userAccount?.username) {
+        socket.emit("listener:state", { nickname: userAccount.username, listening: true });
+      }
     });
 
     socket.on("disconnect", () => {
@@ -2360,7 +2369,7 @@ export default function StreamPage() {
       {profileModalUser && (
         <ProfileModal
           username={profileModalUser}
-          isOwnProfile={profileModalUser === userAccount?.username}
+          isOwnProfile={profileModalUser === myNickname}
           onClose={() => setProfileModalUser(null)}
         />
       )}

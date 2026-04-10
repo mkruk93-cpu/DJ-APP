@@ -14,31 +14,29 @@ export default function AccountSetupPage() {
   const [username, setUsername] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [isMounted, setIsMounted] = useState(false);
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    setIsMounted(true);
+    setMounted(true);
   }, []);
 
   useEffect(() => {
-    if (!isMounted) return;
+    if (!mounted) return;
     if (!user) {
       router.replace("/login");
       return;
     }
 
     if (userAccount?.username) {
-      // User already has username, redirect to stream
       router.replace("/stream");
       return;
     }
 
     if (userAccount && !userAccount.approved) {
-      // User not approved, redirect to login
       router.replace("/login");
       return;
     }
-  }, [user, userAccount, router, isMounted]);
+  }, [user, userAccount, router, mounted]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -54,7 +52,6 @@ export default function AccountSetupPage() {
     try {
       const supabase = getSupabase();
 
-      // Check if username is already taken
       const { data: existingUser } = await supabase
         .from('user_accounts')
         .select('id')
@@ -66,7 +63,6 @@ export default function AccountSetupPage() {
         return;
       }
 
-      // Update user account with username
       const { error: updateError } = await supabase
         .from('user_accounts')
         .update({
@@ -77,10 +73,8 @@ export default function AccountSetupPage() {
 
       if (updateError) throw updateError;
 
-      // Refresh user account data
       await refreshUserAccount();
 
-      // Redirect to stream
       router.push("/stream");
 
     } catch (err) {
@@ -91,7 +85,7 @@ export default function AccountSetupPage() {
     }
   }
 
-  if (!isMounted || !user || !userAccount) {
+  if (!mounted || !user || !userAccount) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="text-white">Laden... (account check)</div>
@@ -100,7 +94,6 @@ export default function AccountSetupPage() {
   }
 
   if (userAccount && !userAccount.approved) {
-    // Should have been redirected to /login by useEffect, but show message just in case
     return (
       <div className="flex min-h-screen items-center justify-center p-4">
         <div className="text-white text-center">

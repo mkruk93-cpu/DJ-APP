@@ -95,7 +95,7 @@ import { recordMissingTrackLookup } from './services/missingTrackLog.js';
 // ── Environment ──────────────────────────────────────────────────────────────
 
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? '';
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? process.env.NEXT_PUBLIC_ADMIN_PASSWORD ?? '';
 const CACHE_DIR = process.env.CACHE_DIR ?? pathJoin(tmpdir(), 'radio_cache');
 const FRONTEND_URL = process.env.FRONTEND_URL ?? 'http://localhost:3000';
 const USER_PLAYLIST_MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
@@ -188,10 +188,15 @@ const POINTS = {
 };
 
 async function awardPoints(nickname: string, points: number, reason: string): Promise<void> {
-  if (!nickname || !nickname.trim()) return;
+  if (!nickname || !nickname.trim()) {
+    console.log(`[points] Skipping - empty nickname, reason: ${reason}`);
+    return;
+  }
   
   try {
     const normalizedNick = nickname.trim();
+    
+    console.log(`[points] Attempting to award ${points} points to "${normalizedNick}", reason: ${reason}`);
     
     // Get user_id from user_accounts by username (case-insensitive)
     const { data: account, error: accountError } = await sb
@@ -201,31 +206,48 @@ async function awardPoints(nickname: string, points: number, reason: string): Pr
       .single();
 
     if (accountError || !account) {
-      console.log(`[points] User not found in user_accounts: "${normalizedNick}"`);
+      console.log(`[points] User not found in user_accounts: "${normalizedNick}", error: ${accountError?.message}`);
       return;
     }
 
     // Get current profile
     const { data: profile } = await sb
       .from('user_profiles')
-      .select('points')
+      .select('points, total_listen_seconds, total_requests')
       .eq('user_id', account.id)
       .single();
 
     const currentPoints = profile?.points || 0;
+    const currentListenSeconds = profile?.total_listen_seconds || 0;
+    const currentRequests = profile?.total_requests || 0;
     const newPoints = currentPoints + points;
+    
+    // Add 60 seconds for listening (called every track change = roughly every 3-5 min)
+    let newListenSeconds = currentListenSeconds;
+    let newRequests = currentRequests;
+    
+    if (reason === 'listening') {
+      newListenSeconds = currentListenSeconds + 60;
+    } else if (reason === 'request added') {
+      newRequests = currentRequests + 1;
+    }
 
     // Try update first, if it fails (no row), insert
     if (profile) {
       const { error: updateError } = await sb
         .from('user_profiles')
-        .update({ points: newPoints, updated_at: new Date().toISOString() })
+        .update({ 
+          points: newPoints, 
+          updated_at: new Date().toISOString(),
+          total_listen_seconds: newListenSeconds,
+          total_requests: newRequests,
+        })
         .eq('user_id', account.id);
       
       if (updateError) {
-        console.log(`[points] Update error for ${normalizedNick}:`, updateError.message);
+        console.log(`[points] Update error for ${normalizedNick}: ${updateError.message}`);
       } else {
-        console.log(`[points] Awarded ${points} points to ${normalizedNick} (total: ${newPoints}): ${reason}`);
+        console.log(`[points] Awarded ${points} points to ${normalizedNick} (total: ${newPoints}), listen: ${newListenSeconds}s, requests: ${newRequests}: ${reason}`);
       }
     } else {
       // Insert new profile
@@ -235,14 +257,14 @@ async function awardPoints(nickname: string, points: number, reason: string): Pr
           user_id: account.id,
           points: newPoints,
           name_color: '#a78bfa',
-          total_listen_seconds: 0,
-          total_requests: 0,
+          total_listen_seconds: newListenSeconds,
+          total_requests: newRequests,
         });
       
       if (insertError) {
         console.log(`[points] Insert error for ${normalizedNick}:`, insertError.message);
       } else {
-        console.log(`[points] Created profile & awarded ${points} points to ${normalizedNick}: ${reason}`);
+        console.log(`[points] Created profile & awarded ${points} points to ${normalizedNick} (listen: ${newListenSeconds}s, requests: ${newRequests}): ${reason}`);
       }
     }
   } catch (err) {
@@ -330,13 +352,18 @@ function applyPlaybackForMode(mode: Mode): void {
   // Award points when a track plays
   playerEvents.on('track:played', async (track: any) => {
     // Award points to requester
-    if (track?.added_by && track.added_by.toLowerCase() !== 'admin' && track.added_by.toLowerCase() !== 'krukkex') {
+    if (track?.added_by && track.added_by.toLowerCase() !== 'admin') {
       await awardPoints(track.added_by, POINTS.REQUEST_PLAYED, 'request played');
     }
     
     // Award listen time points
     await awardListenTimePoints();
   });
+
+  // Award listen time points every minute
+  setInterval(() => {
+    void awardListenTimePoints();
+  }, 60_000);
 }
 
 function evaluateIdlePlayback(mode: Mode): void {
@@ -4881,7 +4908,7 @@ io.on('connection', (socket) => {
       io.emit('queue:update', { items: queue });
       
       // Award points for adding a request
-      if (addedBy && addedBy.toLowerCase() !== 'admin' && addedBy.toLowerCase() !== 'krukkex') {
+      if (addedBy && addedBy.toLowerCase() !== 'admin') {
         void awardPoints(addedBy, POINTS.REQUEST_ADDED, 'request added');
       }
       

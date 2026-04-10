@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
     // First get profiles
     const { data: profiles, error } = await sb
       .from("user_profiles")
-      .select("user_id, points, total_listen_seconds, total_listen_seconds, name_color")
+      .select("user_id, points, total_listen_seconds, total_requests, name_color, avatar_url")
       .order(orderColumn, { ascending: false })
       .limit(limit);
 
@@ -61,8 +61,9 @@ export async function GET(request: NextRequest) {
       username: usernameMap.get(p.user_id) || "Unknown",
       points: p.points || 0,
       listen_seconds: p.total_listen_seconds || 0,
-      total_requests: p.total_listen_seconds || 0, // This should be total_requests
+      total_requests: p.total_requests || 0,
       name_color: p.name_color || "#a78bfa",
+      avatar_url: p.avatar_url || "🎵",
     }));
 
     return NextResponse.json({ leaderboard, type });

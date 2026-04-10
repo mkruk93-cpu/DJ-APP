@@ -45,29 +45,21 @@ export default function AdminPage() {
   const [autoApprove, setAutoApprove] = useState(false);
   const [radioServerUrl, setRadioServerUrl] = useState("");
   const [radioUrlSaved, setRadioUrlSaved] = useState(false);
-
-  // User approvals state
   const [userApprovals, setUserApprovals] = useState<any[]>([]);
   const [approvalsLoading, setApprovalsLoading] = useState(false);
-
-  // Radio admin auth
   const [radioToken, setRadioTokenState] = useState("");
   const [radioAuthError, setRadioAuthError] = useState("");
   const [radioAuthed, setRadioAuthed] = useState(false);
-
-  // Initialize radio token from storage
-  useEffect(() => {
-    const token = getRadioToken();
-    if (token) {
-      setRadioTokenState(token);
-      setRadioAuthed(true);
-    }
-  }, []);
+  const [mounted, setMounted] = useState(false);
   const [keepFiles, setKeepFiles] = useState(false);
   const [jingleEnabled, setJingleEnabled] = useState(true);
   const [jingleEveryTracks, setJingleEveryTracks] = useState(4);
   const [jingleItems, setJingleItems] = useState<AdminJingleItem[]>([]);
   const [jingleLoading, setJingleLoading] = useState(false);
+  const [pushMessage, setPushMessageState] = useState("");
+  const [pushExpiryMinutes, setPushExpiryMinutes] = useState(0);
+  const [pushSending, setPushSending] = useState(false);
+  const [pushError, setPushError] = useState("");
 
   const radioConnected = useRadioStore((s) => s.connected);
   const radioTrack = useRadioStore((s) => s.currentTrack);
@@ -75,16 +67,20 @@ export default function AdminPage() {
   const hideLocalDiscovery = useRadioStore((s) => s.hideLocalDiscovery);
   const store = useRadioStore;
 
-  // Push notification state
-  const [pushMessage, setPushMessageState] = useState("");
-  const [pushExpiryMinutes, setPushExpiryMinutes] = useState(0);
-  const [pushSending, setPushSending] = useState(false);
-  const [pushError, setPushError] = useState("");
-
   const embedded = useMemo(() => {
     if (typeof window === "undefined") return false;
     return new URLSearchParams(window.location.search).get("embed") === "1";
   }, []);
+
+  const effectiveServerUrl = radioServerUrl || process.env.NEXT_PUBLIC_CONTROL_SERVER_URL || "";
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted) {
+    return null;
+  }
 
   // Restore auth state from sessionStorage on mount and on every render
   useEffect(() => {
@@ -129,7 +125,6 @@ export default function AdminPage() {
   }, [authenticated, radioAuthed]);
 
   // Initialize Socket.io for radio admin
-  const effectiveServerUrl = radioServerUrl || process.env.NEXT_PUBLIC_CONTROL_SERVER_URL || "";
   useEffect(() => {
     if (!authenticated || !effectiveServerUrl) return;
     const serverUrl = effectiveServerUrl;
@@ -178,6 +173,10 @@ export default function AdminPage() {
     socket.on("connect", () => {
       store.getState().setConnected(true);
       fetchState();
+      const username = userAccount?.username;
+      if (username) {
+        socket.emit("listener:state", { nickname: username, listening: true });
+      }
     });
 
     socket.on("disconnect", () => store.getState().resetAll());

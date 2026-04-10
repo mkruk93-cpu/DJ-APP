@@ -12,6 +12,7 @@ interface LeaderboardEntry {
   listen_seconds: number;
   total_requests: number;
   name_color: string;
+  avatar_url: string;
 }
 
 interface LeaderboardProps {
@@ -117,9 +118,9 @@ export default function Leaderboard({ onUserClick }: LeaderboardProps) {
                 {entry.rank}
               </div>
 
-              {/* Avatar placeholder */}
+              {/* Avatar */}
               <div className="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center text-xl">
-                🎵
+                {entry.avatar_url || "🎵"}
               </div>
 
               {/* Name and stats */}
