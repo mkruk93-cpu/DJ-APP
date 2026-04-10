@@ -74,7 +74,7 @@ export default function AdminPage() {
 
   const effectiveServerUrl = radioServerUrl || process.env.NEXT_PUBLIC_CONTROL_SERVER_URL || "";
 
-  // All hooks must be called before any early returns
+  // All hooks must be called before any early returns - collect them here first
   useEffect(() => {
     setMounted(true);
   }, []);
@@ -105,11 +105,30 @@ export default function AdminPage() {
     }
   }, [userAccount?.username]);
 
+  const loadUserApprovals = useCallback(async () => {
+    setApprovalsLoading(true);
+    try {
+      const { data, error } = await getSupabase()
+        .from('user_approvals')
+        .select('*')
+        .eq('approved', false)
+        .eq('rejected', false)
+        .order('requested_at', { ascending: false });
+
+      if (error) throw error;
+      setUserApprovals(data || []);
+    } catch (err) {
+      console.error('Error loading user approvals:', err);
+    } finally {
+      setApprovalsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (authenticated) {
       loadUserApprovals();
     }
-  }, [authenticated]);
+  }, [authenticated, loadUserApprovals]);
 
   useEffect(() => {
     if (!authenticated || radioAuthed) return;
@@ -118,12 +137,7 @@ export default function AdminPage() {
     setRadioAuthed(true);
   }, [authenticated, radioAuthed]);
 
-  // Render nothing until mounted (prevents SSR hydration issues)
-  if (!mounted) {
-    return null;
-  }
-
-  // Initialize Socket.io for radio admin
+  // All hooks are now above - render normally (SSR will handle itself)
   useEffect(() => {
     if (!authenticated || !effectiveServerUrl) return;
     const serverUrl = effectiveServerUrl;
@@ -361,25 +375,6 @@ export default function AdminPage() {
         setRadioAuthError("Ongeldig token");
       }
     });
-  }
-
-  async function loadUserApprovals() {
-    setApprovalsLoading(true);
-    try {
-      const { data, error } = await getSupabase()
-        .from('user_approvals')
-        .select('*')
-        .eq('approved', false)
-        .eq('rejected', false)
-        .order('requested_at', { ascending: false });
-
-      if (error) throw error;
-      setUserApprovals(data || []);
-    } catch (err) {
-      console.error('Error loading user approvals:', err);
-    } finally {
-      setApprovalsLoading(false);
-    }
   }
 
   async function approveUser(approvalId: string, userId: string) {
