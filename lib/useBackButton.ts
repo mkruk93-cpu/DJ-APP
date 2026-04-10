@@ -53,8 +53,9 @@ export function useBackButtonHandler({ onCloseOverlay, onGoBack, canGoBack = fal
     if (now - lastPressTime.current < 2000) {
       window.history.go(-window.history.length);
       // Or use navigator.app.exitApp() for native Android
-      if (navigator.exitApp) {
-        navigator.exitApp();
+      const nav = navigator as Navigator & { exitApp?: () => void };
+      if (nav.exitApp) {
+        nav.exitApp();
       }
     } else {
       lastPressTime.current = now;
@@ -106,13 +107,15 @@ export function registerOverlayCloseHandler(handler: () => void): () => void {
     window.__overlayCloseHandlers = [];
   }
   
-  window.__overlayCloseHandlers.push(handler);
+  if (window.__overlayCloseHandlers) {
+    window.__overlayCloseHandlers.push(handler);
+  }
   
   // Return unregister function
   return () => {
     const idx = window.__overlayCloseHandlers?.indexOf(handler);
-    if (idx !== undefined && idx >= 0) {
-      window.__overlayCloseHandlers.splice(idx, 1);
+    if (idx !== undefined && idx >= 0 && window.__overlayCloseHandlers) {
+      window.__overlayCloseHandlers?.splice(idx, 1);
     }
   };
 }
