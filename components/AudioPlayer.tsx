@@ -429,13 +429,14 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     setPlayerPlaying(playing);
 
     const socket = getSocket();
+    const isListening = playing && volume > 0;
     if (socket && socket.connected) {
       socket.emit("listener:state", {
         nickname: nicknameRef.current,
-        listening: playing,
+        listening: isListening,
       });
     }
-  }, [playing, connected, setPlayerPlaying]);
+  }, [playing, connected, volume, setPlayerPlaying]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;

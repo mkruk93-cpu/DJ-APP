@@ -75,7 +75,7 @@ class QueueAddErrorBoundary extends Component<
   }
 }
 
-type SearchSource = "youtube" | "soundcloud" | "spotify" | "genres" | "playlists";
+type SearchSource = "search" | "youtube" | "soundcloud" | "spotify" | "genres" | "playlists";
 
 const YT_URL_REGEX =
   /^https?:\/\/(www\.)?(youtube\.com\/(watch\?.*v=|shorts\/|embed\/)|youtu\.be\/)[\w-]+/i;
@@ -89,6 +89,31 @@ interface SearchResult {
   duration: number | null;
   thumbnail: string;
   channel: string;
+}
+
+interface MusicBrainzArtist {
+  id: string;
+  name: string;
+  country: string | null;
+  type: string | null;
+  disambiguation: string | null;
+}
+
+interface LastFmTrack {
+  name: string;
+  rank: number;
+  playcount: string;
+  listeners: string;
+  duration: number | null;
+  artist: { name: string };
+  url: string;
+}
+
+interface ITunesAlbum {
+  collectionId: number;
+  collectionName: string;
+  artistName: string;
+  artworkUrl100: string;
 }
 
 interface GenreHitRow extends GenreHit {
@@ -179,7 +204,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
   const [searchHasMore, setSearchHasMore] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [showResults, setShowResults] = useState(false);
-  const [source, setSource] = useState<SearchSource>("youtube");
+  const [source, setSource] = useState<SearchSource>("search");
   const [includeSets, setIncludeSets] = useState(false);
   const [includeLocal, setIncludeLocal] = useState(false);
   const [resultStatus, setResultStatus] = useState<Record<string, "idle" | "pending" | "added">>({});
@@ -201,6 +226,18 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
   const [activeGenre, setActiveGenre] = useState<string | null>(null);
   const [genreError, setGenreError] = useState<string | null>(null);
   const [pendingManualSelection, setPendingManualSelection] = useState<PendingManualSelection | null>(null);
+  
+  // Artist search state (for new "search" source)
+  const [artistSearchQuery, setArtistSearchQuery] = useState("");
+  const [artistResults, setArtistResults] = useState<MusicBrainzArtist[]>([]);
+  const [artistSearching, setArtistSearching] = useState(false);
+  const [selectedArtist, setSelectedArtist] = useState<MusicBrainzArtist | null>(null);
+  const [artistTracks, setArtistTracks] = useState<LastFmTrack[]>([]);
+  const [artistTracksLoading, setArtistTracksLoading] = useState(false);
+  const [artistAlbums, setArtistAlbums] = useState<ITunesAlbum[]>([]);
+  const [artistAlbumsLoading, setArtistAlbumsLoading] = useState(false);
+  const [showArtistResults, setShowArtistResults] = useState(false);
+  
   const [isMobile, setIsMobile] = useState(false);
   const [mobileGenreMenuTop, setMobileGenreMenuTop] = useState<number | null>(null);
   const mode = useRadioStore((s) => s.mode);
@@ -484,6 +521,80 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
       })
       .finally(() => setGenresLoading(false));
   }, [serverUrl]);
+
+  // Artist search - MusicBrainz autocomplete
+  const searchArtists = useCallback(async (query: string) => {
+    if (!serverUrl || query.length < 2) {
+      console.log('[artist-search] Skipping - too short:', query.length);
+      setArtistResults([]);
+      setShowArtistResults(false);
+      return;
+    }
+    setArtistSearching(true);
+    console.log('[artist-search] Fetching artists for:', query);
+    try {
+      const res = await fetch(`${serverUrl}/api/search/autocomplete?q=${encodeURIComponent(query)}&limit=10`);
+      console.log('[artist-search] Response status:', res.status);
+      const data = await res.json() as MusicBrainzArtist[];
+      console.log('[artist-search] Got artists:', data.length, data);
+      setArtistResults(data);
+      setShowArtistResults(data.length > 0);
+      console.log('[artist-search] Set showArtistResults:', data.length > 0);
+    } catch (err) {
+      console.error('[artist-search] Error:', err);
+      setArtistResults([]);
+    } finally {
+      setArtistSearching(false);
+    }
+  }, [serverUrl]);
+
+  // Load artist tracks from Last.fm
+  const loadArtistTracks = useCallback(async (artistName: string) => {
+    if (!serverUrl) return;
+    setArtistTracksLoading(true);
+    try {
+      const res = await fetch(`${serverUrl}/api/artist/tracks?name=${encodeURIComponent(artistName)}&limit=50`);
+      const data = await res.json() as LastFmTrack[];
+      setArtistTracks(data);
+    } catch {
+      setArtistTracks([]);
+    } finally {
+      setArtistTracksLoading(false);
+    }
+  }, [serverUrl]);
+
+  // Load artist artwork from iTunes
+  const loadArtistArtwork = useCallback(async (artistName: string) => {
+    if (!serverUrl) return;
+    setArtistAlbumsLoading(true);
+    try {
+      const res = await fetch(`${serverUrl}/api/artwork?artist=${encodeURIComponent(artistName)}&limit=10`);
+      const data = await res.json() as ITunesAlbum[];
+      setArtistAlbums(data);
+    } catch {
+      setArtistAlbums([]);
+    } finally {
+      setArtistAlbumsLoading(false);
+    }
+  }, [serverUrl]);
+
+  // Select an artist
+  const selectArtist = useCallback(async (artist: MusicBrainzArtist) => {
+    setSelectedArtist(artist);
+    setArtistSearchQuery(artist.name);
+    setShowArtistResults(false);
+    setArtistResults([]);
+    await Promise.all([
+      loadArtistTracks(artist.name),
+      loadArtistArtwork(artist.name),
+    ]);
+  }, [loadArtistTracks, loadArtistArtwork]);
+
+  // Get artwork URL with larger size
+  const getArtworkUrl = (url: string, size: '100' | '600' = '600'): string => {
+    if (!url) return '';
+    return url.replace('100x100', `${size}x${size}`);
+  };
 
   const loadGenreHits = useCallback((genre: string, append = false) => {
     if (!serverUrl) return;
@@ -1160,6 +1271,27 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
         <div className="flex shrink-0 items-center gap-1 rounded-lg bg-gray-800 p-0.5">
           <button
             type="button"
+            onClick={() => switchSource("search")}
+            className={`group flex h-8 min-w-0 basis-0 items-center justify-center rounded-md px-1.5 text-[11px] font-semibold transition-all duration-200 ${
+              source === "search"
+                ? "flex-[1.4] bg-violet-500/20 text-violet-300"
+                : "flex-1 text-gray-400 hover:text-gray-200"
+            }`}
+          >
+            <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="11" cy="11" r="7" />
+              <path d="m21 21-4.35-4.35" />
+            </svg>
+            <span
+              className={`overflow-hidden whitespace-nowrap transition-all duration-200 ${
+                source === "search" ? "ml-1 max-w-[86px] opacity-100" : "max-w-0 opacity-0"
+              }`}
+            >
+              Search
+            </span>
+          </button>
+          <button
+            type="button"
             onClick={() => switchSource("youtube")}
             className={`group flex h-8 min-w-0 basis-0 items-center justify-center rounded-md px-1.5 text-[11px] font-semibold transition-all duration-200 ${
               source === "youtube"
@@ -1504,6 +1636,126 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
               </div>
             )}
           </div>
+        ) : source === "search" ? (
+          <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
+            {!selectedArtist ? (
+              <div className="shrink-0 space-y-2">
+                <div className="relative z-10">
+                  <NoAutofillInput
+                    type="search"
+                    name={`artist-search-${Math.random().toString(36).substring(7)}`}
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={artistSearchQuery}
+                    onChange={(e) => {
+                      setArtistSearchQuery(e.target.value);
+                      setSelectedArtist(null);
+                      setArtistTracks([]);
+                      setArtistAlbums([]);
+                      if (debounceRef.current) clearTimeout(debounceRef.current);
+                      if (e.target.value.length >= 2) {
+                        debounceRef.current = setTimeout(() => searchArtists(e.target.value), 300);
+                      } else {
+                        setArtistResults([]);
+                        setShowArtistResults(false);
+                      }
+                    }}
+                    onFocus={() => { if (artistResults.length > 0) setShowArtistResults(true); }}
+                    onBlur={() => { if (!showArtistResults) return; setTimeout(() => setShowArtistResults(false), 150); }}
+                    placeholder="Zoek op artiest..."
+                    className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 pr-10 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
+                  />
+                  {artistSearching && (
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                      <span className="block h-4 w-4 animate-spin rounded-full border-2 border-violet-400 border-t-transparent" />
+                    </div>
+                  )}
+                  {showArtistResults && artistResults.length > 0 && (
+                    <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-60 overflow-y-auto rounded-md border border-gray-700 bg-gray-900 shadow-lg">
+                      {artistResults.map((artist) => (
+                        <button
+                          key={artist.id}
+                          type="button"
+                          onClick={() => selectArtist(artist)}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-gray-800 first:rounded-t-md last:rounded-b-md"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <p className="truncate text-sm font-medium text-white">{artist.name}</p>
+                            <p className="truncate text-xs text-gray-400">
+                              {artist.country || 'Onbekend'}{artist.type ? ` • ${artist.type}` : ''}{artist.disambiguation ? ` • ${artist.disambiguation}` : ''}
+                            </p>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <p className="text-xs text-gray-500">Typ een artiestnaam om nummers te zoeken.</p>
+              </div>
+            ) : (
+              <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
+                <div className="shrink-0 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setSelectedArtist(null); setArtistSearchQuery(""); setArtistTracks([]); setArtistAlbums([]); }}
+                    className="rounded-md bg-gray-700 p-1.5 text-gray-400 hover:text-white"
+                  >
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6" /></svg>
+                  </button>
+                  <span className="truncate text-sm font-semibold text-violet-300">{selectedArtist.name}</span>
+                </div>
+                {artistTracksLoading ? (
+                  <p className="text-xs text-gray-400">Tracks laden...</p>
+                ) : artistTracks.length === 0 ? (
+                  <p className="text-xs text-gray-400">Geen nummers gevonden.</p>
+                ) : (
+                  <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70">
+                    {artistTracks.map((track) => {
+                      const trackLower = track.name.toLowerCase();
+                      const matchingAlbum = artistAlbums.find(a => 
+                        a.collectionName.toLowerCase().includes(trackLower.split('(')[0].trim()) ||
+                        trackLower.includes(a.collectionName.toLowerCase())
+                      );
+                      const thumb = matchingAlbum ? getArtworkUrl(matchingAlbum.artworkUrl100, '600') : null;
+                      return (
+                        <div key={`${track.rank}-${track.name}`} className="flex items-center gap-3 border-b border-gray-800/80 px-3 py-2 last:border-b-0">
+                          {thumb ? <img src={thumb} alt="" className="h-10 w-10 shrink-0 rounded object-cover" /> : <div className="h-10 w-10 shrink-0 rounded bg-gray-800" />}
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-medium text-white">{track.name}</p>
+                            <p className="truncate text-xs text-gray-400">#{track.rank}{track.listeners ? ` • ${parseInt(track.listeners).toLocaleString()} luisteraars` : ''}</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const searchQuery = `${track.artist.name} ${track.name}`;
+                              const url = serverUrl ?? "";
+                              const res = await fetch(`${url}/search?q=${encodeURIComponent(searchQuery)}&source=youtube&limit=1`);
+                              const data = await res.json() as SearchResult[];
+                              if (data.length > 0 && data[0].url) {
+                                const trackLower = track.name.toLowerCase();
+                                const matchingAlbum = artistAlbums.find(a => 
+                                  a.collectionName.toLowerCase().includes(trackLower.split('(')[0].trim()) ||
+                                  trackLower.includes(a.collectionName.toLowerCase())
+                                );
+                                const thumb = matchingAlbum ? getArtworkUrl(matchingAlbum.artworkUrl100, '600') : null;
+                                submitUrl(data[0].url, thumb ?? undefined, track.name, track.artist.name, { keepResults: true, keepInput: true, sourceType: "search" });
+                              } else {
+                                setFeedback({ msg: `Geen YouTube resultaat voor "${track.name}".`, ok: false });
+                              }
+                            }}
+                            disabled={submitting}
+                            className="rounded-md bg-violet-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
+                          >
+                            +
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         ) : (
           <div className="shrink-0 space-y-2">
             <div className="relative">
@@ -1516,9 +1768,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                 onChange={(e) => handleInputChange(e.target.value)}
                 onFocus={() => { if (results.length > 0) setShowResults(true); }}
                 placeholder={
-                  source === "youtube"
-                    ? "Zoek op YouTube of plak een link..."
-                    : "Zoek op SoundCloud of plak een link..."
+                  source === "youtube" ? "Zoek op YouTube of plak een link..." : "Zoek op SoundCloud of plak een link..."
                 }
                 className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 pr-40 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
               />

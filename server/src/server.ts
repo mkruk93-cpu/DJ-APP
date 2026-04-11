@@ -15,6 +15,7 @@ import { getQueue, addToQueue, removeFromQueue, reorderQueue, fetchVideoInfo, ex
 import { canPerformAction } from './permissions.js';
 import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, isPlayCycleRunning, playerEvents, setKeepFiles, getJingleSettings, setJingleSettings, getJingleSelection, setJingleSelection, getJingleCatalog, invalidatePreload, invalidateNextReady, removeQueueItemFromPreload, setActiveFallbackGenre, setActiveFallbackGenres, setActiveSharedFallbackPlaylists, setSharedAutoPlaybackMode, resetSharedAutoPlaybackCycleForSelection, setQueueItemSelectionMeta, setHideLocalDiscoveryForFallback } from './player.js';
 import { youtubeSearch, soundcloudSearch, spotdlSearch } from './services/search.js';
+import { musicBrainzAutocomplete, lastFmGetArtistInfo, lastFmGetTopTracks, lastFmGetTopAlbums, iTunesSearchArtwork } from './services/musicSearch.js';
 import { startBridge } from './bridge.js';
 import { startNowPlayingWatcher } from './nowPlaying.js';
 import { StreamHub } from './streamHub.js';
@@ -356,8 +357,7 @@ function applyPlaybackForMode(mode: Mode): void {
       await awardPoints(track.added_by, POINTS.REQUEST_PLAYED, 'request played');
     }
     
-    // Award listen time points
-    await awardListenTimePoints();
+    // Note: listen time points are only awarded via the interval (every 60s), not on track change
   });
 
   // Award listen time points every minute
@@ -2400,6 +2400,89 @@ app.get('/search', async (req, res) => {
   } catch (err) {
     console.error('[rest] /search error:', err);
     res.status(500).json({ error: 'Search failed' });
+  }
+});
+
+app.get('/api/search/autocomplete', async (req, res) => {
+  const q = String(req.query.q ?? '').trim();
+  if (!q || q.length < 2) {
+    res.json([]);
+    return;
+  }
+  const limit = Math.min(50, Math.max(1, parseInt(String(req.query.limit ?? '10'), 10)));
+  try {
+    const artists = await musicBrainzAutocomplete(q, limit);
+    res.json(artists);
+  } catch (err) {
+    console.error('[rest] /api/search/autocomplete error:', err);
+    res.status(500).json({ error: 'Autocomplete failed' });
+  }
+});
+
+app.get('/api/artist', async (req, res) => {
+  const name = String(req.query.name ?? '').trim();
+  if (!name) {
+    res.status(400).json({ error: 'Artist name required' });
+    return;
+  }
+  try {
+    const info = await lastFmGetArtistInfo(name);
+    if (!info) {
+      res.status(404).json({ error: 'Artist not found' });
+      return;
+    }
+    res.json(info);
+  } catch (err) {
+    console.error('[rest] /api/artist error:', err);
+    res.status(500).json({ error: 'Failed to get artist info' });
+  }
+});
+
+app.get('/api/artist/tracks', async (req, res) => {
+  const name = String(req.query.name ?? '').trim();
+  if (!name) {
+    res.status(400).json({ error: 'Artist name required' });
+    return;
+  }
+  const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit ?? '50'), 10)));
+  try {
+    const tracks = await lastFmGetTopTracks(name, limit);
+    res.json(tracks);
+  } catch (err) {
+    console.error('[rest] /api/artist/tracks error:', err);
+    res.status(500).json({ error: 'Failed to get artist tracks' });
+  }
+});
+
+app.get('/api/artist/albums', async (req, res) => {
+  const name = String(req.query.name ?? '').trim();
+  if (!name) {
+    res.status(400).json({ error: 'Artist name required' });
+    return;
+  }
+  const limit = Math.min(50, Math.max(1, parseInt(String(req.query.limit ?? '10'), 10)));
+  try {
+    const albums = await lastFmGetTopAlbums(name, limit);
+    res.json(albums);
+  } catch (err) {
+    console.error('[rest] /api/artist/albums error:', err);
+    res.status(500).json({ error: 'Failed to get artist albums' });
+  }
+});
+
+app.get('/api/artwork', async (req, res) => {
+  const artist = String(req.query.artist ?? '').trim();
+  if (!artist) {
+    res.status(400).json({ error: 'Artist name required' });
+    return;
+  }
+  const limit = Math.min(50, Math.max(1, parseInt(String(req.query.limit ?? '10'), 10)));
+  try {
+    const albums = await iTunesSearchArtwork(artist, limit);
+    res.json(albums);
+  } catch (err) {
+    console.error('[rest] /api/artwork error:', err);
+    res.status(500).json({ error: 'Failed to get artwork' });
   }
 });
 
