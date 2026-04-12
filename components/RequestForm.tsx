@@ -42,6 +42,7 @@ interface MusicBrainzArtist {
   country: string | null;
   type: string | null;
   disambiguation: string | null;
+  image: string | null;
 }
 
 interface LastFmTrack {
@@ -1146,6 +1147,11 @@ export default function RequestForm(
                           onClick={() => selectArtist(artist)}
                           className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-gray-800 first:rounded-t-md last:rounded-b-md"
                         >
+                          {artist.image ? (
+                            <img src={artist.image} alt="" className="h-10 w-10 shrink-0 rounded object-cover" />
+                          ) : (
+                            <div className="h-10 w-10 shrink-0 rounded bg-gray-800" />
+                          )}
                           <div className="flex-1 min-w-0">
                             <p className="truncate text-sm font-medium text-white">{artist.name}</p>
                             <p className="truncate text-xs text-gray-400">

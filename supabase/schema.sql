@@ -72,6 +72,7 @@ CREATE TABLE queue (
   youtube_url text NOT NULL,
   youtube_id  text NOT NULL,
   title       text,
+  artist      text,
   thumbnail   text,
   added_by    text DEFAULT 'anonymous',
   position    integer NOT NULL,

@@ -777,6 +777,7 @@ function buildAutoFallbackSource(
     youtube_url: `ytsearch1:${search}`,
     youtube_id: `auto_${sanitizeAutoId(genreId)}_${sanitizeAutoId(search)}`,
     title: search,
+    artist: null,
     thumbnail: null,
     added_by: 'auto',
     position: 0,
@@ -790,6 +791,7 @@ function buildAutoFallbackSourceForQuery(sourceId: string, search: string): Queu
     youtube_url: `ytsearch1:${search}`,
     youtube_id: `auto_${sanitizeAutoId(sourceId)}_${sanitizeAutoId(search)}`,
     title: search,
+    artist: null,
     thumbnail: null,
     added_by: 'auto',
     position: 0,
@@ -1758,6 +1760,7 @@ async function prepareAutoFallbackByGenre(genreId: string, expectedSourceKeyOver
           pendingAutoUpcoming = {
             youtube_id: 'auto',
             title: resolvedTitle,
+            artist: null,
             thumbnail: choice.thumbnail ?? selected.thumbnail ?? null,
             duration: hintedDuration,
             added_by: null,
@@ -1881,6 +1884,7 @@ async function prepareLikedAutoFallbackTrack(expectedSourceKeyOverride?: string)
     pendingAutoUpcoming = {
       youtube_id: 'auto',
       title: resolvedTitle,
+      artist: null,
       thumbnail: selected.thumbnail ?? null,
       duration: hintedDuration,
       added_by: null,
@@ -2047,6 +2051,7 @@ async function prepareSharedAutoFallbackTrack(
     pendingAutoUpcoming = {
       youtube_id: 'auto',
       title: resolvedTitle,
+      artist: null,
       thumbnail: selected.thumbnail ?? null,
       duration: hintedDuration,
       added_by: null,
@@ -2609,6 +2614,7 @@ export function getUpcomingTrack(): UpcomingTrack | null {
     return {
       youtube_id: nextReady.youtubeId,
       title: nextReady.title,
+      artist: null,
       thumbnail: nextReady.thumbnail,
       duration: nextReady.duration,
       added_by: nextReady.addedBy,
@@ -2624,6 +2630,7 @@ export function getUpcomingTrack(): UpcomingTrack | null {
     return {
       youtube_id: first.item.youtube_id,
       title: first.item.title ?? null,
+      artist: first.item.artist ?? null,
       thumbnail: first.item.thumbnail ?? null,
       duration: first.duration,
       added_by: first.item.added_by ?? null,
@@ -3418,6 +3425,7 @@ async function playNext(
 ): Promise<void> {
   let audioFile: string | null = null;
   let trackTitle: string | null = null;
+  let trackArtist: string | null = null;
   let trackThumbnail: string | null = null;
   let trackYoutubeId = '';
   let trackDuration: number | null = null;
@@ -3672,6 +3680,7 @@ async function playNext(
         trackDuration = buffered.duration;
         if (buffered.item.title) item.title = buffered.item.title;
         trackTitle = item.title;
+        trackArtist = item.artist ?? null;
         trackThumbnail = item.thumbnail;
         trackYoutubeId = item.youtube_id;
         trackQueueId = item.id;
@@ -3755,6 +3764,7 @@ async function playNext(
       id: trackId,
       youtube_id: trackYoutubeId,
       title: trackTitle,
+      artist: trackArtist,
       thumbnail: trackThumbnail,
       added_by: trackAddedBy,
       duration: trackDuration,
@@ -3847,6 +3857,7 @@ async function playNext(
         id: swapTrackId,
         youtube_id: trackYoutubeId,
         title: trackTitle,
+        artist: trackArtist,
         thumbnail: trackThumbnail,
         added_by: trackAddedBy,
         duration: trackDuration,

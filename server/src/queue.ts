@@ -100,6 +100,7 @@ export async function addToQueue(
   url: string,
   addedBy: string,
   title?: string | null,
+  artist?: string | null,
   thumbnailOverride?: string | null,
 ): Promise<QueueItem> {
   const sourceId = extractSourceId(url);
@@ -123,6 +124,7 @@ export async function addToQueue(
       youtube_url: url,
       youtube_id: sourceId,
       title: title ?? null,
+      artist: artist ?? null,
       thumbnail,
       added_by: addedBy,
       position: nextPosition,
@@ -133,7 +135,7 @@ export async function addToQueue(
   if (error) throw error;
   const item = data as QueueItem;
 
-  if (!title || !thumbnail) {
+  if (!title || !artist || !thumbnail) {
     fetchVideoInfo(url).then(async (info) => {
       const updates: Record<string, string> = {};
       if (!title && info.title) updates.title = info.title;

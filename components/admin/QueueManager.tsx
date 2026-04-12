@@ -77,7 +77,11 @@ function SortableItem({ item, index }: { item: QueueItem; index: number }) {
 
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium text-white">
-          {item.title ?? "Laden..."}
+          {item.artist && item.title && item.title.toLowerCase().startsWith(item.artist.toLowerCase())
+            ? item.title
+            : item.artist
+              ? `${item.artist} - ${item.title ?? "Laden..."}`
+              : item.title ?? "Laden..."}
         </p>
         <p className="truncate text-xs text-gray-400">{item.added_by}</p>
       </div>

@@ -4515,7 +4515,7 @@ function finalizeDurationVote(): void {
         const fallbackTitle = vote.title ?? `Track ${Date.now().toString().slice(-4)}`;
         const resolvedTitle = info.title ?? fallbackTitle;
         const resolvedThumb = info.thumbnail ?? vote.thumbnail ?? null;
-        return addToQueue(sb, vote.youtube_url, vote.added_by, resolvedTitle, resolvedThumb);
+        return addToQueue(sb, vote.youtube_url, vote.added_by, resolvedTitle, vote.artist ?? null, resolvedThumb);
       })
       .then(async (item) => {
         const queue = await getQueue(sb);
@@ -4539,6 +4539,7 @@ function finalizeDurationVote(): void {
 function startDurationVote(
   youtubeUrl: string,
   title: string | null,
+  artist: string | null,
   thumbnail: string | null,
   duration: number,
   addedBy: string,
@@ -4556,6 +4557,7 @@ function startDurationVote(
     id: `dv_${Date.now()}`,
     youtube_url: youtubeUrl,
     title,
+    artist,
     thumbnail,
     duration,
     added_by: addedBy,
@@ -4883,6 +4885,7 @@ async function addQueueItemFromSubmission(
     thumbnail: thumbForQueue ?? null,
     duration: info.duration ?? null,
   };
+  const resolvedArtist = resolved.artist;
   if (options?.resolveOnly) {
     return {
       item: null,
@@ -4892,7 +4895,7 @@ async function addQueueItemFromSubmission(
       selectionMeta: null,
     };
   }
-  const item = await addToQueue(sb, url, addedBy, mergedTitle, thumbForQueue);
+  const item = await addToQueue(sb, url, addedBy, mergedTitle, resolvedArtist, thumbForQueue);
   const sourceTypeNorm = (submission.source_type ?? '').trim().toLowerCase();
   const sourcePlaylistNorm = (submission.source_playlist ?? '').trim() || null;
   const sourceGenreNorm = (submission.source_genre ?? '').trim() || null;

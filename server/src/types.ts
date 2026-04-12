@@ -7,6 +7,7 @@ export interface QueueItem {
   youtube_url: string;
   youtube_id: string;
   title: string | null;
+  artist?: string | null;
   thumbnail: string | null;
   added_by: string;
   position: number;
@@ -21,6 +22,7 @@ export interface Track {
   id: string;
   youtube_id: string;
   title: string | null;
+  artist?: string | null;
   thumbnail: string | null;
   duration: number | null;
   added_by: string | null;
@@ -34,6 +36,7 @@ export interface Track {
 export interface UpcomingTrack {
   youtube_id: string;
   title: string | null;
+  artist?: string | null;
   thumbnail: string | null;
   duration: number | null;
   added_by: string | null;
@@ -85,6 +88,7 @@ export interface DurationVote {
   id: string;
   youtube_url: string;
   title: string | null;
+  artist: string | null;
   thumbnail: string | null;
   duration: number;
   added_by: string;

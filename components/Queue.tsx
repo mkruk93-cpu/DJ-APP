@@ -104,7 +104,11 @@ export default function Queue() {
                   <span className="w-4 shrink-0 text-center text-[11px] text-violet-200/80">{idx + 1}</span>
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-xs font-medium text-violet-100">
-                      {decodeHtmlEntities(item.title)?.trim() || deriveTitleFromId(item.youtube_url)}
+                      {item.artist && item.title && item.title.toLowerCase().startsWith(item.artist.toLowerCase())
+                        ? decodeHtmlEntities(item.title)?.trim() || deriveTitleFromId(item.youtube_url)
+                        : item.artist
+                          ? `${item.artist} - ${decodeHtmlEntities(item.title)?.trim() || deriveTitleFromId(item.youtube_url)}`
+                          : decodeHtmlEntities(item.title)?.trim() || deriveTitleFromId(item.youtube_url)}
                     </p>
                     <p className="truncate text-[10px] text-violet-200/70">
                       Wordt automatisch toegevoegd zodra een nummer afgelopen is
@@ -154,7 +158,11 @@ export default function Queue() {
 
             <div className="min-w-0 flex-1">
               <p className="break-words text-sm font-semibold leading-tight text-white">
-                {decodeHtmlEntities(item.title) ?? deriveTitleFromId(item.youtube_id)}
+                {item.artist && item.title && item.title.toLowerCase().startsWith(item.artist.toLowerCase())
+                  ? decodeHtmlEntities(item.title)
+                  : item.artist
+                    ? `${item.artist} - ${decodeHtmlEntities(item.title) ?? deriveTitleFromId(item.youtube_id)}`
+                    : decodeHtmlEntities(item.title) ?? deriveTitleFromId(item.youtube_id)}
               </p>
               <p className="truncate text-[11px] text-gray-400">
                 door {item.added_by}
