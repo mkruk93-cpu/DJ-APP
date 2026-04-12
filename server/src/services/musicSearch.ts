@@ -47,7 +47,7 @@ const searchCache = new Map<string, { data: unknown; ts: number }>();
 const CACHE_TTL = 5 * 60 * 1000;
 
 let lastMusicbrainzRequest = 0;
-const MIN_REQUEST_INTERVAL = 1500; // 1.5 seconds between requests
+const MIN_REQUEST_INTERVAL = 1500;
 
 function getCached<T>(key: string): T | null {
   const entry = searchCache.get(key);
@@ -61,49 +61,33 @@ function setCache(key: string, data: unknown): void {
   searchCache.set(key, { data, ts: Date.now() });
 }
 
-async function rateLimitedFetch(url: string, options: RequestInit): Promise<Response> {
-  const now = Date.now();
-  const timeSinceLastRequest = now - lastMusicbrainzRequest;
-  
-  if (timeSinceLastRequest < MIN_REQUEST_INTERVAL) {
-    await new Promise(resolve => setTimeout(resolve, MIN_REQUEST_INTERVAL - timeSinceLastRequest));
-  }
-  
-  lastMusicbrainzRequest = Date.now();
-  return fetch(url, options);
-}
-
 export async function musicBrainzAutocomplete(term: string, limit = 10): Promise<MusicBrainzArtist[]> {
   if (!term || term.length < 2) return [];
   
   const cacheKey = `mb:${term}:${limit}`;
   const cached = getCached<MusicBrainzArtist[]>(cacheKey);
-  if (cached) {
-    console.log('[musicbrainz] Cache hit for:', term);
-    return cached;
-  }
+  if (cached) return cached;
 
   try {
-    const url = `https://musicbrainz.org/ws/2/artist?query=${encodeURIComponent(term)}&limit=${limit}&fmt=json`;
-    console.log('[musicbrainz] Fetching:', url);
+    // Try Last.fm as fallback since MusicBrainz is not accessible
+    if (!LASTFM_API_KEY) {
+      console.log('[musicbrainz] No Last.fm key, skipping');
+      return [];
+    }
     
-    const res = await rateLimitedFetch(url, {
-      headers: {
-        'User-Agent': 'DJ-Stream-App/1.0 (https://stream.krukkex.nl, contact: admin@krukkex.nl)',
-        'Accept': 'application/json',
-      },
-    });
+    const url = `https://ws.audioscrobbler.com/2.0/?method=artist.search&artist=${encodeURIComponent(term)}&limit=${limit}&api_key=${LASTFM_API_KEY}&format=json`;
+    console.log('[musicbrainz] Fetching from Last.fm:', url);
     
+    const res = await fetch(url);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     
     const data = await res.json() as any;
-    console.log('[musicbrainz] Response artists count:', data.artists?.length);
-    const artists: MusicBrainzArtist[] = (data.artists || []).map((a: any) => ({
-      id: a.id,
+    const artists: MusicBrainzArtist[] = (data.results?.artistmatches?.artist || []).map((a: any) => ({
+      id: a.mbid || `lfm-${a.name}`,
       name: a.name,
-      country: a.country || null,
-      type: a.type || null,
-      disambiguation: a.disambiguation || null,
+      country: null,
+      type: null,
+      disambiguation: null,
     }));
     
     if (artists.length > 0) {
@@ -113,6 +97,38 @@ export async function musicBrainzAutocomplete(term: string, limit = 10): Promise
   } catch (err) {
     console.warn('[musicbrainz] Autocomplete failed:', (err as Error).message);
     return [];
+  }
+}
+
+export async function lastFmGetArtistImage(artistName: string): Promise<string | null> {
+  if (!LASTFM_API_KEY) return null;
+  if (!artistName) return null;
+  
+  try {
+    const url = `https://ws.audioscrobbler.com/2.0/?method=artist.getInfo&artist=${encodeURIComponent(artistName)}&api_key=${LASTFM_API_KEY}&format=json`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    
+    const data = await res.json() as any;
+    if (data.error || !data.artist?.image) return null;
+    
+    const images = data.artist.image as Array<{size: string; '#text': string}>;
+    
+    // Try to get largest real image, skip placeholder
+    const sizes = ['extralarge', 'large', 'medium', 'small'];
+    for (const size of sizes) {
+      const img = images.find(i => i.size === size && i['#text']);
+      if (img) {
+        const url = img['#text'];
+        // Skip Last.fm's generic star placeholder
+        if (!url.includes('2a96cbd8b46e442fc41c2b86b821562f')) {
+          return url;
+        }
+      }
+    }
+    return null;
+  } catch {
+    return null;
   }
 }
 
@@ -235,22 +251,34 @@ export async function iTunesSearchArtwork(artistName: string, limit = 10): Promi
   if (cached) return cached;
 
   try {
-    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(artistName)}&entity=album&limit=${limit}&attribute=artistTerm`;
-    const res = await fetch(url, {
-      headers: {
-        'User-Agent': 'DJ-Stream-App/1.0',
-      },
-    });
-    
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    
-    const data = await res.json() as any;
-    const albums: ITunesAlbum[] = (data.results || []).map((r: any) => ({
+    // Step 1: Search by artist + album
+    let url = `https://itunes.apple.com/search?term=${encodeURIComponent(artistName)}&entity=album&limit=${limit}&attribute=artistTerm`;
+    let res = await fetch(url, { headers: { 'User-Agent': 'DJ-Stream-App/1.0' }});
+    let data = await res.json() as any;
+    let albums: ITunesAlbum[] = (data.results || []).map((r: any) => ({
       collectionId: r.collectionId,
       collectionName: r.collectionName,
       artistName: r.artistName,
       artworkUrl100: r.artworkUrl100 || '',
     }));
+    
+    // Step 2: If not enough with artwork, also search by track
+    const albumsWithArt = albums.filter(a => a.artworkUrl100);
+    if (albumsWithArt.length < 3) {
+      const trackUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(artistName)}&entity=song&limit=${limit}`;
+      const trackRes = await fetch(trackUrl, { headers: { 'User-Agent': 'DJ-Stream-App/1.0' }});
+      const trackData = await trackRes.json() as any;
+      const trackAlbums = (trackData.results || [])
+        .filter((r: any) => r.artworkUrl100)
+        .map((r: any) => ({
+          collectionId: r.collectionId,
+          collectionName: r.collectionName || r.trackName,
+          artistName: r.artistName,
+          artworkUrl100: r.artworkUrl100 || '',
+        }));
+      
+      albums = [...albumsWithArt, ...trackAlbums].slice(0, limit);
+    }
     
     setCache(cacheKey, albums);
     return albums;
@@ -260,7 +288,7 @@ export async function iTunesSearchArtwork(artistName: string, limit = 10): Promi
   }
 }
 
-export function getArtworkUrl(url: string, size: '100' | '600' = '600'): string {
+export function getArtworkUrl(url: string, size: '100' | '300' = '300'): string {
   if (!url) return '';
   return url.replace('100x100', `${size}x${size}`);
 }

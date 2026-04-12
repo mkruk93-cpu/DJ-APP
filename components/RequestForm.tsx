@@ -238,12 +238,16 @@ export default function RequestForm(
   // Load artist artwork from iTunes
   const loadArtistArtwork = useCallback(async (artistName: string) => {
     if (!serverUrl) return;
+    console.log('[artwork] Loading for:', artistName);
     setArtistAlbumsLoading(true);
     try {
       const res = await fetch(`${serverUrl}/api/artwork?artist=${encodeURIComponent(artistName)}&limit=10`);
+      console.log('[artwork] Response status:', res.status);
       const data = await res.json() as ITunesAlbum[];
+      console.log('[artwork] Got albums:', data.length, data);
       setArtistAlbums(data);
-    } catch {
+    } catch (err) {
+      console.error('[artwork] Error:', err);
       setArtistAlbums([]);
     } finally {
       setArtistAlbumsLoading(false);
@@ -263,7 +267,7 @@ export default function RequestForm(
   }, [loadArtistTracks, loadArtistArtwork]);
 
   // Get artwork URL with larger size
-  const getArtworkUrl = (url: string, size: '100' | '600' = '600'): string => {
+  const getArtworkUrl = (url: string, size: '100' | '300' = '300'): string => {
     if (!url) return '';
     return url.replace('100x100', `${size}x${size}`);
   };
@@ -489,6 +493,7 @@ export default function RequestForm(
     | { kind: "manual"; candidates: ManualResolveCandidate[] }
   > {
     if (!serverUrl) throw new Error("Control server niet bereikbaar.");
+    console.log('[resolveRequestSource] Sending to server:', { title: track.title, artist: track.artist, source_type: track.sourceType });
     const endpoint = `${serverUrl.replace(/\/+$/, "")}/api/downloads/resolve`;
     const res = await fetch(endpoint, {
       method: "POST",
@@ -506,6 +511,7 @@ export default function RequestForm(
       candidates?: ManualResolveCandidate[];
       error?: string;
     };
+    console.log('[resolveRequestSource] Response status:', res.status, 'payload:', JSON.stringify(payload).slice(0, 200));
     if (!res.ok || !payload.item?.url) {
       const candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
       if (candidates.length > 0) return { kind: "manual", candidates };
@@ -646,25 +652,41 @@ export default function RequestForm(
   // Select a track from artist and submit request
   async function selectTrack(track: LastFmTrack) {
     const searchQuery = `${track.artist.name} ${track.name}`;
-    const resolved = await resolveToUrl(searchQuery, "youtube");
-    if (!resolved) {
-      setFeedback({ msg: `Geen YouTube resultaat gevonden voor "${track.name}".`, ok: false });
-      return;
-    }
-    
+    console.log('[artist-search] selectTrack called:', searchQuery);
     const trackLower = track.name.toLowerCase();
     const matchingAlbum = artistAlbums.find(a => 
       a.collectionName.toLowerCase().includes(trackLower.split('(')[0].trim()) ||
       trackLower.includes(a.collectionName.toLowerCase())
     );
-    const thumb = matchingAlbum ? getArtworkUrl(matchingAlbum.artworkUrl100, '600') : null;
+    const providedThumb = matchingAlbum ? getArtworkUrl(matchingAlbum.artworkUrl100, '300') : null;
     
-    await submitRequest(resolved.url, "youtube", {
-      providedThumb: thumb ?? undefined,
-      duration: track.duration ?? null,
-      source: "search",
+    console.log('[artist-search] Calling resolveRequestSource with:', { sourceType: "search", artist: track.artist.name, title: track.name });
+    const resolved = await resolveRequestSource({
+      query: searchQuery,
+      sourceType: "search",
       artist: track.artist.name,
       title: track.name,
+    });
+    console.log('[artist-search] resolveRequestSource result:', resolved.kind);
+    
+    if (resolved.kind === "manual") {
+      setPendingManualResolve({
+        query: searchQuery,
+        sourceType: "search",
+        artist: track.artist.name,
+        title: track.name,
+      });
+      setManualResolveCandidates(resolved.candidates);
+      setFeedback({ msg: "Geen exacte hit. Kies handmatig een resultaat.", ok: false });
+      return;
+    }
+    
+    await submitRequest(resolved.item.url, "youtube", {
+      providedThumb: providedThumb ?? resolved.item.thumbnail ?? undefined,
+      duration: resolved.item.duration ?? track.duration ?? null,
+      source: "search",
+      artist: resolved.item.artist ?? track.artist.name,
+      title: resolved.item.title ?? track.name,
     });
     
     setSelectedArtist(null);
@@ -1161,7 +1183,7 @@ export default function RequestForm(
                         a.collectionName.toLowerCase().includes(trackLower.split('(')[0].trim()) ||
                         trackLower.includes(a.collectionName.toLowerCase())
                       );
-                      const thumb = matchingAlbum ? getArtworkUrl(matchingAlbum.artworkUrl100, '600') : null;
+                      const thumb = matchingAlbum ? getArtworkUrl(matchingAlbum.artworkUrl100, '300') : null;
                       return (
                         <div key={`${track.rank}-${track.name}`} className="flex items-center gap-3 border-b border-gray-800/80 px-3 py-2 last:border-b-0">
                           {thumb ? <img src={thumb} alt="" className="h-10 w-10 shrink-0 rounded object-cover" /> : <div className="h-10 w-10 shrink-0 rounded bg-gray-800" />}

@@ -15,7 +15,7 @@ import { getQueue, addToQueue, removeFromQueue, reorderQueue, fetchVideoInfo, ex
 import { canPerformAction } from './permissions.js';
 import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, isPlayCycleRunning, playerEvents, setKeepFiles, getJingleSettings, setJingleSettings, getJingleSelection, setJingleSelection, getJingleCatalog, invalidatePreload, invalidateNextReady, removeQueueItemFromPreload, setActiveFallbackGenre, setActiveFallbackGenres, setActiveSharedFallbackPlaylists, setSharedAutoPlaybackMode, resetSharedAutoPlaybackCycleForSelection, setQueueItemSelectionMeta, setHideLocalDiscoveryForFallback } from './player.js';
 import { youtubeSearch, soundcloudSearch, spotdlSearch } from './services/search.js';
-import { musicBrainzAutocomplete, lastFmGetArtistInfo, lastFmGetTopTracks, lastFmGetTopAlbums, iTunesSearchArtwork } from './services/musicSearch.js';
+import { musicBrainzAutocomplete, lastFmGetArtistInfo, lastFmGetTopTracks, lastFmGetTopAlbums, iTunesSearchArtwork, lastFmGetArtistImage } from './services/musicSearch.js';
 import { startBridge } from './bridge.js';
 import { startNowPlayingWatcher } from './nowPlaying.js';
 import { StreamHub } from './streamHub.js';
@@ -275,22 +275,18 @@ async function awardPoints(nickname: string, points: number, reason: string): Pr
 
 async function awardListenTimePoints(): Promise<void> {
   try {
-    // Award points to all actively listening users based on listen time
-    const listeners = new Map<string, number>(); // nickname -> seconds
-    
+    // First, deduplicate nicknames that have multiple sockets
+    const uniqueListeners = new Set<string>();
     for (const [socketId, presence] of listenerPresenceBySocket.entries()) {
       if (!presence.listening) continue;
       const nick = (presence.nickname ?? '').trim();
       if (!nick) continue;
-      const current = listeners.get(nick) || 0;
-      listeners.set(nick, current + 60); // Add 60 seconds (1 minute)
+      uniqueListeners.add(nick);
     }
-
-    for (const [nickname, seconds] of listeners.entries()) {
-      const points = Math.floor(seconds / 60) * POINTS.LISTEN_PER_MINUTE;
-      if (points > 0) {
-        await awardPoints(nickname, points, 'listening');
-      }
+    
+    // Award points only once per unique listener
+    for (const nickname of uniqueListeners) {
+      await awardPoints(nickname, POINTS.LISTEN_PER_MINUTE, 'listening');
     }
   } catch (err) {
     console.log(`[points] Listen time error:`, err);
@@ -349,16 +345,6 @@ function applyPlaybackForMode(mode: Mode): void {
   }
   const encoderTarget = internalPlayerUseIcecast ? ICECAST : null;
   startPlayCycle(sb, io, CACHE_DIR, encoderTarget, streamHub);
-  
-  // Award points when a track plays
-  playerEvents.on('track:played', async (track: any) => {
-    // Award points to requester
-    if (track?.added_by && track.added_by.toLowerCase() !== 'admin') {
-      await awardPoints(track.added_by, POINTS.REQUEST_PLAYED, 'request played');
-    }
-    
-    // Note: listen time points are only awarded via the interval (every 60s), not on track change
-  });
 
   // Award listen time points every minute
   setInterval(() => {
@@ -805,6 +791,34 @@ function normalizeSearchText(input: string | null | undefined): string {
     .trim();
 }
 
+/**
+ * Strip catalog/release suffixes from an expected title before token matching.
+ * These are metadata labels (Radio Edit, CD Version, Original Mix …) that are
+ * frequently absent from YouTube video titles, so including them in the expected
+ * token set causes false metadata-mismatch:title failures.
+ *
+ * Intentionally does NOT strip creative variants (Remix, Cover, Bootleg, Techno
+ * Mix, Hardstyle Mix, …) — those indicate a genuinely different recording and
+ * must stay for wrong-version detection.
+ */
+const CATALOG_SUFFIX_DASH_RE =
+  /\s*[-–]\s*(CD\s*Version|Radio\s*(Edit|Mix|Cut|Version)|Extended\s*(Mix|Version)|Original\s*(Mix|Version|Track)|Album\s*(Edit|Version)|VIP\s*Mix|Club\s*Mix|Mix\s*Cut|Online\s*Release|Remaster(?:ed)?|Instrumental\s*Version|Vocal\s*Mix|Full\s*Vocal\s*Mix|Live\s*Edit)\s*$/i;
+const CATALOG_SUFFIX_BRACKET_RE =
+  /\s*[\[(][^\])]*\b(?:Version|Release|Cut)\b[^\])]*[\])]\s*$/i;
+
+function stripCatalogSuffix(title: string): string {
+  let t = title.trim();
+  for (let i = 0; i < 3; i++) {
+    const next = t
+      .replace(CATALOG_SUFFIX_DASH_RE, '')
+      .replace(CATALOG_SUFFIX_BRACKET_RE, '')
+      .trim();
+    if (next === t) break;
+    t = next;
+  }
+  return t;
+}
+
 function tokenizeNormalizedText(input: string | null | undefined): string[] {
   return normalizeSearchText(input)
     .split(' ')
@@ -957,7 +971,8 @@ const SEARCH_HARD_VARIANT_KEYWORDS = [
   'bass boosted',
   'fan made',
   'ai cover',
-  'version',
+  // 'version' removed: too broad — blocks "Original Version", "Extended Version" etc.
+  // Creative re-recordings are caught by 'remix', 'cover', 'karaoke' etc. above.
 ];
 
 const SEARCH_SOFT_VARIANT_KEYWORDS = [
@@ -973,6 +988,7 @@ const SEARCH_SOFT_VARIANT_KEYWORDS = [
 const SEARCH_ALLOW_VERSION_KEYWORDS = [
   'original mix',
   'radio edit',
+  'radio mix',
   'extended mix',
   'remaster',
   'official audio',
@@ -1050,6 +1066,23 @@ function evaluateSearchResultForSubmission(
   );
   const resultTitleSet = new Set(tokenizeNormalizedText(title));
   const resultCombinedSet = new Set(tokenizeNormalizedText(`${title} ${channel}`));
+
+  // Also compute metrics against the catalog-suffix-stripped expected title.
+  // YouTube video titles often omit "Radio Edit", "CD Version", "Original Mix" etc.,
+  // so including those tokens in the required set causes false metadata-mismatch:title.
+  // The full expectedTitle is still used below for wrong-version detection.
+  const strippedExpectedTitle = stripCatalogSuffix(expectedTitle ?? '');
+  const titleWasStripped = strippedExpectedTitle !== (expectedTitle ?? '').trim();
+  const wantedTitleStrippedNorm = titleWasStripped
+    ? normalizeSearchText(strippedExpectedTitle)
+    : wantedTitleNorm;
+  const expectedTitleStrippedSet = titleWasStripped
+    ? new Set(tokenizeNormalizedText(strippedExpectedTitle))
+    : expectedTitleSet;
+  const expectedTitleStrippedRelaxedSet = titleWasStripped
+    ? new Set(Array.from(expectedTitleStrippedSet).filter((t) => !OPTIONAL_TITLE_STYLE_TOKENS.has(t)))
+    : expectedTitleRelaxedSet;
+
   const expectedIncludesRemixLike = hasUnexpectedKeyword(
     wantedTitleNorm,
     '',
@@ -1075,6 +1108,18 @@ function evaluateSearchResultForSubmission(
   const titleRelaxedCombinedCoverage = expectedTitleRelaxedSet.size > 0
     ? fuzzyTokenCoverage(expectedTitleRelaxedSet, resultCombinedSet)
     : titleCombinedCoverage;
+
+  // Stripped-title coverage — only computed when the title actually changed.
+  const titleStrippedCoverage = titleWasStripped && expectedTitleStrippedSet.size > 0
+    ? fuzzyTokenCoverage(expectedTitleStrippedSet, resultTitleSet)
+    : 0;
+  const titleStrippedCombinedCoverage = titleWasStripped && expectedTitleStrippedSet.size > 0
+    ? fuzzyTokenCoverage(expectedTitleStrippedSet, resultCombinedSet)
+    : 0;
+  const titleStrippedRelaxedCoverage = titleWasStripped && expectedTitleStrippedRelaxedSet.size > 0
+    ? fuzzyTokenCoverage(expectedTitleStrippedRelaxedSet, resultTitleSet)
+    : 0;
+
   const titleStrongMatch = titleTokenSimilarity >= 0.8
     || titleCombinedSimilarity >= 0.8
     || titleTokenCoverage >= 0.8
@@ -1082,13 +1127,21 @@ function evaluateSearchResultForSubmission(
     || titleRelaxedCoverage >= 0.8
     || titleRelaxedCombinedCoverage >= 0.8
     || (wantedTitleNorm ? tokenOverlap(expectedTitle ?? '', title) >= 0.85 : true)
-    || (wantedTitleNorm ? titleNorm.includes(wantedTitleNorm) : true);
+    || (wantedTitleNorm ? titleNorm.includes(wantedTitleNorm) : true)
+    // Stripped checks: pass if the result contains the core title without the catalog suffix.
+    || titleStrippedCoverage >= 0.8
+    || titleStrippedCombinedCoverage >= 0.8
+    || titleStrippedRelaxedCoverage >= 0.8
+    || (titleWasStripped && wantedTitleStrippedNorm ? titleNorm.includes(wantedTitleStrippedNorm) : false);
   const titleNearPerfect = titleTokenSimilarity >= 0.95
     || titleCombinedSimilarity >= 0.95
     || titleTokenCoverage >= 0.95
     || titleCombinedCoverage >= 0.95
     || titleRelaxedCoverage >= 0.95
-    || titleRelaxedCombinedCoverage >= 0.95;
+    || titleRelaxedCombinedCoverage >= 0.95
+    || titleStrippedCoverage >= 0.95
+    || titleStrippedCombinedCoverage >= 0.95
+    || titleStrippedRelaxedCoverage >= 0.95;
 
   const resultArtistSet = new Set(tokenizeNormalizedText(`${title} ${channel}`));
   const artistSimilarity = expectedArtistSet.size > 0
@@ -1097,7 +1150,12 @@ function evaluateSearchResultForSubmission(
   const artistContainment = expectedArtistSet.size > 0
     ? tokenContainmentSimilarity(expectedArtistSet, resultArtistSet)
     : 1;
-  const artistHasSignal = expectedArtistSet.size > 0 ? artistContainment >= 0.34 : true;
+  // Dynamic threshold: large multi-artist sets need a lower bar because
+  // YouTube titles rarely list all collaborating artists.
+  const artistSignalThreshold = expectedArtistSet.size >= 8 ? 0.16
+    : expectedArtistSet.size >= 5 ? 0.22
+    : 0.34;
+  const artistHasSignal = expectedArtistSet.size > 0 ? artistContainment >= artistSignalThreshold : true;
   const strictArtistMatch = expectedArtistSet.size > 0
     ? (artistSimilarity >= 0.65 || artistContainment >= 0.6)
     : true;
@@ -2483,6 +2541,22 @@ app.get('/api/artwork', async (req, res) => {
   } catch (err) {
     console.error('[rest] /api/artwork error:', err);
     res.status(500).json({ error: 'Failed to get artwork' });
+  }
+});
+
+// New endpoint: get artist image from Last.fm as fallback
+app.get('/api/artist-image', async (req, res) => {
+  const artist = String(req.query.artist ?? '').trim();
+  if (!artist) {
+    res.status(400).json({ error: 'Artist name required' });
+    return;
+  }
+  try {
+    const image = await lastFmGetArtistImage(artist);
+    res.json({ image });
+  } catch (err) {
+    console.error('[rest] /api/artist-image error:', err);
+    res.status(500).json({ error: 'Failed to get artist image' });
   }
 });
 
@@ -4561,14 +4635,17 @@ async function addQueueItemFromSubmission(
   if (!sourceId) {
     const strictMetadata = sourceType === 'spotify'
       || sourceType === 'user_playlist'
-      || sourceType === 'shared_playlist';
-    const searchLimit = sourceType === 'spotify' || sourceType === 'user_playlist' || sourceType === 'shared_playlist'
+      || sourceType === 'shared_playlist'
+      || sourceType === 'search';
+    console.log(`[resolve] sourceType=${sourceType} strictMetadata=${strictMetadata} url="${url}" expectedArtist="${expectedArtist}" expectedTitle="${expectedTitle}"`);
+    const searchLimit = sourceType === 'spotify' || sourceType === 'user_playlist' || sourceType === 'shared_playlist' || sourceType === 'search'
       ? 10
       : 4;
     const [youtubeResults, soundcloudResults] = await Promise.all([
       youtubeSearchLocal(url, searchLimit),
       soundcloudSearchLocal(url, searchLimit),
     ]);
+    console.log(`[resolve] YouTube results: ${youtubeResults.length}, SoundCloud results: ${soundcloudResults.length}`);
     const searchResults: SubmissionCandidate[] = [
       ...youtubeResults.map((row) => ({ row, provider: 'youtube' as const })),
       ...soundcloudResults.map((row) => ({ row, provider: 'soundcloud' as const })),
@@ -4591,6 +4668,11 @@ async function addQueueItemFromSubmission(
     const ranked = rankedStrict
       .filter(({ evaluation }) => evaluation.score > -100)
       .sort((a, b) => b.evaluation.score - a.evaluation.score);
+
+    console.log(`[resolve] rankedStrict count: ${rankedStrict.length}, ranked pass >-100 count: ${ranked.length}`);
+    if (rankedStrict.length > 0) {
+      console.log(`[resolve] Top 3 scores: ${rankedStrict.slice(0, 3).map(r => `${r.evaluation.score}(${r.evaluation.reasons.join('|')})`).join(', ')}`);
+    }
 
     let selectedCandidate: SubmissionCandidate | null = ranked[0]
       ? { row: ranked[0].row, provider: ranked[0].provider }
@@ -4693,11 +4775,12 @@ async function addQueueItemFromSubmission(
         providerCandidates: searchResults.length,
         diagnostics,
       });
-      console.warn(`[queue] No usable result for "${submission.youtube_url}" strict=${strictMetadata} candidates=${searchResults.length} diagnostics=${JSON.stringify(diagnostics)}`);
+      console.warn(`[resolve] No usable result: strict=${strictMetadata} candidates=${searchResults.length} ranked=${ranked.length} semiStrict count check...`);
       const canPromptManualPick =
         sourceType === 'spotify'
         || sourceType === 'user_playlist'
-        || sourceType === 'shared_playlist';
+        || sourceType === 'shared_playlist'
+        || sourceType === 'search';
       const manualCandidates: SubmissionManualCandidate[] | null = canPromptManualPick
         ? rankedStrict
           .slice(0, 8)
@@ -4795,8 +4878,8 @@ async function addQueueItemFromSubmission(
 
   const resolved: SubmissionResolvedResult = {
     url,
-    title: mergedTitle,
-    artist: submittedArtist ?? discoveredArtist ?? null,
+    title: expectedTitle ?? mergedTitle,
+    artist: expectedArtist ?? submittedArtist ?? discoveredArtist ?? null,
     thumbnail: thumbForQueue ?? null,
     duration: info.duration ?? null,
   };
@@ -5599,6 +5682,14 @@ async function main(): Promise<void> {
 
   const initialMode = await getActiveMode(sb);
   console.log(`[mode] Initial mode: ${initialMode}`);
+  
+  // Register point award listener ONCE at startup (not on each mode change to prevent duplicates)
+  playerEvents.on('track:played', async (track: any) => {
+    if (track?.added_by && track.added_by.toLowerCase() !== 'admin') {
+      await awardPoints(track.added_by, POINTS.REQUEST_PLAYED, 'request played');
+    }
+  });
+  
   applyPlaybackForMode(initialMode);
   evaluateIdlePlayback(initialMode);
   const initialTrack = getCurrentTrack();

@@ -237,6 +237,8 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
   const [artistAlbums, setArtistAlbums] = useState<ITunesAlbum[]>([]);
   const [artistAlbumsLoading, setArtistAlbumsLoading] = useState(false);
   const [showArtistResults, setShowArtistResults] = useState(false);
+  const [addedTrackId, setAddedTrackId] = useState<string | null>(null);
+  const [pendingTrackId, setPendingTrackId] = useState<string | null>(null);
   
   const [isMobile, setIsMobile] = useState(false);
   const [mobileGenreMenuTop, setMobileGenreMenuTop] = useState<number | null>(null);
@@ -522,26 +524,20 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
       .finally(() => setGenresLoading(false));
   }, [serverUrl]);
 
-  // Artist search - MusicBrainz autocomplete
+  // Artist search - MusicBrainz/Last.fm autocomplete
   const searchArtists = useCallback(async (query: string) => {
     if (!serverUrl || query.length < 2) {
-      console.log('[artist-search] Skipping - too short:', query.length);
       setArtistResults([]);
       setShowArtistResults(false);
       return;
     }
     setArtistSearching(true);
-    console.log('[artist-search] Fetching artists for:', query);
     try {
       const res = await fetch(`${serverUrl}/api/search/autocomplete?q=${encodeURIComponent(query)}&limit=10`);
-      console.log('[artist-search] Response status:', res.status);
       const data = await res.json() as MusicBrainzArtist[];
-      console.log('[artist-search] Got artists:', data.length, data);
       setArtistResults(data);
       setShowArtistResults(data.length > 0);
-      console.log('[artist-search] Set showArtistResults:', data.length > 0);
-    } catch (err) {
-      console.error('[artist-search] Error:', err);
+    } catch {
       setArtistResults([]);
     } finally {
       setArtistSearching(false);
@@ -563,12 +559,26 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
     }
   }, [serverUrl]);
 
-  // Load artist artwork from iTunes
+  // Load artist artwork from iTunes + Last.fm fallback
+  const [artistImageFallback, setArtistImageFallback] = useState<string | null>(null);
+
   const loadArtistArtwork = useCallback(async (artistName: string) => {
     if (!serverUrl) return;
     setArtistAlbumsLoading(true);
+    setArtistImageFallback(null);
+    
     try {
-      const res = await fetch(`${serverUrl}/api/artwork?artist=${encodeURIComponent(artistName)}&limit=10`);
+      // Load Last.fm image (skips placeholder images)
+      try {
+        const imgRes = await fetch(`${serverUrl}/api/artist-image?artist=${encodeURIComponent(artistName)}`);
+        const imgData = await imgRes.json() as { image?: string };
+        if (imgData.image) {
+          setArtistImageFallback(imgData.image);
+        }
+      } catch {}
+
+      // Load iTunes with more results
+      const res = await fetch(`${serverUrl}/api/artwork?artist=${encodeURIComponent(artistName)}&limit=50`);
       const data = await res.json() as ITunesAlbum[];
       setArtistAlbums(data);
     } catch {
@@ -591,7 +601,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
   }, [loadArtistTracks, loadArtistArtwork]);
 
   // Get artwork URL with larger size
-  const getArtworkUrl = (url: string, size: '100' | '600' = '600'): string => {
+  const getArtworkUrl = (url: string, size: '100' | '300' = '300'): string => {
     if (!url) return '';
     return url.replace('100x100', `${size}x${size}`);
   };
@@ -1711,44 +1721,98 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                 ) : (
                   <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70">
                     {artistTracks.map((track) => {
+                      const isAdded = addedTrackId === `${selectedArtist?.id}:${track.rank}`;
+                      const isPending = pendingTrackId === `${selectedArtist?.id}:${track.rank}`;
                       const trackLower = track.name.toLowerCase();
                       const matchingAlbum = artistAlbums.find(a => 
                         a.collectionName.toLowerCase().includes(trackLower.split('(')[0].trim()) ||
                         trackLower.includes(a.collectionName.toLowerCase())
                       );
-                      const thumb = matchingAlbum ? getArtworkUrl(matchingAlbum.artworkUrl100, '600') : null;
+                      const iTunesThumb = matchingAlbum ? getArtworkUrl(matchingAlbum.artworkUrl100, '300') : null;
+                      const thumb = iTunesThumb || artistImageFallback || null;
+                      const trackKey = `${selectedArtist?.id}:${track.rank}`;
                       return (
-                        <div key={`${track.rank}-${track.name}`} className="flex items-center gap-3 border-b border-gray-800/80 px-3 py-2 last:border-b-0">
+                        <button
+                          key={trackKey}
+                          type="button"
+                          onClick={async () => {
+                            console.log('[search-track] Click! isPending:', isPending, 'isAdded:', isAdded, 'serverUrl:', !!serverUrl);
+                            if (isPending || isAdded || !serverUrl) {
+                              console.log('[search-track] Early return - blocked');
+                              return;
+                            }
+                            setPendingTrackId(trackKey);
+                            console.log('[search-track] Artist:', track.artist.name, 'Track:', track.name);
+                            try {
+                              // Use resolve endpoint for proper matching
+                              const res = await fetch(`${serverUrl.replace(/\/+$/, "")}/api/downloads/resolve`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  title: track.name,
+                                  artist: track.artist.name,
+                                  source_type: 'search',
+                                  source_playlist: null,
+                                  source_genre: null,
+                                }),
+                              });
+                              const payload = await res.json();
+                              console.log('[search-track] Resolve response:', res.status, 'has item:', !!payload.item, 'candidates:', payload.candidates?.length);
+                              
+                              if (res.ok && payload.item?.url) {
+                                // Direct match found - use metadata from resolved result
+                                await submitUrl(
+                                  payload.item.url,
+                                  payload.item.thumbnail ?? undefined,
+                                  payload.item.title ?? track.name,
+                                  payload.item.artist ?? track.artist.name,
+                                  { sourceType: 'search', sourceGenre: null, sourcePlaylist: null }
+                                );
+                              } else if (payload.candidates && payload.candidates.length > 0) {
+                                // No direct match - show manual selection modal with scored candidates
+                                setPendingManualSelection({
+                                  sourceKey: trackKey,
+                                  title: track.name,
+                                  artist: track.artist.name,
+                                  sourceType: 'search',
+                                  sourceGenre: null,
+                                  sourcePlaylist: null,
+                                  candidates: payload.candidates,
+                                });
+                              } else {
+                                setFeedback({ msg: `Geen resultaat gevonden voor "${track.name}".`, ok: false });
+                              }
+                            } catch (err) {
+                              console.error('[search-track] Error:', err);
+                              setFeedback({ msg: `Fout bij zoeken voor "${track.name}".`, ok: false });
+                            } finally {
+                              setPendingTrackId(null);
+                            }
+                          }}
+                          disabled={submitting || isAdded || isPending}
+                          className={`flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition ${
+                            isAdded ? "bg-green-500/10" : "hover:bg-gray-800/80"
+                          } disabled:opacity-60`}
+                        >
                           {thumb ? <img src={thumb} alt="" className="h-10 w-10 shrink-0 rounded object-cover" /> : <div className="h-10 w-10 shrink-0 rounded bg-gray-800" />}
                           <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-medium text-white">{track.name}</p>
-                            <p className="truncate text-xs text-gray-400">#{track.rank}{track.listeners ? ` • ${parseInt(track.listeners).toLocaleString()} luisteraars` : ''}</p>
+                            <p className="truncate text-xs font-medium text-white">{track.name}</p>
+                            <p className="truncate text-[10px] text-gray-400">#{track.rank}{track.listeners ? ` • ${parseInt(track.listeners).toLocaleString()} luisteraars` : ''}</p>
                           </div>
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              const searchQuery = `${track.artist.name} ${track.name}`;
-                              const url = serverUrl ?? "";
-                              const res = await fetch(`${url}/search?q=${encodeURIComponent(searchQuery)}&source=youtube&limit=1`);
-                              const data = await res.json() as SearchResult[];
-                              if (data.length > 0 && data[0].url) {
-                                const trackLower = track.name.toLowerCase();
-                                const matchingAlbum = artistAlbums.find(a => 
-                                  a.collectionName.toLowerCase().includes(trackLower.split('(')[0].trim()) ||
-                                  trackLower.includes(a.collectionName.toLowerCase())
-                                );
-                                const thumb = matchingAlbum ? getArtworkUrl(matchingAlbum.artworkUrl100, '600') : null;
-                                submitUrl(data[0].url, thumb ?? undefined, track.name, track.artist.name, { keepResults: true, keepInput: true, sourceType: "search" });
-                              } else {
-                                setFeedback({ msg: `Geen YouTube resultaat voor "${track.name}".`, ok: false });
-                              }
-                            }}
-                            disabled={submitting}
-                            className="rounded-md bg-violet-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
-                          >
-                            +
-                          </button>
-                        </div>
+                          {isAdded ? (
+                            <span className="rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
+                              Toegevoegd
+                            </span>
+                          ) : isPending ? (
+                            <span className="rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200">
+                              Bezig...
+                            </span>
+                          ) : (
+                            <svg className="h-3.5 w-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                            </svg>
+                          )}
+                        </button>
                       );
                     })}
                   </div>

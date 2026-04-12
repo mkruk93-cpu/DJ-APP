@@ -131,74 +131,151 @@ async function getSoundCloudClientId(): Promise<string | null> {
   return null;
 }
 
-export async function youtubeSearch(query: string, limit = 12): Promise<SearchResult[]> {
-  const cacheKey = `yt:${query.toLowerCase().trim()}:${limit}`;
-  const cached = searchCache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.results;
+// ─── internal query helpers ───────────────────────────────────────────────────
 
-  try {
-    const payload = JSON.stringify({
-      context: {
-        client: {
-          clientName: 'WEB',
-          clientVersion: '2.20240101.00.00',
-          hl: 'nl',
-          gl: 'NL',
-        },
+/** Version/mix suffixes that almost never appear in YouTube titles. */
+const YT_VERSION_RE =
+  /\s*[-–]\s*(CD Version|Radio\s*(Edit|Mix|Cut|Version)|Extended\s*(Mix|Version)|Original\s*(Mix|Version)|Album\s*(Edit|Version)|VIP\s*Mix|Club\s*Mix|Live\s*Edit|Mix\s*Cut|Online\s*Release|Remaster(ed)?|Instrumental\s*Version|Vocal\s*Mix|Full\s*Vocal\s*Mix|Definitive\s*Mix|Hard\s*Mix|Hardstyle\s*(Mix|Remix)|Techno\s*(Mix|Version)|Drill\s*Remix|Stutter\s*(Techno|TECHNO)(\s*Sped\s*Up)?|Sped\s*Up|Asbakoholic\s*Mix|Gingivitis\s*Mix|200\s*BPM\s*Version|[^-()\[\]]*Remix|[^-()\[\]]*Edit|[^-()\[\]]*\s+Mix)\s*$/i;
+
+// Only strip bracketed tags that are clearly version markers, not title parts like "(Live Edit)"
+const YT_BRACKET_RE = /\s*[\[(][^\])]*\b(Version|Release|Cut)\b[^\])]*[\])]\s*$/i;
+
+function stripSuffix(title: string): string {
+  let t = title;
+  for (let i = 0; i < 3; i++) {
+    const next = t.replace(YT_VERSION_RE, '').replace(YT_BRACKET_RE, '').trim();
+    if (next === t) break;
+    t = next;
+  }
+  return t;
+}
+
+/**
+ * Given a raw query (typically "Artist1, Artist2 - Title - Version"),
+ * return a cleaner query YouTube is more likely to match:
+ *   - strips version suffix from the title part
+ *   - uses only the first artist name to avoid over-constraining the search
+ *
+ * Falls back to the original query unchanged if it doesn't look like
+ * an "Artist - Title" pattern.
+ */
+function cleanYoutubeQuery(query: string): string {
+  const sep = query.indexOf(' - ');
+  if (sep === -1) return query; // no "Artist - Title" pattern, leave as-is
+
+  const artistPart = query.slice(0, sep);
+  const titlePart = query.slice(sep + 3);
+
+  const cleanTitle = stripSuffix(titlePart);
+
+  // Use only the first artist (split on comma, semicolon, or " x ")
+  const primaryArtist = artistPart.split(/\s*[,;]\s*|\s+x\s+/i)[0].trim();
+
+  // If nothing was stripped and there's only one artist, no change needed
+  if (cleanTitle === titlePart && primaryArtist === artistPart) return query;
+
+  return `${primaryArtist} - ${cleanTitle}`;
+}
+
+/** Low-level: fire one YouTube InnerTube search and return raw results. */
+async function fetchYoutubeResults(query: string, limit: number): Promise<SearchResult[]> {
+  const payload = JSON.stringify({
+    context: {
+      client: {
+        clientName: 'WEB',
+        clientVersion: '2.20240101.00.00',
+        hl: 'nl',
+        gl: 'NL',
       },
-      query,
-    });
+    },
+    query,
+  });
 
-    const res = await fetch('https://www.youtube.com/youtubei/v1/search?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8', {
+  const res = await fetch(
+    'https://www.youtube.com/youtubei/v1/search?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8',
+    {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       },
       body: payload,
-    });
+    },
+  );
 
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-    const data = await res.json() as any;
-    const results: SearchResult[] = [];
+  const data = (await res.json()) as any;
+  const results: SearchResult[] = [];
 
-    const contents = data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents;
-    if (!Array.isArray(contents)) throw new Error('Invalid response structure');
+  const contents =
+    data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents;
+  if (!Array.isArray(contents)) throw new Error('Invalid response structure');
 
-    for (const section of contents) {
-      const items = section?.itemSectionRenderer?.contents;
-      if (!Array.isArray(items)) continue;
+  for (const section of contents) {
+    const items = section?.itemSectionRenderer?.contents;
+    if (!Array.isArray(items)) continue;
 
-      for (const item of items) {
-        const video = item?.videoRenderer;
-        if (!video?.videoId) continue;
+    for (const item of items) {
+      const video = item?.videoRenderer;
+      if (!video?.videoId) continue;
 
-        const title = video.title?.runs?.[0]?.text?.trim();
-        if (!title) continue;
+      const title = video.title?.runs?.[0]?.text?.trim();
+      if (!title) continue;
 
-        const lengthText = video.lengthText?.simpleText;
-        let duration: number | null = null;
-        if (lengthText && /^\d+:\d+$/.test(lengthText)) {
-          const [min, sec] = lengthText.split(':').map(Number);
-          duration = min * 60 + sec;
+      const lengthText = video.lengthText?.simpleText;
+      let duration: number | null = null;
+      if (lengthText && /^\d+:\d+$/.test(lengthText)) {
+        const [min, sec] = lengthText.split(':').map(Number);
+        duration = min * 60 + sec;
+      }
+
+      const thumbnail = video.thumbnail?.thumbnails?.[0]?.url || null;
+      const channel = video.ownerText?.runs?.[0]?.text?.trim() || null;
+
+      results.push({
+        id: video.videoId,
+        title,
+        url: `https://www.youtube.com/watch?v=${video.videoId}`,
+        duration,
+        thumbnail,
+        channel,
+      });
+
+      if (results.length >= limit) break;
+    }
+    if (results.length >= limit) break;
+  }
+
+  return results;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function youtubeSearch(query: string, limit = 12): Promise<SearchResult[]> {
+  const cacheKey = `yt:${query.toLowerCase().trim()}:${limit}`;
+  const cached = searchCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.results;
+
+  try {
+    const cleanedQuery = cleanYoutubeQuery(query);
+    const isModified = cleanedQuery !== query;
+
+    // Always fetch the cleaned query first — it finds the right video more reliably.
+    const results = await fetchYoutubeResults(cleanedQuery, limit);
+
+    // If the clean query returned fewer results than expected AND we changed it,
+    // top up with a second pass using the original query (different results may appear).
+    if (isModified && results.length < limit) {
+      const extra = await fetchYoutubeResults(query, limit);
+      const seenIds = new Set(results.map((r) => r.id));
+      for (const r of extra) {
+        if (!seenIds.has(r.id)) {
+          results.push(r);
+          seenIds.add(r.id);
         }
-
-        const thumbnail = video.thumbnail?.thumbnails?.[0]?.url || null;
-        const channel = video.ownerText?.runs?.[0]?.text?.trim() || null;
-
-        results.push({
-          id: video.videoId,
-          title,
-          url: `https://www.youtube.com/watch?v=${video.videoId}`,
-          duration,
-          thumbnail,
-          channel,
-        });
-
         if (results.length >= limit) break;
       }
-      if (results.length >= limit) break;
     }
 
     searchCache.set(cacheKey, { results, ts: Date.now() });
