@@ -238,6 +238,10 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
   const [artistAlbums, setArtistAlbums] = useState<ITunesAlbum[]>([]);
   const [artistAlbumsLoading, setArtistAlbumsLoading] = useState(false);
   const [showArtistResults, setShowArtistResults] = useState(false);
+  const [artistHistory, setArtistHistory] = useState<{id: string; query: string; created_at: string}[]>([]);
+  const [showArtistHistory, setShowArtistHistory] = useState(false);
+  const [videoHistory, setVideoHistory] = useState<{id: string; query: string; created_at: string}[]>([]);
+  const [showVideoHistory, setShowVideoHistory] = useState(false);
   const [addedTrackId, setAddedTrackId] = useState<string | null>(null);
   const [pendingTrackId, setPendingTrackId] = useState<string | null>(null);
   
@@ -291,6 +295,39 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
   }, [showResults]);
 
   const serverUrl = useRadioStore((s) => s.serverUrl) ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
+  const nickname = getNickname();
+
+  // Load search history
+  useEffect(() => {
+    if (!serverUrl || !nickname) return;
+    console.log('[search-history] Loading for nickname:', nickname);
+    Promise.all([
+      fetch(`${serverUrl}/api/search-history?nickname=${encodeURIComponent(nickname)}&type=artist`).then((r) => r.json()).then((d) => { console.log('[search-history] artist response:', d); return d.history ?? []; }).catch(() => []),
+      fetch(`${serverUrl}/api/search-history?nickname=${encodeURIComponent(nickname)}&type=video`).then((r) => r.json()).then((d) => { console.log('[search-history] video response:', d); return d.history ?? []; }).catch(() => []),
+    ]).then(([artistHist, videoHist]) => {
+      console.log('[search-history] Loaded:', { artistHist, videoHist });
+      setArtistHistory(artistHist);
+      setVideoHistory(videoHist);
+    }).catch(() => {});
+  }, [serverUrl, nickname]);
+
+  // Delete search history item
+  const deleteHistoryItem = useCallback(async (type: 'artist' | 'video', id: string) => {
+    if (!serverUrl) return;
+    try {
+      await fetch(`${serverUrl}/api/search-history`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      });
+      if (type === 'artist') {
+        setArtistHistory((prev) => prev.filter((h) => h.id !== id));
+      } else {
+        setVideoHistory((prev) => prev.filter((h) => h.id !== id));
+      }
+    } catch {}
+  }, [serverUrl]);
+
   const isAdmin = useIsAdmin();
   const canAdd = hydrated && canPerformAction(mode, "add_to_queue", isAdmin);
   const isUrl = isSupportedUrl(input.trim());
@@ -599,7 +636,22 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
       loadArtistTracks(artist.name),
       loadArtistArtwork(artist.name),
     ]);
-  }, [loadArtistTracks, loadArtistArtwork]);
+    // Save selected artist to search history
+    if (nickname && serverUrl && artist.name) {
+      fetch(`${serverUrl}/api/search-history`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nickname, type: 'artist', query: artist.name }),
+      }).then((r) => r.json()).then((d) => {
+        if (!d.duplicate) {
+          fetch(`${serverUrl}/api/search-history?nickname=${encodeURIComponent(nickname)}&type=artist`)
+            .then((r) => r.json())
+            .then((d) => setArtistHistory(d.history ?? []))
+            .catch(() => {});
+        }
+      }).catch(() => {});
+    }
+  }, [loadArtistTracks, loadArtistArtwork, nickname, serverUrl]);
 
   // Get artwork URL with larger size
   const getArtworkUrl = (url: string, size: '100' | '300' = '300'): string => {
@@ -1055,6 +1107,24 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
 
     startRecentAdd(key, result.url, result.title, result.channel);
     setResultStatus((prev) => ({ ...prev, [key]: "added" }));
+    
+    // Save to video history (artist - title)
+    const historyQuery = result.channel ? `${result.channel} - ${result.title}` : result.title;
+    if (nickname && serverUrl) {
+      fetch(`${serverUrl}/api/search-history`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nickname, type: 'video', query: historyQuery }),
+      }).then((r) => r.json()).then((d) => {
+        if (!d.duplicate) {
+          fetch(`${serverUrl}/api/search-history?nickname=${encodeURIComponent(nickname)}&type=video`)
+            .then((r) => r.json())
+            .then((d) => setVideoHistory(d.history ?? []))
+            .catch(() => {});
+        }
+      }).catch(() => {});
+    }
+
     submitUrl(
       result.url,
       result.thumbnail || undefined,
@@ -1671,14 +1741,39 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                         setShowArtistResults(false);
                       }
                     }}
-                    onFocus={() => { if (artistResults.length > 0) setShowArtistResults(true); }}
-                    onBlur={() => { if (!showArtistResults) return; setTimeout(() => setShowArtistResults(false), 150); }}
+                    onFocus={() => { setShowArtistHistory(true); if (artistResults.length > 0) setShowArtistResults(true); }}
+                    onKeyDown={(e) => { if (e.key === 'Escape') { setShowArtistHistory(false); setShowArtistResults(false); } }}
+                    onBlur={() => { if (!showArtistResults && !showArtistHistory) return; setTimeout(() => { if (artistSearchQuery.trim() === '') setShowArtistHistory(false); setShowArtistResults(false); }, 150); }}
                     placeholder="Zoek op artiest..."
                     className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 pr-10 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
                   />
                   {artistSearching && (
                     <div className="absolute right-3 top-1/2 -translate-y-1/2">
                       <span className="block h-4 w-4 animate-spin rounded-full border-2 border-violet-400 border-t-transparent" />
+                    </div>
+                  )}
+                  {showArtistHistory && artistHistory.length > 0 && (
+                    <div className="absolute left-0 right-0 top-full z-40 mt-1 rounded-md border border-gray-700 bg-gray-900 shadow-lg">
+                      <div className="px-3 py-1.5 text-[11px] font-medium uppercase text-gray-500">Recente zoekopdrachten</div>
+                      {artistHistory.map((h) => (
+                        <div key={h.id} className="group flex w-full items-center px-3 py-1.5 text-left text-sm text-gray-300 hover:bg-gray-800">
+                          <button
+                            type="button"
+                            onClick={() => { setArtistSearchQuery(h.query); searchArtists(h.query); setShowArtistHistory(false); }}
+                            className="flex-1 truncate"
+                          >
+                            {h.query}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => deleteHistoryItem('artist', h.id)}
+                            className="ml-2 opacity-0 transition group-hover:opacity-100 hover:text-red-400"
+                            title="Verwijderen"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   )}
                   {showArtistResults && artistResults.length > 0 && (
@@ -1836,7 +1931,9 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                 spellCheck={false}
                 value={input}
                 onChange={(e) => handleInputChange(e.target.value)}
-                onFocus={() => { if (results.length > 0) setShowResults(true); }}
+                onFocus={() => { setShowVideoHistory(true); if (results.length > 0) setShowResults(true); }}
+                onKeyDown={(e) => { if (e.key === 'Escape') { setShowVideoHistory(false); setShowResults(false); } }}
+                onBlur={() => { if (!showResults && !showVideoHistory) return; setTimeout(() => { if (input.trim() === '') setShowVideoHistory(false); setShowResults(false); }, 150); }}
                 placeholder={
                   source === "youtube" ? "Zoek op YouTube of plak een link..." : "Zoek op SoundCloud of plak een link..."
                 }
@@ -1874,6 +1971,30 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
               {searching && (
                 <div className="absolute right-36 top-1/2 -translate-y-1/2">
                   <span className="block h-4 w-4 animate-spin rounded-full border-2 border-violet-400 border-t-transparent" />
+                </div>
+              )}
+              {showVideoHistory && videoHistory.length > 0 && (
+                <div className="absolute left-0 right-0 top-full z-[250] mt-1 rounded-md border border-gray-700 bg-gray-900 shadow-lg">
+                  <div className="px-3 py-1.5 text-[11px] font-medium uppercase text-gray-500">Recente zoekopdrachten</div>
+                  {videoHistory.map((h) => (
+                    <div key={h.id} className="group flex w-full items-center px-3 py-1.5 text-left text-sm text-gray-300 hover:bg-gray-800">
+                      <button
+                        type="button"
+                        onClick={() => { setInput(h.query); handleInputChange(h.query); setShowVideoHistory(false); }}
+                        className="flex-1 truncate"
+                      >
+                        {h.query}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteHistoryItem('video', h.id)}
+                        className="ml-2 opacity-0 transition group-hover:opacity-100 hover:text-red-400"
+                        title="Verwijderen"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
                 </div>
               )}
               {showResults && results.length > 0 && (
@@ -2045,7 +2166,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
           </div>
         </div>
       )}
-      </div>
-    </QueueAddErrorBoundary>
+    </div>
+  </QueueAddErrorBoundary>
   );
 }

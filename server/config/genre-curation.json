@@ -2637,6 +2637,21 @@
       "priorityLabels": [],
       "requiredTokens": [],
       "blockedTokens": []
+    },
+    {
+      "id": "liked",
+      "label": "liked",
+      "priorityArtists": [
+        "eilen jewell"
+      ],
+      "blockedArtists": [],
+      "priorityTracks": [
+        "you cared enough to lie"
+      ],
+      "blockedTracks": [],
+      "priorityLabels": [],
+      "requiredTokens": [],
+      "blockedTokens": []
     }
   ],
   "likedPlaylistTracks": [

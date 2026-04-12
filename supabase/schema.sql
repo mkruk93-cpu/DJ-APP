@@ -262,3 +262,13 @@ CREATE POLICY "Admins can manage all approvals" ON user_approvals
 -- Enable Realtime on new tables
 ALTER PUBLICATION supabase_realtime ADD TABLE user_accounts;
 ALTER PUBLICATION supabase_realtime ADD TABLE user_approvals;
+
+-- Search history per user (artist, video searches - video = youtube + soundcloud)
+CREATE TABLE search_history (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  nickname    text NOT NULL,
+  search_type text NOT NULL CHECK (search_type IN ('artist', 'video')),
+  query       text NOT NULL,
+  created_at  timestamptz DEFAULT now()
+);
+CREATE INDEX idx_search_history_nickname ON search_history(nickname, search_type, created_at DESC);

@@ -4236,6 +4236,86 @@ app.post('/api/shoutouts', async (req, res) => {
   }
 });
 
+// Search history endpoints
+app.get('/api/search-history', async (req, res) => {
+  const nickname = String((req.query as { nickname?: string })?.nickname ?? '').trim().toLowerCase();
+  const searchType = String((req.query as { type?: string })?.type ?? '').trim().toLowerCase();
+  console.log('[rest] /api/search-history GET:', { nickname, searchType, query: req.query });
+  if (!nickname) return res.status(400).json({ error: 'nickname is required' });
+  if (!['artist', 'video'].includes(searchType)) {
+    return res.status(400).json({ error: 'type must be artist or video', received: searchType });
+  }
+  try {
+    const { data, error } = await sb
+      .from('search_history')
+      .select('id,query,created_at')
+      .eq('nickname', nickname)
+      .eq('search_type', searchType)
+      .order('created_at', { ascending: false })
+      .limit(20);
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json({ history: (data ?? []).map((r) => ({ id: r.id, query: r.query, created_at: r.created_at })) });
+  } catch (err) {
+    console.error('[rest] /api/search-history GET error:', err);
+    return res.status(500).json({ error: 'Failed to fetch search history' });
+  }
+});
+
+app.post('/api/search-history', async (req, res) => {
+  const body = (req.body as { nickname?: string; type?: string; query?: string }) ?? {};
+  const nickname = String(body.nickname ?? '').trim().toLowerCase();
+  const searchType = String(body.type ?? '').trim().toLowerCase();
+  const query = String(body.query ?? '').trim();
+  console.log('[rest] /api/search-history POST:', { nickname, searchType, query, body });
+  if (!nickname) return res.status(400).json({ error: 'nickname is required' });
+  if (!['artist', 'video'].includes(searchType)) {
+    return res.status(400).json({ error: 'type must be artist or video', received: searchType });
+  }
+  if (!query) return res.status(400).json({ error: 'query is required' });
+  const storedQuery = query.toLowerCase().trim();
+  try {
+    // Check if this query already exists in history (no duplicates at all, case-insensitive)
+    const { data: existing } = await sb
+      .from('search_history')
+      .select('id')
+      .eq('nickname', nickname)
+      .eq('search_type', searchType)
+      .eq('query', storedQuery)
+      .limit(1)
+      .maybeSingle();
+    if (existing) {
+      return res.status(201).json({ ok: true, duplicate: true });
+    }
+    const { error } = await sb
+      .from('search_history')
+      .insert({ nickname, search_type: searchType, query: storedQuery });
+    if (error) {
+      console.warn('[rest] /api/search-history insert error:', error.message);
+    }
+    return res.status(201).json({ ok: true });
+  } catch (err) {
+    console.error('[rest] /api/search-history POST error:', err);
+    return res.status(500).json({ error: 'Failed to save search history' });
+  }
+});
+
+app.delete('/api/search-history', async (req, res) => {
+  const body = (req.body as { id?: string }) ?? {};
+  const id = String(body.id ?? '').trim();
+  if (!id) return res.status(400).json({ error: 'id is required' });
+  try {
+    const { error } = await sb
+      .from('search_history')
+      .delete()
+      .eq('id', id);
+    if (error) return res.status(500).json({ error: error.message });
+    return res.status(200).json({ ok: true });
+  } catch (err) {
+    console.error('[rest] /api/search-history DELETE error:', err);
+    return res.status(500).json({ error: 'Failed to delete search history' });
+  }
+});
+
 // ── Vote skip state ──────────────────────────────────────────────────────────
 
 let voteSkipSet = new Set<string>();
