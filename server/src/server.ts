@@ -4252,9 +4252,16 @@ app.get('/api/search-history', async (req, res) => {
       .eq('nickname', nickname)
       .eq('search_type', searchType)
       .order('created_at', { ascending: false })
-      .limit(20);
+      .limit(100);
     if (error) return res.status(500).json({ error: error.message });
-    return res.json({ history: (data ?? []).map((r) => ({ id: r.id, query: r.query, created_at: r.created_at })) });
+    const uniqueHistory = (data ?? []).reduce<Array<{ id: string; query: string; created_at: string }>>((acc, row) => {
+      const normalizedQuery = String(row.query ?? '').trim().toLowerCase();
+      if (!normalizedQuery) return acc;
+      if (acc.some((item) => item.query === normalizedQuery)) return acc;
+      acc.push({ id: row.id, query: normalizedQuery, created_at: row.created_at });
+      return acc;
+    }, []).slice(0, 20);
+    return res.json({ history: uniqueHistory });
   } catch (err) {
     console.error('[rest] /api/search-history GET error:', err);
     return res.status(500).json({ error: 'Failed to fetch search history' });
@@ -4274,7 +4281,7 @@ app.post('/api/search-history', async (req, res) => {
   if (!query) return res.status(400).json({ error: 'query is required' });
   const storedQuery = query.toLowerCase().trim();
   try {
-    // Check if this query already exists in history (no duplicates at all, case-insensitive)
+    // Existing searches should move to the top instead of creating duplicates.
     const { data: existing } = await sb
       .from('search_history')
       .select('id')
@@ -4284,7 +4291,14 @@ app.post('/api/search-history', async (req, res) => {
       .limit(1)
       .maybeSingle();
     if (existing) {
-      return res.status(201).json({ ok: true, duplicate: true });
+      const { error: updateError } = await sb
+        .from('search_history')
+        .update({ created_at: new Date().toISOString() })
+        .eq('id', existing.id);
+      if (updateError) {
+        console.warn('[rest] /api/search-history update error:', updateError.message);
+      }
+      return res.status(200).json({ ok: true, moved: true });
     }
     const { error } = await sb
       .from('search_history')

@@ -91,6 +91,12 @@ interface SearchResult {
   channel: string;
 }
 
+interface SearchHistoryItem {
+  id: string;
+  query: string;
+  created_at: string;
+}
+
 interface MusicBrainzArtist {
   id: string;
   name: string;
@@ -192,6 +198,27 @@ function normalizeLoose(value: string): string {
     .trim();
 }
 
+function getSearchResultDedupKey(result: SearchResult): string {
+  const urlKey = normalizeLoose(result.url ?? "");
+  if (urlKey) return `url:${urlKey}`;
+
+  const titleKey = normalizeLoose(result.title ?? "");
+  const channelKey = normalizeLoose(result.channel ?? "");
+  if (titleKey || channelKey) return `meta:${channelKey}:${titleKey}`;
+
+  return `id:${result.id}`;
+}
+
+function dedupeSearchResults(items: SearchResult[]): SearchResult[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = getSearchResultDedupKey(item);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export default function QueueAdd({ username }: { username?: string } = {}) {
   const [hydrated, setHydrated] = useState(false);
   const [input, setInput] = useState("");
@@ -238,9 +265,9 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
   const [artistAlbums, setArtistAlbums] = useState<ITunesAlbum[]>([]);
   const [artistAlbumsLoading, setArtistAlbumsLoading] = useState(false);
   const [showArtistResults, setShowArtistResults] = useState(false);
-  const [artistHistory, setArtistHistory] = useState<{id: string; query: string; created_at: string}[]>([]);
+  const [artistHistory, setArtistHistory] = useState<SearchHistoryItem[]>([]);
   const [showArtistHistory, setShowArtistHistory] = useState(false);
-  const [videoHistory, setVideoHistory] = useState<{id: string; query: string; created_at: string}[]>([]);
+  const [videoHistory, setVideoHistory] = useState<SearchHistoryItem[]>([]);
   const [showVideoHistory, setShowVideoHistory] = useState(false);
   const [addedTrackId, setAddedTrackId] = useState<string | null>(null);
   const [pendingTrackId, setPendingTrackId] = useState<string | null>(null);
@@ -297,19 +324,39 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
   const serverUrl = useRadioStore((s) => s.serverUrl) ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
   const nickname = getNickname();
 
+  const fetchSearchHistory = useCallback(async (type: "artist" | "video"): Promise<SearchHistoryItem[]> => {
+    if (!serverUrl || !nickname) return [];
+    try {
+      const res = await fetch(
+        `${serverUrl}/api/search-history?nickname=${encodeURIComponent(nickname)}&type=${type}`,
+      );
+      const data = await res.json() as { history?: SearchHistoryItem[] };
+      return Array.isArray(data.history) ? data.history : [];
+    } catch {
+      return [];
+    }
+  }, [nickname, serverUrl]);
+
+  const refreshSearchHistory = useCallback(async (type: "artist" | "video") => {
+    const history = await fetchSearchHistory(type);
+    if (type === "artist") {
+      setArtistHistory(history);
+    } else {
+      setVideoHistory(history);
+    }
+  }, [fetchSearchHistory]);
+
   // Load search history
   useEffect(() => {
     if (!serverUrl || !nickname) return;
-    console.log('[search-history] Loading for nickname:', nickname);
     Promise.all([
-      fetch(`${serverUrl}/api/search-history?nickname=${encodeURIComponent(nickname)}&type=artist`).then((r) => r.json()).then((d) => { console.log('[search-history] artist response:', d); return d.history ?? []; }).catch(() => []),
-      fetch(`${serverUrl}/api/search-history?nickname=${encodeURIComponent(nickname)}&type=video`).then((r) => r.json()).then((d) => { console.log('[search-history] video response:', d); return d.history ?? []; }).catch(() => []),
+      fetchSearchHistory("artist"),
+      fetchSearchHistory("video"),
     ]).then(([artistHist, videoHist]) => {
-      console.log('[search-history] Loaded:', { artistHist, videoHist });
       setArtistHistory(artistHist);
       setVideoHistory(videoHist);
     }).catch(() => {});
-  }, [serverUrl, nickname]);
+  }, [fetchSearchHistory, nickname, serverUrl]);
 
   // Delete search history item
   const deleteHistoryItem = useCallback(async (type: 'artist' | 'video', id: string) => {
@@ -481,12 +528,11 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
       .then((r) => r.json())
       .then((data: SearchResult[]) => {
         if (runId !== latestSearchRunRef.current) return;
-        const normalized = Array.isArray(data) ? data : [];
+        const normalized = dedupeSearchResults(Array.isArray(data) ? data : []);
         const visible = filterSetResults(normalized);
         setResults((prev) => {
           if (!append) return visible;
-          const merged = [...prev, ...visible];
-          return Array.from(new Map(merged.map((item) => [item.id, item])).values());
+          return dedupeSearchResults([...prev, ...visible]);
         });
         setSearchQuery(query);
         setSearchOffsetSafe(offset + normalized.length);
@@ -631,6 +677,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
     setSelectedArtist(artist);
     setArtistSearchQuery(artist.name);
     setShowArtistResults(false);
+    setShowArtistHistory(false);
     setArtistResults([]);
     await Promise.all([
       loadArtistTracks(artist.name),
@@ -642,16 +689,22 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nickname, type: 'artist', query: artist.name }),
-      }).then((r) => r.json()).then((d) => {
-        if (!d.duplicate) {
-          fetch(`${serverUrl}/api/search-history?nickname=${encodeURIComponent(nickname)}&type=artist`)
-            .then((r) => r.json())
-            .then((d) => setArtistHistory(d.history ?? []))
-            .catch(() => {});
-        }
-      }).catch(() => {});
+      }).then(() => refreshSearchHistory("artist")).catch(() => {});
     }
-  }, [loadArtistTracks, loadArtistArtwork, nickname, serverUrl]);
+  }, [loadArtistTracks, loadArtistArtwork, nickname, refreshSearchHistory, serverUrl]);
+
+  const selectArtistHistoryItem = useCallback(async (query: string) => {
+    const artistName = query.trim();
+    if (!artistName) return;
+    await selectArtist({
+      id: `history:${artistName.toLowerCase()}`,
+      name: artistName,
+      country: null,
+      type: null,
+      disambiguation: null,
+      image: null,
+    });
+  }, [selectArtist]);
 
   // Get artwork URL with larger size
   const getArtworkUrl = (url: string, size: '100' | '300' = '300'): string => {
@@ -1115,14 +1168,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nickname, type: 'video', query: historyQuery }),
-      }).then((r) => r.json()).then((d) => {
-        if (!d.duplicate) {
-          fetch(`${serverUrl}/api/search-history?nickname=${encodeURIComponent(nickname)}&type=video`)
-            .then((r) => r.json())
-            .then((d) => setVideoHistory(d.history ?? []))
-            .catch(() => {});
-        }
-      }).catch(() => {});
+      }).then(() => refreshSearchHistory("video")).catch(() => {});
     }
 
     submitUrl(
@@ -1198,7 +1244,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
         fetch(`${url}/search?q=${encodeURIComponent(query)}&source=${newSource}&limit=${SEARCH_PAGE_SIZE}&offset=0&includeLocal=${hideLocalDiscovery ? "0" : includeLocal ? "1" : "0"}`)
           .then((r) => r.json())
           .then((data: SearchResult[]) => {
-            const normalized = Array.isArray(data) ? data : [];
+            const normalized = dedupeSearchResults(Array.isArray(data) ? data : []);
             setResults(filterSetResults(normalized));
             setSearchOffsetSafe(normalized.length);
             setSearchHasMore(normalized.length > 0);
@@ -1753,13 +1799,13 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                     </div>
                   )}
                   {showArtistHistory && artistHistory.length > 0 && (
-                    <div className="absolute left-0 right-0 top-full z-40 mt-1 rounded-md border border-gray-700 bg-gray-900 shadow-lg">
+                    <div className="absolute left-0 right-0 top-full z-40 mt-1 max-h-72 overflow-y-auto overscroll-contain rounded-md border border-gray-700 bg-gray-900 shadow-lg">
                       <div className="px-3 py-1.5 text-[11px] font-medium uppercase text-gray-500">Recente zoekopdrachten</div>
                       {artistHistory.map((h) => (
                         <div key={h.id} className="group flex w-full items-center px-3 py-1.5 text-left text-sm text-gray-300 hover:bg-gray-800">
                           <button
                             type="button"
-                            onClick={() => { setArtistSearchQuery(h.query); searchArtists(h.query); setShowArtistHistory(false); }}
+                            onClick={() => { void selectArtistHistoryItem(h.query); }}
                             className="flex-1 truncate"
                           >
                             {h.query}
@@ -1767,8 +1813,9 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                           <button
                             type="button"
                             onClick={() => deleteHistoryItem('artist', h.id)}
-                            className="ml-2 opacity-0 transition group-hover:opacity-100 hover:text-red-400"
+                            className="ml-2 shrink-0 px-1 text-red-400 opacity-100 transition hover:text-red-300 sm:opacity-0 sm:group-hover:opacity-100"
                             title="Verwijderen"
+                            aria-label={`Verwijder ${h.query} uit geschiedenis`}
                           >
                             ×
                           </button>
@@ -1974,7 +2021,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                 </div>
               )}
               {showVideoHistory && videoHistory.length > 0 && (
-                <div className="absolute left-0 right-0 top-full z-[250] mt-1 rounded-md border border-gray-700 bg-gray-900 shadow-lg">
+                <div className="absolute left-0 right-0 top-full z-[250] mt-1 max-h-72 overflow-y-auto overscroll-contain rounded-md border border-gray-700 bg-gray-900 shadow-lg">
                   <div className="px-3 py-1.5 text-[11px] font-medium uppercase text-gray-500">Recente zoekopdrachten</div>
                   {videoHistory.map((h) => (
                     <div key={h.id} className="group flex w-full items-center px-3 py-1.5 text-left text-sm text-gray-300 hover:bg-gray-800">
@@ -1988,8 +2035,9 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                       <button
                         type="button"
                         onClick={() => deleteHistoryItem('video', h.id)}
-                        className="ml-2 opacity-0 transition group-hover:opacity-100 hover:text-red-400"
+                        className="ml-2 shrink-0 px-1 text-red-400 opacity-100 transition hover:text-red-300 sm:opacity-0 sm:group-hover:opacity-100"
                         title="Verwijderen"
+                        aria-label={`Verwijder ${h.query} uit geschiedenis`}
                       >
                         ×
                       </button>

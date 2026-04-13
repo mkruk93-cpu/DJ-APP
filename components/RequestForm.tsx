@@ -25,7 +25,7 @@ interface Request {
   created_at: string;
 }
 
-type SearchSource = "search" | "youtube" | "soundcloud" | "spotify" | "genres" | "playlists";
+type SearchSource = "search" | "video" | "spotify" | "genres" | "playlists";
 
 interface SearchResult {
   id: string;
@@ -34,6 +34,12 @@ interface SearchResult {
   duration: number | null;
   thumbnail: string;
   channel: string;
+}
+
+interface SearchHistoryItem {
+  id: string;
+  query: string;
+  created_at: string;
 }
 
 interface MusicBrainzArtist {
@@ -98,6 +104,35 @@ function normalizeLoose(value: string): string {
     .replace(/[^a-z0-9]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function getSearchResultDedupKey(result: SearchResult): string {
+  const urlKey = normalizeLoose(result.url ?? "");
+  if (urlKey) return `url:${urlKey}`;
+
+  const titleKey = normalizeLoose(result.title ?? "");
+  const channelKey = normalizeLoose(result.channel ?? "");
+  if (titleKey || channelKey) return `meta:${channelKey}:${titleKey}`;
+
+  return `id:${result.id}`;
+}
+
+function dedupeSearchResults(items: SearchResult[]): SearchResult[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = getSearchResultDedupKey(item);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function getPreferredVideoSourceOrder(): Array<"soundcloud" | "youtube"> {
+  return ["soundcloud", "youtube"];
+}
+
+function inferVideoSource(url: string): "youtube" | "soundcloud" {
+  return /soundcloud\.com/i.test(url) ? "soundcloud" : "youtube";
 }
 
 const URL_REGEX = /^https?:\/\/(www\.)?(youtube\.com|youtu\.be|soundcloud\.com)\/.+$/i;
@@ -170,9 +205,9 @@ export default function RequestForm(
     () => buildGroupedGenreSections(genres, genreQuery),
     [genres, genreQuery],
   );
-  const [artistHistory, setArtistHistory] = useState<{id: string; query: string; created_at: string}[]>([]);
+  const [artistHistory, setArtistHistory] = useState<SearchHistoryItem[]>([]);
   const [showArtistHistory, setShowArtistHistory] = useState(false);
-  const [videoHistory, setVideoHistory] = useState<{id: string; query: string; created_at: string}[]>([]);
+  const [videoHistory, setVideoHistory] = useState<SearchHistoryItem[]>([]);
   const [showVideoHistory, setShowVideoHistory] = useState(false);
 
   const load = useCallback(async () => {
@@ -184,19 +219,39 @@ export default function RequestForm(
     } catch {}
   }, []);
 
+  const fetchSearchHistory = useCallback(async (type: "artist" | "video"): Promise<SearchHistoryItem[]> => {
+    if (!serverUrl || !nickname) return [];
+    try {
+      const res = await fetch(
+        `${serverUrl}/api/search-history?nickname=${encodeURIComponent(nickname)}&type=${type}`,
+      );
+      const data = await res.json() as { history?: SearchHistoryItem[] };
+      return Array.isArray(data.history) ? data.history : [];
+    } catch {
+      return [];
+    }
+  }, [nickname, serverUrl]);
+
+  const refreshSearchHistory = useCallback(async (type: "artist" | "video") => {
+    const history = await fetchSearchHistory(type);
+    if (type === "artist") {
+      setArtistHistory(history);
+    } else {
+      setVideoHistory(history);
+    }
+  }, [fetchSearchHistory]);
+
   // Load search history on mount and nickname change
   useEffect(() => {
     if (!serverUrl || !nickname) return;
-    console.log('[search-history] Loading for nickname:', nickname);
     Promise.all([
-      fetch(`${serverUrl}/api/search-history?nickname=${encodeURIComponent(nickname)}&type=artist`).then((r) => r.json()).then((d) => { console.log('[search-history] artist response:', d); return d.history ?? []; }).catch(() => []),
-      fetch(`${serverUrl}/api/search-history?nickname=${encodeURIComponent(nickname)}&type=video`).then((r) => r.json()).then((d) => { console.log('[search-history] video response:', d); return d.history ?? []; }).catch(() => []),
+      fetchSearchHistory("artist"),
+      fetchSearchHistory("video"),
     ]).then(([artistHist, videoHist]) => {
-      console.log('[search-history] Loaded:', { artistHist, videoHist });
       setArtistHistory(artistHist);
       setVideoHistory(videoHist);
     }).catch(() => {});
-  }, [serverUrl, nickname]);
+  }, [fetchSearchHistory, nickname, serverUrl]);
 
   // Delete search history item
   const deleteHistoryItem = useCallback(async (type: 'artist' | 'video', id: string) => {
@@ -216,17 +271,27 @@ export default function RequestForm(
   }, [serverUrl]);
 
   const search = useCallback((query: string) => {
-    if (!serverUrl || query.length < 2 || (source !== "youtube" && source !== "soundcloud")) {
+    if (!serverUrl || query.length < 2 || source !== "video") {
       setResults([]);
       setSearching(false);
       return;
     }
     setSearching(true);
-    fetch(`${serverUrl}/search?q=${encodeURIComponent(query)}&source=${source}&includeLocal=${hideLocalDiscovery ? "0" : includeLocal ? "1" : "0"}`)
-      .then((r) => r.json())
-      .then((data: SearchResult[]) => {
-        setResults(data);
-        setShowResults(data.length > 0);
+    const includeLocalParam = hideLocalDiscovery ? "0" : includeLocal ? "1" : "0";
+    Promise.all(
+      getPreferredVideoSourceOrder().map(async (platform) => {
+        const res = await fetch(
+          `${serverUrl}/search?q=${encodeURIComponent(query)}&source=${platform}&includeLocal=${includeLocalParam}`,
+        );
+        if (!res.ok) return [] as SearchResult[];
+        const data = await res.json() as SearchResult[];
+        return Array.isArray(data) ? data : [];
+      }),
+    )
+      .then((groups) => {
+        const deduped = dedupeSearchResults(groups.flat());
+        setResults(deduped);
+        setShowResults(deduped.length > 0);
       })
       .catch(() => setResults([]))
       .finally(() => setSearching(false));
@@ -295,6 +360,7 @@ export default function RequestForm(
     setSelectedArtist(artist);
     setArtistSearchQuery(artist.name);
     setShowArtistResults(false);
+    setShowArtistHistory(false);
     setArtistResults([]);
     await Promise.all([
       loadArtistTracks(artist.name),
@@ -306,16 +372,22 @@ export default function RequestForm(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nickname, type: 'artist', query: artist.name }),
-      }).then((r) => r.json()).then((d) => {
-        if (!d.duplicate) {
-          fetch(`${serverUrl}/api/search-history?nickname=${encodeURIComponent(nickname)}&type=artist`)
-            .then((r) => r.json())
-            .then((d) => setArtistHistory(d.history ?? []))
-            .catch(() => {});
-        }
-      }).catch(() => {});
+      }).then(() => refreshSearchHistory("artist")).catch(() => {});
     }
-  }, [loadArtistTracks, loadArtistArtwork, nickname, serverUrl]);
+  }, [loadArtistTracks, loadArtistArtwork, nickname, refreshSearchHistory, serverUrl]);
+
+  const selectArtistHistoryItem = useCallback(async (query: string) => {
+    const artistName = query.trim();
+    if (!artistName) return;
+    await selectArtist({
+      id: `history:${artistName.toLowerCase()}`,
+      name: artistName,
+      country: null,
+      type: null,
+      disambiguation: null,
+      image: null,
+    });
+  }, [selectArtist]);
 
   // Get artwork URL with larger size
   const getArtworkUrl = (url: string, size: '100' | '300' = '300'): string => {
@@ -523,10 +595,21 @@ export default function RequestForm(
   async function resolveToUrl(query: string, preferredSource: "youtube" | "soundcloud"): Promise<SearchResult | null> {
     if (!serverUrl) return null;
     try {
-      const res = await fetch(`${serverUrl}/search?q=${encodeURIComponent(query)}&source=${preferredSource}&includeLocal=${hideLocalDiscovery ? "0" : includeLocal ? "1" : "0"}`);
-      if (!res.ok) return null;
-      const data = await res.json() as SearchResult[];
-      return data[0] ?? null;
+      const includeLocalParam = hideLocalDiscovery ? "0" : includeLocal ? "1" : "0";
+      const orderedSources = preferredSource === "soundcloud"
+        ? getPreferredVideoSourceOrder()
+        : ["youtube", "soundcloud"] as const;
+      const groups = await Promise.all(
+        orderedSources.map(async (platform) => {
+          const res = await fetch(
+            `${serverUrl}/search?q=${encodeURIComponent(query)}&source=${platform}&includeLocal=${includeLocalParam}`,
+          );
+          if (!res.ok) return [] as SearchResult[];
+          const data = await res.json() as SearchResult[];
+          return Array.isArray(data) ? data : [];
+        }),
+      );
+      return dedupeSearchResults(groups.flat())[0] ?? null;
     } catch {
       return null;
     }
@@ -656,8 +739,7 @@ export default function RequestForm(
     if (source === "spotify" || source === "genres" || source === "playlists") return;
     const trimmed = input.trim();
     if (!trimmed) return;
-    const preferredSource = source === "soundcloud" ? "soundcloud" : "youtube";
-    await submitRequest(trimmed, preferredSource);
+    await submitRequest(trimmed, "soundcloud");
   }
 
   function handleInputChange(value: string) {
@@ -760,12 +842,12 @@ export default function RequestForm(
       setResults([]);
       setShowResults(false);
     }, 100);
-    const preferredSource = source === "soundcloud" ? "soundcloud" : "youtube";
-    const resolvedSource = result.url.startsWith("local://") ? "local" : preferredSource;
+    const inferredSource = inferVideoSource(result.url);
+    const resolvedSource = result.url.startsWith("local://") ? "local" : inferredSource;
     
     // For SoundCloud: use channel (uploader) as artist only if title doesn't have artist info
     let artist = result.channel;
-    if (source === "soundcloud" && result.channel) {
+    if (inferredSource === "soundcloud" && result.channel) {
       const parsed = parseTrackDisplay(result.title);
       if (parsed.artist) {
         // Title already has artist, use that instead of uploader
@@ -780,17 +862,10 @@ export default function RequestForm(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nickname, type: 'video', query: historyQuery }),
-      }).then((r) => r.json()).then((d) => {
-        if (!d.duplicate) {
-          fetch(`${serverUrl}/api/search-history?nickname=${encodeURIComponent(nickname)}&type=video`)
-            .then((r) => r.json())
-            .then((d) => setVideoHistory(d.history ?? []))
-            .catch(() => {});
-        }
-      }).catch(() => {});
+      }).then(() => refreshSearchHistory("video")).catch(() => {});
     }
     
-    await submitRequest(result.url, preferredSource, {
+    await submitRequest(result.url, inferredSource, {
       providedThumb: result.thumbnail || undefined,
       duration: result.duration,
       source: resolvedSource,
@@ -930,30 +1005,10 @@ export default function RequestForm(
           </button>
           <button
             type="button"
-            onClick={() => switchSource("youtube")}
+            onClick={() => switchSource("video")}
             className={`group flex h-8 min-w-0 basis-0 items-center justify-center rounded-md px-1.5 text-[11px] font-semibold transition-all duration-200 ${
-              source === "youtube"
-                ? "flex-[1.4] bg-red-500/20 text-red-400"
-                : "flex-1 text-gray-400 hover:text-gray-200"
-            }`}
-          >
-            <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M23.5 6.2a3.02 3.02 0 00-2.12-2.14C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.38.56A3.02 3.02 0 00.5 6.2 31.7 31.7 0 000 12a31.7 31.7 0 00.5 5.8 3.02 3.02 0 002.12 2.14c1.88.56 9.38.56 9.38.56s7.5 0 9.38-.56a3.02 3.02 0 002.12-2.14A31.7 31.7 0 0024 12a31.7 31.7 0 00-.5-5.8zM9.55 15.5V8.5l6.27 3.5-6.27 3.5z" />
-            </svg>
-            <span
-              className={`overflow-hidden whitespace-nowrap transition-all duration-200 ${
-                source === "youtube" ? "ml-1 max-w-[86px] opacity-100" : "max-w-0 opacity-0"
-              }`}
-            >
-              YouTube
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => switchSource("soundcloud")}
-            className={`group flex h-8 min-w-0 basis-0 items-center justify-center rounded-md px-1.5 text-[11px] font-semibold transition-all duration-200 ${
-              source === "soundcloud"
-                ? "flex-[1.4] bg-orange-500/20 text-orange-400"
+              source === "video"
+                ? "flex-[1.5] bg-orange-500/20 text-orange-300"
                 : "flex-1 text-gray-400 hover:text-gray-200"
             }`}
           >
@@ -962,10 +1017,10 @@ export default function RequestForm(
             </svg>
             <span
               className={`overflow-hidden whitespace-nowrap transition-all duration-200 ${
-                source === "soundcloud" ? "ml-1 max-w-[86px] opacity-100" : "max-w-0 opacity-0"
+                source === "video" ? "ml-1 max-w-[140px] opacity-100" : "max-w-0 opacity-0"
               }`}
             >
-              SoundCloud
+              SC + YouTube
             </span>
           </button>
           <button
@@ -1207,13 +1262,13 @@ export default function RequestForm(
                     </div>
                   )}
                   {showArtistHistory && artistHistory.length > 0 && (
-                    <div className="absolute left-0 right-0 top-full z-40 mt-1 rounded-md border border-gray-700 bg-gray-900 shadow-lg">
+                    <div className="absolute left-0 right-0 top-full z-40 mt-1 max-h-72 overflow-y-auto overscroll-contain rounded-md border border-gray-700 bg-gray-900 shadow-lg">
                       <div className="px-3 py-1.5 text-[11px] font-medium uppercase text-gray-500">Recente zoekopdrachten</div>
                       {artistHistory.map((h) => (
                         <div key={h.id} className="group flex w-full items-center px-3 py-1.5 text-left text-sm text-gray-300 hover:bg-gray-800">
                           <button
                             type="button"
-                            onClick={() => { setArtistSearchQuery(h.query); searchArtists(h.query); setShowArtistHistory(false); }}
+                            onClick={() => { void selectArtistHistoryItem(h.query); }}
                             className="flex-1 truncate"
                           >
                             {h.query}
@@ -1221,8 +1276,9 @@ export default function RequestForm(
                           <button
                             type="button"
                             onClick={() => deleteHistoryItem('artist', h.id)}
-                            className="ml-2 opacity-0 transition group-hover:opacity-100 hover:text-red-400"
+                            className="ml-2 shrink-0 px-1 text-red-400 opacity-100 transition hover:text-red-300 sm:opacity-0 sm:group-hover:opacity-100"
                             title="Verwijderen"
+                            aria-label={`Verwijder ${h.query} uit geschiedenis`}
                           >
                             ×
                           </button>
@@ -1323,12 +1379,7 @@ export default function RequestForm(
                   if (!showResults && !showVideoHistory) return;
                   setTimeout(() => { if (input.trim() === '') setShowVideoHistory(false); setShowResults(false); }, 150);
                 }}
-                onTouchEnd={() => {
-                  // Handle touch end for mobile
-                  if (!showResults) return;
-                  setTimeout(() => setShowResults(false), 300);
-                }}
-                placeholder={source === "youtube" ? "Zoek op YouTube of plak een link..." : "Zoek op SoundCloud of plak een link..."}
+                placeholder="Zoek op SoundCloud of YouTube, of plak een link..."
                 className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 pr-28 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500 focus:ring-1 focus:ring-violet-500/20"
               />
               {!hideLocalDiscovery && (
@@ -1352,7 +1403,7 @@ export default function RequestForm(
                 </div>
               )}
               {showVideoHistory && videoHistory.length > 0 && (
-                <div className="absolute left-0 right-0 top-full z-40 mt-1 rounded-md border border-gray-700 bg-gray-900 shadow-lg">
+                <div className="absolute left-0 right-0 top-full z-40 mt-1 max-h-72 overflow-y-auto overscroll-contain rounded-md border border-gray-700 bg-gray-900 shadow-lg">
                   <div className="px-3 py-1.5 text-[11px] font-medium uppercase text-gray-500">Recente zoekopdrachten</div>
                   {videoHistory.map((h) => (
                     <div key={h.id} className="group flex w-full items-center px-3 py-1.5 text-left text-sm text-gray-300 hover:bg-gray-800">
@@ -1366,8 +1417,9 @@ export default function RequestForm(
                       <button
                         type="button"
                         onClick={() => deleteHistoryItem('video', h.id)}
-                        className="ml-2 opacity-0 transition group-hover:opacity-100 hover:text-red-400"
+                        className="ml-2 shrink-0 px-1 text-red-400 opacity-100 transition hover:text-red-300 sm:opacity-0 sm:group-hover:opacity-100"
                         title="Verwijderen"
+                        aria-label={`Verwijder ${h.query} uit geschiedenis`}
                       >
                         ×
                       </button>
@@ -1378,22 +1430,14 @@ export default function RequestForm(
               {showResults && results.length > 0 && (
                 <div
                   data-prevent-pull-refresh="1"
-                  className="fixed inset-x-4 top-20 z-[150] max-h-[50dvh] overscroll-contain overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50 sm:absolute sm:left-0 sm:right-0 sm:top-full sm:inset-x-auto sm:max-h-80"
+                  className="absolute left-0 right-0 top-full z-[150] mt-1 max-h-[50dvh] touch-pan-y overscroll-contain overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50 sm:max-h-80"
                   onMouseDown={(e) => {
                     // Prevent the blur from hiding results when clicking inside
-                    e.preventDefault();
-                  }}
-                  onTouchStart={(e) => {
-                    // Prevent mobile scroll when touching dropdown
                     e.preventDefault();
                   }}
                   onMouseLeave={() => {
                     // Hide when mouse leaves the dropdown
                     setTimeout(() => setShowResults(false), 200);
-                  }}
-                  onTouchEnd={() => {
-                    // Hide when touch ends on mobile
-                    setTimeout(() => setShowResults(false), 300);
                   }}
                 >
                   {results.map((r) => (
