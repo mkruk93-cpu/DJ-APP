@@ -1447,7 +1447,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
 
         {source === "spotify" ? (
           <div className="min-h-0 flex-1">
-            <SpotifyErrorBoundary onReset={() => switchSource("youtube")}>
+            <SpotifyErrorBoundary onReset={() => switchSource("video")}>
               <SpotifyBrowser onAddTrack={handleSpotifyAdd} submitting={submitting} />
             </SpotifyErrorBoundary>
           </div>
