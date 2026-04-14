@@ -541,15 +541,6 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
         // Close search history dropdown when results are loaded
         setShowVideoHistory(false);
 
-        // Save search term to history (only for the initial search)
-        if (!append && nickname && serverUrl && query.trim().length >= 2) {
-          fetch(`${serverUrl}/api/search-history`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ nickname, type: 'video', query: query.trim() }),
-          }).then(() => refreshSearchHistory("video")).catch(() => {});
-        }
-
         const deduped = dedupeSearchResults(groups.flat());
         const visible = filterSetResults(deduped);
         setResults((prev) => {
@@ -1106,6 +1097,15 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
   function selectResult(result: SearchResult) {
     const key = `${source}:${result.id}`;
     setResultStatus((prev) => ({ ...prev, [key]: "pending" }));
+
+    // Save search term to history when a result is actually selected
+    if (searchQuery && nickname && serverUrl && searchQuery.trim().length >= 2) {
+      fetch(`${serverUrl}/api/search-history`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nickname, type: 'video', query: searchQuery.trim() }),
+      }).then(() => refreshSearchHistory("video")).catch(() => {});
+    }
 
     startRecentAdd(key, result.url, result.title, result.channel);
     setResultStatus((prev) => ({ ...prev, [key]: "added" }));
