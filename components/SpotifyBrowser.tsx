@@ -30,6 +30,10 @@ import {
   type UserPlaylist,
   type UserPlaylistTrack,
 } from "@/lib/userPlaylistsApi";
+import {
+  listFavoriteArtists,
+  type FavoriteArtist,
+} from "@/lib/userPlaylistsApi";
 import { NoAutofillInput } from "@/components/NoAutofillInput";
 import { useAuth } from "@/lib/authContext";
 import TrackActions from "@/components/TrackActions";
@@ -50,6 +54,7 @@ interface SpotifyBrowserProps {
   }) => Promise<"added" | "manual_select" | "error">;
   submitting: boolean;
   mode?: "all" | "playlistsOnly" | "spotifyOnly";
+  onSelectFavoriteArtist?: (artist: { mbid: string; name: string }) => void;
 }
 
 function formatDuration(ms: number): string {
@@ -155,7 +160,7 @@ function isLikedTracksPlaylistName(name: string | null | undefined): boolean {
   return (name ?? "").trim().toLowerCase() === "liked tracks";
 }
 
-export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }: SpotifyBrowserProps) {
+export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", onSelectFavoriteArtist }: SpotifyBrowserProps) {
   const { userAccount } = useAuth();
   const username = userAccount?.username || "";
   const lockAutoplayFallback = useRadioStore((s) => s.lockAutoplayFallback);
@@ -187,6 +192,8 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
   const [tracksNext, setTracksNext] = useState<string | null>(null);
   const [trackSource, setTrackSource] = useState<TrackSource>(null);
   const [importing, setImporting] = useState(false);
+  const [favoriteArtists, setFavoriteArtists] = useState<FavoriteArtist[]>([]);
+  const [favoriteArtistsLoading, setFavoriteArtistsLoading] = useState(false);
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [importFiles, setImportFiles] = useState<File[]>([]);
@@ -421,6 +428,24 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
     }
     // Spotify connectie niet meer nodig
   }, [showPlaylistSections, showSharedPlaylistsInSpotifyTab]);
+
+  useEffect(() => {
+    if (!showPlaylistSections) return;
+    setFavoriteArtistsLoading(true);
+    setFavoriteArtists([]);
+    listFavoriteArtists()
+      .then((favs) => {
+        console.log('[SpotifyBrowser] Favorite artists loaded:', favs.length);
+        setFavoriteArtists(favs);
+      })
+      .catch((err) => {
+        console.error('[SpotifyBrowser] Failed to load favorite artists:', err);
+        setFavoriteArtists([]);
+      })
+      .finally(() => {
+        setFavoriteArtistsLoading(false);
+      });
+  }, [showPlaylistSections]);
 
   useEffect(() => {
     function closeTrackMenu() {
@@ -1193,6 +1218,64 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
       {view === "playlists" && !loading && (
         <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto pb-14 sm:pb-2">
           {showPlaylistSections && (
+          <div className="mb-2 rounded-md bg-pink-950/10 p-2">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-[11px] font-semibold text-pink-200">Favoriete artiesten</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setFavoriteArtistsLoading(true);
+                  listFavoriteArtists()
+                    .then((favs) => setFavoriteArtists(favs))
+                    .catch((err) => {
+                      console.error('[SpotifyBrowser] Failed to reload favorite artists:', err);
+                      setFavoriteArtists([]);
+                    })
+                    .finally(() => setFavoriteArtistsLoading(false));
+                }}
+                disabled={favoriteArtistsLoading}
+                className="text-[10px] text-pink-300 transition hover:text-pink-200 disabled:opacity-40"
+              >
+                {favoriteArtistsLoading ? "Laden..." : "Ververs"}
+              </button>
+            </div>
+            {favoriteArtistsLoading ? (
+              <div className="flex items-center justify-center py-3">
+                <span className="block h-4 w-4 animate-spin rounded-full border-2 border-pink-400 border-t-transparent" />
+              </div>
+            ) : favoriteArtists.length === 0 ? (
+              <p className="text-[10px] text-gray-400">Nog geen favorieten. Zoek naar een artiest en klik op het hartje om toe te voegen.</p>
+            ) : (
+              <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
+                {favoriteArtists.map((artist) => (
+                  <button
+                    key={artist.mbid}
+                    type="button"
+                    onClick={() => {
+                      if (onSelectFavoriteArtist) {
+                        onSelectFavoriteArtist({ mbid: artist.mbid, name: artist.name });
+                      }
+                    }}
+                    className="flex items-center gap-2 rounded-md bg-gray-900/60 px-2 py-1.5 text-left transition hover:bg-pink-500/10"
+                  >
+                    {artist.image_url ? (
+                      <img src={artist.image_url} alt="" className="h-7 w-7 shrink-0 rounded object-cover" />
+                    ) : (
+                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-pink-500/20">
+                        <svg className="h-4 w-4 text-pink-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                        </svg>
+                      </div>
+                    )}
+                    <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-white">{artist.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          )}
+
+          {showPlaylistSections && (
           <div className="mb-2 rounded-md border border-violet-700/70 bg-violet-950/20 p-2">
             <div className="mb-1 flex flex-wrap items-center gap-1.5">
               <p className="text-[11px] font-semibold text-violet-100 mr-auto">Persoonlijke playlists</p>
@@ -1816,7 +1899,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
             return (
               <div
                 key={track.id}
-                className={`flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition ${
+                className={`group flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition ${
                   isAdded
                     ? "bg-green-500/10"
                     : "hover:bg-gray-800/80"
@@ -1837,10 +1920,19 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                   ) : (
                     <div className="h-10 w-10 shrink-0 rounded bg-gray-800" />
                   )}
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 flex-1 text-left">
                     <p className="truncate text-xs font-medium text-white">{track.name}</p>
                     <p className="truncate text-[10px] text-gray-400">{artists}</p>
                   </div>
+                  {isAdded ? (
+                    <span className="shrink-0 rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
+                      Toegevoegd
+                    </span>
+                  ) : isPending ? (
+                    <span className="shrink-0 rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200">
+                      Bezig...
+                    </span>
+                  ) : null}
                 </button>
                 <div className="flex shrink-0 items-center gap-1.5">
                   <TrackActions 
@@ -1903,7 +1995,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                 onTouchEnd={clearTrackHoldTimer}
                 onTouchMove={clearTrackHoldTimer}
                 onTouchCancel={clearTrackHoldTimer}
-                className={`flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition ${
+                className={`group flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition ${
                   isAdded ? "bg-green-500/10" : "hover:bg-gray-800/80"
                 }`}
               >
@@ -1926,10 +2018,19 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                       </svg>
                     </div>
                   )}
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 flex-1 text-left">
                     <p className="truncate text-xs font-medium text-white">{track.title}</p>
                     <p className="truncate text-[10px] text-gray-400">{track.artist ?? "Unknown"}</p>
                   </div>
+                  {isAdded ? (
+                    <span className="shrink-0 rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
+                      Toegevoegd
+                    </span>
+                  ) : isPending ? (
+                    <span className="shrink-0 rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200">
+                      Bezig...
+                    </span>
+                  ) : null}
                 </button>
                 <div className="flex shrink-0 items-center gap-1.5">
                   <TrackActions 
@@ -1987,7 +2088,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
             return (
               <div
                 key={track.id}
-                className={`flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition ${
+                className={`group flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition ${
                   isAdded ? "bg-green-500/10" : "hover:bg-gray-800/80"
                 }`}
               >
@@ -2010,10 +2111,19 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all" }:
                     </svg>
                   </div>
                 )}
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0 flex-1 text-left">
                   <p className="truncate text-xs font-medium text-white">{track.title}</p>
                   <p className="truncate text-[10px] text-gray-400">{track.artist ?? "Unknown"}</p>
                 </div>
+                {isAdded ? (
+                  <span className="shrink-0 rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
+                    Toegevoegd
+                  </span>
+                ) : isPending ? (
+                  <span className="shrink-0 rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200">
+                    Bezig...
+                  </span>
+                ) : null}
                 </button>
                 <div className="flex shrink-0 items-center gap-1.5">
                   <TrackActions 

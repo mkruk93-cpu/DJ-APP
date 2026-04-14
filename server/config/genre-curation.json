@@ -41,7 +41,9 @@
         "gabber"
       ],
       "priorityTracks": [],
-      "blockedTracks": [],
+      "blockedTracks": [
+        "imagine dragons - thunder"
+      ],
       "blockedArtists": []
     },
     {
@@ -190,7 +192,8 @@
         "hugel",
         "gabry ponte",
         "liamoo",
-        "sigrid"
+        "sigrid",
+        "david guetta & bebe rexha"
       ],
       "minScore": 3,
       "priorityLabels": [],
@@ -204,8 +207,12 @@
         "hardcore",
         "gabber"
       ],
-      "priorityTracks": [],
-      "blockedTracks": [],
+      "priorityTracks": [
+        "i'm good (blue) [live performance]"
+      ],
+      "blockedTracks": [
+        "alle farben feat. graham candy - she moves (far away) [street video]"
+      ],
       "blockedArtists": []
     },
     {
@@ -297,7 +304,7 @@
       "blockedArtists": []
     },
     {
-      "id": "drum_and_bass",
+      "id": "drum and bass",
       "label": "Drum and Bass",
       "priorityArtists": [
         "sub focus",
@@ -338,13 +345,16 @@
         "kasra",
         "muzz",
         "feint",
-        "maduk"
+        "maduk",
+        "neonlight"
       ],
       "minScore": 3,
       "priorityLabels": [],
       "requiredTokens": [],
       "blockedTokens": [],
-      "priorityTracks": [],
+      "priorityTracks": [
+        "computer music |hd|"
+      ],
       "blockedTracks": [],
       "blockedArtists": []
     },
@@ -445,7 +455,9 @@
         "gabber"
       ],
       "priorityTracks": [],
-      "blockedTracks": [],
+      "blockedTracks": [
+        "rusko - first day out"
+      ],
       "blockedArtists": []
     },
     {
@@ -1112,7 +1124,7 @@
       "blockedArtists": []
     },
     {
-      "id": "indie_rock",
+      "id": "indie rock",
       "label": "Indie Rock",
       "priorityArtists": [
         "the strokes",
@@ -1129,7 +1141,9 @@
       "requiredTokens": [],
       "blockedTokens": [],
       "priorityTracks": [],
-      "blockedTracks": [],
+      "blockedTracks": [
+        "the wombats - tokyo (vampires & wolves [track 02]"
+      ],
       "blockedArtists": []
     },
     {
@@ -2029,7 +2043,9 @@
       "priorityLabels": [],
       "requiredTokens": [],
       "blockedTokens": [],
-      "priorityTracks": [],
+      "priorityTracks": [
+        "pretty fly (for a white guy) | live at woodstock ’99"
+      ],
       "blockedTracks": [],
       "blockedArtists": []
     },
@@ -2711,6 +2727,14 @@
     "kathy hlad - my accordion polka",
     "darren styles - us against the world (da tweekaz remix)",
     "eppo korthuis - slovenischer bauer tanz",
-    "w&w & axmo ft. sonja - rave love (official audio) [rave culture]"
+    "w&w & axmo ft. sonja - rave love (official audio) [rave culture]",
+    "gpf - gpf x riot shift - broccoli fuck (kimmercore's rimmercore piep fark remix)",
+    "ac/dc - highway to hell",
+    "the offspring - pretty fly (for a white guy) | live at woodstock ’99",
+    "david guetta & bebe rexha - i'm good (blue) [live performance]",
+    "neonlight - computer music |hd|",
+    "atmozfears - timebreaker",
+    "e-force x imthox x mc flo - black mirror | official hardstyle visualizer",
+    "envine & rekall - open your mind | official hardstyle visualizer"
   ]
 }

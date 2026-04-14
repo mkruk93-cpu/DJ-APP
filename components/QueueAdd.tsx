@@ -9,6 +9,7 @@ import { getRadioToken } from "@/lib/auth";
 import { isSpotifyConfigured } from "@/lib/spotify";
 import { getGenres, getGenreHits, addPriorityArtistToGenre, blockArtistForGenre, type GenreOption, type GenreHit } from "@/lib/radioApi";
 import { buildGroupedGenreSections, GENRE_FALLBACK_OPTIONS, getGenreGroupMembers, isGroupedParentGenre, resolveGenreLabel } from "@/lib/genreDropdown";
+import { listFavoriteArtists, addFavoriteArtist, removeFavoriteArtist, type FavoriteArtist } from "@/lib/userPlaylistsApi";
 import SpotifyBrowser from "@/components/SpotifyBrowser";
 import SharedPlaylistsBrowser from "@/components/SharedPlaylistsBrowser";
 import { NoAutofillInput } from "@/components/NoAutofillInput";
@@ -276,6 +277,9 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
   const [showVideoHistory, setShowVideoHistory] = useState(false);
   const [addedTrackId, setAddedTrackId] = useState<string | null>(null);
   const [pendingTrackId, setPendingTrackId] = useState<string | null>(null);
+  const [favoriteArtists, setFavoriteArtists] = useState<FavoriteArtist[]>([]);
+  const [favoriteArtistsLoading, setFavoriteArtistsLoading] = useState(false);
+  const [showFavoriteArtists, setShowFavoriteArtists] = useState(false);
   
   const [isMobile, setIsMobile] = useState(false);
   const [mobileGenreMenuTop, setMobileGenreMenuTop] = useState<number | null>(null);
@@ -1557,7 +1561,24 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
         {source === "spotify" ? (
           <div className="min-h-0 flex-1">
             <SpotifyErrorBoundary onReset={() => switchSource("video")}>
-              <SpotifyBrowser onAddTrack={handleSpotifyAdd} submitting={submitting} />
+              <SpotifyBrowser onAddTrack={handleSpotifyAdd} submitting={submitting} onSelectFavoriteArtist={(artist) => {
+                setSource("search");
+                setArtistSearchQuery(artist.name);
+                setSelectedArtist({
+                  id: artist.mbid,
+                  name: artist.name,
+                  country: null,
+                  type: null,
+                  disambiguation: null,
+                  image: null,
+                });
+                setArtistTracks([]);
+                setArtistAlbums([]);
+                setArtistTracksPageSafe(1);
+                setArtistTracksHasMore(false);
+                setArtistTrackFilter("");
+                void loadArtistTracks(artist.name, false);
+              }} />
             </SpotifyErrorBoundary>
           </div>
         ) : source === "playlists" ? (
@@ -1775,33 +1796,66 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
             {!selectedArtist ? (
               <div className="shrink-0 space-y-2">
                 <div className="relative z-10">
-                  <NoAutofillInput
-                    type="search"
-                    name={`artist-search-${Math.random().toString(36).substring(7)}`}
-                    autoComplete="off"
-                    spellCheck={false}
-                    value={artistSearchQuery}
-                    onChange={(e) => {
-                      setArtistSearchQuery(e.target.value);
-                      setSelectedArtist(null);
-                      setArtistTracks([]);
-                      setArtistAlbums([]);
-                      if (debounceRef.current) clearTimeout(debounceRef.current);
-                      if (e.target.value.length >= 2) {
-                        debounceRef.current = setTimeout(() => searchArtists(e.target.value), 300);
-                      } else {
-                        setArtistResults([]);
-                        setShowArtistResults(false);
-                      }
-                    }}
-                    onFocus={() => { setShowArtistHistory(true); if (artistResults.length > 0) setShowArtistResults(true); }}
-                    onKeyDown={(e) => { if (e.key === 'Escape') { setShowArtistHistory(false); setShowArtistResults(false); } }}
-                    onBlur={() => { if (!showArtistResults && !showArtistHistory) return; setTimeout(() => { if (artistSearchQuery.trim() === '') setShowArtistHistory(false); setShowArtistResults(false); }, 150); }}
-                    placeholder="Zoek op artiest..."
-                    className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 pr-10 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
-                  />
+                  <div className="flex gap-2">
+                    <NoAutofillInput
+                      type="search"
+                      name={`artist-search-${Math.random().toString(36).substring(7)}`}
+                      autoComplete="off"
+                      spellCheck={false}
+                      value={artistSearchQuery}
+                      onChange={(e) => {
+                        setArtistSearchQuery(e.target.value);
+                        setSelectedArtist(null);
+                        setArtistTracks([]);
+                        setArtistAlbums([]);
+                        if (debounceRef.current) clearTimeout(debounceRef.current);
+                        if (e.target.value.length >= 2) {
+                          debounceRef.current = setTimeout(() => searchArtists(e.target.value), 300);
+                        } else {
+                          setArtistResults([]);
+                          setShowArtistResults(false);
+                        }
+                      }}
+                      onFocus={() => { setShowArtistHistory(true); if (artistResults.length > 0) setShowArtistResults(true); }}
+                      onKeyDown={(e) => { if (e.key === 'Escape') { setShowArtistHistory(false); setShowArtistResults(false); } }}
+                      onBlur={() => { if (!showArtistResults && !showArtistHistory) return; setTimeout(() => { if (artistSearchQuery.trim() === '') setShowArtistHistory(false); setShowArtistResults(false); }, 150); }}
+                      placeholder="Zoek op artiest..."
+                      className="flex-1 rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 pr-10 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (showFavoriteArtists) {
+                          setShowFavoriteArtists(false);
+                        } else {
+                          if (favoriteArtists.length === 0 && !favoriteArtistsLoading) {
+                            setFavoriteArtistsLoading(true);
+                            try {
+                              const favs = await listFavoriteArtists();
+                              setFavoriteArtists(favs);
+                            } catch (err) {
+                              console.error('[QueueAdd] Failed to load favorite artists:', err);
+                            } finally {
+                              setFavoriteArtistsLoading(false);
+                            }
+                          }
+                          setShowFavoriteArtists(true);
+                        }
+                      }}
+                      className={`shrink-0 rounded-lg border px-3 py-2 text-xs font-semibold transition ${
+                        showFavoriteArtists
+                          ? 'border-pink-500/50 bg-pink-500/20 text-pink-300'
+                          : 'border-gray-700 bg-gray-800 text-gray-300 hover:border-pink-500/50 hover:text-pink-300'
+                      }`}
+                      title="Favorieten"
+                    >
+                      <svg className="h-4 w-4" fill={showFavoriteArtists ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                      </svg>
+                    </button>
+                  </div>
                   {artistSearching && (
-                    <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                    <div className="absolute right-14 top-1/2 -translate-y-1/2">
                       <span className="block h-4 w-4 animate-spin rounded-full border-2 border-violet-400 border-t-transparent" />
                     </div>
                   )}
@@ -1832,26 +1886,123 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                   )}
                   {showArtistResults && artistResults.length > 0 && (
                     <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-80 overflow-y-auto overscroll-contain rounded-md border border-gray-700 bg-gray-900 shadow-lg" style={{ WebkitOverflowScrolling: 'touch' }}>
-                      {artistResults.map((artist) => (
+                      {artistResults.map((artist) => {
+                        const isFav = favoriteArtists.some((f) => f.mbid === artist.id);
+                        return (
+                        <div key={artist.id} className="group flex w-full items-center px-3 py-2 text-left hover:bg-gray-800 first:rounded-t-md last:rounded-b-md">
+                          <button
+                            type="button"
+                            onClick={() => selectArtist(artist)}
+                            className="flex min-w-0 flex-1 items-center gap-2"
+                          >
+                            {artist.image ? (
+                              <img src={artist.image} alt="" className="h-10 w-10 shrink-0 rounded object-cover" />
+                            ) : (
+                              <div className="h-10 w-10 shrink-0 rounded bg-gray-800" />
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-medium text-white">{artist.name}</p>
+                              <p className="truncate text-xs text-gray-400">
+                                {artist.country || 'Onbekend'}{artist.type ? ` • ${artist.type}` : ''}{artist.disambiguation ? ` • ${artist.disambiguation}` : ''}
+                              </p>
+                            </div>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              if (isFav) {
+                                await removeFavoriteArtist(artist.id);
+                                setFavoriteArtists((prev) => prev.filter((f) => f.mbid !== artist.id));
+                              } else {
+                                await addFavoriteArtist({ mbid: artist.id, name: artist.name, image_url: artist.image, country: artist.country });
+                                setFavoriteArtists((prev) => [...prev, { mbid: artist.id, name: artist.name, image_url: artist.image, country: artist.country, added_at: new Date().toISOString() }]);
+                              }
+                            }}
+                            className={`ml-2 shrink-0 rounded p-1 transition ${isFav ? 'text-pink-400 hover:bg-pink-500/10' : 'text-gray-600 opacity-0 group-hover:opacity-100 hover:text-pink-400'}`}
+                            title={isFav ? "Verwijder uit favorieten" : "Toevoegen aan favorieten"}
+                          >
+                            <svg className="h-4 w-4" fill={isFav ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                            </svg>
+                          </button>
+                        </div>
+                      );
+                      })}
+                    </div>
+                  )}
+
+                  {showFavoriteArtists && (
+                    <div className="mt-2 rounded-md bg-pink-950/10 p-2">
+                      <div className="mb-2 flex items-center justify-between">
+                        <p className="text-[11px] font-semibold text-pink-200">Favoriete artiesten</p>
                         <button
-                          key={artist.id}
                           type="button"
-                          onClick={() => selectArtist(artist)}
-                          className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-gray-800 first:rounded-t-md last:rounded-b-md"
+                          onClick={() => setShowFavoriteArtists(false)}
+                          className="text-xs text-pink-300 transition hover:text-pink-200"
                         >
-                          {artist.image ? (
-                            <img src={artist.image} alt="" className="h-10 w-10 shrink-0 rounded object-cover" />
-                          ) : (
-                            <div className="h-10 w-10 shrink-0 rounded bg-gray-800" />
-                          )}
-                          <div className="flex-1 min-w-0">
-                            <p className="truncate text-sm font-medium text-white">{artist.name}</p>
-                            <p className="truncate text-xs text-gray-400">
-                              {artist.country || 'Onbekend'}{artist.type ? ` • ${artist.type}` : ''}{artist.disambiguation ? ` • ${artist.disambiguation}` : ''}
-                            </p>
-                          </div>
+                          Sluiten
                         </button>
-                      ))}
+                      </div>
+                      {favoriteArtistsLoading ? (
+                        <div className="flex items-center justify-center py-3">
+                          <span className="block h-4 w-4 animate-spin rounded-full border-2 border-pink-400 border-t-transparent" />
+                        </div>
+                      ) : favoriteArtists.length === 0 ? (
+                        <p className="text-xs text-gray-400">Nog geen favorieten. Klik op het hartje naast een artiest om toe te voegen.</p>
+                      ) : (
+                        <div className="space-y-1">
+                          {favoriteArtists.map((artist) => (
+                            <div key={artist.mbid} className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-pink-500/10">
+                              {artist.image_url ? (
+                                <img src={artist.image_url} alt="" className="h-8 w-8 shrink-0 rounded object-cover" />
+                              ) : (
+                                <div className="h-8 w-8 shrink-0 rounded bg-gray-800" />
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setShowFavoriteArtists(false);
+                                  setArtistSearchQuery(artist.name);
+                                  setSelectedArtist({
+                                    id: artist.mbid,
+                                    name: artist.name,
+                                    country: artist.country,
+                                    type: null,
+                                    disambiguation: null,
+                                    image: artist.image_url,
+                                  });
+                                  setArtistTracks([]);
+                                  setArtistAlbums([]);
+                                  setArtistTracksPageSafe(1);
+                                  setArtistTracksHasMore(false);
+                                  setArtistTrackFilter("");
+                                  void loadArtistTracks(artist.name, false);
+                                }}
+                                className="min-w-0 flex-1 text-left"
+                              >
+                                <p className="truncate text-xs font-medium text-white">{artist.name}</p>
+                                {artist.country && (
+                                  <p className="truncate text-[10px] text-gray-400">{artist.country}</p>
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  await removeFavoriteArtist(artist.mbid);
+                                  setFavoriteArtists((prev) => prev.filter((f) => f.mbid !== artist.mbid));
+                                }}
+                                className="shrink-0 rounded p-1 text-gray-500 opacity-0 transition hover:bg-red-500/10 hover:text-red-400 group-hover:opacity-100"
+                                title="Verwijder uit favorieten"
+                              >
+                                <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1869,6 +2020,28 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6" /></svg>
                     </button>
                     <span className="truncate text-sm font-semibold text-violet-300">{selectedArtist.name}</span>
+                    {selectedArtist.id && !selectedArtist.id.startsWith("history:") && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const mbid = selectedArtist.id;
+                          const isFav = favoriteArtists.some((f) => f.mbid === mbid);
+                          if (isFav) {
+                            await removeFavoriteArtist(mbid);
+                            setFavoriteArtists((prev) => prev.filter((f) => f.mbid !== mbid));
+                          } else {
+                            await addFavoriteArtist({ mbid, name: selectedArtist.name, image_url: selectedArtist.image, country: selectedArtist.country });
+                            setFavoriteArtists((prev) => [...prev, { mbid, name: selectedArtist.name, image_url: selectedArtist.image, country: selectedArtist.country, added_at: new Date().toISOString() }]);
+                          }
+                        }}
+                        className={`shrink-0 rounded p-1 transition ${favoriteArtists.some((f) => f.mbid === selectedArtist.id) ? 'text-pink-400 hover:bg-pink-500/10' : 'text-gray-600 hover:text-pink-400'}`}
+                        title={favoriteArtists.some((f) => f.mbid === selectedArtist.id) ? "Verwijder uit favorieten" : "Toevoegen aan favorieten"}
+                      >
+                        <svg className="h-4 w-4" fill={favoriteArtists.some((f) => f.mbid === selectedArtist.id) ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                        </svg>
+                      </button>
+                    )}
                   </div>
 
                   <div className="flex-1 max-w-[180px]">
@@ -1905,70 +2078,82 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                       const thumb = matchingAlbum ? getArtworkUrl(matchingAlbum.artworkUrl100, '300') : artistImageFallback;
 
                       return (
-                        <button
+                        <div
                           key={trackId}
-                          type="button"
-                          onClick={async () => {
-                            if (isPending || isAdded || !serverUrl) return;
-                            setPendingTrackId(trackId);
-                            try {
-                              // Use resolve endpoint for proper matching
-                              const res = await fetch(`${serverUrl.replace(/\/+$/, "")}/api/downloads/resolve`, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({
-                                  title: track.name,
-                                  artist: track.artist?.name || selectedArtist.name,
-                                  source_type: 'search',
-                                  source_playlist: null,
-                                  source_genre: null,
-                                }),
-                              });
-                              const payload = await res.json();
-                              
-                              if (res.ok && payload.item?.url) {
-                                await submitUrl(
-                                  payload.item.url,
-                                  payload.item.thumbnail ?? thumb ?? undefined,
-                                  payload.item.title ?? track.name,
-                                  payload.item.artist ?? track.artist?.name ?? selectedArtist.name,
-                                  { sourceType: 'search', sourceGenre: null, sourcePlaylist: null }
-                                );
-                                setAddedTrackId(trackId);
-                                setTimeout(() => setAddedTrackId(null), 5000);
-                              } else if (payload.candidates && payload.candidates.length > 0) {
-                                setPendingManualSelection({
-                                  sourceKey: trackId,
-                                  title: track.name,
-                                  artist: track.artist?.name || selectedArtist.name,
-                                  sourceType: 'search',
-                                  sourceGenre: null,
-                                  sourcePlaylist: null,
-                                  candidates: payload.candidates,
-                                });
-                              } else {
-                                setFeedback({ msg: `Geen resultaat gevonden voor "${track.name}".`, ok: false });
-                              }
-                            } catch (err) {
-                              console.error('[search-track] Error:', err);
-                              setFeedback({ msg: `Fout bij zoeken voor "${track.name}".`, ok: false });
-                            } finally {
-                              setPendingTrackId(null);
-                            }
-                          }}
-                          disabled={submitting || isAdded || isPending}
-                          className={`flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition ${
+                          className={`group flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition ${
                             isAdded ? "bg-green-500/10" : "hover:bg-gray-800/80"
-                          } disabled:opacity-60`}
+                          }`}
                         >
-                          {thumb ? <img src={thumb} alt="" className="h-10 w-10 shrink-0 rounded object-cover" /> : <div className="h-10 w-10 shrink-0 rounded bg-gray-800" />}
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-xs font-medium text-white">{track.name}</p>
-                            <p className="truncate text-[10px] text-gray-400">
-                              {`#${track.rank || idx + 1}`}
-                              {track.listeners ? ` • ${parseInt(track.listeners).toLocaleString()} luisteraars` : ''}
-                            </p>
-                          </div>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (isPending || isAdded || !serverUrl) return;
+                              setPendingTrackId(trackId);
+                              try {
+                                const res = await fetch(`${serverUrl.replace(/\/+$/, "")}/api/downloads/resolve`, {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({
+                                    title: track.name,
+                                    artist: track.artist?.name || selectedArtist.name,
+                                    source_type: 'search',
+                                    source_playlist: null,
+                                    source_genre: null,
+                                  }),
+                                });
+                                const payload = await res.json();
+                                
+                                if (res.ok && payload.item?.url) {
+                                  await submitUrl(
+                                    payload.item.url,
+                                    payload.item.thumbnail ?? thumb ?? undefined,
+                                    payload.item.title ?? track.name,
+                                    payload.item.artist ?? track.artist?.name ?? selectedArtist.name,
+                                    { sourceType: 'search', sourceGenre: null, sourcePlaylist: null }
+                                  );
+                                  setAddedTrackId(trackId);
+                                  setTimeout(() => setAddedTrackId(null), 5000);
+                                } else if (payload.candidates && payload.candidates.length > 0) {
+                                  setPendingManualSelection({
+                                    sourceKey: trackId,
+                                    title: track.name,
+                                    artist: track.artist?.name || selectedArtist.name,
+                                    sourceType: 'search',
+                                    sourceGenre: null,
+                                    sourcePlaylist: null,
+                                    candidates: payload.candidates,
+                                  });
+                                } else {
+                                  setFeedback({ msg: `Geen resultaat gevonden voor "${track.name}".`, ok: false });
+                                }
+                              } catch (err) {
+                                console.error('[search-track] Error:', err);
+                                setFeedback({ msg: `Fout bij zoeken voor "${track.name}".`, ok: false });
+                              } finally {
+                                setPendingTrackId(null);
+                              }
+                            }}
+                            disabled={submitting || isAdded || isPending}
+                            className="flex min-w-0 flex-1 items-center gap-2 disabled:opacity-60"
+                          >
+                            {thumb ? <img src={thumb} alt="" className="h-10 w-10 shrink-0 rounded object-cover" /> : <div className="h-10 w-10 shrink-0 rounded bg-gray-800" />}
+                            <div className="min-w-0 flex-1 text-left">
+                              <p className="truncate text-xs font-medium text-white">{track.name}</p>
+                              <p className="truncate text-[10px] text-gray-400">
+                                {`#${track.rank || idx + 1}`}
+                                {track.listeners ? ` • ${parseInt(track.listeners).toLocaleString()} luisteraars` : ''}
+                              </p>
+                            </div>
+                            {isAdded ? (
+                              <span className="shrink-0 rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
+                                Toegevoegd
+                              </span>
+                            ) : isPending ? (
+                              <span className="shrink-0 rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200">
+                                Bezig...
+                              </span>
+                            ) : null}
+                          </button>
                           <div className="flex shrink-0 items-center gap-1.5">
                             <TrackActions 
                               title={track.name} 
@@ -1977,17 +2162,8 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                               className="mr-1"
                               iconSize={16}
                             />
-                            {isAdded ? (
-                              <span className="rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
-                                Toegevoegd
-                              </span>
-                            ) : isPending ? (
-                              <span className="rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200">
-                                Bezig...
-                              </span>
-                            ) : null}
+                          </div>
                         </div>
-                      </button>
                       );
                     })}
                     {artistTracksLoadingMore && (
@@ -2123,38 +2299,51 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                     const isAdded = status === "added";
                     const isPending = status === "pending";
                     return (
-                    <button
+                    <div
                       key={r.id}
-                      type="button"
-                      onClick={() => selectResult(r)}
-                      className={`flex w-full items-center gap-2 px-2.5 py-1 text-left transition first:rounded-t-xl last:rounded-b-xl ${
+                      className={`group flex w-full items-center gap-2 px-2.5 py-1 text-left transition first:rounded-t-xl last:rounded-b-xl ${
                         isAdded ? "bg-green-500/10" : "hover:bg-gray-800/80"
                       }`}
                     >
-                      {r.thumbnail ? (
-                        <img
-                          src={r.thumbnail}
-                          alt=""
-                          className="h-8 w-10 shrink-0 rounded object-cover lg:h-7 lg:w-9"
-                        />
-                      ) : (
-                        <div className="flex h-8 w-10 shrink-0 items-center justify-center rounded bg-gray-800 text-[10px] text-gray-500 lg:h-7 lg:w-9">
-                          no art
+                      <button
+                        type="button"
+                        onClick={() => selectResult(r)}
+                        className="flex min-w-0 flex-1 items-center gap-2"
+                      >
+                        {r.thumbnail ? (
+                          <img
+                            src={r.thumbnail}
+                            alt=""
+                            className="h-8 w-10 shrink-0 rounded object-cover lg:h-7 lg:w-9"
+                          />
+                        ) : (
+                          <div className="flex h-8 w-10 shrink-0 items-center justify-center rounded bg-gray-800 text-[10px] text-gray-500 lg:h-7 lg:w-9">
+                            no art
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1 text-left">
+                          <p className="line-clamp-2 text-xs font-medium leading-snug text-white sm:line-clamp-1">{r.title}</p>
+                          <div className="mt-0.5 flex items-center gap-2 text-left">
+                            {r.channel && (
+                              <span className="truncate text-[11px] text-gray-400">{r.channel}</span>
+                            )}
+                            {r.duration !== null && (
+                              <span className="shrink-0 text-[11px] tabular-nums text-gray-500">
+                                {formatDuration(r.duration)}
+                              </span>
+                            )}
+                          </div>
                         </div>
-                      )}
-                      <div className="min-w-0 flex-1 text-left">
-                        <p className="line-clamp-2 text-xs font-medium leading-snug text-white sm:line-clamp-1">{r.title}</p>
-                        <div className="mt-0.5 flex items-center gap-2 text-left">
-                          {r.channel && (
-                            <span className="truncate text-[11px] text-gray-400">{r.channel}</span>
-                          )}
-                          {r.duration !== null && (
-                            <span className="shrink-0 text-[11px] tabular-nums text-gray-500">
-                              {formatDuration(r.duration)}
-                            </span>
-                          )}
-                        </div>
-                      </div>
+                        {isAdded ? (
+                          <span className="shrink-0 rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
+                            Toegevoegd
+                          </span>
+                        ) : isPending ? (
+                          <span className="shrink-0 rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200">
+                            Bezig...
+                          </span>
+                        ) : null}
+                      </button>
                       <TrackActions 
                         title={r.title} 
                         artist={r.channel || ""} 
@@ -2162,16 +2351,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                         className="mr-1"
                         iconSize={16}
                       />
-                      {isAdded ? (
-                        <span className="rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
-                          Toegevoegd
-                        </span>
-                      ) : isPending ? (
-                        <span className="rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200">
-                          Bezig...
-                        </span>
-                      ) : null}
-                    </button>
+                    </div>
                     );
                   })}
                   {searchingMore && (

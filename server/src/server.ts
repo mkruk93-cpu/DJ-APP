@@ -47,6 +47,10 @@ import {
   getPublicUserPlaylistTracks,
   getUserPlaylistTracksForFallback,
   hasPublicFallbackUserPlaylist,
+  listFavoriteArtists,
+  addFavoriteArtist,
+  removeFavoriteArtist,
+  isFavoriteArtist,
   type PlaylistGenreMeta as UserPlaylistGenreMeta,
 } from './services/userPlaylistStore.js';
 import {
@@ -2879,6 +2883,74 @@ app.get('/api/user-playlists/liked-tracks', async (req, res) => {
     res.json(playlist);
   } catch (err) {
     console.error('[rest] /api/user-playlists/liked-tracks error:', err);
+    res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
+app.get('/api/favorite-artists', async (req, res) => {
+  const identity = getUserIdentityFromRequest(req);
+  if (!identity) {
+    return res.status(400).json({ error: 'nickname en device_id zijn verplicht' });
+  }
+  try {
+    const artists = await listFavoriteArtists(identity);
+    res.json(artists);
+  } catch (err) {
+    console.error('[rest] /api/favorite-artists error:', err);
+    res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
+app.post('/api/favorite-artists', async (req, res) => {
+  const identity = getUserIdentityFromRequest(req);
+  if (!identity) {
+    return res.status(400).json({ error: 'nickname en device_id zijn verplicht' });
+  }
+  const { mbid, name, image_url, country } = req.body ?? {};
+  if (!mbid || !name) {
+    return res.status(400).json({ error: 'mbid en name zijn verplicht' });
+  }
+  try {
+    const artist = await addFavoriteArtist(identity, { mbid, name, image_url: image_url ?? null, country: country ?? null });
+    res.json(artist);
+  } catch (err) {
+    console.error('[rest] /api/favorite-artists POST error:', err);
+    res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
+app.delete('/api/favorite-artists/:mbid', async (req, res) => {
+  const identity = getUserIdentityFromRequest(req);
+  if (!identity) {
+    return res.status(400).json({ error: 'nickname en device_id zijn verplicht' });
+  }
+  const mbid = String(req.params.mbid ?? '').trim();
+  if (!mbid) {
+    return res.status(400).json({ error: 'mbid ontbreekt' });
+  }
+  try {
+    const ok = await removeFavoriteArtist(identity, mbid);
+    res.json({ ok });
+  } catch (err) {
+    console.error('[rest] /api/favorite-artists/:mbid DELETE error:', err);
+    res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
+app.get('/api/favorite-artists/:mbid/check', async (req, res) => {
+  const identity = getUserIdentityFromRequest(req);
+  if (!identity) {
+    return res.status(400).json({ error: 'nickname en device_id zijn verplicht' });
+  }
+  const mbid = String(req.params.mbid ?? '').trim();
+  if (!mbid) {
+    return res.status(400).json({ error: 'mbid ontbreekt' });
+  }
+  try {
+    const isFav = await isFavoriteArtist(identity, mbid);
+    res.json({ is_favorite: isFav });
+  } catch (err) {
+    console.error('[rest] /api/favorite-artists/:mbid/check error:', err);
     res.status(500).json({ error: getErrorMessage(err) });
   }
 });

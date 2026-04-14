@@ -19,6 +19,9 @@ function deriveTitleFromId(sourceId: string): string {
       if (artist && title) return `${artist} - ${title}`;
     }
   }
+  if (sourceId.length === 11 && /^[a-zA-Z0-9_-]{11}$/.test(sourceId)) {
+    return "Onbekende video";
+  }
   return "Nummer wordt geladen...";
 }
 
@@ -158,9 +161,9 @@ export default function Queue() {
         {queue.map((item, index) => (
           <div
             key={item.id}
-            className="flex items-center gap-2.5 rounded-lg border border-gray-800 bg-gray-800/50 p-2 transition hover:border-gray-700 sm:gap-3 sm:p-2.5"
+            className="group flex items-center gap-1.5 rounded-md border border-gray-800 bg-gray-800/40 px-1.5 py-1 transition hover:border-gray-700 sm:gap-2 sm:px-2 sm:py-1.5"
           >
-            <span className="w-5 shrink-0 text-center text-xs font-medium text-gray-500">
+            <span className="w-4 shrink-0 text-center text-[10px] text-gray-500 sm:text-xs">
               {index + 1}
             </span>
 
@@ -168,30 +171,30 @@ export default function Queue() {
               <img
                 src={item.thumbnail}
                 alt=""
-                className="h-8 w-12 shrink-0 rounded object-cover sm:h-9 sm:w-14"
+                className="h-6 w-8 shrink-0 rounded object-cover sm:h-7 sm:w-10"
               />
             )}
 
-            <div className="min-w-0 flex-1">
-              <p className="break-words text-sm font-semibold leading-tight text-white">
+            <div className="min-w-0 flex-1 text-left">
+              <p className="truncate text-[10px] font-medium leading-tight text-white sm:text-xs">
                 {item.artist && item.title && item.title.toLowerCase().startsWith(item.artist.toLowerCase())
                   ? decodeHtmlEntities(item.title)
                   : item.artist
                     ? `${item.artist} - ${decodeHtmlEntities(item.title) ?? deriveTitleFromId(item.youtube_id)}`
                     : decodeHtmlEntities(item.title) ?? deriveTitleFromId(item.youtube_id)}
               </p>
-              <p className="truncate text-[11px] text-gray-400">
-                door {item.added_by}
+              <p className="truncate text-[9px] text-gray-500 sm:text-[10px]">
+                {item.added_by}
               </p>
             </div>
 
-            <div className="flex shrink-0 items-center gap-1">
+            <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
               <TrackActions
                 title={item.title ?? deriveTitleFromId(item.youtube_id)}
                 artist={item.artist ?? null}
                 artwork_url={item.thumbnail ?? null}
-                className="mr-1"
-                iconSize={15}
+                className="mr-0.5"
+                iconSize={13}
               />
               {canRequestPush && (
                 <button
@@ -199,10 +202,10 @@ export default function Queue() {
                     getSocket().emit("queuePushVote:start", { id: item.id, added_by: nickname || "onbekend" });
                   }}
                   disabled={!!queuePushVote || index === 0}
-                  className="rounded p-1 text-violet-300 transition hover:bg-violet-500/10 hover:text-violet-200 disabled:opacity-40"
+                  className="rounded p-0.5 text-violet-300 transition hover:bg-violet-500/10 hover:text-violet-200 disabled:opacity-40 sm:p-1"
                   title="Stem om als volgende te zetten"
                 >
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <svg className="h-3 w-3 sm:h-4 sm:w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M13 5l7 7-7 7" />
                   </svg>
                 </button>
@@ -218,10 +221,10 @@ export default function Queue() {
                       added_by: nickname || "onbekend",
                     });
                   }}
-                  className="rounded p-1 text-gray-500 transition hover:bg-red-500/10 hover:text-red-400"
+                  className="rounded p-0.5 text-gray-500 transition hover:bg-red-500/10 hover:text-red-400 sm:p-1"
                   title="Verwijderen"
                 >
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <svg className="h-3 w-3 sm:h-4 sm:w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>

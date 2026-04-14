@@ -31,6 +31,16 @@ interface StorePlaylist {
 
 interface StoreShape {
   playlists: StorePlaylist[];
+  favorite_artists: FavoriteArtist[];
+}
+
+export interface FavoriteArtist {
+  id: string;
+  mbid: string;
+  name: string;
+  image_url: string | null;
+  country: string | null;
+  added_at: string;
 }
 
 export interface PlaylistOwner {
@@ -102,7 +112,7 @@ const STORE_FILE = process.env.USER_PLAYLIST_STORE_FILE
 let writeQueue: Promise<void> = Promise.resolve();
 
 function emptyStore(): StoreShape {
-  return { playlists: [] };
+  return { playlists: [], favorite_artists: [] };
 }
 
 function ensureStoreDir(): void {
@@ -211,7 +221,10 @@ function readStore(): StoreShape {
     const playlists = Array.isArray(parsed.playlists)
       ? parsed.playlists.map((entry) => normalizeStoredPlaylist(entry as StorePlaylist))
       : [];
-    return { playlists };
+    const favorite_artists = Array.isArray(parsed.favorite_artists)
+      ? parsed.favorite_artists
+      : [];
+    return { playlists, favorite_artists };
   } catch (err) {
     console.warn('[user-playlists] Store read failed, using empty store:', (err as Error).message);
     return emptyStore();
@@ -643,5 +656,58 @@ export async function getAnyUserPlaylistMetaByName(name: string): Promise<{
       genre_group: match.genre_group ?? null,
       subgenre: match.subgenre ?? null,
     };
+  });
+}
+
+export async function listFavoriteArtists(owner: PlaylistOwner): Promise<FavoriteArtist[]> {
+  return withStoreAccess((store) => {
+    return store.favorite_artists
+      .filter((artist) => artist.id === getOwnerKey(owner.nickname))
+      .sort((a, b) => b.added_at.localeCompare(a.added_at));
+  });
+}
+
+export async function addFavoriteArtist(
+  owner: PlaylistOwner,
+  artist: { mbid: string; name: string; image_url: string | null; country: string | null },
+): Promise<FavoriteArtist> {
+  return withStoreAccess((store) => {
+    const ownerKey = getOwnerKey(owner.nickname);
+    const existing = store.favorite_artists.find(
+      (a) => a.id === ownerKey && a.mbid === artist.mbid,
+    );
+    if (existing) return existing;
+
+    const newArtist: FavoriteArtist = {
+      id: ownerKey,
+      mbid: artist.mbid,
+      name: artist.name,
+      image_url: artist.image_url,
+      country: artist.country,
+      added_at: new Date().toISOString(),
+    };
+    store.favorite_artists.push(newArtist);
+    return newArtist;
+  }, true);
+}
+
+export async function removeFavoriteArtist(owner: PlaylistOwner, mbid: string): Promise<boolean> {
+  return withStoreAccess((store) => {
+    const ownerKey = getOwnerKey(owner.nickname);
+    const index = store.favorite_artists.findIndex(
+      (a) => a.id === ownerKey && a.mbid === mbid,
+    );
+    if (index < 0) return false;
+    store.favorite_artists.splice(index, 1);
+    return true;
+  }, true);
+}
+
+export async function isFavoriteArtist(owner: PlaylistOwner, mbid: string): Promise<boolean> {
+  return withStoreAccess((store) => {
+    const ownerKey = getOwnerKey(owner.nickname);
+    return store.favorite_artists.some(
+      (a) => a.id === ownerKey && a.mbid === mbid,
+    );
   });
 }

@@ -438,6 +438,62 @@ export async function importIntoSharedPlaylistAdmin(
   return { playlist: payload.playlist, usage: payload.usage };
 }
 
+export interface FavoriteArtist {
+  mbid: string;
+  name: string;
+  image_url: string | null;
+  country: string | null;
+  added_at: string;
+}
+
+export async function listFavoriteArtists(): Promise<FavoriteArtist[]> {
+  const { nickname, deviceId } = getUserIdentity(true);
+  const params = new URLSearchParams();
+  params.set('nickname', nickname);
+  params.set('device_id', deviceId);
+  const res = await fetch(`${getServerUrl()}/api/favorite-artists?${params.toString()}`);
+  return parseOrThrow<FavoriteArtist[]>(res);
+}
+
+export async function addFavoriteArtist(artist: { mbid: string; name: string; image_url?: string | null; country?: string | null }): Promise<FavoriteArtist> {
+  const { nickname, deviceId } = getUserIdentity(true);
+  const res = await fetch(`${getServerUrl()}/api/favorite-artists`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      nickname,
+      device_id: deviceId,
+      mbid: artist.mbid,
+      name: artist.name,
+      image_url: artist.image_url ?? null,
+      country: artist.country ?? null,
+    }),
+  });
+  return parseOrThrow<FavoriteArtist>(res);
+}
+
+export async function removeFavoriteArtist(mbid: string): Promise<{ ok: boolean }> {
+  const { nickname, deviceId } = getUserIdentity(true);
+  const safeMbid = encodeURIComponent(mbid);
+  const res = await fetch(`${getServerUrl()}/api/favorite-artists/${safeMbid}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nickname, device_id: deviceId }),
+  });
+  return parseOrThrow<{ ok: boolean }>(res);
+}
+
+export async function isFavoriteArtist(mbid: string): Promise<boolean> {
+  const { nickname, deviceId } = getUserIdentity(true);
+  const safeMbid = encodeURIComponent(mbid);
+  const params = new URLSearchParams();
+  params.set('nickname', nickname);
+  params.set('device_id', deviceId);
+  const res = await fetch(`${getServerUrl()}/api/favorite-artists/${safeMbid}/check?${params.toString()}`);
+  const data = await parseOrThrow<{ is_favorite: boolean }>(res);
+  return data.is_favorite;
+}
+
 export async function deleteSharedPlaylistTrackAdmin(
   playlistId: string,
   trackId: string,

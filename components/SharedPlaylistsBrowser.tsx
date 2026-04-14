@@ -934,7 +934,7 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
             return (
               <div
                 key={track.id}
-                className={`flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition ${
+                className={`group flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition ${
                   isAdded ? "bg-green-500/10" : "hover:bg-gray-800/80"
                 }`}
               >
@@ -949,10 +949,19 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                 ) : (
                   <div className="h-10 w-10 shrink-0 rounded bg-gray-800" />
                 )}
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0 flex-1 text-left">
                   <p className="truncate text-xs font-medium text-white">{track.title}</p>
                   <p className="truncate text-[10px] text-gray-400">{track.artist ?? "Unknown"}</p>
                 </div>
+                {isAdded ? (
+                  <span className="shrink-0 rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
+                    Toegevoegd
+                  </span>
+                ) : isPending ? (
+                  <span className="shrink-0 rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200">
+                    Bezig...
+                  </span>
+                ) : null}
                 </button>
                 <div className="flex shrink-0 items-center gap-1.5">
                   <TrackActions 
@@ -963,15 +972,6 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                     className="mr-1"
                     iconSize={16}
                   />
-                  {isAdded ? (
-                    <span className="rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
-                      Toegevoegd
-                    </span>
-                  ) : isPending ? (
-                    <span className="rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200">
-                      Bezig...
-                    </span>
-                  ) : null}
                 </div>
               </div>
             );

@@ -94,11 +94,13 @@ export default function PlaylistOptionsButton({
           setMode("menu");
           setFilter("");
         }}
-        className="flex h-7 w-7 items-center justify-center rounded-full border border-gray-700 bg-gray-800 text-sm font-semibold leading-none text-gray-200 transition hover:border-violet-500 hover:text-white"
+        className="flex h-6 w-6 flex-col items-center justify-center rounded text-[8px] leading-none text-gray-400 transition hover:text-white gap-0.5"
         title="Playlist opties"
         aria-label="Playlist opties"
       >
-        {buttonLabel}
+        <span className="h-0.5 w-0.5 rounded-full bg-current"></span>
+        <span className="h-0.5 w-0.5 rounded-full bg-current"></span>
+        <span className="h-0.5 w-0.5 rounded-full bg-current"></span>
       </button>
       {open && (
         <div className="absolute right-0 top-full z-50 mt-1 w-56 overflow-hidden rounded-lg border border-gray-700 bg-gray-950 shadow-2xl">
