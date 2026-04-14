@@ -262,6 +262,10 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
   const [selectedArtist, setSelectedArtist] = useState<MusicBrainzArtist | null>(null);
   const [artistTracks, setArtistTracks] = useState<LastFmTrack[]>([]);
   const [artistTracksLoading, setArtistTracksLoading] = useState(false);
+  const [artistTracksPage, setArtistTracksPage] = useState(1);
+  const [artistTracksHasMore, setArtistTracksHasMore] = useState(false);
+  const [artistTracksLoadingMore, setArtistTracksLoadingMore] = useState(false);
+  const [artistTrackFilter, setArtistTrackFilter] = useState("");
   const [artistAlbums, setArtistAlbums] = useState<ITunesAlbum[]>([]);
   const [artistAlbumsLoading, setArtistAlbumsLoading] = useState(false);
   const [showArtistResults, setShowArtistResults] = useState(false);
@@ -282,18 +286,26 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
   const genreMenuRef = useRef<HTMLDetailsElement>(null);
   const genreSummaryRef = useRef<HTMLElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
+  const artistLoadMoreRef = useRef<HTMLDivElement>(null);
   const searchListRef = useRef<HTMLDivElement>(null);
+  const artistTracksListRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recentAddTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recentAddTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const genreLoadInFlightRef = useRef(false);
+  const artistLoadInFlightRef = useRef(false);
   const genreNoProgressPagesRef = useRef(0);
   const genreHitsCacheRef = useRef(new Map<string, GenreHit[]>());
   const searchOffsetRef = useRef(0);
   const genreOffsetRef = useRef(0);
+  const artistTracksPageRef = useRef(1);
+  const searchCacheRef = useRef<Map<string, SearchResult[]>>(new Map());
+  const artistCacheRef = useRef<Map<string, LastFmTrack[]>>(new Map());
   const latestSearchRunRef = useRef(0);
   const GENRE_PAGE_SIZE = 10;
   const SEARCH_PAGE_SIZE = 12;
+  const ARTIST_TRACKS_PAGE_SIZE = 50;
+  const MAX_ARTIST_TRACKS = 250;
 
   useEffect(() => {
     setHydrated(true);
@@ -525,6 +537,19 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
 
     const sources = source === "video" ? ["soundcloud", "youtube"] : [source];
 
+    // Check frontend cache for initial searches (offset 0)
+    const cacheKey = `${source}:${query.toLowerCase()}:${useLocal ? 'local' : 'remote'}`;
+    if (!append && searchCacheRef.current.has(cacheKey)) {
+      const cached = searchCacheRef.current.get(cacheKey)!;
+      setResults(cached);
+      setSearchQuery(query);
+      setSearchOffsetSafe(cached.length);
+      setSearchHasMore(true);
+      setShowResults(cached.length > 0);
+      setSearching(false);
+      return;
+    }
+
     Promise.all(
       sources.map(async (platform) => {
         const res = await fetch(
@@ -544,8 +569,13 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
         const deduped = dedupeSearchResults(groups.flat());
         const visible = filterSetResults(deduped);
         setResults((prev) => {
-          if (!append) return visible;
-          return dedupeSearchResults([...prev, ...visible]);
+          const next = !append ? visible : dedupeSearchResults([...prev, ...visible]);
+          // Cache the results for initial search to speed up source/tab switching
+          if (!append) {
+            const cacheKey = `${source}:${query.toLowerCase()}:${useLocal ? 'local' : 'remote'}`;
+            searchCacheRef.current.set(cacheKey, next);
+          }
+          return next;
         });
         setSearchQuery(query);
         setSearchOffsetSafe(offset + deduped.length);
@@ -630,15 +660,6 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
       
       // Close artist history dropdown when results are loaded
       setShowArtistHistory(false);
-
-      // Save search term to history (only for the initial search)
-      if (nickname && serverUrl && query.trim().length >= 2) {
-        fetch(`${serverUrl}/api/search-history`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ nickname, type: 'artist', query: query.trim() }),
-        }).then(() => refreshSearchHistory("artist")).catch(() => {});
-      }
     } catch {
       setArtistResults([]);
     } finally {
@@ -646,20 +667,79 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
     }
   }, [serverUrl, nickname, refreshSearchHistory]);
 
+  const setArtistTracksPageSafe = useCallback((page: number) => {
+    setArtistTracksPage(page);
+    artistTracksPageRef.current = page;
+  }, []);
+
   // Load artist tracks from Last.fm
-  const loadArtistTracks = useCallback(async (artistName: string) => {
+  const loadArtistTracks = useCallback(async (artistName: string, append = false) => {
     if (!serverUrl) return;
-    setArtistTracksLoading(true);
-    try {
-      const res = await fetch(`${serverUrl}/api/artist/tracks?name=${encodeURIComponent(artistName)}&limit=50`);
-      const data = await res.json() as LastFmTrack[];
-      setArtistTracks(data);
-    } catch {
+    if (artistLoadInFlightRef.current) return;
+    
+    const page = append ? artistTracksPageRef.current : 1;
+    artistLoadInFlightRef.current = true;
+    
+    if (append) {
+      setArtistTracksLoadingMore(true);
+    } else {
+      // Check frontend cache for initial artist load
+      if (artistCacheRef.current.has(artistName)) {
+        const cached = artistCacheRef.current.get(artistName)!;
+        setArtistTracks(cached);
+        setArtistTracksPageSafe(2); // Assume 1st page is cached
+        setArtistTracksHasMore(cached.length >= ARTIST_TRACKS_PAGE_SIZE && cached.length < MAX_ARTIST_TRACKS);
+        artistLoadInFlightRef.current = false;
+        return;
+      }
+      setArtistTracksLoading(true);
       setArtistTracks([]);
-    } finally {
-      setArtistTracksLoading(false);
+      setArtistTracksPageSafe(1);
+      setArtistTracksHasMore(false);
     }
-  }, [serverUrl]);
+
+    try {
+      // Always use tracks for artist search
+      const endpoint = "tracks";
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 second timeout
+
+      const res = await fetch(
+        `${serverUrl}/api/artist/${endpoint}?name=${encodeURIComponent(artistName)}&limit=${ARTIST_TRACKS_PAGE_SIZE}&page=${page}&method=gettoptracks`,
+        { signal: controller.signal }
+      );
+      clearTimeout(timeoutId);
+
+      const data = await res.json() as any[];
+      const tracks = Array.isArray(data) ? data : [];
+      
+      let totalCount = 0;
+      setArtistTracks((prev) => {
+        const next = append ? [...prev, ...tracks] : tracks;
+        // Basic dedupe
+        const deduped = Array.from(new Map(next.map(t => [t.url || `${t.name}-${t.artist?.name}`, t])).values());
+        totalCount = deduped.length;
+        // Cache the results for initial load
+        if (!append) artistCacheRef.current.set(artistName, deduped);
+        return deduped;
+      });
+      
+      setArtistTracksPageSafe(page + 1);
+      setArtistTracksHasMore(tracks.length >= ARTIST_TRACKS_PAGE_SIZE && totalCount < MAX_ARTIST_TRACKS);
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') {
+        console.warn("[artist-tracks] Fetch aborted due to timeout");
+      } else {
+        console.error("[artist-tracks] Error loading tracks:", err);
+      }
+      if (!append) setArtistTracks([]);
+      setArtistTracksHasMore(false);
+    } finally {
+      artistLoadInFlightRef.current = false;
+      setArtistTracksLoading(false);
+      setArtistTracksLoadingMore(false);
+    }
+  }, [serverUrl, setArtistTracksPageSafe]);
 
   // Load artist artwork from iTunes + Last.fm fallback
   const [artistImageFallback, setArtistImageFallback] = useState<string | null>(null);
@@ -697,8 +777,11 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
     setShowArtistResults(false);
     setShowArtistHistory(false);
     setArtistResults([]);
+    setArtistTracksPageSafe(1);
+    setArtistTracksHasMore(false);
+    setArtistTrackFilter("");
     await Promise.all([
-      loadArtistTracks(artist.name),
+      loadArtistTracks(artist.name, false),
       loadArtistArtwork(artist.name),
     ]);
     // Save selected artist to search history
@@ -709,7 +792,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
         body: JSON.stringify({ nickname, type: 'artist', query: artist.name }),
       }).then(() => refreshSearchHistory("artist")).catch(() => {});
     }
-  }, [loadArtistTracks, loadArtistArtwork, nickname, refreshSearchHistory, serverUrl]);
+  }, [loadArtistTracks, loadArtistArtwork, nickname, refreshSearchHistory, serverUrl, setArtistTracksPageSafe]);
 
   const selectArtistHistoryItem = useCallback(async (query: string) => {
     const artistName = query.trim();
@@ -821,6 +904,31 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
     observer.observe(sentinel);
     return () => observer.disconnect();
   }, [source, activeGenre, genreHasMore, genreHitsLoading, genreHitsLoadingMore, loadGenreHits]);
+
+  useEffect(() => {
+    if (source !== "search" || !selectedArtist) return;
+    const root = artistTracksListRef.current;
+    const sentinel = artistLoadMoreRef.current;
+    if (!root || !sentinel) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries.some((entry) => entry.isIntersecting);
+        if (!visible) return;
+        if (!artistTracksHasMore || artistTracksLoading || artistTracksLoadingMore) return;
+        
+        // If filtering and no visible tracks, don't auto-load more in a loop
+        const filteredCount = artistTracks.filter(t => !artistTrackFilter || t.name.toLowerCase().includes(artistTrackFilter.toLowerCase())).length;
+        if (artistTrackFilter && filteredCount === 0 && artistTracks.length > 0) return;
+
+        loadArtistTracks(selectedArtist.name, true);
+      },
+      { root, rootMargin: "150px" },
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [source, selectedArtist, artistTracksHasMore, artistTracksLoading, artistTracksLoadingMore, loadArtistTracks]);
 
   function handleSearchListScroll(e: React.UIEvent<HTMLDivElement>) {
     if (source === "spotify" || source === "genres" || source === "playlists") return;
@@ -1775,45 +1883,58 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
               </div>
             ) : (
               <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
-                <div className="shrink-0 flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => { setSelectedArtist(null); setArtistSearchQuery(""); setArtistTracks([]); setArtistAlbums([]); }}
-                    className="rounded-md bg-gray-700 p-1.5 text-gray-400 hover:text-white"
-                  >
-                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6" /></svg>
-                  </button>
-                  <span className="truncate text-sm font-semibold text-violet-300">{selectedArtist.name}</span>
+                <div className="shrink-0 flex items-center justify-between gap-2 px-0.5">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => { setSelectedArtist(null); setArtistSearchQuery(""); setArtistTracks([]); setArtistAlbums([]); setArtistTracksPageSafe(1); setArtistTrackFilter(""); }}
+                      className="rounded-md bg-gray-700 p-1.5 text-gray-400 hover:text-white shrink-0"
+                    >
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6" /></svg>
+                    </button>
+                    <span className="truncate text-sm font-semibold text-violet-300">{selectedArtist.name}</span>
+                  </div>
+
+                  <div className="flex-1 max-w-[180px]">
+                    <input
+                      type="text"
+                      value={artistTrackFilter}
+                      onChange={(e) => setArtistTrackFilter(e.target.value)}
+                      placeholder="Filter op nummer..."
+                      className="w-full rounded-lg border border-gray-700 bg-gray-800/80 px-2 py-1 text-xs text-white placeholder-gray-500 outline-none focus:border-violet-500/50"
+                    />
+                  </div>
                 </div>
                 {artistTracksLoading ? (
-                  <p className="text-xs text-gray-400">Tracks laden...</p>
+                  <p className="text-xs text-gray-400 px-1">Laden...</p>
                 ) : artistTracks.length === 0 ? (
-                  <p className="text-xs text-gray-400">Geen nummers gevonden.</p>
+                  <p className="text-xs text-gray-400 px-1">Geen resultaten gevonden.</p>
                 ) : (
-                  <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70">
-                    {artistTracks.map((track) => {
-                      const isAdded = addedTrackId === `${selectedArtist?.id}:${track.rank}`;
-                      const isPending = pendingTrackId === `${selectedArtist?.id}:${track.rank}`;
+                  <div 
+                    ref={artistTracksListRef}
+                    className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70"
+                  >
+                    {artistTracks
+                      .filter(track => !artistTrackFilter || track.name.toLowerCase().includes(artistTrackFilter.toLowerCase()))
+                      .map((track, idx) => {
+                      const trackId = `${selectedArtist?.id}:${track.rank || idx}`;
+                      const isAdded = addedTrackId === trackId;
+                      const isPending = pendingTrackId === trackId;
+                      
                       const trackLower = track.name.toLowerCase();
                       const matchingAlbum = artistAlbums.find(a => 
                         a.collectionName.toLowerCase().includes(trackLower.split('(')[0].trim()) ||
                         trackLower.includes(a.collectionName.toLowerCase())
                       );
-                      const iTunesThumb = matchingAlbum ? getArtworkUrl(matchingAlbum.artworkUrl100, '300') : null;
-                      const thumb = iTunesThumb || artistImageFallback || null;
-                      const trackKey = `${selectedArtist?.id}:${track.rank}`;
+                      const thumb = matchingAlbum ? getArtworkUrl(matchingAlbum.artworkUrl100, '300') : artistImageFallback;
+
                       return (
                         <button
-                          key={trackKey}
+                          key={trackId}
                           type="button"
                           onClick={async () => {
-                            console.log('[search-track] Click! isPending:', isPending, 'isAdded:', isAdded, 'serverUrl:', !!serverUrl);
-                            if (isPending || isAdded || !serverUrl) {
-                              console.log('[search-track] Early return - blocked');
-                              return;
-                            }
-                            setPendingTrackId(trackKey);
-                            console.log('[search-track] Artist:', track.artist.name, 'Track:', track.name);
+                            if (isPending || isAdded || !serverUrl) return;
+                            setPendingTrackId(trackId);
                             try {
                               // Use resolve endpoint for proper matching
                               const res = await fetch(`${serverUrl.replace(/\/+$/, "")}/api/downloads/resolve`, {
@@ -1821,30 +1942,29 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({
                                   title: track.name,
-                                  artist: track.artist.name,
+                                  artist: track.artist?.name || selectedArtist.name,
                                   source_type: 'search',
                                   source_playlist: null,
                                   source_genre: null,
                                 }),
                               });
                               const payload = await res.json();
-                              console.log('[search-track] Resolve response:', res.status, 'has item:', !!payload.item, 'candidates:', payload.candidates?.length);
                               
                               if (res.ok && payload.item?.url) {
-                                // Direct match found - use metadata from resolved result
                                 await submitUrl(
                                   payload.item.url,
-                                  payload.item.thumbnail ?? undefined,
+                                  payload.item.thumbnail ?? thumb ?? undefined,
                                   payload.item.title ?? track.name,
-                                  payload.item.artist ?? track.artist.name,
+                                  payload.item.artist ?? track.artist?.name ?? selectedArtist.name,
                                   { sourceType: 'search', sourceGenre: null, sourcePlaylist: null }
                                 );
+                                setAddedTrackId(trackId);
+                                setTimeout(() => setAddedTrackId(null), 5000);
                               } else if (payload.candidates && payload.candidates.length > 0) {
-                                // No direct match - show manual selection modal with scored candidates
                                 setPendingManualSelection({
-                                  sourceKey: trackKey,
+                                  sourceKey: trackId,
                                   title: track.name,
-                                  artist: track.artist.name,
+                                  artist: track.artist?.name || selectedArtist.name,
                                   sourceType: 'search',
                                   sourceGenre: null,
                                   sourcePlaylist: null,
@@ -1868,7 +1988,10 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                           {thumb ? <img src={thumb} alt="" className="h-10 w-10 shrink-0 rounded object-cover" /> : <div className="h-10 w-10 shrink-0 rounded bg-gray-800" />}
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-xs font-medium text-white">{track.name}</p>
-                            <p className="truncate text-[10px] text-gray-400">#{track.rank}{track.listeners ? ` • ${parseInt(track.listeners).toLocaleString()} luisteraars` : ''}</p>
+                            <p className="truncate text-[10px] text-gray-400">
+                              {`#${track.rank || idx + 1}`}
+                              {track.listeners ? ` • ${parseInt(track.listeners).toLocaleString()} luisteraars` : ''}
+                            </p>
                           </div>
                           {isAdded ? (
                             <span className="rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
@@ -1886,6 +2009,10 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                         </button>
                       );
                     })}
+                    {artistTracksLoadingMore && (
+                      <p className="px-3 py-2 text-[11px] text-gray-400 animate-pulse">Meer laden...</p>
+                    )}
+                    <div ref={artistLoadMoreRef} className="h-1 w-full" />
                   </div>
                 )}
               </div>

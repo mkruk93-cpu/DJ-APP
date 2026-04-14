@@ -152,19 +152,19 @@ export async function lastFmGetArtistInfo(artistName: string): Promise<LastFmArt
   }
 }
 
-export async function lastFmGetTopTracks(artistName: string, limit = 50): Promise<LastFmTrack[]> {
+export async function lastFmGetTopTracks(artistName: string, limit = 50, page = 1): Promise<LastFmTrack[]> {
   if (!LASTFM_API_KEY || !artistName) return [];
-  const cacheKey = `lfm:tracks:${artistName}:${limit}`;
+  const cacheKey = `lfm:tracks:${artistName}:${limit}:${page}`;
   const cached = getCached<LastFmTrack[]>(cacheKey);
   if (cached) return cached;
 
   try {
-    const url = `https://ws.audioscrobbler.com/2.0/?method=artist.getTopTracks&artist=${encodeURIComponent(artistName)}&limit=${limit}&api_key=${LASTFM_API_KEY}&format=json`;
+    const url = `https://ws.audioscrobbler.com/2.0/?method=artist.getTopTracks&artist=${encodeURIComponent(artistName)}&limit=${limit}&page=${page}&api_key=${LASTFM_API_KEY}&format=json`;
     const res = await fetch(url);
     const data = await res.json() as any;
     const tracks = (data.toptracks?.track || []).map((t: any, idx: number) => ({
       name: t.name,
-      rank: idx + 1,
+      rank: ((page - 1) * limit) + idx + 1,
       playcount: t.playcount || '0',
       listeners: t.listeners || '0',
       duration: t.duration ? parseInt(t.duration, 10) : null,
@@ -178,14 +178,14 @@ export async function lastFmGetTopTracks(artistName: string, limit = 50): Promis
   }
 }
 
-export async function lastFmGetTopAlbums(artistName: string, limit = 10): Promise<LastFmAlbum[]> {
+export async function lastFmGetTopAlbums(artistName: string, limit = 10, page = 1): Promise<LastFmAlbum[]> {
   if (!LASTFM_API_KEY || !artistName) return [];
-  const cacheKey = `lfm:albums:${artistName}:${limit}`;
+  const cacheKey = `lfm:albums:${artistName}:${limit}:${page}`;
   const cached = getCached<LastFmAlbum[]>(cacheKey);
   if (cached) return cached;
 
   try {
-    const url = `https://ws.audioscrobbler.com/2.0/?method=artist.getTopAlbums&artist=${encodeURIComponent(artistName)}&limit=${limit}&api_key=${LASTFM_API_KEY}&format=json`;
+    const url = `https://ws.audioscrobbler.com/2.0/?method=artist.getTopAlbums&artist=${encodeURIComponent(artistName)}&limit=${limit}&page=${page}&api_key=${LASTFM_API_KEY}&format=json`;
     const res = await fetch(url);
     const data = await res.json() as any;
     
@@ -210,6 +210,19 @@ export async function lastFmGetTopAlbums(artistName: string, limit = 10): Promis
   } catch {
     return [];
   }
+}
+
+export async function lastFmGetLovedTracks(artistName: string, limit = 50, page = 1): Promise<LastFmTrack[]> {
+  // Last.fm heeft geen artist.getLovedTracks. 
+  // We gebruiken artist.getTopTracks als basis en filteren of we gebruiken een andere methode.
+  // Last.fm's artist.getTopTracks is de enige relevante methode voor artiest-niveau tracks.
+  return lastFmGetTopTracks(artistName, limit, page);
+}
+
+export async function lastFmGetRecentTracks(artistName: string, limit = 50, page = 1): Promise<LastFmTrack[]> {
+  // Last.fm heeft geen artist.getRecentTracks.
+  // We gebruiken artist.getTopTracks.
+  return lastFmGetTopTracks(artistName, limit, page);
 }
 
 export async function iTunesSearchArtwork(artistName: string, limit = 10): Promise<ITunesAlbum[]> {

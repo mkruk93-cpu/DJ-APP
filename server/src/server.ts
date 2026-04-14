@@ -2422,6 +2422,9 @@ app.get('/search', async (req, res) => {
     return;
   }
 
+  // Add browser cache header
+  res.set('Cache-Control', 'public, max-age=300'); // 5 minutes
+
   try {
     const LOCAL_BUCKET_MAX = 20;
 
@@ -2473,6 +2476,10 @@ app.get('/api/search/autocomplete', async (req, res) => {
     res.json([]);
     return;
   }
+
+  // Cache for 10 minutes (less likely to change)
+  res.set('Cache-Control', 'public, max-age=600');
+
   const limit = Math.min(50, Math.max(1, parseInt(String(req.query.limit ?? '10'), 10)));
   try {
     const artists = await musicBrainzAutocomplete(q, limit);
@@ -2508,9 +2515,22 @@ app.get('/api/artist/tracks', async (req, res) => {
     res.status(400).json({ error: 'Artist name required' });
     return;
   }
+
+  // Cache for 10 minutes
+  res.set('Cache-Control', 'public, max-age=600');
+
+  const method = String(req.query.method ?? 'gettoptracks').toLowerCase();
   const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit ?? '50'), 10)));
+  const page = Math.max(1, parseInt(String(req.query.page ?? '1'), 10));
   try {
-    const tracks = await lastFmGetTopTracks(name, limit);
+    let tracks;
+    if (method === 'getlovedtracks') {
+      tracks = await lastFmGetLovedTracks(name, limit, page);
+    } else if (method === 'getrecenttracks') {
+      tracks = await lastFmGetRecentTracks(name, limit, page);
+    } else {
+      tracks = await lastFmGetTopTracks(name, limit, page);
+    }
     res.json(tracks);
   } catch (err) {
     console.error('[rest] /api/artist/tracks error:', err);
@@ -2525,8 +2545,9 @@ app.get('/api/artist/albums', async (req, res) => {
     return;
   }
   const limit = Math.min(50, Math.max(1, parseInt(String(req.query.limit ?? '10'), 10)));
+  const page = Math.max(1, parseInt(String(req.query.page ?? '1'), 10));
   try {
-    const albums = await lastFmGetTopAlbums(name, limit);
+    const albums = await lastFmGetTopAlbums(name, limit, page);
     res.json(albums);
   } catch (err) {
     console.error('[rest] /api/artist/albums error:', err);
@@ -3288,6 +3309,9 @@ app.get('/api/genre-hits', async (req, res) => {
   const limit = Math.min(parseInt(String(req.query.limit ?? '10'), 10) || 10, 20);
   const offset = Math.max(parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
   
+  // Cache for 1 minute (genre hits vary more)
+  res.set('Cache-Control', 'public, max-age=60');
+
   try {
     // Check cache first (shorter TTL for more variety)
     const cacheKey = `${genre}:${limit}:${offset}`;
