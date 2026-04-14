@@ -289,6 +289,18 @@ export default function RequestForm(
       }),
     )
       .then((groups) => {
+        // Close search history dropdown when results are loaded
+        setShowVideoHistory(false);
+
+        // Save search term to history
+        if (nickname && serverUrl && query.trim().length >= 2) {
+          fetch(`${serverUrl}/api/search-history`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ nickname, type: 'video', query: query.trim() }),
+          }).then(() => refreshSearchHistory("video")).catch(() => {});
+        }
+
         const deduped = dedupeSearchResults(groups.flat());
         setResults(deduped);
         setShowResults(deduped.length > 0);
@@ -313,6 +325,18 @@ export default function RequestForm(
       console.log('[artist-search] Got artists:', data.length);
       setArtistResults(data);
       setShowArtistResults(data.length > 0);
+
+      // Close artist history dropdown when results are loaded
+      setShowArtistHistory(false);
+
+      // Save search term to history
+      if (nickname && serverUrl && query.trim().length >= 2) {
+        fetch(`${serverUrl}/api/search-history`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ nickname, type: 'artist', query: query.trim() }),
+        }).then(() => refreshSearchHistory("artist")).catch(() => {});
+      }
     } catch (err) {
       console.error('[artist-search] Error:', err);
       setArtistResults([]);
@@ -1006,22 +1030,39 @@ export default function RequestForm(
           <button
             type="button"
             onClick={() => switchSource("video")}
-            className={`group flex h-8 min-w-0 basis-0 items-center justify-center rounded-md px-1.5 text-[11px] font-semibold transition-all duration-200 ${
+            className={`group relative h-8 min-w-[110px] basis-0 overflow-hidden rounded-md transition-all duration-300 ${
               source === "video"
-                ? "flex-[1.5] bg-orange-500/20 text-orange-300"
+                ? "flex-[2] bg-gray-800/40 shadow-sm"
                 : "flex-1 text-gray-400 hover:text-gray-200"
             }`}
           >
-            <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M1.175 12.225c-.05 0-.075.025-.075.075v4.4c0 .05.025.075.075.075s.075-.025.075-.075v-4.4c0-.05-.025-.075-.075-.075zm-.9.825c-.05 0-.075.025-.075.075v2.75c0 .05.025.075.075.075s.075-.025.075-.075v-2.75c0-.05-.025-.075-.075-.075zm1.8-.6c-.05 0-.075.025-.075.075v5c0 .05.025.075.075.075s.075-.025.075-.075v-5c0-.05-.025-.075-.075-.075zm.9-.75c-.05 0-.075.025-.075.075v6.5c0 .05.025.075.075.075s.075-.025.075-.075v-6.5c0-.05-.025-.075-.075-.075zm.9.275c-.05 0-.075.025-.075.075v5.95c0 .05.025.075.075.075s.075-.025.075-.075v-5.95c0-.05-.025-.075-.075-.075zm.9-.9c-.05 0-.075.025-.075.075v7.75c0 .05.025.075.075.075s.075-.025.075-.075v-7.75c0-.05-.025-.075-.075-.075zm.9 1.05c-.05 0-.075.025-.075.075v5.65c0 .05.025.075.075.075s.075-.025.075-.075v-5.65c0-.05-.025-.075-.075-.075zm.9-2.025c-.05 0-.075.025-.075.075v9.7c0 .05.025.075.075.075s.075-.025.075-.075v-9.7c0-.05-.025-.075-.075-.075zm.9-.475c-.05 0-.075.025-.075.075v10.65c0 .05.025.075.075.075s.075-.025.075-.075V9.55c0-.05-.025-.075-.075-.075zm.9.45c-.05 0-.075.025-.075.075v9.75c0 .05.025.075.075.075s.075-.025.075-.075v-9.75c0-.05-.025-.075-.075-.075zm1.3-.275c-.827 0-1.587.262-2.213.708a5.346 5.346 0 00-1.587-3.658A5.346 5.346 0 009.175 5C6.388 5 4.1 7.163 3.95 9.9c-.013.05-.013.1-.013.15 0 .05 0 .1.013.15h-.175c-.975 0-1.775.8-1.775 1.775v5.05c0 .975.8 1.775 1.775 1.775H12.5c2.375 0 4.3-1.925 4.3-4.3S14.875 10.2 12.5 10.2z" />
-            </svg>
-            <span
-              className={`overflow-hidden whitespace-nowrap transition-all duration-200 ${
-                source === "video" ? "ml-1 max-w-[140px] opacity-100" : "max-w-0 opacity-0"
+            {/* Background Split */}
+            <div 
+              className={`absolute inset-0 transition-opacity duration-300 ${
+                source === "video" ? "opacity-100" : "opacity-0"
               }`}
-            >
-              SC + YouTube
-            </span>
+              style={{
+                background: 'linear-gradient(135deg, rgba(255, 85, 0, 0.2) 50%, rgba(220, 38, 38, 0.2) 50%)'
+              }}
+            />
+            
+            <div className="relative flex h-full w-full items-center justify-between px-2.5">
+              {/* SC Side */}
+              <div className={`flex items-center gap-1 transition-all duration-300 ${source === "video" ? "text-orange-400 translate-y-[-2px] translate-x-[-1px]" : "text-gray-400"}`}>
+                <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M1.175 12.225c-.05 0-.075.025-.075.075v4.4c0 .05.025.075.075.075s.075-.025.075-.075v-4.4c0-.05-.025-.075-.075-.075zm-.9.825c-.05 0-.075.025-.075.075v2.75c0 .05.025.075.075.075s.075-.025.075-.075v-2.75c0-.05-.025-.075-.075-.075zm1.8-.6c-.05 0-.075.025-.075.075v5c0 .05.025.075.075.075s.075-.025.075-.075v-5c0-.05-.025-.075-.075-.075zm.9-.75c-.05 0-.075.025-.075.075v6.5c0 .05.025.075.075.075s.075-.025.075-.075v-6.5c0-.05-.025-.075-.075-.075zm.9.275c-.05 0-.075.025-.075.075v5.95c0 .05.025.075.075.075s.075-.025.075-.075v-5.95c0-.05-.025-.075-.075-.075zm.9-.9c-.05 0-.075.025-.075.075v7.75c0 .05.025.075.075.075s.075-.025.075-.075v-7.75c0-.05-.025-.075-.075-.075zm.9 1.05c-.05 0-.075.025-.075.075v5.65c0 .05.025.075.075.075s.075-.025.075-.075v-5.65c0-.05-.025-.075-.075-.075zm.9-2.025c-.05 0-.075.025-.075.075v9.7c0 .05.025.075.075.075s.075-.025.075-.075v-9.7c0-.05-.025-.075-.075-.075zm.9-.475c-.05 0-.075.025-.075.075v10.65c0 .05.025.075.075.075s.075-.025.075-.075V9.55c0-.05-.025-.075-.075-.075zm.9.45c-.05 0-.075.025-.075.075v9.75c0 .05.025.075.075.075s.075-.025.075-.075v-9.75c0-.05-.025-.075-.075-.075zm1.3-.275c-.827 0-1.587.262-2.213.708a5.346 5.346 0 00-1.587-3.658A5.346 5.346 0 009.175 5C6.388 5 4.1 7.163 3.95 9.9c-.013.05-.013.1-.013.15 0 .05 0 .1.013.15h-.175c-.975 0-1.775.8-1.775 1.775v5.05c0 .975.8 1.775 1.775 1.775H12.5c2.375 0 4.3-1.925 4.3-4.3S14.875 10.2 12.5 10.2z" />
+                </svg>
+                <span className="text-[10px] font-bold">SC</span>
+              </div>
+
+              {/* YT Side */}
+              <div className={`flex items-center gap-1 transition-all duration-300 ${source === "video" ? "text-red-500 translate-y-[2px] translate-x-[1px]" : "text-gray-400"}`}>
+                <span className="text-[10px] font-bold">YT</span>
+                <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M23.5 6.2a3.02 3.02 0 00-2.12-2.14C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.38.56A3.02 3.02 0 00.5 6.2 31.7 31.7 0 000 12a31.7 31.7 0 00.5 5.8 3.02 3.02 0 002.12 2.14c1.88.56 9.38.56 9.38.56s7.5 0 9.38-.56a3.02 3.02 0 002.12-2.14A31.7 31.7 0 0024 12a31.7 31.7 0 00-.5-5.8zM9.55 15.5V8.5l6.27 3.5-6.27 3.5z" />
+                </svg>
+              </div>
+            </div>
           </button>
           <button
             type="button"
@@ -1262,14 +1303,14 @@ export default function RequestForm(
                     </div>
                   )}
                   {showArtistHistory && artistHistory.length > 0 && (
-                    <div className="absolute left-0 right-0 top-full z-40 mt-1 max-h-72 overflow-y-auto overscroll-contain rounded-md border border-gray-700 bg-gray-900 shadow-lg">
+                    <div className="absolute left-0 right-auto top-full z-40 mt-1 max-h-72 w-full max-w-[280px] overflow-y-auto overscroll-contain rounded-md border border-gray-700 bg-gray-900 shadow-lg">
                       <div className="px-3 py-1.5 text-[11px] font-medium uppercase text-gray-500">Recente zoekopdrachten</div>
                       {artistHistory.map((h) => (
                         <div key={h.id} className="group flex w-full items-center px-3 py-1.5 text-left text-sm text-gray-300 hover:bg-gray-800">
                           <button
                             type="button"
                             onClick={() => { void selectArtistHistoryItem(h.query); }}
-                            className="flex-1 truncate"
+                            className="flex-1 truncate text-left"
                           >
                             {h.query}
                           </button>
@@ -1287,7 +1328,7 @@ export default function RequestForm(
                     </div>
                   )}
                   {showArtistResults && artistResults.length > 0 && (
-                    <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-60 overflow-y-auto rounded-md border border-gray-700 bg-gray-900 shadow-lg">
+                    <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-80 overflow-y-auto overscroll-contain rounded-md border border-gray-700 bg-gray-900 shadow-lg" style={{ WebkitOverflowScrolling: 'touch' }}>
                       {artistResults.map((artist) => (
                         <button
                           key={artist.id}
@@ -1300,7 +1341,7 @@ export default function RequestForm(
                           ) : (
                             <div className="h-10 w-10 shrink-0 rounded bg-gray-800" />
                           )}
-                          <div className="flex-1 min-w-0">
+                          <div className="flex-1 min-w-0 text-left">
                             <p className="truncate text-sm font-medium text-white">{artist.name}</p>
                             <p className="truncate text-xs text-gray-400">
                               {artist.country || 'Onbekend'}{artist.type ? ` • ${artist.type}` : ''}{artist.disambiguation ? ` • ${artist.disambiguation}` : ''}
@@ -1341,7 +1382,7 @@ export default function RequestForm(
                       return (
                         <div key={`${track.rank}-${track.name}`} className="flex items-center gap-3 border-b border-gray-800/80 px-3 py-2 last:border-b-0">
                           {thumb ? <img src={thumb} alt="" className="h-10 w-10 shrink-0 rounded object-cover" /> : <div className="h-10 w-10 shrink-0 rounded bg-gray-800" />}
-                          <div className="min-w-0 flex-1">
+                          <div className="min-w-0 flex-1 text-left">
                             <p className="truncate text-sm font-medium text-white">{track.name}</p>
                             <p className="truncate text-xs text-gray-400">#{track.rank}{track.listeners ? ` • ${parseInt(track.listeners).toLocaleString()} luisteraars` : ''}</p>
                           </div>
@@ -1362,121 +1403,121 @@ export default function RequestForm(
             )}
           </div>
         ) : (
-          <div className="shrink-0 space-y-2">
-            <div className="relative z-10">
-              <NoAutofillInput
-                type="search"
-                id="request-search-input"
-                name={`request-search-${Math.random().toString(36).substring(7)}`}
-                autoComplete="off"
-                spellCheck={false}
-                value={input}
-                onChange={(e) => handleInputChange(e.target.value)}
-                onFocus={() => { setShowVideoHistory(true); if (results.length > 0) setShowResults(true); }}
-                onKeyDown={(e) => { if (e.key === 'Escape') { setShowVideoHistory(false); setShowResults(false); } }}
-                onBlur={() => {
-                  // Don't hide immediately on blur, let the click handler or touch end manage it
-                  if (!showResults && !showVideoHistory) return;
-                  setTimeout(() => { if (input.trim() === '') setShowVideoHistory(false); setShowResults(false); }, 150);
-                }}
-                placeholder="Zoek op SoundCloud of YouTube, of plak een link..."
-                className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 pr-28 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500 focus:ring-1 focus:ring-violet-500/20"
-              />
-              {!hideLocalDiscovery && (
-              <button
-                type="button"
-                onClick={() => setIncludeLocal((prev) => !prev)}
-                className={`absolute right-3 top-1/2 -translate-y-1/2 rounded-full border px-2 py-0.5 text-[10px] font-semibold transition ${
-                  includeLocal
-                    ? "border-violet-500/70 bg-violet-500/20 text-violet-200"
-                    : "border-gray-600 bg-gray-800/80 text-gray-300 hover:border-gray-500"
-                }`}
-                aria-pressed={includeLocal}
-                title="Lokale tracks meenemen"
-              >
-                Lokaal
-              </button>
-              )}
-              {searching && (
-                <div className="absolute right-24 top-1/2 -translate-y-1/2">
-                  <span className="block h-4 w-4 animate-spin rounded-full border-2 border-violet-400 border-t-transparent" />
-                </div>
-              )}
-              {showVideoHistory && videoHistory.length > 0 && (
-                <div className="absolute left-0 right-0 top-full z-40 mt-1 max-h-72 overflow-y-auto overscroll-contain rounded-md border border-gray-700 bg-gray-900 shadow-lg">
-                  <div className="px-3 py-1.5 text-[11px] font-medium uppercase text-gray-500">Recente zoekopdrachten</div>
-                  {videoHistory.map((h) => (
-                    <div key={h.id} className="group flex w-full items-center px-3 py-1.5 text-left text-sm text-gray-300 hover:bg-gray-800">
-                      <button
-                        type="button"
-                        onClick={() => { setInput(h.query); handleInputChange(h.query); setShowVideoHistory(false); }}
-                        className="flex-1 truncate"
-                      >
-                        {h.query}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => deleteHistoryItem('video', h.id)}
-                        className="ml-2 shrink-0 px-1 text-red-400 opacity-100 transition hover:text-red-300 sm:opacity-0 sm:group-hover:opacity-100"
-                        title="Verwijderen"
-                        aria-label={`Verwijder ${h.query} uit geschiedenis`}
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {showResults && results.length > 0 && (
-                <div
-                  data-prevent-pull-refresh="1"
-                  className="absolute left-0 right-0 top-full z-[150] mt-1 max-h-[50dvh] touch-pan-y overscroll-contain overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50 sm:max-h-80"
-                  onMouseDown={(e) => {
-                    // Prevent the blur from hiding results when clicking inside
-                    e.preventDefault();
+          <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
+            <div className="shrink-0 space-y-2">
+              <div className="relative z-10">
+                <NoAutofillInput
+                  type="search"
+                  id="request-search-input"
+                  name={`request-search-${Math.random().toString(36).substring(7)}`}
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={input}
+                  onChange={(e) => handleInputChange(e.target.value)}
+                  onFocus={() => { setShowVideoHistory(true); if (results.length > 0) setShowResults(true); }}
+                  onKeyDown={(e) => { if (e.key === 'Escape') { setShowVideoHistory(false); setShowResults(false); } }}
+                  onBlur={() => {
+                    // Don't hide immediately on blur, let the click handler or touch end manage it
+                    if (!showResults && !showVideoHistory) return;
+                    setTimeout(() => { if (input.trim() === '') setShowVideoHistory(false); setShowResults(false); }, 150);
                   }}
-                  onMouseLeave={() => {
-                    // Hide when mouse leaves the dropdown
-                    setTimeout(() => setShowResults(false), 200);
-                  }}
+                  placeholder="Zoek op SoundCloud of YouTube, of plak een link..."
+                  className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 pr-28 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500 focus:ring-1 focus:ring-violet-500/20"
+                />
+                {!hideLocalDiscovery && (
+                <button
+                  type="button"
+                  onClick={() => setIncludeLocal((prev) => !prev)}
+                  className={`absolute right-3 top-1/2 -translate-y-1/2 rounded-full border px-2 py-0.5 text-[10px] font-semibold transition ${
+                    includeLocal
+                      ? "border-violet-500/70 bg-violet-500/20 text-violet-200"
+                      : "border-gray-600 bg-gray-800/80 text-gray-300 hover:border-gray-500"
+                  }`}
+                  aria-pressed={includeLocal}
+                  title="Lokale tracks meenemen"
                 >
-                  {results.map((r) => (
-                    <button
-                      key={r.id}
-                      type="button"
-                      onClick={() => { void selectResult(r); }}
-                      className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition hover:bg-gray-800/80 first:rounded-t-xl last:rounded-b-xl"
-                    >
-                      {r.thumbnail ? (
-                        <img src={r.thumbnail} alt="" className="h-12 w-16 shrink-0 rounded-md object-cover" />
-                      ) : (
-                        <div className="flex h-12 w-16 shrink-0 items-center justify-center rounded-md bg-gray-800 text-[10px] text-gray-500">
-                          lokaal
-                        </div>
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-white">{r.title}</p>
-                        <div className="flex items-center gap-2">
-                          {r.channel && <span className="truncate text-xs text-gray-400">{r.channel}</span>}
-                          {r.duration !== null && (
-                            <span className="shrink-0 text-xs tabular-nums text-gray-500">
-                              {Math.floor(r.duration / 60)}:{String(r.duration % 60).padStart(2, "0")}
-                            </span>
-                          )}
-                        </div>
+                  Lokaal
+                </button>
+                )}
+                {searching && (
+                  <div className="absolute right-24 top-1/2 -translate-y-1/2">
+                    <span className="block h-4 w-4 animate-spin rounded-full border-2 border-violet-400 border-t-transparent" />
+                  </div>
+                )}
+                {showVideoHistory && videoHistory.length > 0 && (
+                  <div className="absolute left-0 right-auto top-full z-40 mt-1 max-h-72 w-full max-w-[280px] overflow-y-auto overscroll-contain rounded-md border border-gray-700 bg-gray-900 shadow-lg">
+                    <div className="px-3 py-1.5 text-[11px] font-medium uppercase text-gray-500">Recente zoekopdrachten</div>
+                    {videoHistory.map((h) => (
+                      <div key={h.id} className="group flex w-full items-center px-3 py-1.5 text-left text-sm text-gray-300 hover:bg-gray-800">
+                        <button
+                          type="button"
+                          onClick={() => { setInput(h.query); handleInputChange(h.query); setShowVideoHistory(false); }}
+                          className="flex-1 truncate text-left"
+                        >
+                          {h.query}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteHistoryItem('video', h.id)}
+                          className="ml-2 shrink-0 px-1 text-red-400 opacity-100 transition hover:text-red-300 sm:opacity-0 sm:group-hover:opacity-100"
+                          title="Verwijderen"
+                          aria-label={`Verwijder ${h.query} uit geschiedenis`}
+                        >
+                          ×
+                        </button>
                       </div>
-                    </button>
-                  ))}
-                </div>
-              )}
+                    ))}
+                  </div>
+                )}
+              </div>
+              <button
+                type="submit"
+                disabled={submitting || !input.trim()}
+                className="w-full rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-violet-500 active:scale-[0.98] disabled:opacity-40"
+              >
+                {submitting ? "Checken..." : "Verzoek sturen"}
+              </button>
             </div>
-            <button
-              type="submit"
-              disabled={submitting || !input.trim()}
-              className="w-full rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-violet-500 active:scale-[0.98] disabled:opacity-40"
-            >
-              {submitting ? "Checken..." : "Verzoek sturen"}
-            </button>
+
+            {showResults && results.length > 0 && (
+              <div
+                data-prevent-pull-refresh="1"
+                className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50"
+                style={{ WebkitOverflowScrolling: 'touch' }}
+                onMouseDown={(e) => {
+                  // Prevent the blur from hiding results when clicking inside
+                  e.preventDefault();
+                }}
+              >
+                {results.map((r) => (
+                  <button
+                    key={r.id}
+                    type="button"
+                    onClick={() => { void selectResult(r); }}
+                    className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition hover:bg-gray-800/80 first:rounded-t-xl last:rounded-b-xl"
+                  >
+                    {r.thumbnail ? (
+                      <img src={r.thumbnail} alt="" className="h-12 w-16 shrink-0 rounded-md object-cover" />
+                    ) : (
+                      <div className="flex h-12 w-16 shrink-0 items-center justify-center rounded-md bg-gray-800 text-[10px] text-gray-500">
+                        lokaal
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1 text-left">
+                      <p className="truncate text-sm font-medium text-white">{r.title}</p>
+                      <div className="flex items-center gap-2 text-left">
+                        {r.channel && <span className="truncate text-xs text-gray-400">{r.channel}</span>}
+                        {r.duration !== null && (
+                          <span className="shrink-0 text-xs tabular-nums text-gray-500">
+                            {Math.floor(r.duration / 60)}:{String(r.duration % 60).padStart(2, "0")}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
         {feedback && (

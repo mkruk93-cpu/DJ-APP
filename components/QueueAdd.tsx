@@ -75,8 +75,9 @@ class QueueAddErrorBoundary extends Component<
   }
 }
 
-type SearchSource = "search" | "youtube" | "soundcloud" | "spotify" | "genres" | "playlists";
+type SearchSource = "search" | "video" | "spotify" | "genres" | "playlists";
 
+const URL_REGEX = /^https?:\/\/(www\.)?(youtube\.com|youtu\.be|soundcloud\.com)\/.+$/i;
 const YT_URL_REGEX =
   /^https?:\/\/(www\.)?(youtube\.com\/(watch\?.*v=|shorts\/|embed\/)|youtu\.be\/)[\w-]+/i;
 const SC_URL_REGEX =
@@ -224,7 +225,6 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
   const [input, setInput] = useState("");
   const [feedback, setFeedback] = useState<{ msg: string; ok: boolean } | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
   const [results, setResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchingMore, setSearchingMore] = useState(false);
@@ -522,34 +522,50 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
     const runId = ++latestSearchRunRef.current;
     if (append) setSearchingMore(true);
     else setSearching(true);
-    fetch(
-      `${serverUrl}/search?q=${encodeURIComponent(query)}&source=${source}&limit=${SEARCH_PAGE_SIZE}&offset=${offset}&includeLocal=${useLocal ? "1" : "0"}`,
+
+    const sources = source === "video" ? ["soundcloud", "youtube"] : [source];
+
+    Promise.all(
+      sources.map(async (platform) => {
+        const res = await fetch(
+          `${serverUrl}/search?q=${encodeURIComponent(query)}&source=${platform}&limit=${SEARCH_PAGE_SIZE}&offset=${offset}&includeLocal=${useLocal ? "1" : "0"}`,
+        );
+        if (!res.ok) return [] as SearchResult[];
+        const data = await res.json() as SearchResult[];
+        return Array.isArray(data) ? data : [];
+      }),
     )
-      .then((r) => r.json())
-      .then((data: SearchResult[]) => {
+      .then((groups) => {
         if (runId !== latestSearchRunRef.current) return;
-        const normalized = dedupeSearchResults(Array.isArray(data) ? data : []);
-        const visible = filterSetResults(normalized);
+        
+        // Close search history dropdown when results are loaded
+        setShowVideoHistory(false);
+
+        // Save search term to history (only for the initial search)
+        if (!append && nickname && serverUrl && query.trim().length >= 2) {
+          fetch(`${serverUrl}/api/search-history`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ nickname, type: 'video', query: query.trim() }),
+          }).then(() => refreshSearchHistory("video")).catch(() => {});
+        }
+
+        const deduped = dedupeSearchResults(groups.flat());
+        const visible = filterSetResults(deduped);
         setResults((prev) => {
           if (!append) return visible;
           return dedupeSearchResults([...prev, ...visible]);
         });
         setSearchQuery(query);
-        setSearchOffsetSafe(offset + normalized.length);
-        
+        setSearchOffsetSafe(offset + deduped.length);
+
         // Improved logic for hasMore when local files are included
         if (useLocal && offset < 30) {
-          // When local files are enabled, always assume more results until offset 30
-          // This ensures we can reach remote results after local bucket (20) + buffer
-          console.log('[search-debug] Setting hasMore=true (includeLocal, offset < 30)', { offset, includeLocal: useLocal });
           setSearchHasMore(true);
         } else {
-          // Standard logic: has more if we got results
-          const hasMore = normalized.length > 0;
-          console.log('[search-debug] Setting hasMore based on results', { hasMore, resultsLength: normalized.length, offset });
-          setSearchHasMore(hasMore);
+          setSearchHasMore(deduped.length > 0);
         }
-        
+
         setShowResults(append ? true : visible.length > 0);
       })
       .catch(() => {
@@ -559,7 +575,6 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
           setSearchOffsetSafe(0);
           setSearchHasMore(false);
         } else {
-          // On error during append, still allow more attempts if we're in local+remote mode
           if (useLocal && searchOffsetRef.current < 30) {
             setSearchHasMore(true);
           } else {
@@ -621,12 +636,24 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
       const data = await res.json() as MusicBrainzArtist[];
       setArtistResults(data);
       setShowArtistResults(data.length > 0);
+      
+      // Close artist history dropdown when results are loaded
+      setShowArtistHistory(false);
+
+      // Save search term to history (only for the initial search)
+      if (nickname && serverUrl && query.trim().length >= 2) {
+        fetch(`${serverUrl}/api/search-history`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ nickname, type: 'artist', query: query.trim() }),
+        }).then(() => refreshSearchHistory("artist")).catch(() => {});
+      }
     } catch {
       setArtistResults([]);
     } finally {
       setArtistSearching(false);
     }
-  }, [serverUrl]);
+  }, [serverUrl, nickname, refreshSearchHistory]);
 
   // Load artist tracks from Last.fm
   const loadArtistTracks = useCallback(async (artistName: string) => {
@@ -833,84 +860,6 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
     // Let the touch move event bubble normally for smooth scrolling
     e.stopPropagation();
   }, []);
-
-  // Calculate dropdown position to prevent it from going off-screen
-  const calculateDropdownPosition = useCallback(() => {
-    if (typeof window === 'undefined' || !wrapperRef.current) return;
-
-    const inputContainer = wrapperRef.current.querySelector('input[type="text"]')?.parentElement;
-    if (!inputContainer) return;
-
-    const rect = inputContainer.getBoundingClientRect();
-    const viewportHeight = window.innerHeight;
-    const spaceBelow = viewportHeight - rect.bottom;
-    const spaceAbove = rect.top;
-
-    // Mobile: always stretch the results list to the bottom viewport edge.
-    // This avoids the empty strip under the list on phones.
-    if (isMobile) {
-      const top = Math.min(Math.max(8, Math.round(rect.bottom + 8)), Math.max(8, viewportHeight - 140));
-      const maxHeight = Math.max(120, viewportHeight - top - 8);
-      setDropdownStyle({
-        position: 'fixed',
-        left: '8px',
-        right: '8px',
-        top: `${top}px`,
-        bottom: '8px',
-        marginTop: '0',
-        transform: 'none',
-        maxHeight: `${maxHeight}px`,
-      });
-      return;
-    }
-    
-    // Check if we have enough space below (need at least 200px for meaningful dropdown)
-    if (spaceBelow >= 200) {
-      // Position normally below input using fixed to bypass overflow-hidden
-      setDropdownStyle({
-        position: 'fixed',
-        top: `${Math.round(rect.bottom + 4)}px`,
-        left: `${Math.round(rect.left)}px`,
-        width: `${Math.round(rect.width)}px`,
-        maxHeight: `${Math.max(140, spaceBelow - 8)}px`
-      });
-    } else if (spaceAbove >= 200) {
-      // Position above input using fixed to bypass overflow-hidden
-      const bottom = viewportHeight - rect.top;
-      setDropdownStyle({
-        position: 'fixed',
-        bottom: `${Math.round(bottom + 4)}px`,
-        top: 'auto',
-        left: `${Math.round(rect.left)}px`,
-        width: `${Math.round(rect.width)}px`,
-        marginTop: '0',
-        maxHeight: `${Math.max(140, spaceAbove - 8)}px`
-      });
-    } else {
-      // Use fixed positioning in center if neither has enough space
-      setDropdownStyle({
-        position: 'fixed',
-        left: '8px',
-        right: '8px',
-        top: '50%',
-        transform: 'translateY(-50%)',
-        maxHeight: `${viewportHeight * 0.6}px`
-      });
-    }
-  }, [isMobile]);
-
-  // Update dropdown position when results are shown
-  useEffect(() => {
-    if (showResults && results.length > 0) {
-      calculateDropdownPosition();
-      
-      // Recalculate on window resize
-      const handleResize = () => calculateDropdownPosition();
-      window.addEventListener('resize', handleResize);
-      
-      return () => window.removeEventListener('resize', handleResize);
-    }
-  }, [showResults, results.length, calculateDropdownPosition]);
 
   function handleGenreListScroll(e: React.UIEvent<HTMLDivElement>) {
     if (source !== "genres" || !activeGenre) return;
@@ -1144,7 +1093,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
       if (results.length > 0) {
         selectResult(results[0]);
       } else {
-        setFeedback({ msg: "Zoek een nummer of plak een YouTube/SoundCloud link.", ok: false });
+        setFeedback({ msg: "Zoek een nummer of plak een SoundCloud of YouTube link.", ok: false });
       }
       return;
     }
@@ -1161,16 +1110,6 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
     startRecentAdd(key, result.url, result.title, result.channel);
     setResultStatus((prev) => ({ ...prev, [key]: "added" }));
     
-    // Save to video history (artist - title)
-    const historyQuery = result.channel ? `${result.channel} - ${result.title}` : result.title;
-    if (nickname && serverUrl) {
-      fetch(`${serverUrl}/api/search-history`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nickname, type: 'video', query: historyQuery }),
-      }).then(() => refreshSearchHistory("video")).catch(() => {});
-    }
-
     submitUrl(
       result.url,
       result.thumbnail || undefined,
@@ -1239,20 +1178,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
     if (query.length >= 2 && !isSupportedUrl(query)) {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(() => {
-        setSearching(true);
-        const url = serverUrl ?? "";
-        fetch(`${url}/search?q=${encodeURIComponent(query)}&source=${newSource}&limit=${SEARCH_PAGE_SIZE}&offset=0&includeLocal=${hideLocalDiscovery ? "0" : includeLocal ? "1" : "0"}`)
-          .then((r) => r.json())
-          .then((data: SearchResult[]) => {
-            const normalized = dedupeSearchResults(Array.isArray(data) ? data : []);
-            setResults(filterSetResults(normalized));
-            setSearchOffsetSafe(normalized.length);
-            setSearchHasMore(normalized.length > 0);
-            setSearchQuery(query);
-            setShowResults(filterSetResults(normalized).length > 0);
-          })
-          .catch(() => setResults([]))
-          .finally(() => setSearching(false));
+        search(query, false);
       }, 100);
     }
   }
@@ -1419,43 +1345,40 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
           </button>
           <button
             type="button"
-            onClick={() => switchSource("youtube")}
-            className={`group flex h-8 min-w-0 basis-0 items-center justify-center rounded-md px-1.5 text-[11px] font-semibold transition-all duration-200 ${
-              source === "youtube"
-                ? "flex-[1.4] bg-red-500/20 text-red-400"
+            onClick={() => switchSource("video")}
+            className={`group relative h-8 min-w-[110px] basis-0 overflow-hidden rounded-md transition-all duration-300 ${
+              source === "video"
+                ? "flex-[2] bg-gray-800/40 shadow-sm"
                 : "flex-1 text-gray-400 hover:text-gray-200"
             }`}
           >
-            <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M23.5 6.2a3.02 3.02 0 00-2.12-2.14C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.38.56A3.02 3.02 0 00.5 6.2 31.7 31.7 0 000 12a31.7 31.7 0 00.5 5.8 3.02 3.02 0 002.12 2.14c1.88.56 9.38.56 9.38.56s7.5 0 9.38-.56a3.02 3.02 0 002.12-2.14A31.7 31.7 0 0024 12a31.7 31.7 0 00-.5-5.8zM9.55 15.5V8.5l6.27 3.5-6.27 3.5z" />
-            </svg>
-            <span
-              className={`overflow-hidden whitespace-nowrap transition-all duration-200 ${
-                source === "youtube" ? "ml-1 max-w-[86px] opacity-100" : "max-w-0 opacity-0"
+            {/* Background Split */}
+            <div 
+              className={`absolute inset-0 transition-opacity duration-300 ${
+                source === "video" ? "opacity-100" : "opacity-0"
               }`}
-            >
-              YouTube
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => switchSource("soundcloud")}
-            className={`group flex h-8 min-w-0 basis-0 items-center justify-center rounded-md px-1.5 text-[11px] font-semibold transition-all duration-200 ${
-              source === "soundcloud"
-                ? "flex-[1.4] bg-orange-500/20 text-orange-400"
-                : "flex-1 text-gray-400 hover:text-gray-200"
-            }`}
-          >
-            <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M1.175 12.225c-.05 0-.075.025-.075.075v4.4c0 .05.025.075.075.075s.075-.025.075-.075v-4.4c0-.05-.025-.075-.075-.075zm-.9.825c-.05 0-.075.025-.075.075v2.75c0 .05.025.075.075.075s.075-.025.075-.075v-2.75c0-.05-.025-.075-.075-.075zm1.8-.6c-.05 0-.075.025-.075.075v5c0 .05.025.075.075.075s.075-.025.075-.075v-5c0-.05-.025-.075-.075-.075zm.9-.75c-.05 0-.075.025-.075.075v6.5c0 .05.025.075.075.075s.075-.025.075-.075v-6.5c0-.05-.025-.075-.075-.075zm.9.275c-.05 0-.075.025-.075.075v5.95c0 .05.025.075.075.075s.075-.025.075-.075v-5.95c0-.05-.025-.075-.075-.075zm.9-.9c-.05 0-.075.025-.075.075v7.75c0 .05.025.075.075.075s.075-.025.075-.075v-7.75c0-.05-.025-.075-.075-.075zm.9 1.05c-.05 0-.075.025-.075.075v5.65c0 .05.025.075.075.075s.075-.025.075-.075v-5.65c0-.05-.025-.075-.075-.075zm.9-2.025c-.05 0-.075.025-.075.075v9.7c0 .05.025.075.075.075s.075-.025.075-.075v-9.7c0-.05-.025-.075-.075-.075zm.9-.475c-.05 0-.075.025-.075.075v10.65c0 .05.025.075.075.075s.075-.025.075-.075V9.55c0-.05-.025-.075-.075-.075zm.9.45c-.05 0-.075.025-.075.075v9.75c0 .05.025.075.075.075s.075-.025.075-.075v-9.75c0-.05-.025-.075-.075-.075zm1.3-.275c-.827 0-1.587.262-2.213.708a5.346 5.346 0 00-1.587-3.658A5.346 5.346 0 009.175 5C6.388 5 4.1 7.163 3.95 9.9c-.013.05-.013.1-.013.15 0 .05 0 .1.013.15h-.175c-.975 0-1.775.8-1.775 1.775v5.05c0 .975.8 1.775 1.775 1.775H12.5c2.375 0 4.3-1.925 4.3-4.3S14.875 10.2 12.5 10.2z" />
-            </svg>
-            <span
-              className={`overflow-hidden whitespace-nowrap transition-all duration-200 ${
-                source === "soundcloud" ? "ml-1 max-w-[86px] opacity-100" : "max-w-0 opacity-0"
-              }`}
-            >
-              SoundCloud
-            </span>
+              style={{
+                background: 'linear-gradient(135deg, rgba(255, 85, 0, 0.2) 50%, rgba(220, 38, 38, 0.2) 50%)'
+              }}
+            />
+            
+            <div className="relative flex h-full w-full items-center justify-between px-2.5">
+              {/* SC Side */}
+              <div className={`flex items-center gap-1 transition-all duration-300 ${source === "video" ? "text-orange-400 translate-y-[-2px] translate-x-[-1px]" : "text-gray-400"}`}>
+                <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M1.175 12.225c-.05 0-.075.025-.075.075v4.4c0 .05.025.075.075.075s.075-.025.075-.075v-4.4c0-.05-.025-.075-.075-.075zm-.9.825c-.05 0-.075.025-.075.075v2.75c0 .05.025.075.075.075s.075-.025.075-.075v-2.75c0-.05-.025-.075-.075-.075zm1.8-.6c-.05 0-.075.025-.075.075v5c0 .05.025.075.075.075s.075-.025.075-.075v-5c0-.05-.025-.075-.075-.075zm.9-.75c-.05 0-.075.025-.075.075v6.5c0 .05.025.075.075.075s.075-.025.075-.075v-6.5c0-.05-.025-.075-.075-.075zm.9.275c-.05 0-.075.025-.075.075v5.95c0 .05.025.075.075.075s.075-.025.075-.075v-5.95c0-.05-.025-.075-.075-.075zm.9-.9c-.05 0-.075.025-.075.075v7.75c0 .05.025.075.075.075s.075-.025.075-.075v-7.75c0-.05-.025-.075-.075-.075zm.9 1.05c-.05 0-.075.025-.075.075v5.65c0 .05.025.075.075.075s.075-.025.075-.075v-5.65c0-.05-.025-.075-.075-.075zm.9-2.025c-.05 0-.075.025-.075.075v9.7c0 .05.025.075.075.075s.075-.025.075-.075v-9.7c0-.05-.025-.075-.075-.075zm.9-.475c-.05 0-.075.025-.075.075v10.65c0 .05.025.075.075.075s.075-.025.075-.075V9.55c0-.05-.025-.075-.075-.075zm.9.45c-.05 0-.075.025-.075.075v9.75c0 .05.025.075.075.075s.075-.025.075-.075v-9.75c0-.05-.025-.075-.075-.075zm1.3-.275c-.827 0-1.587.262-2.213.708a5.346 5.346 0 00-1.587-3.658A5.346 5.346 0 009.175 5C6.388 5 4.1 7.163 3.95 9.9c-.013.05-.013.1-.013.15 0 .05 0 .1.013.15h-.175c-.975 0-1.775.8-1.775 1.775v5.05c0 .975.8 1.775 1.775 1.775H12.5c2.375 0 4.3-1.925 4.3-4.3S14.875 10.2 12.5 10.2z" />
+                </svg>
+                <span className="text-[10px] font-bold">SC</span>
+              </div>
+
+              {/* YT Side */}
+              <div className={`flex items-center gap-1 transition-all duration-300 ${source === "video" ? "text-red-500 translate-y-[2px] translate-x-[1px]" : "text-gray-400"}`}>
+                <span className="text-[10px] font-bold">YT</span>
+                <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M23.5 6.2a3.02 3.02 0 00-2.12-2.14C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.38.56A3.02 3.02 0 00.5 6.2 31.7 31.7 0 000 12a31.7 31.7 0 00.5 5.8 3.02 3.02 0 002.12 2.14c1.88.56 9.38.56 9.38.56s7.5 0 9.38-.56a3.02 3.02 0 002.12-2.14A31.7 31.7 0 0024 12a31.7 31.7 0 00-.5-5.8zM9.55 15.5V8.5l6.27 3.5-6.27 3.5z" />
+                </svg>
+              </div>
+            </div>
           </button>
           <button
             type="button"
@@ -1806,7 +1729,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                           <button
                             type="button"
                             onClick={() => { void selectArtistHistoryItem(h.query); }}
-                            className="flex-1 truncate"
+                            className="flex-1 truncate text-left"
                           >
                             {h.query}
                           </button>
@@ -1824,7 +1747,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                     </div>
                   )}
                   {showArtistResults && artistResults.length > 0 && (
-                    <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-60 overflow-y-auto rounded-md border border-gray-700 bg-gray-900 shadow-lg">
+                    <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-80 overflow-y-auto overscroll-contain rounded-md border border-gray-700 bg-gray-900 shadow-lg" style={{ WebkitOverflowScrolling: 'touch' }}>
                       {artistResults.map((artist) => (
                         <button
                           key={artist.id}
@@ -1969,6 +1892,8 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
             )}
           </div>
         ) : (
+         <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
+          {/* 1. Zoekveld Sectie */}
           <div className="shrink-0 space-y-2">
             <div className="relative">
               <NoAutofillInput
@@ -1978,14 +1903,31 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                 spellCheck={false}
                 value={input}
                 onChange={(e) => handleInputChange(e.target.value)}
-                onFocus={() => { setShowVideoHistory(true); if (results.length > 0) setShowResults(true); }}
-                onKeyDown={(e) => { if (e.key === 'Escape') { setShowVideoHistory(false); setShowResults(false); } }}
-                onBlur={() => { if (!showResults && !showVideoHistory) return; setTimeout(() => { if (input.trim() === '') setShowVideoHistory(false); setShowResults(false); }, 150); }}
-                placeholder={
-                  source === "youtube" ? "Zoek op YouTube of plak een link..." : "Zoek op SoundCloud of plak een link..."
-                }
+                onFocus={() => {
+                  if (results.length > 0) {
+                    setShowResults(true);
+                    setShowVideoHistory(false);
+                  } else {
+                    setShowVideoHistory(true);
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    setShowVideoHistory(false);
+                    setShowResults(false);
+                  }
+                }}
+                onBlur={() => {
+                  if (!showResults && !showVideoHistory) return;
+                  setTimeout(() => {
+                    if (input.trim() === '') setShowVideoHistory(false);
+                    setShowResults(false);
+                  }, 150);
+                }}
+                placeholder="Zoek op SoundCloud of YouTube, of plak een link..."
                 className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 pr-40 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
               />
+              
               <button
                 type="button"
                 onClick={() => setIncludeSets((prev) => !prev)}
@@ -2000,26 +1942,30 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
               >
                 Sets tonen
               </button>
+              
               {!hideLocalDiscovery && (
-              <button
-                type="button"
-                onClick={() => setIncludeLocal((prev) => !prev)}
-                className={`absolute right-3 top-1/2 -translate-y-1/2 rounded-full border px-2 py-0.5 text-[10px] font-semibold transition ${
-                  includeLocal
-                    ? "border-violet-500/70 bg-violet-500/20 text-violet-200"
-                    : "border-gray-600 bg-gray-800/80 text-gray-300 hover:border-gray-500"
-                }`}
-                aria-pressed={includeLocal}
-                title="Lokale tracks meenemen"
-              >
-                Lokaal
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setIncludeLocal((prev) => !prev)}
+                  className={`absolute right-3 top-1/2 -translate-y-1/2 rounded-full border px-2 py-0.5 text-[10px] font-semibold transition ${
+                    includeLocal
+                      ? "border-violet-500/70 bg-violet-500/20 text-violet-200"
+                      : "border-gray-600 bg-gray-800/80 text-gray-300 hover:border-gray-500"
+                  }`}
+                  aria-pressed={includeLocal}
+                  title="Lokale tracks meenemen"
+                >
+                  Lokaal
+                </button>
               )}
+              
               {searching && (
                 <div className="absolute right-36 top-1/2 -translate-y-1/2">
                   <span className="block h-4 w-4 animate-spin rounded-full border-2 border-violet-400 border-t-transparent" />
                 </div>
               )}
+              
+              {/* Zoekarchief / Geschiedenis */}
               {showVideoHistory && videoHistory.length > 0 && (
                 <div className="absolute left-0 right-0 top-full z-[250] mt-1 max-h-72 overflow-y-auto overscroll-contain rounded-md border border-gray-700 bg-gray-900 shadow-lg">
                   <div className="px-3 py-1.5 text-[11px] font-medium uppercase text-gray-500">Recente zoekopdrachten</div>
@@ -2027,8 +1973,12 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                     <div key={h.id} className="group flex w-full items-center px-3 py-1.5 text-left text-sm text-gray-300 hover:bg-gray-800">
                       <button
                         type="button"
-                        onClick={() => { setInput(h.query); handleInputChange(h.query); setShowVideoHistory(false); }}
-                        className="flex-1 truncate"
+                        onClick={() => {
+                          setInput(h.query);
+                          handleInputChange(h.query);
+                          setShowVideoHistory(false);
+                        }}
+                        className="flex-1 truncate text-left"
                       >
                         {h.query}
                       </button>
@@ -2045,19 +1995,19 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                   ))}
                 </div>
               )}
+
+              {/* 2. Zoekresultaten Lijst */}
               {showResults && results.length > 0 && (
                 <div
                   ref={searchListRef}
                   onScroll={handleSearchListScroll}
                   onTouchEnd={handleSearchListTouch}
                   onTouchMove={handleSearchListTouchMove}
-                  className="absolute left-0 right-0 top-full z-[300] mt-1 overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50"
+                  data-prevent-pull-refresh="1"
+                  className="absolute left-0 right-0 top-full z-[300] mt-1 max-h-80 overflow-y-auto overscroll-contain rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50 sm:max-h-96"
                   style={{ 
                     WebkitOverflowScrolling: 'touch',
-                    transform: 'translateZ(0)', // Force hardware acceleration
-                    willChange: 'scroll-position', // Optimize for scrolling
-                    touchAction: 'pan-y', // Allow vertical scrolling only
-                    ...dropdownStyle // Apply calculated positioning
+                    touchAction: 'pan-y'
                   }}
                 >
                   {results.map((r) => (
@@ -2078,9 +2028,9 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                           no art
                         </div>
                       )}
-                      <div className="min-w-0 flex-1">
+                      <div className="min-w-0 flex-1 text-left">
                         <p className="line-clamp-2 text-xs font-medium leading-snug text-white sm:line-clamp-1">{r.title}</p>
-                        <div className="mt-0.5 flex items-center gap-2">
+                        <div className="mt-0.5 flex items-center gap-2 text-left">
                           {r.channel && (
                             <span className="truncate text-[11px] text-gray-400">{r.channel}</span>
                           )}
@@ -2115,6 +2065,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                 </div>
               )}
             </div>
+            
             <button
               type="submit"
               disabled={submitting || !input.trim()}
@@ -2123,98 +2074,101 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
               {submitting ? "Checken..." : isUrl ? "Toevoegen" : "Zoeken"}
             </button>
           </div>
-        )}
-        {feedback && (
-          <p className={`text-sm ${feedback.ok ? "text-green-400" : "text-red-400"}`}>
-            {feedback.msg}
-          </p>
-        )}
-      </form>
+        </div>
+      )}
 
-      {pendingManualSelection && (
-        <div className="absolute inset-0 z-[120] flex items-center justify-center bg-black/70 p-2">
-          <div className="max-h-[75dvh] w-full max-w-2xl overflow-hidden rounded-xl border border-violet-700/70 bg-gray-950 shadow-2xl shadow-black/60">
-            <div className="border-b border-gray-800 px-4 py-3">
-              <div className="flex items-start justify-between gap-2">
-                <p className="text-sm font-semibold text-white">Geen exacte hit gevonden</p>
-                <button
-                  type="button"
-                  onClick={() => setPendingManualSelection(null)}
-                  className="rounded border border-gray-700 px-2 py-1 text-[11px] font-semibold text-gray-200 transition hover:border-gray-500 hover:text-white"
-                >
-                  Annuleren
-                </button>
-              </div>
-              <p className="mt-1 text-xs text-gray-300">
-                Kies handmatig het juiste resultaat voor{" "}
-                <span className="font-semibold text-violet-200">
-                  {pendingManualSelection.artist
-                    ? `${pendingManualSelection.artist} - ${pendingManualSelection.title}`
-                    : pendingManualSelection.title}
-                </span>
-                .
-              </p>
-            </div>
-            <div className="max-h-[52dvh] overflow-y-auto">
-              {pendingManualSelection.candidates.map((candidate) => (
-                <button
-                  key={`${candidate.provider}:${candidate.url}`}
-                  type="button"
-                  onClick={() => { void chooseManualCandidate(candidate); }}
-                  className="flex w-full items-center gap-2 border-b border-gray-900 px-3 py-2 text-left transition hover:bg-gray-900/80"
-                >
-                  {candidate.thumbnail ? (
-                    <img src={candidate.thumbnail} alt="" className="h-10 w-12 shrink-0 rounded object-cover" />
-                  ) : (
-                    <div className="h-10 w-12 shrink-0 rounded bg-gray-800" />
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm text-white">{candidate.title}</p>
-                    <p className="truncate text-xs text-gray-400">{candidate.channel || "Onbekende uploader"}</p>
-                  </div>
-                  <div className="flex shrink-0 flex-col items-end gap-1">
-                    <span className="rounded bg-gray-800 px-1.5 py-0.5 text-[10px] uppercase text-gray-300">
-                      {candidate.provider}
-                    </span>
-                    {candidate.duration !== null && (
-                      <span className="text-[11px] tabular-nums text-gray-400">
-                        {formatDuration(candidate.duration)}
-                      </span>
-                    )}
-                  </div>
-                </button>
-              ))}
-            </div>
-            <div className="flex justify-end border-t border-gray-800 px-3 py-2">
+      {feedback && (
+        <p className={`text-sm ${feedback.ok ? "text-green-400" : "text-red-400"}`}>
+          {feedback.msg}
+        </p>
+      )}
+    </form>
+
+    {/* Handmatige Selectie Modal */}
+    {pendingManualSelection && (
+      <div className="absolute inset-0 z-[120] flex items-center justify-center bg-black/70 p-2">
+        <div className="max-h-[75dvh] w-full max-w-2xl overflow-hidden rounded-xl border border-violet-700/70 bg-gray-950 shadow-2xl shadow-black/60">
+          <div className="border-b border-gray-800 px-4 py-3">
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-sm font-semibold text-white">Geen exacte hit gevonden</p>
               <button
                 type="button"
                 onClick={() => setPendingManualSelection(null)}
-                className="rounded-md border border-gray-700 px-3 py-1 text-xs font-semibold text-gray-200 transition hover:border-gray-500 hover:text-white"
+                className="rounded border border-gray-700 px-2 py-1 text-[11px] font-semibold text-gray-200 transition hover:border-gray-500 hover:text-white"
               >
                 Annuleren
               </button>
             </div>
+            <p className="mt-1 text-xs text-gray-300">
+              Kies handmatig het juiste resultaat voor{" "}
+              <span className="font-semibold text-violet-200">
+                {pendingManualSelection.artist
+                  ? `${pendingManualSelection.artist} - ${pendingManualSelection.title}`
+                  : pendingManualSelection.title}
+              </span>.
+            </p>
           </div>
-        </div>
-      )}
-
-      {recentAdd && (
-        <div className="pointer-events-none absolute left-0 right-0 top-2 z-[70] px-2">
-          <div className="pointer-events-auto flex items-center justify-between gap-2 rounded-lg border border-violet-800/60 bg-violet-950/95 px-3 py-2 text-xs text-violet-100 shadow-lg shadow-violet-900/30 backdrop-blur">
-            <span className="min-w-0 flex-1 truncate">
-              Toegevoegd: <span className="font-semibold">{recentAdd.title}</span> · {undoSecondsLeft}s
-            </span>
+          <div className="max-h-[52dvh] overflow-y-auto">
+            {pendingManualSelection.candidates.map((candidate) => (
+              <button
+                key={`${candidate.provider}:${candidate.url}`}
+                type="button"
+                onClick={() => { void chooseManualCandidate(candidate); }}
+                className="flex w-full items-center gap-2 border-b border-gray-900 px-3 py-2 text-left transition hover:bg-gray-900/80"
+              >
+                {candidate.thumbnail ? (
+                  <img src={candidate.thumbnail} alt="" className="h-10 w-12 shrink-0 rounded object-cover" />
+                ) : (
+                  <div className="h-10 w-12 shrink-0 rounded bg-gray-800" />
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm text-white">{candidate.title}</p>
+                  <p className="truncate text-xs text-gray-400">{candidate.channel || "Onbekende uploader"}</p>
+                </div>
+                <div className="flex shrink-0 flex-col items-end gap-1">
+                  <span className="rounded bg-gray-800 px-1.5 py-0.5 text-[10px] uppercase text-gray-300">
+                    {candidate.provider}
+                  </span>
+                  {candidate.duration !== null && (
+                    <span className="text-[11px] tabular-nums text-gray-400">
+                      {formatDuration(candidate.duration)}
+                    </span>
+                  )}
+                </div>
+              </button>
+            ))}
+          </div>
+          <div className="flex justify-end border-t border-gray-800 px-3 py-2">
             <button
               type="button"
-              onClick={undoRecentAdd}
-              className="rounded-md border border-violet-600/70 px-2 py-1 font-semibold text-violet-100 transition hover:bg-violet-800/50"
+              onClick={() => setPendingManualSelection(null)}
+              className="rounded-md border border-gray-700 px-3 py-1 text-xs font-semibold text-gray-200 transition hover:border-gray-500 hover:text-white"
             >
-              Ongedaan maken
+              Annuleren
             </button>
           </div>
         </div>
-      )}
-    </div>
-  </QueueAddErrorBoundary>
+      </div>
+    )}
+
+    {/* Undo Melding */}
+    {recentAdd && (
+      <div className="pointer-events-none absolute left-0 right-0 top-2 z-[70] px-2">
+        <div className="pointer-events-auto flex items-center justify-between gap-2 rounded-lg border border-violet-800/60 bg-violet-950/95 px-3 py-2 text-xs text-violet-100 shadow-lg shadow-violet-900/30 backdrop-blur">
+          <span className="min-w-0 flex-1 truncate">
+            Toegevoegd: <span className="font-semibold">{recentAdd.title}</span> · {undoSecondsLeft}s
+          </span>
+          <button
+            type="button"
+            onClick={undoRecentAdd}
+            className="rounded-md border border-violet-600/70 px-2 py-1 font-semibold text-violet-100 transition hover:bg-violet-800/50"
+          >
+            Ongedaan maken
+          </button>
+        </div>
+      </div>
+    )}
+  </div>
+</QueueAddErrorBoundary>
   );
 }

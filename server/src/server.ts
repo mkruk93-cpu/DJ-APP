@@ -345,12 +345,12 @@ function applyPlaybackForMode(mode: Mode): void {
   }
   const encoderTarget = internalPlayerUseIcecast ? ICECAST : null;
   startPlayCycle(sb, io, CACHE_DIR, encoderTarget, streamHub);
-
-  // Award listen time points every minute
-  setInterval(() => {
-    void awardListenTimePoints();
-  }, 60_000);
 }
+
+// Global listen time interval
+setInterval(() => {
+  void awardListenTimePoints();
+}, 60_000);
 
 function evaluateIdlePlayback(mode: Mode): void {
   if (!AUTO_PAUSE_WHEN_IDLE) return;
@@ -2101,6 +2101,12 @@ async function youtubeSearchLocal(query: string, limit = 12): Promise<SearchResu
       for (const item of items) {
         const v = item?.videoRenderer;
         if (!v?.videoId) continue;
+
+        // Filter out videos that are likely restricted or not downloadable
+        const badges = v.badges?.map((b: any) => b?.metadataBadgeRenderer?.label?.toLowerCase() || '') ?? [];
+        const isLive = badges.includes('live') || badges.includes('live nu');
+        const isUpcoming = badges.includes('upcoming');
+        if (isLive || isUpcoming) continue;
 
         const title = v.title?.runs?.map((r: { text: string }) => r.text).join('') ?? 'Onbekend';
         const channel = v.ownerText?.runs?.[0]?.text ?? v.shortBylineText?.runs?.[0]?.text ?? '';

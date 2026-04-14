@@ -58,7 +58,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .single();
       
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Refresh account timeout')), 3000)
+        setTimeout(() => reject(new Error('Refresh account timeout')), 10000)
       );
 
       const { data, error } = await Promise.race([accountPromise, timeoutPromise]) as any;
@@ -173,7 +173,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (loading) {
           setLoading(false);
         }
-      }, 3000);
+      }, 10000);
 
       try {
         const { data: { session } } = await supabase.auth.getSession();
