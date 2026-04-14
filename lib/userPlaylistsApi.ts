@@ -6,10 +6,19 @@ export interface UserPlaylist {
   name: string;
   source: string;
   created_at: string;
+  track_count?: number;
   genre_group: string | null;
   subgenre: string | null;
   related_parent_playlist_id: string | null;
   cover_url: string | null;
+  owner_username: string;
+  shared_with: string[];
+  shared_with_count: number;
+  shared_with_viewer: boolean;
+  is_owner: boolean;
+  viewer_can_edit: boolean;
+  is_public: boolean;
+  is_public_fallback: boolean;
 }
 
 export interface UserPlaylistTrack {
@@ -18,6 +27,7 @@ export interface UserPlaylistTrack {
   artist: string | null;
   album: string | null;
   spotify_url: string | null;
+  artwork_url: string | null;
   position: number;
 }
 
@@ -36,11 +46,6 @@ export interface UserPlaylistImportResult {
   imported: Array<{ id: string; name: string; trackCount: number }>;
   totalPlaylists: number;
   totalTracks: number;
-  shared?: {
-    importedPlaylists: number;
-    warnings: Array<{ name: string; reason: string }>;
-    usage: { playlists: number; tracks: number };
-  };
 }
 
 function getServerUrl(): string {
@@ -139,6 +144,78 @@ export async function deleteUserPlaylist(playlistId: string): Promise<void> {
   await parseOrThrow<{ ok: boolean }>(res);
 }
 
+export async function addTrackToUserPlaylist(playlistId: string, track: { title: string; artist: string | null; album?: string | null; spotify_url?: string | null; artwork_url?: string | null; position?: number }): Promise<{ ok: boolean; playlistId: string }> {
+  const { nickname, deviceId } = getUserIdentity(true);
+  const safeId = encodeURIComponent(playlistId);
+  const res = await fetch(`${getServerUrl()}/api/user-playlists/${safeId}/tracks`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nickname, device_id: deviceId, track }),
+  });
+  return parseOrThrow<{ ok: boolean; playlistId: string }>(res);
+}
+
+export async function removeTrackFromUserPlaylist(playlistId: string, trackId: string): Promise<{ ok: boolean }> {
+  const { nickname, deviceId } = getUserIdentity(true);
+  const safeId = encodeURIComponent(playlistId);
+  const safeTrackId = encodeURIComponent(trackId);
+  const res = await fetch(`${getServerUrl()}/api/user-playlists/${safeId}/tracks/${safeTrackId}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nickname, device_id: deviceId }),
+  });
+  return parseOrThrow<{ ok: boolean }>(res);
+}
+
+export async function getLikedTracksPlaylist(): Promise<{ id: string; name: string }> {
+  const params = withIdentityParams();
+  const res = await fetch(`${getServerUrl()}/api/user-playlists/liked-tracks?${params.toString()}`);
+  return parseOrThrow<{ id: string; name: string }>(res);
+}
+
+export async function createEmptyUserPlaylist(name: string, genreGroup?: string | null): Promise<{ id: string; name: string }> {
+  const { nickname, deviceId } = getUserIdentity(true);
+  const res = await fetch(`${getServerUrl()}/api/user-playlists`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nickname, device_id: deviceId, name, genre_group: genreGroup }),
+  });
+  const data = await parseOrThrow<{ id: string; name: string; trackCount: number }>(res);
+  return { id: data.id, name: data.name };
+}
+
+export async function updateUserPlaylistSharing(
+  playlistId: string,
+  payload: {
+    share_username?: string | null;
+    is_public?: boolean;
+    is_public_fallback?: boolean;
+  },
+): Promise<UserPlaylist> {
+  const { nickname, deviceId } = getUserIdentity(true);
+  const safeId = encodeURIComponent(playlistId);
+  const res = await fetch(`${getServerUrl()}/api/user-playlists/${safeId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      nickname,
+      device_id: deviceId,
+      ...payload,
+    }),
+  });
+  const data = await parseOrThrow<{ ok: boolean; playlist: UserPlaylist }>(res);
+  return data.playlist;
+}
+
+export async function listKnownUsers(query = "", limit = 200): Promise<string[]> {
+  const params = new URLSearchParams();
+  if (query.trim()) params.set("q", query.trim());
+  params.set("limit", String(limit));
+  const res = await fetch(`${getServerUrl()}/api/users?${params.toString()}`);
+  const data = await parseOrThrow<{ users: string[] }>(res);
+  return data.users;
+}
+
 export interface SpotifyOembedResult {
   thumbnail_url: string | null;
   title: string | null;
@@ -164,6 +241,9 @@ export interface SharedPlaylist {
   subgenre: string | null;
   related_parent_playlist_id: string | null;
   cover_url: string | null;
+  kind?: "shared" | "user_public";
+  owner_username?: string | null;
+  is_public_fallback?: boolean;
 }
 
 export interface PlaylistGenreMetaInput {

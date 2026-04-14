@@ -21,12 +21,25 @@ export default function CacheClear({ version }: CacheClearProps) {
   async function clearAllCache() {
     setIsClearing(true);
     try {
+      const preservedEntries = new Map<string, string>();
+      const keysToPreserve = new Set(["radio_device_id", "nickname"]);
+      for (const key of keysToPreserve) {
+        const value = localStorage.getItem(key);
+        if (value !== null) {
+          preservedEntries.set(key, value);
+        }
+      }
+
       // Clear localStorage
       const localStorageKeys = Object.keys(localStorage);
       localStorageKeys.forEach(key => {
         if (!key.startsWith('cache_cleared_version')) {
           localStorage.removeItem(key);
         }
+      });
+
+      preservedEntries.forEach((value, key) => {
+        localStorage.setItem(key, value);
       });
 
       // Clear sessionStorage

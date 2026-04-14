@@ -8,6 +8,7 @@ interface StoreTrack {
   artist: string | null;
   album: string | null;
   spotify_url: string | null;
+  artwork_url: string | null;
   position: number;
 }
 
@@ -22,6 +23,9 @@ interface StorePlaylist {
   subgenre: string | null;
   related_parent_playlist_id: string | null;
   cover_url: string | null;
+  shared_with: string[];
+  is_public: boolean;
+  is_public_fallback: boolean;
   tracks: StoreTrack[];
 }
 
@@ -39,6 +43,7 @@ export interface CreatePlaylistInputTrack {
   artist: string | null;
   album: string | null;
   spotify_url: string | null;
+  artwork_url?: string | null;
   position: number;
 }
 
@@ -47,10 +52,19 @@ export interface PlaylistSummary {
   name: string;
   source: string;
   created_at: string;
+  track_count?: number;
   genre_group: string | null;
   subgenre: string | null;
   related_parent_playlist_id: string | null;
   cover_url: string | null;
+  owner_username: string;
+  shared_with: string[];
+  shared_with_count: number;
+  shared_with_viewer: boolean;
+  is_owner: boolean;
+  viewer_can_edit: boolean;
+  is_public: boolean;
+  is_public_fallback: boolean;
 }
 
 export interface PlaylistGenreMeta {
@@ -72,6 +86,7 @@ export interface PlaylistTrackPage {
     artist: string | null;
     album: string | null;
     spotify_url: string | null;
+    artwork_url: string | null;
     position: number;
   }>;
   total: number;
@@ -97,32 +112,12 @@ function ensureStoreDir(): void {
   }
 }
 
-function readStore(): StoreShape {
-  ensureStoreDir();
-  if (!fs.existsSync(STORE_FILE)) return emptyStore();
-  try {
-    const raw = fs.readFileSync(STORE_FILE, 'utf8');
-    if (!raw.trim()) return emptyStore();
-    const parsed = JSON.parse(raw) as Partial<StoreShape>;
-    const playlists = Array.isArray(parsed.playlists)
-      ? parsed.playlists.map((entry) => normalizeStoredPlaylist(entry as StorePlaylist))
-      : [];
-    return { playlists };
-  } catch (err) {
-    console.warn('[user-playlists] Store read failed, using empty store:', (err as Error).message);
-    return emptyStore();
-  }
+function getOwnerKey(value: string | null | undefined): string {
+  return (value ?? '').trim().toLowerCase();
 }
 
-function writeStore(store: StoreShape): void {
-  ensureStoreDir();
-  const tmpFile = `${STORE_FILE}.tmp`;
-  fs.writeFileSync(tmpFile, JSON.stringify(store, null, 2), 'utf8');
-  fs.renameSync(tmpFile, STORE_FILE);
-}
-
-function matchesOwner(playlist: StorePlaylist, owner: PlaylistOwner): boolean {
-  return playlist.nickname === owner.nickname && playlist.device_id === owner.deviceId;
+function isLikedTracksPlaylist(name: string | null | undefined): boolean {
+  return (name ?? '').trim().toLowerCase() === 'liked tracks';
 }
 
 function normalizeTrackPosition(index: number, value: number): number {
@@ -144,6 +139,34 @@ function normalizeGenreMeta(input?: PlaylistGenreMeta | null): PlaylistGenreMeta
   };
 }
 
+function getTrackMergeKey(track: Pick<StoreTrack, 'title' | 'artist' | 'album' | 'spotify_url'>): string {
+  const spotifyUrl = (track.spotify_url ?? '').trim().toLowerCase();
+  if (spotifyUrl) return `spotify:${spotifyUrl}`;
+  const artist = (track.artist ?? '').trim().toLowerCase();
+  const title = (track.title ?? '').trim().toLowerCase();
+  const album = (track.album ?? '').trim().toLowerCase();
+  return `meta:${artist}::${title}::${album}`;
+}
+
+function mergeTracks(target: StoreTrack[], source: StoreTrack[]): StoreTrack[] {
+  const merged = [...target];
+  const seen = new Set(merged.map((track) => getTrackMergeKey(track)));
+  for (const track of source) {
+    const key = getTrackMergeKey(track);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push({
+      ...track,
+      id: randomUUID(),
+      position: merged.length + 1,
+    });
+  }
+  return merged.map((track, index) => ({
+    ...track,
+    position: index + 1,
+  }));
+}
+
 function normalizeStoredPlaylist(raw: StorePlaylist): StorePlaylist {
   const meta = normalizeGenreMeta({
     genre_group: (raw as Partial<StorePlaylist>).genre_group ?? null,
@@ -157,14 +180,170 @@ function normalizeStoredPlaylist(raw: StorePlaylist): StorePlaylist {
     subgenre: meta.subgenre,
     related_parent_playlist_id: meta.related_parent_playlist_id,
     cover_url: meta.cover_url ?? null,
+    shared_with: Array.isArray((raw as Partial<StorePlaylist>).shared_with)
+      ? ((raw as Partial<StorePlaylist>).shared_with as string[])
+          .map((entry) => getOwnerKey(entry))
+          .filter(Boolean)
+      : [],
+    is_public: Boolean((raw as Partial<StorePlaylist>).is_public),
+    is_public_fallback: Boolean((raw as Partial<StorePlaylist>).is_public_fallback),
+    tracks: Array.isArray((raw as Partial<StorePlaylist>).tracks)
+      ? ((raw as Partial<StorePlaylist>).tracks as StoreTrack[]).map((track, index) => ({
+          id: track.id,
+          title: track.title,
+          artist: track.artist ?? null,
+          album: track.album ?? null,
+          spotify_url: track.spotify_url ?? null,
+          artwork_url: (track as Partial<StoreTrack>).artwork_url ?? null,
+          position: normalizeTrackPosition(index, track.position),
+        }))
+      : [],
   };
 }
 
-async function withWriteLock<T>(operation: (store: StoreShape) => T): Promise<T> {
-  const run = writeQueue.then(() => {
+function readStore(): StoreShape {
+  ensureStoreDir();
+  if (!fs.existsSync(STORE_FILE)) return emptyStore();
+  try {
+    const raw = fs.readFileSync(STORE_FILE, 'utf8');
+    if (!raw.trim()) return emptyStore();
+    const parsed = JSON.parse(raw) as Partial<StoreShape>;
+    const playlists = Array.isArray(parsed.playlists)
+      ? parsed.playlists.map((entry) => normalizeStoredPlaylist(entry as StorePlaylist))
+      : [];
+    return { playlists };
+  } catch (err) {
+    console.warn('[user-playlists] Store read failed, using empty store:', (err as Error).message);
+    return emptyStore();
+  }
+}
+
+async function writeStore(store: StoreShape): Promise<void> {
+  ensureStoreDir();
+  const data = JSON.stringify(store, null, 2);
+  const tmpFile = `${STORE_FILE}.tmp`;
+
+  try {
+    await fs.promises.writeFile(tmpFile, data, 'utf8');
+    let attempts = 0;
+    while (attempts < 10) {
+      try {
+        if (fs.existsSync(STORE_FILE)) {
+          try {
+            await fs.promises.unlink(STORE_FILE);
+          } catch {
+            // Best-effort for Windows rename behavior.
+          }
+        }
+        await fs.promises.rename(tmpFile, STORE_FILE);
+        return;
+      } catch (err) {
+        attempts += 1;
+        if (attempts >= 10) throw err;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+  } catch (err) {
+    console.warn('[user-playlists] Atomic write failed, falling back to direct write:', (err as Error).message);
+    await fs.promises.writeFile(STORE_FILE, data, 'utf8');
+  }
+}
+
+function matchesOwner(playlist: StorePlaylist, owner: PlaylistOwner): boolean {
+  return getOwnerKey(playlist.nickname) === getOwnerKey(owner.nickname);
+}
+
+function canViewPlaylist(playlist: StorePlaylist, viewer: PlaylistOwner): boolean {
+  if (matchesOwner(playlist, viewer)) return true;
+  const viewerKey = getOwnerKey(viewer.nickname);
+  return !!viewerKey && playlist.shared_with.includes(viewerKey);
+}
+
+function mapPlaylistSummary(playlist: StorePlaylist, viewer: PlaylistOwner): PlaylistSummary {
+  const viewerKey = getOwnerKey(viewer.nickname);
+  const ownerKey = getOwnerKey(playlist.nickname);
+  const isOwner = !!viewerKey && viewerKey === ownerKey;
+  const sharedWithViewer = !isOwner && playlist.shared_with.includes(viewerKey);
+  return {
+    id: playlist.id,
+    name: playlist.name,
+    source: playlist.source,
+    created_at: playlist.created_at,
+    track_count: playlist.tracks.length,
+    genre_group: playlist.genre_group ?? null,
+    subgenre: playlist.subgenre ?? null,
+    related_parent_playlist_id: playlist.related_parent_playlist_id ?? null,
+    cover_url: playlist.cover_url ?? null,
+    owner_username: playlist.nickname,
+    shared_with: [...playlist.shared_with],
+    shared_with_count: playlist.shared_with.length,
+    shared_with_viewer: sharedWithViewer,
+    is_owner: isOwner,
+    viewer_can_edit: isOwner,
+    is_public: playlist.is_public,
+    is_public_fallback: playlist.is_public_fallback,
+  };
+}
+
+function migrateOwnerPlaylists(store: StoreShape, owner: PlaylistOwner): void {
+  const ownerKey = getOwnerKey(owner.nickname);
+  if (!ownerKey) return;
+
+  const ownerPlaylists = store.playlists.filter((playlist) => getOwnerKey(playlist.nickname) === ownerKey);
+  for (const playlist of ownerPlaylists) {
+    playlist.nickname = owner.nickname;
+    playlist.device_id = owner.deviceId;
+  }
+
+  const likedPlaylists = ownerPlaylists
+    .filter((playlist) => isLikedTracksPlaylist(playlist.name))
+    .sort((a, b) => a.created_at.localeCompare(b.created_at));
+
+  if (likedPlaylists.length <= 1) return;
+
+  const canonical = likedPlaylists[0];
+  for (let i = 1; i < likedPlaylists.length; i += 1) {
+    const duplicate = likedPlaylists[i];
+    canonical.tracks = mergeTracks(canonical.tracks, duplicate.tracks);
+    canonical.shared_with = Array.from(new Set([...canonical.shared_with, ...duplicate.shared_with]));
+    canonical.is_public = canonical.is_public || duplicate.is_public;
+    canonical.is_public_fallback = canonical.is_public_fallback || duplicate.is_public_fallback;
+    const duplicateIndex = store.playlists.findIndex((entry) => entry.id === duplicate.id);
+    if (duplicateIndex >= 0) store.playlists.splice(duplicateIndex, 1);
+  }
+}
+
+function ensureLikedTracksPlaylist(store: StoreShape, owner: PlaylistOwner): void {
+  const liked = store.playlists.find((entry) => isLikedTracksPlaylist(entry.name) && matchesOwner(entry, owner));
+  if (liked) return;
+
+  const playlistId = randomUUID();
+  const createdAt = new Date().toISOString();
+  store.playlists.push({
+    id: playlistId,
+    nickname: owner.nickname,
+    device_id: owner.deviceId,
+    name: 'Liked Tracks',
+    source: 'manual',
+    created_at: createdAt,
+    genre_group: 'Other',
+    subgenre: 'Liked',
+    related_parent_playlist_id: null,
+    cover_url: null,
+    shared_with: [],
+    is_public: false,
+    is_public_fallback: false,
+    tracks: [],
+  });
+}
+
+async function withStoreAccess<T>(operation: (store: StoreShape) => T | Promise<T>, write = false): Promise<T> {
+  const run = writeQueue.then(async () => {
     const store = readStore();
-    const result = operation(store);
-    writeStore(store);
+    const result = await operation(store);
+    if (write) {
+      await writeStore(store);
+    }
     return result;
   });
   writeQueue = run.then(() => undefined, () => undefined);
@@ -172,13 +351,15 @@ async function withWriteLock<T>(operation: (store: StoreShape) => T): Promise<T>
 }
 
 export async function getUserPlaylistUsage(owner: PlaylistOwner): Promise<PlaylistUsage> {
-  const store = readStore();
-  const ownerPlaylists = store.playlists.filter((playlist) => matchesOwner(playlist, owner));
-  const tracks = ownerPlaylists.reduce((sum, playlist) => sum + playlist.tracks.length, 0);
-  return {
-    playlists: ownerPlaylists.length,
-    tracks,
-  };
+  return withStoreAccess((store) => {
+    migrateOwnerPlaylists(store, owner);
+    const ownerPlaylists = store.playlists.filter((playlist) => matchesOwner(playlist, owner));
+    const tracks = ownerPlaylists.reduce((sum, playlist) => sum + playlist.tracks.length, 0);
+    return {
+      playlists: ownerPlaylists.length,
+      tracks,
+    };
+  }, true);
 }
 
 export async function createUserPlaylist(
@@ -188,7 +369,8 @@ export async function createUserPlaylist(
   source = 'exportify',
   genreMeta?: PlaylistGenreMeta,
 ): Promise<{ id: string; name: string; trackCount: number }> {
-  return withWriteLock((store) => {
+  return withStoreAccess((store) => {
+    migrateOwnerPlaylists(store, owner);
     const playlistId = randomUUID();
     const createdAt = new Date().toISOString();
     const normalizedTracks: StoreTrack[] = tracks.map((track, index) => ({
@@ -197,6 +379,7 @@ export async function createUserPlaylist(
       artist: track.artist,
       album: track.album,
       spotify_url: track.spotify_url,
+      artwork_url: track.artwork_url ?? null,
       position: normalizeTrackPosition(index, track.position),
     }));
 
@@ -212,6 +395,9 @@ export async function createUserPlaylist(
       subgenre: meta.subgenre,
       related_parent_playlist_id: meta.related_parent_playlist_id,
       cover_url: meta.cover_url ?? null,
+      shared_with: [],
+      is_public: false,
+      is_public_fallback: false,
       tracks: normalizedTracks,
     });
 
@@ -220,34 +406,87 @@ export async function createUserPlaylist(
       name,
       trackCount: normalizedTracks.length,
     };
-  });
+  }, true);
 }
 
 export async function listUserPlaylists(owner: PlaylistOwner): Promise<PlaylistSummary[]> {
-  const store = readStore();
-  return store.playlists
-    .filter((playlist) => matchesOwner(playlist, owner))
-    .sort((a, b) => b.created_at.localeCompare(a.created_at))
-    .map((playlist) => ({
-      id: playlist.id,
-      name: playlist.name,
-      source: playlist.source,
-      created_at: playlist.created_at,
-      genre_group: playlist.genre_group ?? null,
-      subgenre: playlist.subgenre ?? null,
-      related_parent_playlist_id: playlist.related_parent_playlist_id ?? null,
-      cover_url: playlist.cover_url ?? null,
-    }));
+  return withStoreAccess((store) => {
+    migrateOwnerPlaylists(store, owner);
+    ensureLikedTracksPlaylist(store, owner);
+    return store.playlists
+      .filter((playlist) => canViewPlaylist(playlist, owner))
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .map((playlist) => mapPlaylistSummary(playlist, owner));
+  }, true);
 }
 
 export async function getUserPlaylistTracks(
   owner: PlaylistOwner,
   playlistId: string,
 ): Promise<StoreTrack[] | null> {
-  const store = readStore();
-  const playlist = store.playlists.find((entry) => entry.id === playlistId && matchesOwner(entry, owner));
-  if (!playlist) return null;
-  return [...playlist.tracks].sort((a, b) => a.position - b.position);
+  return withStoreAccess((store) => {
+    migrateOwnerPlaylists(store, owner);
+    const playlist = store.playlists.find((entry) => entry.id === playlistId && canViewPlaylist(entry, owner));
+    if (!playlist) return null;
+    return [...playlist.tracks].sort((a, b) => a.position - b.position);
+  }, true);
+}
+
+export async function addTrackToUserPlaylist(
+  owner: PlaylistOwner,
+  playlistId: string,
+  track: CreatePlaylistInputTrack,
+): Promise<{ success: boolean; playlistId: string }> {
+  return withStoreAccess((store) => {
+    migrateOwnerPlaylists(store, owner);
+    const playlist = store.playlists.find((entry) => entry.id === playlistId && matchesOwner(entry, owner));
+    if (!playlist) return { success: false, playlistId };
+
+    playlist.tracks.push({
+      id: randomUUID(),
+      title: track.title,
+      artist: track.artist,
+      album: track.album,
+      spotify_url: track.spotify_url,
+      artwork_url: track.artwork_url ?? null,
+      position: track.position ?? (playlist.tracks.length + 1),
+    });
+    playlist.tracks = playlist.tracks
+      .sort((a, b) => a.position - b.position)
+      .map((entry, index) => ({ ...entry, position: index + 1 }));
+    return { success: true, playlistId };
+  }, true);
+}
+
+export async function removeTrackFromUserPlaylist(
+  owner: PlaylistOwner,
+  playlistId: string,
+  trackId: string,
+): Promise<boolean> {
+  return withStoreAccess((store) => {
+    migrateOwnerPlaylists(store, owner);
+    const playlist = store.playlists.find((entry) => entry.id === playlistId && matchesOwner(entry, owner));
+    if (!playlist) return false;
+    const index = playlist.tracks.findIndex((track) => track.id === trackId);
+    if (index < 0) return false;
+    playlist.tracks.splice(index, 1);
+    playlist.tracks = playlist.tracks
+      .sort((a, b) => a.position - b.position)
+      .map((entry, order) => ({ ...entry, position: order + 1 }));
+    return true;
+  }, true);
+}
+
+export async function getOrCreateLikedTracksPlaylist(
+  owner: PlaylistOwner,
+): Promise<{ id: string; name: string }> {
+  return withStoreAccess((store) => {
+    migrateOwnerPlaylists(store, owner);
+    ensureLikedTracksPlaylist(store, owner);
+    const playlist = store.playlists.find((entry) => isLikedTracksPlaylist(entry.name) && matchesOwner(entry, owner));
+    if (!playlist) return { id: '', name: 'Liked Tracks' };
+    return { id: playlist.id, name: playlist.name };
+  }, true);
 }
 
 export async function getUserPlaylistTracksPage(
@@ -256,31 +495,134 @@ export async function getUserPlaylistTracksPage(
   limit: number,
   offset: number,
 ): Promise<PlaylistTrackPage | null> {
-  const store = readStore();
-  const playlist = store.playlists.find((entry) => entry.id === playlistId && matchesOwner(entry, owner));
-  if (!playlist) return null;
-  const sorted = [...playlist.tracks].sort((a, b) => a.position - b.position);
-  const safeLimit = Math.max(1, Math.min(limit, 300));
-  const safeOffset = Math.max(0, offset);
-  const items = sorted.slice(safeOffset, safeOffset + safeLimit);
-  return {
-    items,
-    total: sorted.length,
-    limit: safeLimit,
-    offset: safeOffset,
-    hasMore: safeOffset + items.length < sorted.length,
-  };
+  return withStoreAccess((store) => {
+    migrateOwnerPlaylists(store, owner);
+    const playlist = store.playlists.find((entry) => entry.id === playlistId && canViewPlaylist(entry, owner));
+    if (!playlist) return null;
+    const sorted = [...playlist.tracks].sort((a, b) => a.position - b.position);
+    const safeLimit = Math.max(1, Math.min(limit, 300));
+    const safeOffset = Math.max(0, offset);
+    const items = sorted.slice(safeOffset, safeOffset + safeLimit);
+    return {
+      items,
+      total: sorted.length,
+      limit: safeLimit,
+      offset: safeOffset,
+      hasMore: safeOffset + items.length < sorted.length,
+    };
+  }, true);
 }
 
 export async function deleteUserPlaylist(
   owner: PlaylistOwner,
   playlistId: string,
 ): Promise<boolean> {
-  return withWriteLock((store) => {
+  return withStoreAccess((store) => {
+    migrateOwnerPlaylists(store, owner);
     const index = store.playlists.findIndex((entry) => entry.id === playlistId && matchesOwner(entry, owner));
     if (index < 0) return false;
+    if (isLikedTracksPlaylist(store.playlists[index]?.name)) return false;
     store.playlists.splice(index, 1);
     return true;
+  }, true);
+}
+
+export async function updateUserPlaylistSharing(
+  owner: PlaylistOwner,
+  playlistId: string,
+  updates: {
+    shareWithUsername?: string | null;
+    isPublic?: boolean;
+    isPublicFallback?: boolean;
+  },
+): Promise<PlaylistSummary | null> {
+  return withStoreAccess((store) => {
+    migrateOwnerPlaylists(store, owner);
+    const playlist = store.playlists.find((entry) => entry.id === playlistId && matchesOwner(entry, owner));
+    if (!playlist) return null;
+
+    if (typeof updates.shareWithUsername === 'string') {
+      const nextUser = getOwnerKey(updates.shareWithUsername);
+      if (nextUser && nextUser !== getOwnerKey(owner.nickname) && !playlist.shared_with.includes(nextUser)) {
+        playlist.shared_with.push(nextUser);
+      }
+    }
+
+    if (typeof updates.isPublic === 'boolean') {
+      playlist.is_public = updates.isPublic;
+      if (!updates.isPublic) playlist.is_public_fallback = false;
+    }
+
+    if (typeof updates.isPublicFallback === 'boolean') {
+      playlist.is_public_fallback = playlist.is_public ? updates.isPublicFallback : false;
+    }
+
+    return mapPlaylistSummary(playlist, owner);
+  }, true);
+}
+
+export async function listPublicUserPlaylists(limit = 100, offset = 0): Promise<PlaylistSummary[]> {
+  return withStoreAccess((store) => {
+    const safeLimit = Math.max(1, Math.min(limit, 250));
+    const safeOffset = Math.max(0, offset);
+    return store.playlists
+      .filter((playlist) => playlist.is_public)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .slice(safeOffset, safeOffset + safeLimit)
+      .map((playlist) => ({
+        id: `user:${playlist.id}`,
+        name: playlist.name,
+        source: playlist.source,
+        created_at: playlist.created_at,
+        track_count: playlist.tracks.length,
+        genre_group: playlist.genre_group ?? null,
+        subgenre: playlist.subgenre ?? null,
+        related_parent_playlist_id: playlist.related_parent_playlist_id ?? null,
+        cover_url: playlist.cover_url ?? null,
+        owner_username: playlist.nickname,
+        shared_with: [...playlist.shared_with],
+        shared_with_count: playlist.shared_with.length,
+        shared_with_viewer: false,
+        is_owner: false,
+        viewer_can_edit: false,
+        is_public: true,
+        is_public_fallback: playlist.is_public_fallback,
+      }));
+  });
+}
+
+export async function getPublicUserPlaylistTracks(prefixedPlaylistId: string): Promise<StoreTrack[] | null> {
+  return withStoreAccess((store) => {
+    const playlistId = prefixedPlaylistId.startsWith('user:') ? prefixedPlaylistId.slice(5) : prefixedPlaylistId;
+    const playlist = store.playlists.find((entry) => entry.id === playlistId && entry.is_public);
+    if (!playlist) return null;
+    return [...playlist.tracks].sort((a, b) => a.position - b.position);
+  });
+}
+
+export async function getUserPlaylistTracksForFallback(prefixedPlaylistId: string): Promise<{
+  id: string;
+  name: string;
+  owner_username: string;
+  tracks: StoreTrack[];
+} | null> {
+  return withStoreAccess((store) => {
+    const playlistId = prefixedPlaylistId.startsWith('user:') ? prefixedPlaylistId.slice(5) : prefixedPlaylistId;
+    const playlist = store.playlists.find((entry) => entry.id === playlistId);
+    if (!playlist) return null;
+    return {
+      id: `user:${playlist.id}`,
+      name: playlist.name,
+      owner_username: playlist.nickname,
+      tracks: [...playlist.tracks].sort((a, b) => a.position - b.position),
+    };
+  });
+}
+
+export async function hasPublicFallbackUserPlaylist(prefixedPlaylistId: string): Promise<boolean> {
+  return withStoreAccess((store) => {
+    const playlistId = prefixedPlaylistId.startsWith('user:') ? prefixedPlaylistId.slice(5) : prefixedPlaylistId;
+    return store.playlists.some((entry) => entry.id === playlistId && entry.is_public_fallback);
   });
 }
 
@@ -290,15 +632,16 @@ export async function getAnyUserPlaylistMetaByName(name: string): Promise<{
   genre_group: string | null;
   subgenre: string | null;
 } | null> {
-  const needle = name.trim().toLowerCase();
-  if (!needle) return null;
-  const store = readStore();
-  const match = store.playlists.find((playlist) => playlist.name.trim().toLowerCase() === needle);
-  if (!match) return null;
-  return {
-    id: match.id,
-    name: match.name,
-    genre_group: match.genre_group ?? null,
-    subgenre: match.subgenre ?? null,
-  };
+  return withStoreAccess((store) => {
+    const needle = name.trim().toLowerCase();
+    if (!needle) return null;
+    const match = store.playlists.find((playlist) => playlist.name.trim().toLowerCase() === needle);
+    if (!match) return null;
+    return {
+      id: match.id,
+      name: match.name,
+      genre_group: match.genre_group ?? null,
+      subgenre: match.subgenre ?? null,
+    };
+  });
 }

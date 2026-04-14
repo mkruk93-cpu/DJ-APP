@@ -38,6 +38,8 @@ export default function PwaRegistrar() {
           /^spotify-browser:/,
           /^shared-playlists-browser:/,
           /^fallback-selector:/,
+          /^nickname$/,
+          /^radio_device_id$/,
           /^radio_nickname$/,
           /^dj_radio_nickname$/,
           /^sb-.*-auth-token$/, // Supabase auth

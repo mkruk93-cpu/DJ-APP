@@ -12,6 +12,7 @@ import { pickRandomFallbackForGenre, parseAutoFallbackGenreId, LIKED_AUTO_GENRE_
 import { fetchArtworkCandidate } from './artwork.js';
 import { listLikedPlaylistTracks } from './services/genreCuratedConfig.js';
 import { getSharedPlaylistTracks, parseSharedFallbackPlaylistId } from './services/sharedPlaylistStore.js';
+import { getUserPlaylistTracksForFallback } from './services/userPlaylistStore.js';
 import { getTopTracksByGenre, getMergedGenreTags, getPriorityArtistsForGenre, resolveMergedGenreId, type GenreHitItem } from './services/discovery.js';
 import { getCachedGenreHits, makeGenreHitsCacheKey, setGenreHitsCacheEntry } from './genreHitsStore.js';
 import { recordMissingTrackLookup } from './services/missingTrackLog.js';
@@ -166,7 +167,8 @@ let localFallbackCursor = 0;
 type AutoSourceItem =
   | { type: 'genre'; key: string; genreId: string }
   | { type: 'liked'; key: string }
-  | { type: 'shared'; key: string; playlistId: string; playbackMode: SharedAutoPlaybackMode };
+  | { type: 'shared'; key: string; playlistId: string; playbackMode: SharedAutoPlaybackMode }
+  | { type: 'user'; key: string; playlistId: string; playbackMode: SharedAutoPlaybackMode };
 
 type ActiveAutoSource =
   | AutoSourceItem
@@ -277,7 +279,7 @@ function getActiveLocalFallbackGenres(): string[] {
   const selected = activeFallbackGenreIds.length > 0
     ? activeFallbackGenreIds
     : (activeFallbackGenre ? [activeFallbackGenre] : []);
-  return selected.filter((id) => !id.startsWith('auto:') && !id.startsWith('shared:'));
+  return selected.filter((id) => !id.startsWith('auto:') && !id.startsWith('shared:') && !id.startsWith('user:'));
 }
 
 function pickRandomFallbackForActiveSelections(exclude?: string | null): string | null {
@@ -308,6 +310,15 @@ function getActiveAutoSource(): ActiveAutoSource | null {
         type: 'shared',
         key: `shared:${sharedPlaylistId}`,
         playlistId: sharedPlaylistId,
+        playbackMode: activeSharedAutoPlaybackMode,
+      });
+      continue;
+    }
+    if (id.startsWith('user:')) {
+      items.push({
+        type: 'user',
+        key: id,
+        playlistId: id,
         playbackMode: activeSharedAutoPlaybackMode,
       });
       continue;
@@ -2126,10 +2137,162 @@ async function prepareSharedAutoFallbackTrack(
   }
 }
 
+async function prepareUserAutoFallbackTrack(
+  playlistId: string,
+  playbackMode: SharedAutoPlaybackMode = 'random',
+  expectedSourceKeyOverride?: string,
+): Promise<ReadyTrack | null> {
+  const expectedSourceKey = expectedSourceKeyOverride ?? playlistId;
+  try {
+    if (!isAutoSourceStillActive(expectedSourceKey)) return null;
+    const playlist = await getUserPlaylistTracksForFallback(playlistId);
+    if (!playlist || playlist.tracks.length === 0) return null;
+
+    const candidates = playlist.tracks
+      .map((track) => {
+        const title = (track.title ?? '').trim();
+        const artist = (track.artist ?? '').trim();
+        const query = artist ? `${normalizeArtistSearchQuery(artist)} - ${title}` : title;
+        const recentKey = artist ? `${artist} - ${title}` : title;
+        return {
+          title,
+          artist: artist || null,
+          query: query.trim(),
+          recentKey: sanitizeDisplayText(recentKey),
+          cycleKey: normalizeAutoKey(`${artist} ${title}`),
+        };
+      })
+      .filter((entry) => entry.title.length > 0 && entry.query.length > 0);
+
+    if (candidates.length === 0) return null;
+    const fresh = candidates.filter((entry) => !recentAutoTrackKeys.includes(normalizeAutoKey(entry.recentKey)));
+    const pool = fresh.length > 0 ? fresh : candidates;
+    let choice: typeof pool[number] | undefined;
+
+    if (playbackMode === 'ordered') {
+      const cursor = sharedPlaylistOrderCursor.get(playlistId) ?? 0;
+      const index = ((cursor % pool.length) + pool.length) % pool.length;
+      choice = pool[index];
+      sharedPlaylistOrderCursor.set(playlistId, (index + 1) % pool.length);
+    } else {
+      const playedSet = sharedPlaylistRandomPlayedKeys.get(playlistId) ?? new Set<string>();
+      let randomPool = pool.filter((entry) => !playedSet.has(entry.cycleKey));
+      if (randomPool.length === 0) {
+        playedSet.clear();
+        randomPool = pool;
+      }
+      choice = randomPool[Math.floor(Math.random() * randomPool.length)];
+      sharedPlaylistRandomPlayedKeys.set(playlistId, playedSet);
+    }
+    if (!choice) return null;
+
+    const pseudo = buildAutoFallbackSourceForQuery(playlist.id, choice.query);
+    const selected = await resolveShortAutoCandidate(choice.query, undefined, {
+      expectedArtist: choice.artist,
+      expectedTitle: choice.title,
+      strictMetadata: true,
+      minDurationSeconds: AUTO_SHARED_MIN_DURATION_SECONDS,
+      maxDurationSeconds: AUTO_SHARED_MAX_DURATION_SECONDS,
+    });
+    if (!isAutoSourceStillActive(expectedSourceKey)) return null;
+    if (!selected) return null;
+
+    const selectedPseudo: QueueItem = {
+      ...pseudo,
+      youtube_url: selected.url,
+      title: selected.title ?? pseudo.title,
+    };
+    const resolvedTitle = buildAutoDisplayTitle(selected.title, choice.artist, choice.title);
+    const hintedDuration = selected.duration;
+    if (!isAllowedAutoTrackWithDurationBounds(
+      resolvedTitle,
+      hintedDuration,
+      AUTO_SHARED_MIN_DURATION_SECONDS,
+      AUTO_SHARED_MAX_DURATION_SECONDS,
+    )) {
+      return null;
+    }
+
+    pendingAutoUpcoming = {
+      youtube_id: 'auto',
+      title: resolvedTitle,
+      artist: null,
+      thumbnail: selected.thumbnail ?? null,
+      duration: hintedDuration,
+      added_by: null,
+      isFallback: true,
+      selection_label: `Autoplay playlist (${playlist.name})`,
+      selection_playlist: playlist.name,
+      selection_tab: 'playlists',
+      selection_key: playlist.id,
+    };
+    broadcastUpcomingTrack();
+
+    const audioFile = await downloadAudio(selectedPseudo, _cacheDir);
+    if (!isAutoSourceStillActive(expectedSourceKey)) {
+      if (!keepFiles) cleanupFile(audioFile);
+      pendingAutoUpcoming = null;
+      broadcastUpcomingTrack();
+      return null;
+    }
+
+    const fileDuration = await getAudioDuration(audioFile);
+    if (fileDuration === null) {
+      if (!keepFiles) cleanupFile(audioFile);
+      pendingAutoUpcoming = null;
+      broadcastUpcomingTrack();
+      return null;
+    }
+
+    const finalDuration = hintedDuration ?? fileDuration;
+    if (!isAllowedAutoTrackWithDurationBounds(
+      resolvedTitle,
+      finalDuration,
+      AUTO_SHARED_MIN_DURATION_SECONDS,
+      AUTO_SHARED_MAX_DURATION_SECONDS,
+    )) {
+      if (!keepFiles) cleanupFile(audioFile);
+      pendingAutoUpcoming = null;
+      broadcastUpcomingTrack();
+      return null;
+    }
+
+    const playedSet = sharedPlaylistRandomPlayedKeys.get(playlistId) ?? new Set<string>();
+    playedSet.add(choice.cycleKey);
+    sharedPlaylistRandomPlayedKeys.set(playlistId, playedSet);
+    rememberAutoTrackKey(choice.recentKey);
+    pendingAutoUpcoming = null;
+    const forceDualMono = await shouldForceDualMono(audioFile);
+    return {
+      audioFile,
+      title: resolvedTitle,
+      thumbnail: selected.thumbnail ?? null,
+      youtubeId: 'local',
+      duration: finalDuration,
+      addedBy: null,
+      queueItemId: null,
+      isFallback: true,
+      isAutoFallback: true,
+      cleanupAfterUse: true,
+      forceDualMono,
+      selectionLabel: `Autoplay playlist (${playlist.name})`,
+      selectionPlaylist: playlist.name,
+      selectionTab: 'playlists',
+      selectionKey: playlist.id,
+    };
+  } catch (err) {
+    pendingAutoUpcoming = null;
+    broadcastUpcomingTrack();
+    console.warn(`[player] User playlist auto fallback prepare failed (${playlistId}): ${(err as Error).message}`);
+    return null;
+  }
+}
+
 async function prepareAutoSourceTrack(source: ActiveAutoSource): Promise<ReadyTrack | null> {
   if (source.type === 'liked') return prepareLikedAutoFallbackTrack();
   if (source.type === 'genre') return prepareAutoFallbackByGenre(source.genreId);
   if (source.type === 'shared') return prepareSharedAutoFallbackTrack(source.playlistId, source.playbackMode);
+  if (source.type === 'user') return prepareUserAutoFallbackTrack(source.playlistId, source.playbackMode);
   if (source.items.length === 0) return null;
 
   const start = mixedAutoSourceCursor % source.items.length;
@@ -2141,6 +2304,8 @@ async function prepareAutoSourceTrack(source: ActiveAutoSource): Promise<ReadyTr
       ready = await prepareLikedAutoFallbackTrack(source.key);
     } else if (item.type === 'genre') {
       ready = await prepareAutoFallbackByGenre(item.genreId, source.key);
+    } else if (item.type === 'user') {
+      ready = await prepareUserAutoFallbackTrack(item.playlistId, item.playbackMode, source.key);
     } else {
       ready = await prepareSharedAutoFallbackTrack(item.playlistId, item.playbackMode, source.key);
     }
@@ -3406,7 +3571,6 @@ async function ensureAutoReadyBuffer(sb: SupabaseClient, cacheDir: string, targe
         continue;
       }
       autoReadyBuffer.push(ready);
-      console.log(`[auto-preload] Buffered auto track (${getAutoReadyCount()}/${AUTO_READY_MAX}): ${ready.title ?? autoSource.key}`);
       broadcastUpcomingTrack();
     }
   } catch (err) {

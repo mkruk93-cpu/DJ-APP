@@ -15,6 +15,8 @@ import { getSocket } from "@/lib/socket";
 import { getRadioToken } from "@/lib/auth";
 import { useRadioStore } from "@/lib/radioStore";
 import { NoAutofillInput } from "@/components/NoAutofillInput";
+import TrackActions from "@/components/TrackActions";
+import PlaylistOptionsButton, { type MenuAction } from "@/components/PlaylistOptionsButton";
 
 interface SharedPlaylistsBrowserProps {
   onAddTrack: (track: {
@@ -474,12 +476,32 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
     }
     const selectedBy = (typeof window !== "undefined" ? localStorage.getItem("nickname") : null)?.trim() || "onbekend";
     getSocket().emit("fallback:genre:set", {
-      genreId: `shared:${playlist.id}`,
+      genreId: playlist.kind === "user_public" ? playlist.id : `shared:${playlist.id}`,
       selectedBy,
       sharedPlaybackMode: "random",
       token: getRadioToken() ?? undefined,
     });
     setStatus(`Autoplay fallback ingesteld op: ${playlist.name}`);
+  }
+
+  function renderPlaylistOptions(playlist: SharedPlaylist) {
+    const actions: MenuAction[] = [
+      {
+        key: "auto",
+        label: "Gebruik als autoplay fallback",
+        tone: "accent" as const,
+        onSelect: () => setAsAutoplayFallback(playlist),
+      },
+    ];
+    if (isPlaylistOwner(playlist) && playlist.kind !== "user_public") {
+      actions.push({
+        key: "edit",
+        label: "Bewerk playlist",
+        tone: "default" as const,
+        onSelect: () => openPlaylistEdit(playlist),
+      });
+    }
+    return <PlaylistOptionsButton actions={actions} />;
   }
 
   const filteredPlaylists = sharedPlaylists.filter((playlist) =>
@@ -535,16 +557,10 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
         <div className="shrink-0 rounded-md border border-blue-800/60 bg-blue-950/25 p-2 text-[11px] text-blue-100">
           <p className="font-semibold">Wat doet dit?</p>
           <p className="mt-0.5 text-blue-100/90">
-            Hier kies je publieke playlists om snel tracks toe te voegen. Upload 1 of meerdere Exportify CSV's,
-            geef 1 playlistnaam op, en dubbele tracks worden automatisch verwijderd. Onderstrepingen in
-            bestandsnamen worden weer als spaties getoond.
+            Hier kies je publieke playlists om snel tracks toe te voegen. Via `Opties` kun je een playlist als autoplay fallback gebruiken,
+            en als eigenaar ook de naam, cover en genre-informatie aanpassen.
           </p>
         </div>
-      )}
-      {view === "playlists" && (
-        <p className="shrink-0 text-[10px] text-violet-300/90">
-          Tip: klik `Auto` bij een playlist om die direct als autoplay fallback te gebruiken.
-        </p>
       )}
 
       <NoAutofillInput
@@ -680,24 +696,7 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                               <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-300">
                                 {playlist.track_count}
                               </span>
-                              {isPlaylistOwner(playlist) && (
-                                <button
-                                  type="button"
-                                  onClick={() => openPlaylistEdit(playlist)}
-                                  className="shrink-0 rounded border border-gray-600 bg-gray-800 px-1.5 py-0.5 text-[10px] font-semibold text-gray-200 transition hover:border-violet-500 hover:text-white"
-                                  title="Naam en genre aanpassen"
-                                >
-                                  Bewerk
-                                </button>
-                              )}
-                              <button
-                                type="button"
-                                onClick={() => setAsAutoplayFallback(playlist)}
-                                className="shrink-0 rounded border border-violet-700/80 bg-violet-900/30 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200 transition hover:bg-violet-800/40"
-                                title="Gebruik als autoplay fallback"
-                              >
-                                Auto
-                              </button>
+                              {renderPlaylistOptions(playlist)}
                             </div>
                             {editDraft?.id === playlist.id && (
                               <div className="rounded border border-violet-800/60 bg-violet-950/25 p-2 text-[10px] text-gray-200">
@@ -783,24 +782,7 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                   <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-300">
                     {playlist.track_count}
                   </span>
-                  {isPlaylistOwner(playlist) && (
-                    <button
-                      type="button"
-                      onClick={() => openPlaylistEdit(playlist)}
-                      className="shrink-0 rounded border border-gray-600 bg-gray-800 px-1.5 py-0.5 text-[10px] font-semibold text-gray-200 transition hover:border-violet-500 hover:text-white"
-                      title="Naam en genre aanpassen"
-                    >
-                      Bewerk
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setAsAutoplayFallback(playlist)}
-                    className="shrink-0 rounded border border-violet-700/80 bg-violet-900/30 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200 transition hover:bg-violet-800/40"
-                    title="Gebruik als autoplay fallback"
-                  >
-                    Auto
-                  </button>
+                  {renderPlaylistOptions(playlist)}
                 </div>
                 {editDraft?.id === playlist.id && (
                   <div className="rounded border border-violet-800/60 bg-violet-950/25 p-2 text-[10px] text-gray-200">
@@ -950,15 +932,18 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
             const spotifyUrl = (track.spotify_url ?? "").trim();
             const thumb = spotifyUrl ? thumbs[spotifyUrl] : "";
             return (
-              <button
+              <div
                 key={track.id}
-                type="button"
-                onClick={() => handleAddTrack(track)}
-                disabled={submitting || isAdded || isPending}
                 className={`flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition ${
                   isAdded ? "bg-green-500/10" : "hover:bg-gray-800/80"
-                } disabled:opacity-60`}
+                }`}
               >
+                <button
+                  type="button"
+                  onClick={() => handleAddTrack(track)}
+                  disabled={submitting || isPending}
+                  className="flex min-w-0 flex-1 items-center gap-2 disabled:opacity-60"
+                >
                 {thumb ? (
                   <img src={thumb} alt="" className="h-10 w-10 shrink-0 rounded object-cover" />
                 ) : (
@@ -968,20 +953,27 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                   <p className="truncate text-xs font-medium text-white">{track.title}</p>
                   <p className="truncate text-[10px] text-gray-400">{track.artist ?? "Unknown"}</p>
                 </div>
-                {isAdded ? (
-                  <span className="rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
-                    Toegevoegd
-                  </span>
-                ) : isPending ? (
-                  <span className="rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200">
-                    Bezig...
-                  </span>
-                ) : (
-                  <svg className="h-3.5 w-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                  </svg>
-                )}
-              </button>
+                </button>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <TrackActions 
+                    title={track.title} 
+                    artist={track.artist} 
+                    spotify_url={track.spotify_url}
+                    album={track.album}
+                    className="mr-1"
+                    iconSize={16}
+                  />
+                  {isAdded ? (
+                    <span className="rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
+                      Toegevoegd
+                    </span>
+                  ) : isPending ? (
+                    <span className="rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200">
+                      Bezig...
+                    </span>
+                  ) : null}
+                </div>
+              </div>
             );
           })}
           {filteredTracks.length === 0 && (

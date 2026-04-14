@@ -25,7 +25,27 @@ export function getDeviceId(): string {
 
 export function getNickname(): string {
   if (typeof window === 'undefined') return '';
-  return (localStorage.getItem('nickname') ?? '').trim();
+  const stored = (localStorage.getItem('nickname') ?? '').trim();
+  const authUser = localStorage.getItem('supabase.auth.token');
+  if (authUser) {
+    try {
+      const parsed = JSON.parse(authUser);
+      const authNickname = String(
+        parsed?.user?.user_metadata?.username
+        || parsed?.user?.email?.split('@')[0]
+        || '',
+      ).trim();
+      if (authNickname) {
+        if (stored !== authNickname) {
+          localStorage.setItem('nickname', authNickname);
+        }
+        return authNickname;
+      }
+    } catch {
+      // Ignore parse errors and fall back to stored nickname.
+    }
+  }
+  return stored;
 }
 
 export function getUserIdentity(requireNickname = true): UserIdentity {

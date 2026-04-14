@@ -15,7 +15,7 @@ import { getQueue, addToQueue, removeFromQueue, reorderQueue, fetchVideoInfo, ex
 import { canPerformAction } from './permissions.js';
 import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, isPlayCycleRunning, playerEvents, setKeepFiles, getJingleSettings, setJingleSettings, getJingleSelection, setJingleSelection, getJingleCatalog, invalidatePreload, invalidateNextReady, removeQueueItemFromPreload, setActiveFallbackGenre, setActiveFallbackGenres, setActiveSharedFallbackPlaylists, setSharedAutoPlaybackMode, resetSharedAutoPlaybackCycleForSelection, setQueueItemSelectionMeta, setHideLocalDiscoveryForFallback } from './player.js';
 import { youtubeSearch, soundcloudSearch, spotdlSearch } from './services/search.js';
-import { musicBrainzAutocomplete, lastFmGetArtistInfo, lastFmGetTopTracks, lastFmGetTopAlbums, iTunesSearchArtwork, lastFmGetArtistImage } from './services/musicSearch.js';
+import { musicBrainzAutocomplete, lastFmGetArtistInfo, lastFmGetTopTracks, lastFmGetTopAlbums, iTunesSearchArtwork, lastFmGetArtistImage, lastFmGetLovedTracks, lastFmGetRecentTracks } from './services/musicSearch.js';
 import { startBridge } from './bridge.js';
 import { startNowPlayingWatcher } from './nowPlaying.js';
 import { StreamHub } from './streamHub.js';
@@ -38,7 +38,15 @@ import {
   getUserPlaylistTracks as getStoredUserPlaylistTracks,
   getUserPlaylistTracksPage as getStoredUserPlaylistTracksPage,
   deleteUserPlaylist as deleteStoredUserPlaylist,
+  addTrackToUserPlaylist,
+  removeTrackFromUserPlaylist,
+  getOrCreateLikedTracksPlaylist,
   getUserPlaylistUsage,
+  updateUserPlaylistSharing,
+  listPublicUserPlaylists,
+  getPublicUserPlaylistTracks,
+  getUserPlaylistTracksForFallback,
+  hasPublicFallbackUserPlaylist,
   type PlaylistGenreMeta as UserPlaylistGenreMeta,
 } from './services/userPlaylistStore.js';
 import {
@@ -489,6 +497,21 @@ function getUserIdentityFromRequest(req: Request): { nickname: string; deviceId:
   const deviceId = normalizeDeviceId(getIdentityValueFromRequest(req, 'device_id'));
   if (!nickname || !deviceId) return null;
   return { nickname, deviceId };
+}
+
+async function doesUsernameExist(username: string): Promise<boolean> {
+  const normalized = normalizeNickname(username);
+  if (!normalized) return false;
+  const { data, error } = await sb
+    .from('user_accounts')
+    .select('username')
+    .ilike('username', normalized)
+    .limit(1);
+  if (error) {
+    console.warn('[user-playlists] Username lookup failed:', error.message);
+    return false;
+  }
+  return Array.isArray(data) && data.length > 0;
 }
 
 function getAdminTokenFromRequest(req: Request): string | null {
@@ -1334,8 +1357,9 @@ async function isKnownFallbackSelection(genreId: string | null): Promise<boolean
     return true;
   }
   const sharedPlaylistId = parseSharedFallbackPlaylistId(genreId);
-  if (!sharedPlaylistId) return false;
-  return hasSharedPlaylist(sharedPlaylistId);
+  if (sharedPlaylistId) return hasSharedPlaylist(sharedPlaylistId);
+  if (genreId.startsWith('user:')) return hasPublicFallbackUserPlaylist(genreId);
+  return false;
 }
 
 async function emitFallbackGenreUpdate(target?: { emit: (event: string, payload: unknown) => void }): Promise<void> {
@@ -1391,6 +1415,7 @@ async function getCombinedFallbackGenres(): Promise<FallbackGenre[]> {
     trackCount: 0,
   };
   let sharedPlaylists: Awaited<ReturnType<typeof listSharedPlaylists>> = [];
+  let publicUserPlaylists: Awaited<ReturnType<typeof listPublicUserPlaylists>> = [];
   try {
     const pageSize = 250;
     const maxPages = 30;
@@ -1405,6 +1430,11 @@ async function getCombinedFallbackGenres(): Promise<FallbackGenre[]> {
   } catch (err) {
     console.warn('[fallback] Shared playlist list unavailable:', (err as Error).message);
   }
+  try {
+    publicUserPlaylists = await listPublicUserPlaylists(250, 0);
+  } catch (err) {
+    console.warn('[fallback] Public user playlist list unavailable:', (err as Error).message);
+  }
   const sharedGenres: FallbackGenre[] = sharedPlaylists.map((playlist) => ({
     id: toSharedFallbackPlaylistId(playlist.id),
     label: `Playlist · ${playlist.name}`,
@@ -1413,7 +1443,17 @@ async function getCombinedFallbackGenres(): Promise<FallbackGenre[]> {
     subgenre: playlist.subgenre ?? null,
     related_parent_playlist_id: playlist.related_parent_playlist_id ?? null,
   }));
-  return [...localGenres, likedGenre, ...autoGenres, ...sharedGenres];
+  const publicUserGenres: FallbackGenre[] = publicUserPlaylists
+    .filter((playlist) => playlist.is_public_fallback)
+    .map((playlist) => ({
+      id: playlist.id,
+      label: `Playlist · ${playlist.name} (${playlist.owner_username})`,
+      trackCount: playlist.track_count ?? 0,
+      genre_group: playlist.genre_group ?? null,
+      subgenre: playlist.subgenre ?? null,
+      related_parent_playlist_id: playlist.related_parent_playlist_id ?? null,
+    }));
+  return [...localGenres, likedGenre, ...autoGenres, ...sharedGenres, ...publicUserGenres];
 }
 
 function getEffectiveListenerCount(): number {
@@ -2724,25 +2764,32 @@ app.post('/api/user-playlists/import', upload.any(), async (req, res) => {
       });
     }
 
-    const sharedIngest = await ingestParsedPlaylistsIntoShared(parsed, identity.nickname, 'exportify-user', {
-      ...genreMeta,
-      cover_url: coverOptions.coverUrl ?? genreMeta.cover_url ?? null,
-    }, coverOptions);
-    const sharedUsage = await getSharedStoreUsage();
-
     res.json({
       ok: true,
       imported,
       totalPlaylists: imported.length,
       totalTracks,
-      shared: {
-        importedPlaylists: sharedIngest.imported.length,
-        warnings: sharedIngest.warnings,
-        usage: sharedUsage,
-      },
     });
   } catch (err) {
     console.error('[rest] /api/user-playlists/import error:', err);
+    res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
+app.post('/api/user-playlists', async (req, res) => {
+  const identity = getUserIdentityFromRequest(req);
+  if (!identity) {
+    return res.status(400).json({ error: 'nickname en device_id zijn verplicht' });
+  }
+  const { name, genre_group } = req.body;
+  if (!name) {
+    return res.status(400).json({ error: 'playlist_name is verplicht' });
+  }
+  try {
+    const result = await createUserPlaylist(identity, name, [], 'manual', { genre_group: genre_group || null, subgenre: null, related_parent_playlist_id: null });
+    res.json(result);
+  } catch (err) {
+    console.error('[rest] /api/user-playlists POST error:', err);
     res.status(500).json({ error: getErrorMessage(err) });
   }
 });
@@ -2802,6 +2849,104 @@ app.get('/api/user-playlists/:id/tracks', async (req, res) => {
   }
 });
 
+app.post('/api/user-playlists/:id/tracks', async (req, res) => {
+  const identity = getUserIdentityFromRequest(req);
+  if (!identity) {
+    return res.status(400).json({ error: 'nickname en device_id zijn verplicht' });
+  }
+  const playlistId = String(req.params.id ?? '').trim();
+  const track = req.body.track;
+  if (!playlistId || !track) {
+    return res.status(400).json({ error: 'Playlist id of track ontbreekt' });
+  }
+  try {
+    const result = await addTrackToUserPlaylist(identity, playlistId, track);
+    if (!result.success) return res.status(404).json({ error: 'Playlist niet gevonden' });
+    res.json({ ok: true, playlistId: result.playlistId });
+  } catch (err) {
+    console.error('[rest] /api/user-playlists/:id/tracks POST error:', err);
+    res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
+app.get('/api/user-playlists/liked-tracks', async (req, res) => {
+  const identity = getUserIdentityFromRequest(req);
+  if (!identity) {
+    return res.status(400).json({ error: 'nickname en device_id zijn verplicht' });
+  }
+  try {
+    const playlist = await getOrCreateLikedTracksPlaylist(identity);
+    res.json(playlist);
+  } catch (err) {
+    console.error('[rest] /api/user-playlists/liked-tracks error:', err);
+    res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
+app.delete('/api/user-playlists/:id/tracks/:trackId', async (req, res) => {
+  const identity = getUserIdentityFromRequest(req);
+  if (!identity) {
+    return res.status(400).json({ error: 'nickname en device_id zijn verplicht' });
+  }
+  const playlistId = String(req.params.id ?? '').trim();
+  const trackId = String(req.params.trackId ?? '').trim();
+  if (!playlistId || !trackId) {
+    return res.status(400).json({ error: 'Playlist id of track id ontbreekt' });
+  }
+  try {
+    const ok = await removeTrackFromUserPlaylist(identity, playlistId, trackId);
+    res.json({ ok });
+  } catch (err) {
+    console.error('[rest] /api/user-playlists/:id/tracks/:trackId DELETE error:', err);
+    res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
+app.patch('/api/user-playlists/:id', async (req, res) => {
+  const identity = getUserIdentityFromRequest(req);
+  if (!identity) {
+    return res.status(400).json({ error: 'nickname en device_id zijn verplicht' });
+  }
+
+  const playlistId = String(req.params.id ?? '').trim();
+  if (!playlistId) {
+    return res.status(400).json({ error: 'Playlist id ontbreekt' });
+  }
+
+  const shareUsername = normalizeNickname(getIdentityValueFromRequest(req, 'share_username'));
+  const wantsPublic = req.body && typeof req.body === 'object' && Object.prototype.hasOwnProperty.call(req.body, 'is_public');
+  const wantsPublicFallback = req.body && typeof req.body === 'object' && Object.prototype.hasOwnProperty.call(req.body, 'is_public_fallback');
+  const nextPublic = wantsPublic ? Boolean((req.body as Record<string, unknown>).is_public) : undefined;
+  const nextPublicFallback = wantsPublicFallback ? Boolean((req.body as Record<string, unknown>).is_public_fallback) : undefined;
+
+  if (!shareUsername && typeof nextPublic === 'undefined' && typeof nextPublicFallback === 'undefined') {
+    return res.status(400).json({ error: 'Geen share/public/fallback wijziging meegegeven' });
+  }
+
+  try {
+    if (shareUsername) {
+      const exists = await doesUsernameExist(shareUsername);
+      if (!exists) {
+        return res.status(404).json({ error: 'Gebruiker niet gevonden' });
+      }
+    }
+
+    const updated = await updateUserPlaylistSharing(identity, playlistId, {
+      shareWithUsername: shareUsername,
+      isPublic: nextPublic,
+      isPublicFallback: nextPublicFallback,
+    });
+    if (!updated) {
+      return res.status(404).json({ error: 'Playlist niet gevonden of je bent geen eigenaar' });
+    }
+
+    return res.json({ ok: true, playlist: updated });
+  } catch (err) {
+    console.error('[rest] /api/user-playlists/:id PATCH error:', err);
+    return res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
 app.delete('/api/user-playlists/:id', async (req, res) => {
   const identity = getUserIdentityFromRequest(req);
   if (!identity) {
@@ -2822,19 +2967,71 @@ app.delete('/api/user-playlists/:id', async (req, res) => {
   }
 });
 
+app.get('/api/users', async (req, res) => {
+  const q = String(req.query.q ?? '').trim();
+  const limitRaw = parseInt(String(req.query.limit ?? '200'), 10);
+  const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(limitRaw, 300)) : 200;
+  try {
+    let query = sb
+      .from('user_accounts')
+      .select('username')
+      .order('username', { ascending: true })
+      .limit(limit);
+    if (q) {
+      query = query.ilike('username', `%${q}%`);
+    }
+    const { data, error } = await query;
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+    const users = Array.from(new Set((data ?? [])
+      .map((entry) => String(entry.username ?? '').trim())
+      .filter(Boolean)));
+    return res.json({ users });
+  } catch (err) {
+    console.error('[rest] /api/users GET error:', err);
+    return res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
 app.get('/api/shared-playlists', async (req, res) => {
   const parsedLimit = parseInt(String(req.query.limit ?? '100'), 10);
   const parsedOffset = parseInt(String(req.query.offset ?? '0'), 10);
   const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(parsedLimit, 250)) : 100;
   const offset = Number.isFinite(parsedOffset) ? Math.max(0, parsedOffset) : 0;
   try {
-    const [items, usage] = await Promise.all([
-      listSharedPlaylists(limit, offset),
+    const [sharedItems, sharedUsage, publicUserItems] = await Promise.all([
+      listSharedPlaylists(250, 0),
       getSharedStoreUsage(),
+      listPublicUserPlaylists(250, 0),
     ]);
+    const items = [
+      ...sharedItems.map((item) => ({ ...item, kind: 'shared' as const, owner_username: item.added_by ?? null })),
+      ...publicUserItems.map((item) => ({
+        id: item.id,
+        name: item.name,
+        source: item.source,
+        created_at: item.created_at,
+        imported_at: item.created_at,
+        track_count: item.track_count ?? 0,
+        added_by: item.owner_username,
+        genre_group: item.genre_group,
+        subgenre: item.subgenre,
+        related_parent_playlist_id: item.related_parent_playlist_id,
+        cover_url: item.cover_url,
+        kind: 'user_public' as const,
+        owner_username: item.owner_username,
+        is_public_fallback: item.is_public_fallback,
+      })),
+    ]
+      .sort((a, b) => (b.imported_at ?? b.created_at).localeCompare(a.imported_at ?? a.created_at))
+      .slice(offset, offset + limit);
     res.json({
       items,
-      usage,
+      usage: {
+        playlists: sharedUsage.playlists + publicUserItems.length,
+        tracks: sharedUsage.tracks,
+      },
       paging: { limit, offset },
     });
   } catch (err) {
@@ -3002,6 +3199,28 @@ app.get('/api/shared-playlists/:id/tracks', async (req, res) => {
     return res.status(400).json({ error: 'Playlist id ontbreekt' });
   }
   try {
+    if (playlistId.startsWith('user:')) {
+      const tracks = await getPublicUserPlaylistTracks(playlistId);
+      if (!tracks) return res.status(404).json({ error: 'Playlist niet gevonden' });
+      const hasPaging = typeof req.query.limit !== 'undefined' || typeof req.query.offset !== 'undefined';
+      if (hasPaging) {
+        const parsedLimit = parseInt(String(req.query.limit ?? '120'), 10);
+        const parsedOffset = parseInt(String(req.query.offset ?? '0'), 10);
+        const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(parsedLimit, 300)) : 120;
+        const offset = Number.isFinite(parsedOffset) ? Math.max(0, parsedOffset) : 0;
+        const items = tracks.slice(offset, offset + limit);
+        return res.json({
+          items,
+          paging: {
+            total: tracks.length,
+            limit,
+            offset,
+            hasMore: offset + items.length < tracks.length,
+          },
+        });
+      }
+      return res.json(tracks);
+    }
     const hasPaging = typeof req.query.limit !== 'undefined' || typeof req.query.offset !== 'undefined';
     if (hasPaging) {
       const parsedLimit = parseInt(String(req.query.limit ?? '120'), 10);
@@ -4270,7 +4489,6 @@ app.post('/api/shoutouts', async (req, res) => {
 app.get('/api/search-history', async (req, res) => {
   const nickname = String((req.query as { nickname?: string })?.nickname ?? '').trim().toLowerCase();
   const searchType = String((req.query as { type?: string })?.type ?? '').trim().toLowerCase();
-  console.log('[rest] /api/search-history GET:', { nickname, searchType, query: req.query });
   if (!nickname) return res.status(400).json({ error: 'nickname is required' });
   if (!['artist', 'video'].includes(searchType)) {
     return res.status(400).json({ error: 'type must be artist or video', received: searchType });
@@ -4303,7 +4521,6 @@ app.post('/api/search-history', async (req, res) => {
   const nickname = String(body.nickname ?? '').trim().toLowerCase();
   const searchType = String(body.type ?? '').trim().toLowerCase();
   const query = String(body.query ?? '').trim();
-  console.log('[rest] /api/search-history POST:', { nickname, searchType, query, body });
   if (!nickname) return res.status(400).json({ error: 'nickname is required' });
   if (!['artist', 'video'].includes(searchType)) {
     return res.status(400).json({ error: 'type must be artist or video', received: searchType });

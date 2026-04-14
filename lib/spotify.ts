@@ -271,6 +271,9 @@ export interface SpotifyTrackItem {
   artists: SpotifyArtist[];
   album: SpotifyAlbum;
   duration_ms: number;
+  external_urls?: {
+    spotify?: string;
+  };
 }
 
 export interface SpotifyPlaylistTrack {

@@ -10,6 +10,8 @@ import { useSyncedTrack } from "@/lib/useSyncedTrack";
 import { dislikeCurrentAutoTrack, likeCurrentAutoTrack } from "@/lib/radioApi";
 import { getSocket } from "@/lib/socket";
 import type { Track } from "@/lib/types";
+import { addTrackToUserPlaylist, getLikedTracksPlaylist } from "@/lib/userPlaylistsApi";
+import TrackActions from "@/components/TrackActions";
 
 declare global {
   interface Window {
@@ -1113,6 +1115,9 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const displayArtist = syncedRadioTrack ? decodeHtmlEntities(radioArtist) : (showSupabaseData ? decodeHtmlEntities(track.artist) : null);
   const syncedRadioArtwork = syncedRadioTrack?.thumbnail ?? null;
   const immediateRadioArtwork = radioTrack?.thumbnail ?? null;
+  const trackArtworkForPlaylistActions = isJingleTrack
+    ? null
+    : (syncedRadioArtwork ?? immediateRadioArtwork ?? null);
   // Outside DJ mode we never render Supabase artwork to avoid Rekordbox exporter covers flashing in.
   const supabaseArtwork = (showSupabaseData && preferSupabase) ? track.artwork_url : null;
   // Keep synced artwork leading to avoid falling back to stale exporter thumbnails.
@@ -1179,9 +1184,25 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     if (!artist && !title) return;
     setFeedbackSaving(true);
     try {
+      // 1. Existing auto-DJ like logic
       await likeCurrentAutoTrack(artist, title);
       setLikedTrackKey(currentLikeKey);
       setDislikedTrackKey(null);
+      
+      // 2. New Liked Tracks playlist logic
+      try {
+        const liked = await getLikedTracksPlaylist();
+        await addTrackToUserPlaylist(liked.id, {
+          title: title ?? "",
+          artist: artist,
+          album: null,
+          spotify_url: null,
+          artwork_url: trackArtworkForPlaylistActions,
+        });
+      } catch (err) {
+        console.warn("[AudioPlayer] Failed to add track to user liked tracks playlist:", err);
+      }
+
       setFeedbackMessage("Nummer geliked");
     } catch {
       setFeedbackMessage("Like opslaan mislukt");
@@ -1790,6 +1811,14 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
                     >
                       {likedTrackKey === currentLikeKey ? "♥ Geliked" : feedbackSaving ? "Opslaan..." : "♡ Like"}
                     </button>
+                    <TrackActions 
+                      title={displayTitle ?? ""} 
+                      artist={displayArtist ?? ""} 
+                      artwork_url={trackArtworkForPlaylistActions}
+                      showLike={false}
+                      className="inline-flex"
+                      iconSize={14}
+                    />
                     {canDislikeAutoTrack && (
                       <button
                         type="button"
@@ -2019,6 +2048,14 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
                   >
                     {likedTrackKey === currentLikeKey ? "♥ Geliked" : feedbackSaving ? "Opslaan..." : "♡ Like dit nummer"}
                   </button>
+                  <TrackActions 
+                    title={displayTitle ?? ""} 
+                    artist={displayArtist ?? ""} 
+                    artwork_url={trackArtworkForPlaylistActions}
+                    showLike={false}
+                    className="inline-flex"
+                    iconSize={16}
+                  />
                   {canDislikeAutoTrack && (
                     <button
                       type="button"

@@ -12,6 +12,7 @@ import { buildGroupedGenreSections, GENRE_FALLBACK_OPTIONS, getGenreGroupMembers
 import SpotifyBrowser from "@/components/SpotifyBrowser";
 import SharedPlaylistsBrowser from "@/components/SharedPlaylistsBrowser";
 import { NoAutofillInput } from "@/components/NoAutofillInput";
+import TrackActions from "@/components/TrackActions";
 
 class SpotifyErrorBoundary extends Component<
   { children: ReactNode; onReset: () => void },
@@ -1547,7 +1548,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                   source === "spotify" ? "ml-1 max-w-[86px] opacity-100" : "max-w-0 opacity-0"
                 }`}
               >
-                Spotify
+                Persoonlijk
               </span>
             </button>
           )}
@@ -1750,39 +1751,14 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                           </button>
                         </div>
                       )}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const key = `genres:${item.id}`;
-                          setResultStatus((prev) => ({ ...prev, [key]: "pending" }));
-                          setTimeout(() => {
-                            setResultStatus((prev) => ({ ...prev, [key]: "added" }));
-                          }, 120);
-                          setTimeout(() => {
-                            setResultStatus((prev) => ({ ...prev, [key]: "idle" }));
-                          }, 4000);
-                          const localOrQuery = item.sourceHint?.startsWith("local://") ? item.sourceHint : item.query;
-                          startRecentAdd(key, localOrQuery, item.title, item.artist);
-                          submitUrl(localOrQuery, item.thumbnail || undefined, item.title, item.artist, {
-                            sourceType: "genres",
-                            sourceGenre: activeGenreLabel,
-                          });
-                        }}
-                        disabled={submitting}
-                        className={`rounded-md px-2.5 py-1 text-xs font-semibold text-white transition disabled:opacity-50 ${
-                          resultStatus[`genres:${item.id}`] === "added"
-                            ? "bg-green-600 hover:bg-green-500"
-                            : resultStatus[`genres:${item.id}`] === "pending"
-                              ? "bg-violet-500/80"
-                              : "bg-violet-600 hover:bg-violet-500"
-                        }`}
-                      >
-                        {resultStatus[`genres:${item.id}`] === "added"
-                          ? "Toegevoegd"
-                          : resultStatus[`genres:${item.id}`] === "pending"
-                            ? "Bezig..."
-                            : "Toevoegen"}
-                      </button>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <TrackActions 
+                          title={item.title} 
+                          artist={item.artist} 
+                          className="mr-0.5"
+                          iconSize={15}
+                        />
+                      </div>
                     </div>
                   </div>
                 ))
@@ -1993,20 +1969,25 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                               {track.listeners ? ` • ${parseInt(track.listeners).toLocaleString()} luisteraars` : ''}
                             </p>
                           </div>
-                          {isAdded ? (
-                            <span className="rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
-                              Toegevoegd
-                            </span>
-                          ) : isPending ? (
-                            <span className="rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200">
-                              Bezig...
-                            </span>
-                          ) : (
-                            <svg className="h-3.5 w-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                            </svg>
-                          )}
-                        </button>
+                          <div className="flex shrink-0 items-center gap-1.5">
+                            <TrackActions 
+                              title={track.name} 
+                              artist={track.artist?.name || selectedArtist?.name || ""} 
+                              artwork_url={thumb ?? null}
+                              className="mr-1"
+                              iconSize={16}
+                            />
+                            {isAdded ? (
+                              <span className="rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
+                                Toegevoegd
+                              </span>
+                            ) : isPending ? (
+                              <span className="rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200">
+                                Bezig...
+                              </span>
+                            ) : null}
+                        </div>
+                      </button>
                       );
                     })}
                     {artistTracksLoadingMore && (
@@ -2137,12 +2118,18 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                     touchAction: 'pan-y'
                   }}
                 >
-                  {results.map((r) => (
+                  {results.map((r) => {
+                    const status = resultStatus[`${source}:${r.id}`] ?? "idle";
+                    const isAdded = status === "added";
+                    const isPending = status === "pending";
+                    return (
                     <button
                       key={r.id}
                       type="button"
                       onClick={() => selectResult(r)}
-                      className="flex w-full items-center gap-2 px-2.5 py-1 text-left transition hover:bg-gray-800/80 first:rounded-t-xl last:rounded-b-xl"
+                      className={`flex w-full items-center gap-2 px-2.5 py-1 text-left transition first:rounded-t-xl last:rounded-b-xl ${
+                        isAdded ? "bg-green-500/10" : "hover:bg-gray-800/80"
+                      }`}
                     >
                       {r.thumbnail ? (
                         <img
@@ -2168,23 +2155,25 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                           )}
                         </div>
                       </div>
-                      {resultStatus[`${source}:${r.id}`] === "added" && (
-                        <span className="shrink-0 rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
+                      <TrackActions 
+                        title={r.title} 
+                        artist={r.channel || ""} 
+                        artwork_url={r.thumbnail || null}
+                        className="mr-1"
+                        iconSize={16}
+                      />
+                      {isAdded ? (
+                        <span className="rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
                           Toegevoegd
                         </span>
-                      )}
-                      {resultStatus[`${source}:${r.id}`] === "pending" && (
-                        <span className="shrink-0 rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-300">
+                      ) : isPending ? (
+                        <span className="rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200">
                           Bezig...
                         </span>
-                      )}
-                      {r.duration !== null && r.duration > 3900 && (
-                        <span className="shrink-0 rounded bg-red-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-red-400">
-                          Te lang
-                        </span>
-                      )}
+                      ) : null}
                     </button>
-                  ))}
+                    );
+                  })}
                   {searchingMore && (
                     <p className="px-3 py-2 text-[11px] text-gray-400">Meer resultaten laden...</p>
                   )}
@@ -2253,6 +2242,13 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                   <p className="truncate text-xs text-gray-400">{candidate.channel || "Onbekende uploader"}</p>
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1">
+                  <TrackActions 
+                    title={candidate.title} 
+                    artist={candidate.channel} 
+                    artwork_url={candidate.thumbnail ?? null}
+                    className="mb-1"
+                    iconSize={16}
+                  />
                   <span className="rounded bg-gray-800 px-1.5 py-0.5 text-[10px] uppercase text-gray-300">
                     {candidate.provider}
                   </span>

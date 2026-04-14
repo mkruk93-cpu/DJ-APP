@@ -1123,7 +1123,7 @@ export default function RequestForm(
                   source === "spotify" ? "ml-1 max-w-[86px] opacity-100" : "max-w-0 opacity-0"
                 }`}
               >
-                Spotify
+                Persoonlijk
               </span>
             </button>
           )}

@@ -6,6 +6,7 @@ import { getSocket } from "@/lib/socket";
 import { getRadioToken } from "@/lib/auth";
 import { useAuth } from "@/lib/authContext";
 import { decodeHtmlEntities } from "@/lib/trackDisplay";
+import TrackActions from "@/components/TrackActions";
 
 function deriveTitleFromId(sourceId: string): string {
   if (!sourceId) return "Nummer wordt geladen...";
@@ -102,6 +103,13 @@ export default function Queue() {
                   className="flex items-center gap-2 rounded-md border border-violet-900/50 bg-violet-900/20 px-2 py-1.5"
                 >
                   <span className="w-4 shrink-0 text-center text-[11px] text-violet-200/80">{idx + 1}</span>
+                  {item.thumbnail ? (
+                    <img
+                      src={item.thumbnail}
+                      alt=""
+                      className="h-8 w-12 shrink-0 rounded object-cover"
+                    />
+                  ) : null}
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-xs font-medium text-violet-100">
                       {item.artist && item.title && item.title.toLowerCase().startsWith(item.artist.toLowerCase())
@@ -114,7 +122,15 @@ export default function Queue() {
                       Wordt automatisch toegevoegd zodra een nummer afgelopen is
                     </p>
                   </div>
+                  <TrackActions
+                    title={item.title ?? deriveTitleFromId(item.youtube_url)}
+                    artist={item.artist ?? null}
+                    artwork_url={item.thumbnail ?? null}
+                    className="mr-1"
+                    iconSize={15}
+                  />
                   <button
+                    type="button"
                     onClick={() =>
                       getSocket().emit("deferredQueue:remove", {
                         id: item.id,
@@ -170,6 +186,13 @@ export default function Queue() {
             </div>
 
             <div className="flex shrink-0 items-center gap-1">
+              <TrackActions
+                title={item.title ?? deriveTitleFromId(item.youtube_id)}
+                artist={item.artist ?? null}
+                artwork_url={item.thumbnail ?? null}
+                className="mr-1"
+                iconSize={15}
+              />
               {canRequestPush && (
                 <button
                   onClick={() => {

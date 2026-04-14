@@ -1897,7 +1897,7 @@ export default function StreamPage() {
                   <SkipButton compact />
                 </div>
               </div>
-              <div className="hidden sm:block">
+              <div>
                 <DurationVotePanel />
                 <QueuePushVotePanel />
               </div>
