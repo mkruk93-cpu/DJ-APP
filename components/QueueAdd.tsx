@@ -311,6 +311,108 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
   const SEARCH_PAGE_SIZE = 12;
   const ARTIST_TRACKS_PAGE_SIZE = 50;
   const MAX_ARTIST_TRACKS = 250;
+  const serverUrl = useRadioStore((s) => s.serverUrl) ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
+  const nickname = getNickname();
+
+  const normalizeArtistName = useCallback((value: string | null | undefined) => (value ?? "").trim().toLowerCase(), []);
+  const favoriteArtistIds = useMemo(() => new Set(favoriteArtists.map((artist) => artist.mbid)), [favoriteArtists]);
+
+  const isArtistFavorited = useCallback((artistId?: string | null, artistName?: string | null) => {
+    if (artistId && !artistId.startsWith("history:")) {
+      return favoriteArtistIds.has(artistId);
+    }
+    const normalizedName = normalizeArtistName(artistName);
+    return normalizedName
+      ? favoriteArtists.some((artist) => normalizeArtistName(artist.name) === normalizedName)
+      : false;
+  }, [favoriteArtistIds, favoriteArtists, normalizeArtistName]);
+
+  const resolveFavoriteArtist = useCallback(async (artist: {
+    id?: string | null;
+    name: string;
+    image?: string | null;
+    country?: string | null;
+  }): Promise<{ mbid: string; name: string; image_url: string | null; country: string | null } | null> => {
+    const normalizedName = normalizeArtistName(artist.name);
+    if (!normalizedName) return null;
+
+    if (artist.id && !artist.id.startsWith("history:")) {
+      return {
+        mbid: artist.id,
+        name: artist.name,
+        image_url: artist.image ?? null,
+        country: artist.country ?? null,
+      };
+    }
+
+    const existing = favoriteArtists.find((entry) => normalizeArtistName(entry.name) === normalizedName);
+    if (existing) {
+      return {
+        mbid: existing.mbid,
+        name: existing.name,
+        image_url: existing.image_url ?? null,
+        country: existing.country ?? null,
+      };
+    }
+
+    if (!serverUrl) return null;
+
+    try {
+      const res = await fetch(`${serverUrl}/api/search/autocomplete?q=${encodeURIComponent(artist.name)}&limit=8`);
+      if (!res.ok) return null;
+      const data = await res.json() as MusicBrainzArtist[];
+      const exactMatch = data.find((entry) => normalizeArtistName(entry.name) === normalizedName) ?? data[0];
+      if (!exactMatch?.id) return null;
+      return {
+        mbid: exactMatch.id,
+        name: exactMatch.name,
+        image_url: exactMatch.image ?? artist.image ?? null,
+        country: exactMatch.country ?? artist.country ?? null,
+      };
+    } catch {
+      return null;
+    }
+  }, [favoriteArtists, normalizeArtistName, serverUrl]);
+
+  const toggleFavoriteArtistState = useCallback(async (artist: {
+    id?: string | null;
+    name: string;
+    image?: string | null;
+    country?: string | null;
+  }) => {
+    const existingFavorite = favoriteArtists.find((entry) =>
+      (artist.id && !artist.id.startsWith("history:") && entry.mbid === artist.id) ||
+      normalizeArtistName(entry.name) === normalizeArtistName(artist.name)
+    );
+
+    if (existingFavorite) {
+      await removeFavoriteArtist(existingFavorite.mbid);
+      setFavoriteArtists((prev) => prev.filter((entry) => entry.mbid !== existingFavorite.mbid));
+      return;
+    }
+
+    const resolved = await resolveFavoriteArtist(artist);
+    if (!resolved) {
+      setFeedback({ msg: `Kon ${artist.name} niet als favoriet opslaan. Probeer de artiest opnieuw te openen vanuit de zoekresultaten.`, ok: false });
+      return;
+    }
+
+    await addFavoriteArtist(resolved);
+    setFavoriteArtists((prev) => (
+      prev.some((entry) => entry.mbid === resolved.mbid)
+        ? prev
+        : [...prev, { ...resolved, added_at: new Date().toISOString() }]
+    ));
+
+    if (selectedArtist && normalizeArtistName(selectedArtist.name) === normalizeArtistName(artist.name) && (!selectedArtist.id || selectedArtist.id.startsWith("history:"))) {
+      setSelectedArtist((prev) => (prev ? {
+        ...prev,
+        id: resolved.mbid,
+        image: prev.image ?? resolved.image_url ?? null,
+        country: prev.country ?? resolved.country ?? null,
+      } : prev));
+    }
+  }, [favoriteArtists, normalizeArtistName, resolveFavoriteArtist, selectedArtist]);
 
   useEffect(() => {
     setHydrated(true);
@@ -337,9 +439,6 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
       document.removeEventListener('touchstart', handleClickOutside);
     };
   }, [showResults]);
-
-  const serverUrl = useRadioStore((s) => s.serverUrl) ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
-  const nickname = getNickname();
 
   const fetchSearchHistory = useCallback(async (type: "artist" | "video"): Promise<SearchHistoryItem[]> => {
     if (!serverUrl || !nickname) return [];
@@ -802,6 +901,35 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
   const selectArtistHistoryItem = useCallback(async (query: string) => {
     const artistName = query.trim();
     if (!artistName) return;
+    const normalizedName = normalizeArtistName(artistName);
+    const knownFavorite = favoriteArtists.find((artist) => normalizeArtistName(artist.name) === normalizedName);
+
+    if (knownFavorite) {
+      await selectArtist({
+        id: knownFavorite.mbid,
+        name: knownFavorite.name,
+        country: knownFavorite.country,
+        type: null,
+        disambiguation: null,
+        image: knownFavorite.image_url,
+      });
+      return;
+    }
+
+    if (serverUrl) {
+      try {
+        const res = await fetch(`${serverUrl}/api/search/autocomplete?q=${encodeURIComponent(artistName)}&limit=8`);
+        if (res.ok) {
+          const matches = await res.json() as MusicBrainzArtist[];
+          const resolved = matches.find((artist) => normalizeArtistName(artist.name) === normalizedName) ?? matches[0];
+          if (resolved) {
+            await selectArtist(resolved);
+            return;
+          }
+        }
+      } catch {}
+    }
+
     await selectArtist({
       id: `history:${artistName.toLowerCase()}`,
       name: artistName,
@@ -810,7 +938,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
       disambiguation: null,
       image: null,
     });
-  }, [selectArtist]);
+  }, [favoriteArtists, normalizeArtistName, selectArtist, serverUrl]);
 
   // Get artwork URL with larger size
   const getArtworkUrl = (url: string, size: '100' | '300' = '300'): string => {
@@ -1304,10 +1432,11 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
     sourceType?: string | null;
     sourceGenre?: string | null;
     sourcePlaylist?: string | null;
+    artwork_url?: string | null;
   }): Promise<AddTrackResult> {
     const spotifyKey = track.id ? `spotify:${track.id}` : `spotify:${Date.now()}`;
     setResultStatus((prev) => ({ ...prev, [spotifyKey]: "pending" }));
-    const response = await submitUrl(track.query, undefined, track.title ?? null, track.artist ?? null, {
+    const response = await submitUrl(track.query, track.artwork_url ?? undefined, track.title ?? null, track.artist ?? null, {
       sourceType: track.sourceType ?? source,
       sourceGenre: track.sourceGenre ?? null,
       sourcePlaylist: track.sourcePlaylist ?? null,
@@ -1564,13 +1693,14 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
               <SpotifyBrowser onAddTrack={handleSpotifyAdd} submitting={submitting} onSelectFavoriteArtist={(artist) => {
                 setSource("search");
                 setArtistSearchQuery(artist.name);
+                setArtistImageFallback(artist.image_url ?? null);
                 setSelectedArtist({
                   id: artist.mbid,
                   name: artist.name,
                   country: null,
                   type: null,
                   disambiguation: null,
-                  image: null,
+                  image: artist.image_url ?? null,
                 });
                 setArtistTracks([]);
                 setArtistAlbums([]);
@@ -1578,6 +1708,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                 setArtistTracksHasMore(false);
                 setArtistTrackFilter("");
                 void loadArtistTracks(artist.name, false);
+                void loadArtistArtwork(artist.name);
               }} />
             </SpotifyErrorBoundary>
           </div>
@@ -1805,6 +1936,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                       value={artistSearchQuery}
                       onChange={(e) => {
                         setArtistSearchQuery(e.target.value);
+                        if (showFavoriteArtists) setShowFavoriteArtists(false);
                         setSelectedArtist(null);
                         setArtistTracks([]);
                         setArtistAlbums([]);
@@ -1887,7 +2019,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                   {showArtistResults && artistResults.length > 0 && (
                     <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-80 overflow-y-auto overscroll-contain rounded-md border border-gray-700 bg-gray-900 shadow-lg" style={{ WebkitOverflowScrolling: 'touch' }}>
                       {artistResults.map((artist) => {
-                        const isFav = favoriteArtists.some((f) => f.mbid === artist.id);
+                        const isFav = isArtistFavorited(artist.id, artist.name);
                         return (
                         <div key={artist.id} className="group flex w-full items-center px-3 py-2 text-left hover:bg-gray-800 first:rounded-t-md last:rounded-b-md">
                           <button
@@ -1911,15 +2043,14 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                             type="button"
                             onClick={async (e) => {
                               e.stopPropagation();
-                              if (isFav) {
-                                await removeFavoriteArtist(artist.id);
-                                setFavoriteArtists((prev) => prev.filter((f) => f.mbid !== artist.id));
-                              } else {
-                                await addFavoriteArtist({ mbid: artist.id, name: artist.name, image_url: artist.image, country: artist.country });
-                                setFavoriteArtists((prev) => [...prev, { mbid: artist.id, name: artist.name, image_url: artist.image, country: artist.country, added_at: new Date().toISOString() }]);
-                              }
+                              await toggleFavoriteArtistState({
+                                id: artist.id,
+                                name: artist.name,
+                                image: artist.image,
+                                country: artist.country,
+                              });
                             }}
-                            className={`ml-2 shrink-0 rounded p-1 transition ${isFav ? 'text-pink-400 hover:bg-pink-500/10' : 'text-gray-600 opacity-0 group-hover:opacity-100 hover:text-pink-400'}`}
+                            className={`ml-2 shrink-0 rounded p-1 transition ${isFav ? 'text-pink-400 hover:bg-pink-500/10' : 'text-gray-400 hover:bg-pink-500/10 hover:text-pink-400'}`}
                             title={isFav ? "Verwijder uit favorieten" : "Toevoegen aan favorieten"}
                           >
                             <svg className="h-4 w-4" fill={isFav ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -1933,7 +2064,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                   )}
 
                   {showFavoriteArtists && (
-                    <div className="mt-2 rounded-md bg-pink-950/10 p-2">
+                    <div className="mt-2 max-h-72 overflow-y-auto overscroll-contain rounded-md bg-pink-950/10 p-2" style={{ WebkitOverflowScrolling: "touch" }}>
                       <div className="mb-2 flex items-center justify-between">
                         <p className="text-[11px] font-semibold text-pink-200">Favoriete artiesten</p>
                         <button
@@ -1978,6 +2109,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                                   setArtistTracksHasMore(false);
                                   setArtistTrackFilter("");
                                   void loadArtistTracks(artist.name, false);
+                                  void loadArtistArtwork(artist.name);
                                 }}
                                 className="min-w-0 flex-1 text-left"
                               >
@@ -2020,28 +2152,23 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6" /></svg>
                     </button>
                     <span className="truncate text-sm font-semibold text-violet-300">{selectedArtist.name}</span>
-                    {selectedArtist.id && !selectedArtist.id.startsWith("history:") && (
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          const mbid = selectedArtist.id;
-                          const isFav = favoriteArtists.some((f) => f.mbid === mbid);
-                          if (isFav) {
-                            await removeFavoriteArtist(mbid);
-                            setFavoriteArtists((prev) => prev.filter((f) => f.mbid !== mbid));
-                          } else {
-                            await addFavoriteArtist({ mbid, name: selectedArtist.name, image_url: selectedArtist.image, country: selectedArtist.country });
-                            setFavoriteArtists((prev) => [...prev, { mbid, name: selectedArtist.name, image_url: selectedArtist.image, country: selectedArtist.country, added_at: new Date().toISOString() }]);
-                          }
-                        }}
-                        className={`shrink-0 rounded p-1 transition ${favoriteArtists.some((f) => f.mbid === selectedArtist.id) ? 'text-pink-400 hover:bg-pink-500/10' : 'text-gray-600 hover:text-pink-400'}`}
-                        title={favoriteArtists.some((f) => f.mbid === selectedArtist.id) ? "Verwijder uit favorieten" : "Toevoegen aan favorieten"}
-                      >
-                        <svg className="h-4 w-4" fill={favoriteArtists.some((f) => f.mbid === selectedArtist.id) ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
-                        </svg>
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await toggleFavoriteArtistState({
+                          id: selectedArtist.id,
+                          name: selectedArtist.name,
+                          image: selectedArtist.image,
+                          country: selectedArtist.country,
+                        });
+                      }}
+                      className={`shrink-0 rounded p-1 transition ${isArtistFavorited(selectedArtist.id, selectedArtist.name) ? 'text-pink-400 hover:bg-pink-500/10' : 'text-gray-400 hover:bg-pink-500/10 hover:text-pink-400'}`}
+                      title={isArtistFavorited(selectedArtist.id, selectedArtist.name) ? "Verwijder uit favorieten" : "Toevoegen aan favorieten"}
+                    >
+                      <svg className="h-4 w-4" fill={isArtistFavorited(selectedArtist.id, selectedArtist.name) ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                      </svg>
+                    </button>
                   </div>
 
                   <div className="flex-1 max-w-[180px]">
@@ -2070,12 +2197,22 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                       const isAdded = addedTrackId === trackId;
                       const isPending = pendingTrackId === trackId;
                       
-                      const trackLower = track.name.toLowerCase();
-                      const matchingAlbum = artistAlbums.find(a => 
-                        a.collectionName.toLowerCase().includes(trackLower.split('(')[0].trim()) ||
-                        trackLower.includes(a.collectionName.toLowerCase())
-                      );
-                      const thumb = matchingAlbum ? getArtworkUrl(matchingAlbum.artworkUrl100, '300') : artistImageFallback;
+                      const normalizeForMatch = (value: string): string => value
+                        .toLowerCase()
+                        .replace(/\([^)]*\)/g, " ")
+                        .replace(/\[[^\]]*\]/g, " ")
+                        .replace(/\b(remix|edit|radio mix|extended mix|live|version)\b/g, " ")
+                        .replace(/[^a-z0-9]+/g, " ")
+                        .trim();
+                      const trackBase = normalizeForMatch(track.name).split(" ").slice(0, 4).join(" ");
+                      const matchingAlbum = artistAlbums.find((album) => {
+                        const albumBase = normalizeForMatch(album.collectionName);
+                        if (!albumBase || !trackBase) return false;
+                        return albumBase.includes(trackBase) || trackBase.includes(albumBase);
+                      });
+                      const thumb = matchingAlbum
+                        ? getArtworkUrl(matchingAlbum.artworkUrl100, '300')
+                        : (selectedArtist?.image || artistImageFallback || null);
 
                       return (
                         <div

@@ -50,7 +50,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      // Add a timeout to prevent hanging the auth initialization
+      // Keep account fetch bounded, but don't let it block initial app render.
       const accountPromise = supabase
         .from('user_accounts')
         .select('*')
@@ -58,7 +58,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .single();
       
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Refresh account timeout')), 10000)
+        setTimeout(() => reject(new Error('Refresh account timeout')), 2500)
       );
 
       const { data, error } = await Promise.race([accountPromise, timeoutPromise]) as any;
@@ -168,21 +168,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const initializeAuth = async () => {
-      // Safety timeout for loading state - shorter for faster UX
+      // Never leave the whole app blocked on auth bootstrap for long.
       const safetyTimeout = setTimeout(() => {
         if (loading) {
           setLoading(false);
         }
-      }, 10000);
+      }, 2500);
 
       try {
         const { data: { session } } = await supabase.auth.getSession();
         setSession(session);
         const currentUser = session?.user ?? null;
         setUser(currentUser);
+        setLoading(false);
 
         if (currentUser) {
-          await refreshUserAccount(currentUser);
+          void refreshUserAccount(currentUser);
         }
       } catch (error) {
         console.error('Auth initialization error:', error);
@@ -198,9 +199,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(session);
       const currentUser = session?.user ?? null;
       setUser(currentUser);
+      setLoading(false);
 
       if (currentUser) {
-        await refreshUserAccount(currentUser);
+        void refreshUserAccount(currentUser);
       } else {
         setUserAccount(null);
       }

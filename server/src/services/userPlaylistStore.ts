@@ -490,6 +490,45 @@ export async function removeTrackFromUserPlaylist(
   }, true);
 }
 
+export async function backfillUserPlaylistTrackArtwork(
+  owner: PlaylistOwner,
+  playlistId: string,
+  updates: Array<{ trackId: string; artwork_url: string | null }>,
+): Promise<{ updated: number; skipped: number; missing: number } | null> {
+  return withStoreAccess((store) => {
+    migrateOwnerPlaylists(store, owner);
+    const playlist = store.playlists.find((entry) => entry.id === playlistId && matchesOwner(entry, owner));
+    if (!playlist) return null;
+    let updated = 0;
+    let skipped = 0;
+    let missing = 0;
+    for (const update of updates) {
+      const trackId = (update.trackId ?? '').trim();
+      if (!trackId) {
+        skipped += 1;
+        continue;
+      }
+      const artwork = (update.artwork_url ?? '').trim();
+      if (!artwork) {
+        skipped += 1;
+        continue;
+      }
+      const track = playlist.tracks.find((entry) => entry.id === trackId);
+      if (!track) {
+        missing += 1;
+        continue;
+      }
+      if ((track.artwork_url ?? '').trim()) {
+        skipped += 1;
+        continue;
+      }
+      track.artwork_url = artwork.slice(0, 1200);
+      updated += 1;
+    }
+    return { updated, skipped, missing };
+  }, true);
+}
+
 export async function getOrCreateLikedTracksPlaylist(
   owner: PlaylistOwner,
 ): Promise<{ id: string; name: string }> {

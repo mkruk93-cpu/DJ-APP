@@ -155,6 +155,20 @@ export async function addTrackToUserPlaylist(playlistId: string, track: { title:
   return parseOrThrow<{ ok: boolean; playlistId: string }>(res);
 }
 
+export async function backfillUserPlaylistTrackArtwork(
+  playlistId: string,
+  updates: Array<{ trackId: string; artwork_url: string | null }>,
+): Promise<{ ok: boolean; updated: number; skipped: number; missing: number }> {
+  const { nickname, deviceId } = getUserIdentity(true);
+  const safeId = encodeURIComponent(playlistId);
+  const res = await fetch(`${getServerUrl()}/api/user-playlists/${safeId}/tracks/artwork-backfill`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nickname, device_id: deviceId, updates }),
+  });
+  return parseOrThrow<{ ok: boolean; updated: number; skipped: number; missing: number }>(res);
+}
+
 export async function removeTrackFromUserPlaylist(playlistId: string, trackId: string): Promise<{ ok: boolean }> {
   const { nickname, deviceId } = getUserIdentity(true);
   const safeId = encodeURIComponent(playlistId);

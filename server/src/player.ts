@@ -128,10 +128,10 @@ function setSkipLock(locked: boolean): void {
   _io?.emit('skip:lock', { locked });
 }
 
-const STREAM_DELAY_MS = parseInt(process.env.STREAM_DELAY_MS ?? '8000', 10);
-const STREAM_BITRATE_RAW = (process.env.STREAM_BITRATE ?? '256k').trim().toLowerCase();
+const STREAM_DELAY_MS = parseInt(process.env.STREAM_DELAY_MS ?? '1500', 10);
+const STREAM_BITRATE_RAW = (process.env.STREAM_BITRATE ?? '128k').trim().toLowerCase();
 const STREAM_USE_SOURCE_MODE = STREAM_BITRATE_RAW === 'source' || STREAM_BITRATE_RAW === 'true';
-const STREAM_BITRATE = STREAM_USE_SOURCE_MODE ? '256k' : STREAM_BITRATE_RAW;
+const STREAM_BITRATE = STREAM_USE_SOURCE_MODE ? '128k' : STREAM_BITRATE_RAW;
 const STREAM_NORMALIZE = String(process.env.STREAM_NORMALIZE ?? 'true').toLowerCase() !== 'false';
 const STREAM_AUDIO_FILTER =
   (process.env.STREAM_AUDIO_FILTER ?? '').trim()
@@ -815,7 +815,7 @@ interface AutoSearchCandidate {
   title: string | null;
   duration: number | null;
   thumbnail: string | null;
-  source: 'youtube' | 'soundcloud';
+  source: 'youtube' | 'soundcloud' | 'spotdl';
 }
 
 interface AutoCandidateMatchOptions {
@@ -825,6 +825,12 @@ interface AutoCandidateMatchOptions {
   minDurationSeconds?: number;
   maxDurationSeconds?: number;
 }
+
+type AutoQueryVariant = {
+  query: string;
+  expectedArtist: string | null;
+  expectedTitle: string | null;
+};
 
 const AUTO_BLOCKED_KEYWORDS = [
   'advertisement',
@@ -902,7 +908,6 @@ const SEARCH_HARD_VARIANT_KEYWORDS = [
   'bass boosted',
   'fan made',
   'ai cover',
-  'version',
 ];
 
 const SEARCH_SOFT_VARIANT_KEYWORDS = [
@@ -918,6 +923,7 @@ const SEARCH_SOFT_VARIANT_KEYWORDS = [
 const SEARCH_ALLOW_VERSION_KEYWORDS = [
   'original mix',
   'radio edit',
+  'radio mix',
   'extended mix',
   'remaster',
   'official audio',
@@ -967,6 +973,24 @@ function tokenOverlap(a: string, b: string): number {
   return matches / Math.max(aSet.size, bSet.size);
 }
 
+const CATALOG_SUFFIX_DASH_RE =
+  /\s*[-–]\s*(CD\s*Version|Radio\s*(Edit|Mix|Cut|Version)|Extended\s*(Mix|Version)|Original\s*(Mix|Version|Track)|Album\s*(Edit|Version)|VIP\s*Mix|Club\s*Mix|Mix\s*Cut|Online\s*Release|Remaster(?:ed)?|Instrumental\s*Version|Vocal\s*Mix|Full\s*Vocal\s*Mix|Live\s*Edit)\s*$/i;
+const CATALOG_SUFFIX_BRACKET_RE =
+  /\s*[\[(][^\])]*\b(?:Version|Release|Cut)\b[^\])]*[\])]\s*$/i;
+
+function stripCatalogSuffix(title: string): string {
+  let normalized = title.trim();
+  for (let i = 0; i < 3; i += 1) {
+    const next = normalized
+      .replace(CATALOG_SUFFIX_DASH_RE, '')
+      .replace(CATALOG_SUFFIX_BRACKET_RE, '')
+      .trim();
+    if (next === normalized) break;
+    normalized = next;
+  }
+  return normalized;
+}
+
 function evaluateSearchResultForAutoSubmission(
   result: { title?: string | null; channel?: string | null; duration?: number | null },
   expectedArtist: string | null,
@@ -999,6 +1023,17 @@ function evaluateSearchResultForAutoSubmission(
   );
   const resultTitleSet = new Set(tokenizeArtistText(title));
   const resultCombinedSet = new Set(tokenizeArtistText(`${title} ${channel}`));
+  const strippedExpectedTitle = stripCatalogSuffix(expectedTitle ?? '');
+  const titleWasStripped = strippedExpectedTitle !== (expectedTitle ?? '').trim();
+  const wantedTitleStrippedNorm = titleWasStripped
+    ? normalizeArtistMatchText(strippedExpectedTitle)
+    : wantedTitleNorm;
+  const expectedTitleStrippedSet = titleWasStripped
+    ? new Set(tokenizeArtistText(strippedExpectedTitle))
+    : expectedTitleSet;
+  const expectedTitleStrippedRelaxedSet = titleWasStripped
+    ? new Set(Array.from(expectedTitleStrippedSet).filter((token) => !OPTIONAL_TITLE_STYLE_TOKENS.has(token)))
+    : expectedTitleRelaxedSet;
   const expectedIncludesRemixLike = hasUnexpectedKeyword(
     wantedTitleNorm,
     '',
@@ -1024,6 +1059,15 @@ function evaluateSearchResultForAutoSubmission(
   const combinedTitleRelaxedCoverage = expectedTitleRelaxedSet.size > 0
     ? fuzzyTokenCoverage(expectedTitleRelaxedSet, resultCombinedSet)
     : combinedTitleCoverage;
+  const titleStrippedCoverage = titleWasStripped && expectedTitleStrippedSet.size > 0
+    ? fuzzyTokenCoverage(expectedTitleStrippedSet, resultTitleSet)
+    : 0;
+  const titleStrippedCombinedCoverage = titleWasStripped && expectedTitleStrippedSet.size > 0
+    ? fuzzyTokenCoverage(expectedTitleStrippedSet, resultCombinedSet)
+    : 0;
+  const titleStrippedRelaxedCoverage = titleWasStripped && expectedTitleStrippedRelaxedSet.size > 0
+    ? fuzzyTokenCoverage(expectedTitleStrippedRelaxedSet, resultTitleSet)
+    : 0;
   const titleStrongMatch = titleTokenSimilarity >= 0.8
     || titleCombinedSimilarity >= 0.8
     || titleCoverage >= 0.8
@@ -1031,13 +1075,20 @@ function evaluateSearchResultForAutoSubmission(
     || titleRelaxedCoverage >= 0.8
     || combinedTitleRelaxedCoverage >= 0.8
     || (wantedTitleNorm ? tokenOverlap(expectedTitle ?? '', title) >= 0.85 : true)
-    || (wantedTitleNorm ? titleNorm.includes(wantedTitleNorm) : true);
+    || (wantedTitleNorm ? titleNorm.includes(wantedTitleNorm) : true)
+    || titleStrippedCoverage >= 0.8
+    || titleStrippedCombinedCoverage >= 0.8
+    || titleStrippedRelaxedCoverage >= 0.8
+    || (titleWasStripped && wantedTitleStrippedNorm ? titleNorm.includes(wantedTitleStrippedNorm) : false);
   const titleNearPerfect = titleTokenSimilarity >= 0.95
     || titleCombinedSimilarity >= 0.95
     || titleCoverage >= 0.95
     || combinedTitleCoverage >= 0.95
     || titleRelaxedCoverage >= 0.95
-    || combinedTitleRelaxedCoverage >= 0.95;
+    || combinedTitleRelaxedCoverage >= 0.95
+    || titleStrippedCoverage >= 0.95
+    || titleStrippedCombinedCoverage >= 0.95
+    || titleStrippedRelaxedCoverage >= 0.95;
 
   const resultArtistSet = new Set(tokenizeArtistText(`${title} ${channel}`));
   const artistSimilarity = expectedArtistSet.size > 0
@@ -2013,22 +2064,17 @@ async function prepareSharedAutoFallbackTrack(
 
     console.log(`[auto-download] Trying (shared:${playlistId}): ${choice.query}`);
     const pseudo = buildAutoFallbackSourceForQuery(`shared_${playlistId}`, choice.query);
-    let selected = await resolveShortAutoCandidate(choice.query, undefined, {
-      expectedArtist: choice.artist,
-      expectedTitle: choice.title,
-      strictMetadata: true,
-      minDurationSeconds: AUTO_SHARED_MIN_DURATION_SECONDS,
-      maxDurationSeconds: AUTO_SHARED_MAX_DURATION_SECONDS,
-    });
-    if (!selected && choice.title) {
-      // Retry with a looser query to handle edge-cases where artist-prefix blocks discovery.
-      selected = await resolveShortAutoCandidate(choice.title, undefined, {
-        expectedArtist: choice.artist,
-        expectedTitle: choice.title,
+    let selected: AutoSearchCandidate | null = null;
+    const queryVariants = buildPlaylistAutoQueryVariants(choice.artist, choice.title, choice.query);
+    for (const variant of queryVariants) {
+      selected = await resolveShortAutoCandidate(variant.query, undefined, {
+        expectedArtist: variant.expectedArtist,
+        expectedTitle: variant.expectedTitle,
         strictMetadata: true,
         minDurationSeconds: AUTO_SHARED_MIN_DURATION_SECONDS,
         maxDurationSeconds: AUTO_SHARED_MAX_DURATION_SECONDS,
       });
+      if (selected) break;
     }
     if (!isAutoSourceStillActive(expectedSourceKey)) return null;
     if (!selected) {
@@ -2187,13 +2233,18 @@ async function prepareUserAutoFallbackTrack(
     if (!choice) return null;
 
     const pseudo = buildAutoFallbackSourceForQuery(playlist.id, choice.query);
-    const selected = await resolveShortAutoCandidate(choice.query, undefined, {
-      expectedArtist: choice.artist,
-      expectedTitle: choice.title,
-      strictMetadata: true,
-      minDurationSeconds: AUTO_SHARED_MIN_DURATION_SECONDS,
-      maxDurationSeconds: AUTO_SHARED_MAX_DURATION_SECONDS,
-    });
+    let selected: AutoSearchCandidate | null = null;
+    const queryVariants = buildPlaylistAutoQueryVariants(choice.artist, choice.title, choice.query);
+    for (const variant of queryVariants) {
+      selected = await resolveShortAutoCandidate(variant.query, undefined, {
+        expectedArtist: variant.expectedArtist,
+        expectedTitle: variant.expectedTitle,
+        strictMetadata: true,
+        minDurationSeconds: AUTO_SHARED_MIN_DURATION_SECONDS,
+        maxDurationSeconds: AUTO_SHARED_MAX_DURATION_SECONDS,
+      });
+      if (selected) break;
+    }
     if (!isAutoSourceStillActive(expectedSourceKey)) return null;
     if (!selected) return null;
 
@@ -2286,6 +2337,77 @@ async function prepareUserAutoFallbackTrack(
     console.warn(`[player] User playlist auto fallback prepare failed (${playlistId}): ${(err as Error).message}`);
     return null;
   }
+}
+
+function getPrimaryArtistForAutoQuery(artist: string | null | undefined): string | null {
+  const raw = (artist ?? '').trim();
+  if (!raw) return null;
+  const normalized = raw
+    .split(/\s*(?:,|&| feat\.?| ft\.?| featuring | x | vs\.?| versus |\/|\|)\s*/i)
+    .map((part) => part.trim())
+    .find((part) => /[a-z0-9]/i.test(part) && part.replace(/[^a-z0-9]/gi, '').length >= 2);
+  return normalized || null;
+}
+
+function pushAutoQueryVariant(
+  variants: AutoQueryVariant[],
+  seen: Set<string>,
+  query: string | null | undefined,
+  expectedArtist: string | null | undefined,
+  expectedTitle: string | null | undefined,
+): void {
+  const normalizedQuery = sanitizeDisplayText(query ?? '');
+  if (!normalizedQuery) return;
+  const normalizedArtist = sanitizeDisplayText(expectedArtist ?? '') || '';
+  const normalizedTitle = sanitizeDisplayText(expectedTitle ?? '') || '';
+  const key = `${normalizedQuery}||${normalizedArtist}||${normalizedTitle}`;
+  if (seen.has(key)) return;
+  seen.add(key);
+  variants.push({
+    query: normalizedQuery,
+    expectedArtist: normalizedArtist || null,
+    expectedTitle: normalizedTitle || null,
+  });
+}
+
+function buildPlaylistAutoQueryVariants(
+  artist: string | null | undefined,
+  title: string | null | undefined,
+  baseQuery: string,
+): AutoQueryVariant[] {
+  const variants: AutoQueryVariant[] = [];
+  const seen = new Set<string>();
+  const safeArtist = sanitizeDisplayText(artist ?? '') || null;
+  const safeTitle = sanitizeDisplayText(title ?? '') || null;
+  const strippedTitle = safeTitle ? stripCatalogSuffix(safeTitle) : null;
+  const primaryArtist = getPrimaryArtistForAutoQuery(safeArtist);
+
+  pushAutoQueryVariant(variants, seen, baseQuery, safeArtist, safeTitle);
+  pushAutoQueryVariant(variants, seen, safeTitle, safeArtist, safeTitle);
+  if (strippedTitle && strippedTitle !== safeTitle) {
+    pushAutoQueryVariant(variants, seen, strippedTitle, safeArtist, strippedTitle);
+  }
+  if (primaryArtist) {
+    pushAutoQueryVariant(
+      variants,
+      seen,
+      safeTitle ? `${normalizeArtistSearchQuery(primaryArtist)} - ${safeTitle}` : primaryArtist,
+      primaryArtist,
+      safeTitle,
+    );
+    if (strippedTitle && strippedTitle !== safeTitle) {
+      pushAutoQueryVariant(
+        variants,
+        seen,
+        `${normalizeArtistSearchQuery(primaryArtist)} - ${strippedTitle}`,
+        primaryArtist,
+        strippedTitle,
+      );
+      pushAutoQueryVariant(variants, seen, strippedTitle, primaryArtist, strippedTitle);
+    }
+  }
+
+  return variants;
 }
 
 async function prepareAutoSourceTrack(source: ActiveAutoSource): Promise<ReadyTrack | null> {
@@ -3450,8 +3572,16 @@ export function stopPlayCycle(options?: { preserveCurrentTrack?: boolean }): voi
   }
   completedSwap = null;
   killDecoderProcess(currentDecoder);
-  if (encoder && encoder.stdin) {
-    encoder.stdin.end();
+  if (encoder) {
+    const activeEncoder = encoder;
+    if (activeEncoder.stdin && !activeEncoder.stdin.destroyed) {
+      activeEncoder.stdin.end();
+    }
+    setTimeout(() => {
+      if (encoder === activeEncoder && activeEncoder.exitCode === null) {
+        killEncoderProcess(activeEncoder);
+      }
+    }, 1500);
   }
   if (preloadRefreshTimer) {
     clearInterval(preloadRefreshTimer);
@@ -4069,7 +4199,11 @@ async function playNext(
       }
 
     if (isEncoderCrash) {
-      console.warn(`[player] Encoder crashed during ${trackTitle ?? trackYoutubeId} — restarting encoder (not counting as track failure)`);
+      if (isExpectedEncoderShutdownWindow()) {
+        console.log(`[player] Encoder stopped during ${trackTitle ?? trackYoutubeId} after expected pause/stop`);
+      } else {
+        console.warn(`[player] Encoder crashed during ${trackTitle ?? trackYoutubeId} — restarting encoder (not counting as track failure)`);
+      }
       currentTrack = null;
       currentQueueItemId = null;
       pendingQueueUpcoming = null;

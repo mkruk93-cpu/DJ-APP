@@ -77,7 +77,7 @@ function downloadRequest(row: RequestRow, downloadPath: string): Promise<void> {
       '--no-warnings',
       '--extract-audio',
       '--audio-format', 'mp3',
-      '--audio-quality', '192K',
+      '--audio-quality', '128K',
       '-o', outtmpl,
       row.url,
     ]);

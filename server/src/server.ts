@@ -40,6 +40,7 @@ import {
   deleteUserPlaylist as deleteStoredUserPlaylist,
   addTrackToUserPlaylist,
   removeTrackFromUserPlaylist,
+  backfillUserPlaylistTrackArtwork,
   getOrCreateLikedTracksPlaylist,
   getUserPlaylistUsage,
   updateUserPlaylistSharing,
@@ -141,7 +142,8 @@ const ICECAST = useIcecast
     }
   : null;
 
-const streamHub = new StreamHub();
+const streamHubRingBytes = Math.max(32 * 1024, parseInt(process.env.STREAM_HUB_RING_BYTES ?? '65536', 10) || 65536);
+const streamHub = new StreamHub(streamHubRingBytes);
 const spotifyOembedCache = new Map<string, { thumbnail_url: string | null; title: string | null; author_name: string | null; ts: number }>();
 let sharedInboxJobRunning = false;
 
@@ -330,6 +332,72 @@ interface ListenerPresenceState {
 const listenerPresenceBySocket = new Map<string, ListenerPresenceState>();
 let idleNoListenerSince: number | null = null;
 let playbackPausedForIdle = false;
+let idleQueueDrainTimer: ReturnType<typeof setTimeout> | null = null;
+const IDLE_QUEUE_DRAIN_DEFAULT_SECONDS = Math.max(90, parseInt(process.env.IDLE_QUEUE_DRAIN_DEFAULT_SECONDS ?? '210', 10) || 210);
+const IDLE_QUEUE_DRAIN_MIN_SECONDS = Math.max(30, parseInt(process.env.IDLE_QUEUE_DRAIN_MIN_SECONDS ?? '45', 10) || 45);
+
+function clearIdleQueueDrainTimer(): void {
+  if (idleQueueDrainTimer) {
+    clearTimeout(idleQueueDrainTimer);
+    idleQueueDrainTimer = null;
+  }
+}
+
+function toIdleDrainDelayMs(durationSeconds: number | null | undefined): number {
+  const rawSeconds = typeof durationSeconds === 'number' && Number.isFinite(durationSeconds) && durationSeconds > 0
+    ? durationSeconds
+    : IDLE_QUEUE_DRAIN_DEFAULT_SECONDS;
+  return Math.max(IDLE_QUEUE_DRAIN_MIN_SECONDS * 1000, Math.round(rawSeconds * 1000));
+}
+
+function getRemainingCurrentTrackMs(track: Track | null): number | null {
+  if (!track) return null;
+  if (typeof track.duration !== 'number' || !Number.isFinite(track.duration) || track.duration <= 0) {
+    return null;
+  }
+  const trackEndAt = track.started_at + (track.duration * 1000);
+  const remainingMs = trackEndAt - Date.now();
+  return Math.max(0, remainingMs);
+}
+
+async function advanceIdleQueueOnce(): Promise<void> {
+  if (!playbackPausedForIdle || getEffectiveListenerCount() > 0) return;
+  try {
+    const queue = await getQueue(sb);
+    const next = queue[0];
+    if (!next) {
+      clearIdleQueueDrainTimer();
+      return;
+    }
+
+    await removeFromQueue(sb, next.id);
+    const refreshedQueue = await getQueue(sb);
+    io.emit('queue:update', { items: refreshedQueue });
+
+    const info = await fetchVideoInfo(next.youtube_url).catch(() => ({ title: null, duration: null, thumbnail: null }));
+    const nextDelayMs = toIdleDrainDelayMs(info.duration);
+    console.log(`[player] Idle-drain advanced queue: ${next.title ?? info.title ?? next.youtube_id} (next in ${Math.round(nextDelayMs / 1000)}s)`);
+
+    if (playbackPausedForIdle && getEffectiveListenerCount() === 0) {
+      clearIdleQueueDrainTimer();
+      idleQueueDrainTimer = setTimeout(() => {
+        void advanceIdleQueueOnce();
+      }, nextDelayMs);
+    }
+  } catch (err) {
+    clearIdleQueueDrainTimer();
+    console.warn('[player] Idle queue drain failed:', err instanceof Error ? err.message : String(err));
+  }
+}
+
+function scheduleIdleQueueDrain(initialDelayMs: number | null): void {
+  clearIdleQueueDrainTimer();
+  if (!playbackPausedForIdle) return;
+  const delayMs = Math.max(1000, initialDelayMs ?? toIdleDrainDelayMs(null));
+  idleQueueDrainTimer = setTimeout(() => {
+    void advanceIdleQueueOnce();
+  }, delayMs);
+}
 
 function isStreamOnlineForStatus(): boolean {
   if (getCurrentTrack() !== null) return true;
@@ -369,6 +437,7 @@ function evaluateIdlePlayback(mode: Mode): void {
   if (mode === 'dj') {
     idleNoListenerSince = null;
     playbackPausedForIdle = false;
+    clearIdleQueueDrainTimer();
     return;
   }
   const listeners = getEffectiveListenerCount();
@@ -376,6 +445,8 @@ function evaluateIdlePlayback(mode: Mode): void {
     idleNoListenerSince = null;
     if (playbackPausedForIdle) {
       playbackPausedForIdle = false;
+      clearIdleQueueDrainTimer();
+      streamHub.clearBacklog();
       applyPlaybackForMode(mode);
       emitStreamStatus();
       console.log('[player] Resumed play cycle: listeners detected');
@@ -388,8 +459,13 @@ function evaluateIdlePlayback(mode: Mode): void {
   }
   if (playbackPausedForIdle) return;
   if (Date.now() - idleNoListenerSince < AUTO_PAUSE_IDLE_GRACE_MS) return;
-  stopPlayCycle({ preserveCurrentTrack: true });
+  const pausedTrack = getCurrentTrack();
+  const remainingMs = getRemainingCurrentTrackMs(pausedTrack);
+  stopPlayCycle();
+  io.emit('track:change', null);
+  streamHub.clearBacklog();
   playbackPausedForIdle = true;
+  scheduleIdleQueueDrain(remainingMs);
   emitStreamStatus();
   console.log(`[player] Auto-paused play cycle: no listeners for ${Math.round(AUTO_PAUSE_IDLE_GRACE_MS / 1000)}s`);
 }
@@ -2870,6 +2946,41 @@ app.post('/api/user-playlists/:id/tracks', async (req, res) => {
   } catch (err) {
     console.error('[rest] /api/user-playlists/:id/tracks POST error:', err);
     res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
+app.post('/api/user-playlists/:id/tracks/artwork-backfill', async (req, res) => {
+  const identity = getUserIdentityFromRequest(req);
+  if (!identity) {
+    return res.status(400).json({ error: 'nickname en device_id zijn verplicht' });
+  }
+  const playlistId = String(req.params.id ?? '').trim();
+  const updatesRaw = Array.isArray(req.body?.updates) ? req.body.updates : [];
+  if (!playlistId) {
+    return res.status(400).json({ error: 'Playlist id ontbreekt' });
+  }
+  if (updatesRaw.length === 0) {
+    return res.status(400).json({ error: 'updates ontbreekt' });
+  }
+  const updates = updatesRaw
+    .slice(0, 300)
+    .map((entry) => ({
+      trackId: String((entry as { trackId?: unknown }).trackId ?? '').trim(),
+      artwork_url: String((entry as { artwork_url?: unknown }).artwork_url ?? '').trim() || null,
+    }))
+    .filter((entry) => !!entry.trackId && !!entry.artwork_url);
+  if (updates.length === 0) {
+    return res.status(400).json({ error: 'Geen geldige artwork updates' });
+  }
+  try {
+    const result = await backfillUserPlaylistTrackArtwork(identity, playlistId, updates);
+    if (!result) {
+      return res.status(404).json({ error: 'Playlist niet gevonden of je bent geen eigenaar' });
+    }
+    return res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error('[rest] /api/user-playlists/:id/tracks/artwork-backfill POST error:', err);
+    return res.status(500).json({ error: getErrorMessage(err) });
   }
 });
 

@@ -35,6 +35,7 @@ export default function PwaRegistrar() {
 
         // Wis localStorage selectief (behou instellingen en afspeellijsten)
         const whitelist = [
+          /^djapp:player-/,
           /^spotify-browser:/,
           /^shared-playlists-browser:/,
           /^fallback-selector:/,

@@ -143,7 +143,7 @@ export default function FallbackGenreSelector() {
   const [presets, setPresets] = useState<SharedFallbackPreset[]>([]);
   const [presetName, setPresetName] = useState("");
   const [showPresetsPanel, setShowPresetsPanel] = useState(false);
-  const [selectedSharedGenres, setSelectedSharedGenres] = useState<string[]>([]);
+  const [optimisticSelectedGenreIds, setOptimisticSelectedGenreIds] = useState<string[] | null>(null);
 
   const sortedGenres = useMemo(
     () => [...genres].sort((a, b) => a.label.localeCompare(b.label, "nl")),
@@ -212,11 +212,22 @@ export default function FallbackGenreSelector() {
     return activeGenre ? [activeGenre] : [];
   }, [activeGenres, activeGenre]);
 
-  // Sync selectedSharedGenres with store
+  const effectiveSelectedGenreIds = optimisticSelectedGenreIds ?? selectedGenreIds;
+  const selectedSharedGenres = useMemo(
+    () => effectiveSelectedGenreIds.filter((id) => id.startsWith("shared:")),
+    [effectiveSelectedGenreIds],
+  );
+
   useEffect(() => {
-    const sharedIds = selectedGenreIds.filter((id) => id.startsWith("shared:"));
-    setSelectedSharedGenres(sharedIds);
-  }, [selectedGenreIds]);
+    if (!optimisticSelectedGenreIds) return;
+    const expected = new Set(optimisticSelectedGenreIds);
+    const actual = new Set(selectedGenreIds);
+    if (expected.size !== actual.size) return;
+    for (const id of expected) {
+      if (!actual.has(id)) return;
+    }
+    setOptimisticSelectedGenreIds(null);
+  }, [optimisticSelectedGenreIds, selectedGenreIds]);
 
   function getSectionForGenreId(id: string): FallbackSection {
     if (id.startsWith("shared:")) return "playlists";
@@ -316,6 +327,7 @@ export default function FallbackGenreSelector() {
     const sectionOnly = Array.from(new Set(ids.filter((id) => getSectionForGenreId(id) === section)));
     if (sectionOnly.length === 0) return;
     setActiveSection(section);
+    setOptimisticSelectedGenreIds(sectionOnly);
     if (section === "playlists") {
       emitSharedSelection(sectionOnly);
       return;
@@ -325,7 +337,7 @@ export default function FallbackGenreSelector() {
 
   function toggleSelection(id: string): void {
     const section = getSectionForGenreId(id);
-    const sectionSelected = selectedGenreIds.filter((entry) => getSectionForGenreId(entry) === section);
+    const sectionSelected = effectiveSelectedGenreIds.filter((entry) => getSectionForGenreId(entry) === section);
     const isActive = sectionSelected.includes(id);
     let next = isActive
       ? sectionSelected.filter((entry) => entry !== id)
@@ -337,11 +349,6 @@ export default function FallbackGenreSelector() {
       if (randomFallback) next = [randomFallback];
     }
     
-    // Optimistic UI update
-    if (section === "playlists") {
-      setSelectedSharedGenres(next);
-    }
-    
     // Apply to server
     applySectionSelection(section, next);
   }
@@ -351,20 +358,12 @@ export default function FallbackGenreSelector() {
     if (sectionIds.length === 0) return;
     
     if (enabled) {
-      // Optimistic UI update
-      if (section === "playlists") {
-        setSelectedSharedGenres(sectionIds);
-      }
       applySectionSelection(section, sectionIds);
       return;
     }
     
     const fallbackId = pickRandomSectionId(section);
     if (fallbackId) {
-      // Optimistic UI update
-      if (section === "playlists") {
-        setSelectedSharedGenres([fallbackId]);
-      }
       applySectionSelection(section, [fallbackId]);
     }
   }
@@ -539,7 +538,7 @@ export default function FallbackGenreSelector() {
           <div className="mb-1 text-[10px] font-semibold text-gray-200">Actief:</div>
           {selectedGenreIds.length > 0 ? (
             <div className="flex flex-col gap-0.5">
-              {selectedGenreIds
+              {effectiveSelectedGenreIds
                 .slice(0, 4)
                 .map((id) => {
                   const label = sortedGenres.find((genre) => genre.id === id)?.label ?? id;
@@ -549,9 +548,9 @@ export default function FallbackGenreSelector() {
                     </div>
                   );
                 })}
-              {selectedGenreIds.length > 4 && (
+              {effectiveSelectedGenreIds.length > 4 && (
                 <div className="text-[9px] text-gray-400">
-                  +{selectedGenreIds.length - 4} meer
+                  +{effectiveSelectedGenreIds.length - 4} meer
                 </div>
               )}
             </div>
@@ -658,7 +657,7 @@ export default function FallbackGenreSelector() {
           {activeSection === "local" && (
             <>
               {localGenres.map((genre) => {
-                const isActive = selectedGenreIds.includes(genre.id);
+                const isActive = effectiveSelectedGenreIds.includes(genre.id);
                 return (
                   <label
                     key={genre.id}
@@ -692,7 +691,7 @@ export default function FallbackGenreSelector() {
               {likedAutoGenre && (
                 <label
                   className={`mb-0.5 flex w-full cursor-pointer items-center justify-between rounded-md px-2 py-1.5 text-left text-xs font-semibold transition ${
-                    selectedGenreIds.includes(likedAutoGenre.id)
+                    effectiveSelectedGenreIds.includes(likedAutoGenre.id)
                       ? "bg-fuchsia-600/25 text-fuchsia-100"
                       : "text-fuchsia-200 hover:bg-gray-800 hover:text-white"
                   }`}
@@ -700,7 +699,7 @@ export default function FallbackGenreSelector() {
                   <span className="mr-2 flex items-center gap-2">
                     <input
                       type="checkbox"
-                      checked={selectedGenreIds.includes(likedAutoGenre.id)}
+                      checked={effectiveSelectedGenreIds.includes(likedAutoGenre.id)}
                       disabled={fallbackChangeBlocked}
                       onChange={() => toggleSelection(likedAutoGenre.id)}
                       className="h-3.5 w-3.5 cursor-pointer accent-fuchsia-500 disabled:cursor-not-allowed disabled:opacity-50"
@@ -712,7 +711,7 @@ export default function FallbackGenreSelector() {
               )}
               {groupedAutoSections.map((section) => {
                 const parentAutoId = `auto:${section.parent.id}`;
-                const parentActive = selectedGenreIds.includes(parentAutoId);
+                const parentActive = effectiveSelectedGenreIds.includes(parentAutoId);
                 return (
                   <div key={section.id} className="mb-1 last:mb-0">
                     <label
@@ -738,7 +737,7 @@ export default function FallbackGenreSelector() {
                     </label>
                     {section.children.map((genre) => {
                       const childAutoId = `auto:${genre.id}`;
-                      const isActive = selectedGenreIds.includes(childAutoId);
+                      const isActive = effectiveSelectedGenreIds.includes(childAutoId);
                       return (
                         <label
                           key={`${section.id}:${genre.id}`}
@@ -864,7 +863,7 @@ export default function FallbackGenreSelector() {
                         </p>
                         <div className="mt-1 space-y-0.5">
                           {subgroup.items.map((playlist) => {
-                            const isActive = selectedGenreIds.includes(playlist.id);
+                            const isActive = effectiveSelectedGenreIds.includes(playlist.id);
                             return (
                               <label
                                 key={playlist.id}
@@ -894,7 +893,7 @@ export default function FallbackGenreSelector() {
                   </div>
                 </div>
               )) : sortedSharedPlaylists.map((playlist) => {
-                const isActive = selectedGenreIds.includes(playlist.id);
+                const isActive = effectiveSelectedGenreIds.includes(playlist.id);
                 return (
                   <label
                     key={playlist.id}

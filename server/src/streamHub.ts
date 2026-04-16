@@ -48,6 +48,11 @@ export class StreamHub {
     return Buffer.concat(this.ringBuffer);
   }
 
+  clearBacklog(): void {
+    this.ringBuffer = [];
+    this.ringSize = 0;
+  }
+
   get listenerCount(): number {
     return this.subscribers.size;
   }

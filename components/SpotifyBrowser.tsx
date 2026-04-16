@@ -24,6 +24,7 @@ import {
   listKnownUsers,
   listUserPlaylists,
   removeTrackFromUserPlaylist,
+  backfillUserPlaylistTrackArtwork,
   updateUserPlaylistSharing,
   type SharedPlaylist,
   type PlaylistGenreMetaInput,
@@ -32,6 +33,7 @@ import {
 } from "@/lib/userPlaylistsApi";
 import {
   listFavoriteArtists,
+  removeFavoriteArtist,
   type FavoriteArtist,
 } from "@/lib/userPlaylistsApi";
 import { NoAutofillInput } from "@/components/NoAutofillInput";
@@ -51,10 +53,11 @@ interface SpotifyBrowserProps {
     sourceType?: string | null;
     sourceGenre?: string | null;
     sourcePlaylist?: string | null;
+    artwork_url?: string | null;
   }) => Promise<"added" | "manual_select" | "error">;
   submitting: boolean;
   mode?: "all" | "playlistsOnly" | "spotifyOnly";
-  onSelectFavoriteArtist?: (artist: { mbid: string; name: string }) => void;
+  onSelectFavoriteArtist?: (artist: { mbid: string; name: string; image_url?: string | null }) => void;
 }
 
 function formatDuration(ms: number): string {
@@ -68,6 +71,7 @@ type View = "playlists" | "tracks" | "importedTracks" | "sharedTracks";
 type TrackSource = "liked" | "playlist" | null;
 type PlaylistSortMode = "name_asc" | "name_desc" | "tracks_desc" | "newest";
 type PlaylistViewMode = "grouped" | "all";
+type PersonalLibraryTab = "playlists" | "artists" | "create" | "import";
 const IMPORTED_TRACK_PAGE_SIZE = 120;
 const PLAYLIST_GENRE_GROUPS = [
   "Hard Dance",
@@ -194,6 +198,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
   const [importing, setImporting] = useState(false);
   const [favoriteArtists, setFavoriteArtists] = useState<FavoriteArtist[]>([]);
   const [favoriteArtistsLoading, setFavoriteArtistsLoading] = useState(false);
+  const [personalLibraryTab, setPersonalLibraryTab] = useState<PersonalLibraryTab>("playlists");
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [importFiles, setImportFiles] = useState<File[]>([]);
@@ -236,11 +241,14 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
   const listRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const trackHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const favoriteArtistHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Username from auth context
 
   const thumbnailLoadingRef = useRef<Set<string>>(new Set());
   const thumbnailQueueRef = useRef<string[]>([]);
   const thumbnailWorkersRef = useRef(0);
+  const artworkBackfillQueueRef = useRef<Map<string, string>>(new Map());
+  const artworkBackfillTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const viewRef = useRef<View>("playlists");
 
   // Spotify functionaliteit
@@ -306,6 +314,24 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
     if (trackHoldTimerRef.current) {
       clearTimeout(trackHoldTimerRef.current);
       trackHoldTimerRef.current = null;
+    }
+  }
+
+  function clearFavoriteArtistHoldTimer() {
+    if (favoriteArtistHoldTimerRef.current) {
+      clearTimeout(favoriteArtistHoldTimerRef.current);
+      favoriteArtistHoldTimerRef.current = null;
+    }
+  }
+
+  async function handleRemoveFavoriteArtist(artist: FavoriteArtist): Promise<void> {
+    const ok = confirm(`Favoriete artiest "${artist.name}" verwijderen?`);
+    if (!ok) return;
+    try {
+      await removeFavoriteArtist(artist.mbid);
+      setFavoriteArtists((prev) => prev.filter((entry) => entry.mbid !== artist.mbid));
+    } catch (err) {
+      alert("Verwijderen mislukt: " + (err instanceof Error ? err.message : "onbekende fout"));
     }
   }
 
@@ -421,6 +447,19 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
     );
   }
 
+  const reloadFavoriteArtists = useCallback(async () => {
+    setFavoriteArtistsLoading(true);
+    try {
+      const favs = await listFavoriteArtists();
+      setFavoriteArtists(favs);
+    } catch (err) {
+      console.error("[SpotifyBrowser] Failed to load favorite artists:", err);
+      setFavoriteArtists([]);
+    } finally {
+      setFavoriteArtistsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (showPlaylistSections) {
       void loadSavedPlaylists();
@@ -431,21 +470,8 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
 
   useEffect(() => {
     if (!showPlaylistSections) return;
-    setFavoriteArtistsLoading(true);
-    setFavoriteArtists([]);
-    listFavoriteArtists()
-      .then((favs) => {
-        console.log('[SpotifyBrowser] Favorite artists loaded:', favs.length);
-        setFavoriteArtists(favs);
-      })
-      .catch((err) => {
-        console.error('[SpotifyBrowser] Failed to load favorite artists:', err);
-        setFavoriteArtists([]);
-      })
-      .finally(() => {
-        setFavoriteArtistsLoading(false);
-      });
-  }, [showPlaylistSections]);
+    void reloadFavoriteArtists();
+  }, [reloadFavoriteArtists, showPlaylistSections]);
 
   useEffect(() => {
     function closeTrackMenu() {
@@ -718,6 +744,34 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
     }
   }, [resolveSavedTrackThumbnail]);
 
+  const flushArtworkBackfill = useCallback(async () => {
+    const playlist = selectedSavedPlaylist;
+    if (!playlist?.id || !playlist.viewer_can_edit) return;
+    const queued = Array.from(artworkBackfillQueueRef.current.entries()).map(([trackId, artwork_url]) => ({ trackId, artwork_url }));
+    artworkBackfillQueueRef.current.clear();
+    if (queued.length === 0) return;
+    try {
+      await backfillUserPlaylistTrackArtwork(playlist.id, queued.slice(0, 250));
+    } catch {
+      // Best effort background write; local UI already has fallback artwork.
+    }
+  }, [selectedSavedPlaylist]);
+
+  const scheduleArtworkBackfill = useCallback((updates: Array<{ trackId: string; artwork_url: string }>) => {
+    if (!selectedSavedPlaylist?.id || !selectedSavedPlaylist.viewer_can_edit) return;
+    for (const update of updates) {
+      const trackId = (update.trackId ?? "").trim();
+      const artwork = (update.artwork_url ?? "").trim();
+      if (!trackId || !artwork) continue;
+      artworkBackfillQueueRef.current.set(trackId, artwork);
+    }
+    if (artworkBackfillTimerRef.current) return;
+    artworkBackfillTimerRef.current = setTimeout(() => {
+      artworkBackfillTimerRef.current = null;
+      void flushArtworkBackfill();
+    }, 700);
+  }, [flushArtworkBackfill, selectedSavedPlaylist]);
+
   async function handleImportExportify() {
     if (importFiles.length === 0) {
       setImportError("Kies eerst een .csv of .zip bestand.");
@@ -901,12 +955,14 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
     try {
       const artists = track.artists?.map((a) => a?.name).filter(Boolean).join(", ") || "Unknown";
       const query = `${artists} - ${track.name ?? "Unknown"}`;
+      const albumImg = track.album?.images?.[0]?.url ?? track.album?.images?.[1]?.url ?? track.album?.images?.[2]?.url ?? null;
       const result = await onAddTrack({
         id: track.id ?? undefined,
         query,
         artist: artists,
         title: track.name ?? null,
         sourceType: "spotify",
+        artwork_url: albumImg,
       });
       if (result === "added") {
         setTimeout(() => setAddedTrackId(null), 3000);
@@ -931,6 +987,8 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
       const playlistMeta = view === "sharedTracks" ? selectedSharedPlaylist : selectedSavedPlaylist;
       const sourceType = view === "sharedTracks" ? "shared_playlist" : "user_playlist";
       const sourceGenre = [playlistMeta?.genre_group, playlistMeta?.subgenre].filter(Boolean).join(" / ") || null;
+      const spotifyUrl = (track.spotify_url ?? "").trim();
+      const fallbackThumb = spotifyUrl ? savedTrackThumbs[spotifyUrl] : "";
       const result = await onAddTrack({
         query,
         artist: artist || null,
@@ -938,6 +996,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
         sourceType,
         sourceGenre,
         sourcePlaylist: playlistMeta?.name ?? null,
+        artwork_url: track.artwork_url || fallbackThumb || null,
       });
       if (result === "added") {
         setTimeout(() => setAddedTrackId(null), 3000);
@@ -1079,6 +1138,11 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
   );
   const groupedSavedPlaylists = useMemo(() => groupPlaylistsByGenre(sortedSavedPlaylists), [sortedSavedPlaylists]);
   const groupedSharedPlaylists = useMemo(() => groupPlaylistsByGenre(sortedSharedPlaylists), [sortedSharedPlaylists]);
+  const personalPlaylistCount = savedPlaylists.length;
+  const personalTrackCount = useMemo(
+    () => savedPlaylists.reduce((sum, playlist) => sum + ((playlist as UserPlaylistWithCount).track_count ?? 0), 0),
+    [savedPlaylists],
+  );
 
   const filteredTracks = tracks.filter((t) => {
     if (!t?.name) return false;
@@ -1111,7 +1175,43 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
 
   useEffect(() => {
     if (view !== "importedTracks" && view !== "sharedTracks") return;
-    const visibleTracks = view === "sharedTracks" ? filteredSharedTracks : filteredSavedTracks;
+      const visibleTracks = view === "sharedTracks" ? filteredSharedTracks : filteredSavedTracks;
+      const updateTracksWithThumb = (
+        tracks: UserPlaylistTrack[],
+      ): UserPlaylistTrack[] => {
+        let changed = false;
+        const next = tracks.map((track) => {
+          const spotifyUrl = (track.spotify_url ?? "").trim();
+          if (!spotifyUrl) return track;
+          const knownThumb = savedTrackThumbs[spotifyUrl];
+          if (!knownThumb) return track;
+          const currentArtwork = (track.artwork_url ?? "").trim();
+          if (currentArtwork) return track;
+          changed = true;
+          return { ...track, artwork_url: knownThumb };
+        });
+        return changed ? next : tracks;
+      };
+      if (view === "sharedTracks") {
+        setSharedTracks((prev) => updateTracksWithThumb(prev));
+      } else {
+        setSavedTracks((prev) => {
+          const pendingBackfill = prev
+            .filter((track) => !(track.artwork_url ?? "").trim())
+            .map((track) => {
+              const spotifyUrl = (track.spotify_url ?? "").trim();
+              const artwork = spotifyUrl ? savedTrackThumbs[spotifyUrl] : "";
+              return { trackId: track.id, artwork_url: artwork || "" };
+            })
+            .filter((entry) => !!entry.artwork_url);
+          const next = updateTracksWithThumb(prev);
+          if (next === prev) return prev;
+          if (pendingBackfill.length > 0) {
+            scheduleArtworkBackfill(pendingBackfill);
+          }
+          return next;
+        });
+      }
     for (const track of visibleTracks) {
       const spotifyUrl = (track.spotify_url ?? "").trim();
       const artworkUrl = (track.artwork_url ?? "").trim();
@@ -1133,7 +1233,15 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
       thumbnailQueueRef.current.push(url);
     }
     pumpThumbnailQueue();
-  }, [view, filteredSavedTracks, filteredSharedTracks, savedTrackThumbs, pumpThumbnailQueue]);
+  }, [view, filteredSavedTracks, filteredSharedTracks, savedTrackThumbs, pumpThumbnailQueue, scheduleArtworkBackfill]);
+
+  useEffect(() => () => {
+    if (artworkBackfillTimerRef.current) {
+      clearTimeout(artworkBackfillTimerRef.current);
+      artworkBackfillTimerRef.current = null;
+    }
+    clearFavoriteArtistHoldTimer();
+  }, []);
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col gap-1.5 pb-[max(env(safe-area-inset-bottom),4px)] sm:pb-0">
@@ -1217,52 +1325,95 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
       {/* Playlist list */}
       {view === "playlists" && !loading && (
         <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto pb-14 sm:pb-2">
-          {showPlaylistSections && (
-          <div className="mb-2 rounded-md bg-pink-950/10 p-2">
-            <div className="mb-2 flex items-center justify-between">
-              <p className="text-[11px] font-semibold text-pink-200">Favoriete artiesten</p>
+          <div className="mb-2 rounded-md border border-gray-700 bg-gray-900/80 p-2.5 shadow-[0_8px_20px_rgba(0,0,0,0.22)]">
+            <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[10px] text-gray-400">
+              <span className="rounded-full border border-white/8 bg-white/[0.03] px-2.5 py-1">
+                {personalPlaylistCount} playlists
+              </span>
+              <span className="rounded-full border border-white/8 bg-white/[0.03] px-2.5 py-1">
+                {favoriteArtists.length} artiesten
+              </span>
+              <span className="rounded-full border border-white/8 bg-white/[0.03] px-2.5 py-1">
+                {personalTrackCount} tracks
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-1 sm:grid-cols-4">
+              {[
+                { key: "playlists", label: "Playlists" },
+                { key: "artists", label: "Artiesten" },
+                { key: "create", label: "Maken" },
+                { key: "import", label: "Import" },
+              ].map((tab) => {
+                const isActive = personalLibraryTab === tab.key;
+                return (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() => setPersonalLibraryTab(tab.key as PersonalLibraryTab)}
+                    className={`rounded-md border px-2.5 py-1.5 text-left text-[11px] transition ${
+                      isActive
+                        ? "border-violet-500/50 bg-violet-500/15 text-violet-100"
+                        : "border-gray-700 bg-gray-800/70 text-gray-300 hover:border-violet-500/40 hover:bg-gray-800"
+                    }`}
+                  >
+                    <span className="block font-semibold">{tab.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {showPlaylistSections && personalLibraryTab === "artists" && (
+          <div className="mb-2 rounded-md border border-gray-700 bg-gray-900/80 p-2.5">
+            <div className="mb-3 flex items-center justify-between">
+              <p className="text-[11px] font-semibold text-white">Favoriete artiesten</p>
               <button
                 type="button"
-                onClick={() => {
-                  setFavoriteArtistsLoading(true);
-                  listFavoriteArtists()
-                    .then((favs) => setFavoriteArtists(favs))
-                    .catch((err) => {
-                      console.error('[SpotifyBrowser] Failed to reload favorite artists:', err);
-                      setFavoriteArtists([]);
-                    })
-                    .finally(() => setFavoriteArtistsLoading(false));
-                }}
+                onClick={() => { void reloadFavoriteArtists(); }}
                 disabled={favoriteArtistsLoading}
-                className="text-[10px] text-pink-300 transition hover:text-pink-200 disabled:opacity-40"
+                className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] font-semibold text-gray-300 transition hover:border-white/15 hover:bg-white/[0.05] disabled:opacity-40"
               >
                 {favoriteArtistsLoading ? "Laden..." : "Ververs"}
               </button>
             </div>
             {favoriteArtistsLoading ? (
               <div className="flex items-center justify-center py-3">
-                <span className="block h-4 w-4 animate-spin rounded-full border-2 border-pink-400 border-t-transparent" />
+                <span className="block h-4 w-4 animate-spin rounded-full border-2 border-gray-500 border-t-transparent" />
               </div>
             ) : favoriteArtists.length === 0 ? (
               <p className="text-[10px] text-gray-400">Nog geen favorieten. Zoek naar een artiest en klik op het hartje om toe te voegen.</p>
             ) : (
-              <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {favoriteArtists.map((artist) => (
                   <button
                     key={artist.mbid}
                     type="button"
                     onClick={() => {
                       if (onSelectFavoriteArtist) {
-                        onSelectFavoriteArtist({ mbid: artist.mbid, name: artist.name });
+                        onSelectFavoriteArtist({ mbid: artist.mbid, name: artist.name, image_url: artist.image_url ?? null });
                       }
                     }}
-                    className="flex items-center gap-2 rounded-md bg-gray-900/60 px-2 py-1.5 text-left transition hover:bg-pink-500/10"
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      void handleRemoveFavoriteArtist(artist);
+                    }}
+                    onTouchStart={() => {
+                      clearFavoriteArtistHoldTimer();
+                      favoriteArtistHoldTimerRef.current = setTimeout(() => {
+                        void handleRemoveFavoriteArtist(artist);
+                      }, 550);
+                    }}
+                    onTouchEnd={clearFavoriteArtistHoldTimer}
+                    onTouchMove={clearFavoriteArtistHoldTimer}
+                    onTouchCancel={clearFavoriteArtistHoldTimer}
+                    className="group flex items-center gap-3 rounded-md border border-gray-700 bg-gray-800/70 px-3 py-2 text-left transition hover:border-violet-500/35 hover:bg-gray-800"
                   >
                     {artist.image_url ? (
-                      <img src={artist.image_url} alt="" className="h-7 w-7 shrink-0 rounded object-cover" />
+                      <img src={artist.image_url} alt="" className="h-10 w-10 shrink-0 rounded-xl object-cover" />
                     ) : (
-                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-pink-500/20">
-                        <svg className="h-4 w-4 text-pink-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/[0.04]">
+                        <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                         </svg>
                       </div>
@@ -1275,27 +1426,28 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
           </div>
           )}
 
-          {showPlaylistSections && (
-          <div className="mb-2 rounded-md border border-violet-700/70 bg-violet-950/20 p-2">
+          {showPlaylistSections && personalLibraryTab === "playlists" && (
+          <div className="mb-2 rounded-md border border-gray-700 bg-gray-900/80 p-2.5">
             <div className="mb-1 flex flex-wrap items-center gap-1.5">
-              <p className="text-[11px] font-semibold text-violet-100 mr-auto">Persoonlijke playlists</p>
+              <p className="mr-auto text-[11px] font-semibold text-white">Persoonlijke playlists</p>
               <button
                 type="button"
                 onClick={() => { void loadSavedPlaylists(); }}
                 disabled={savedPlaylistsLoading}
-                className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] font-semibold text-violet-300 transition hover:border-violet-500 hover:text-violet-200 disabled:opacity-40"
+                className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] font-semibold text-gray-300 transition hover:border-white/15 hover:bg-white/[0.05] disabled:opacity-40"
               >
                 {savedPlaylistsLoading ? "Laden..." : "Ververs"}
               </button>
               <select
                 value={savedSortMode}
                 onChange={(e) => setSavedSortMode(e.target.value as PlaylistSortMode)}
-                className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white outline-none focus:border-violet-500"
+                className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] text-white outline-none focus:border-emerald-400"
+                style={{ colorScheme: "dark" }}
               >
-                <option value="name_asc">Naam A-Z</option>
-                <option value="name_desc">Naam Z-A</option>
-                <option value="tracks_desc">Meeste tracks</option>
-                <option value="newest">Nieuwste import</option>
+                <option value="name_asc" style={{ color: "#111827", backgroundColor: "#ffffff" }}>Naam A-Z</option>
+                <option value="name_desc" style={{ color: "#111827", backgroundColor: "#ffffff" }}>Naam Z-A</option>
+                <option value="tracks_desc" style={{ color: "#111827", backgroundColor: "#ffffff" }}>Meeste tracks</option>
+                <option value="newest" style={{ color: "#111827", backgroundColor: "#ffffff" }}>Nieuwste import</option>
               </select>
             </div>
             <div className="mb-1 grid grid-cols-2 gap-1">
@@ -1304,8 +1456,8 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
                 onClick={() => setSavedPlaylistViewMode("grouped")}
                 className={`rounded px-2 py-1 text-[10px] font-semibold transition ${
                   savedPlaylistViewMode === "grouped"
-                    ? "bg-violet-700/35 text-violet-100"
-                    : "text-gray-300 hover:bg-gray-800"
+                    ? "bg-emerald-500/20 text-emerald-100"
+                    : "text-gray-300 hover:bg-white/[0.04]"
                 }`}
               >
                 Op genre
@@ -1315,8 +1467,8 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
                 onClick={() => setSavedPlaylistViewMode("all")}
                 className={`rounded px-2 py-1 text-[10px] font-semibold transition ${
                   savedPlaylistViewMode === "all"
-                    ? "bg-violet-700/35 text-violet-100"
-                    : "text-gray-300 hover:bg-gray-800"
+                    ? "bg-emerald-500/20 text-emerald-100"
+                    : "text-gray-300 hover:bg-white/[0.04]"
                 }`}
               >
                 Alles onder elkaar
@@ -1338,9 +1490,9 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
                       : Array.from(new Set([...prev, genreGroup.genreLabel]))
                   ));
                 }}
-                className="mt-1 rounded border border-violet-900/40 bg-violet-950/10 p-1"
+                className="mt-2 rounded-md border border-gray-700 bg-gray-900/70 p-1.5"
               >
-                <summary className="cursor-pointer list-none text-[11px] font-semibold text-violet-100">
+                <summary className="cursor-pointer list-none text-[11px] font-semibold text-white">
                   {genreGroup.genreLabel} ({genreGroup.subgroups.reduce((acc, subgroup) => acc + subgroup.items.length, 0)})
                 </summary>
                 <div className="mt-1 space-y-1">
@@ -1358,7 +1510,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
                             : Array.from(new Set([...prev, key]))
                         ));
                       }}
-                      className="rounded border border-gray-800/80 bg-gray-900/40 p-1"
+                      className="rounded-xl border border-white/6 bg-white/[0.03] p-1.5"
                     >
                       <summary className="cursor-pointer list-none text-[10px] font-semibold text-gray-300">
                         {subgroup.subgenreLabel} ({subgroup.items.length})
@@ -1367,21 +1519,21 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
                         {subgroup.items.map((playlist: UserPlaylist) => {
                           const playlistWithCount = playlist as UserPlaylistWithCount;
                           return (
-                            <div key={playlistWithCount.id} className="rounded-lg border border-gray-800 bg-gray-900/70 px-2.5 py-1.5">
+                            <div key={playlistWithCount.id} className="rounded-md border border-gray-700 bg-gray-950/75 px-3 py-2">
                               <div className="mb-1 flex flex-wrap items-center gap-1">
                                 {playlistWithCount.is_owner ? (
-                                  <span className="rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200">Eigen</span>
+                                  <span className="rounded-full bg-white/[0.05] px-2 py-0.5 text-[10px] font-semibold text-gray-200">Van jou</span>
                                 ) : (
-                                  <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-sky-200">Gedeeld door {playlistWithCount.owner_username}</span>
+                                  <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-semibold text-sky-200">Gedeeld door {playlistWithCount.owner_username}</span>
                                 )}
                                 {playlistWithCount.is_public && (
-                                  <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-200">Publiek</span>
+                                  <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-200">Publiek</span>
                                 )}
                                 {playlistWithCount.is_public_fallback && (
-                                  <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-200">Fallback zichtbaar</span>
+                                  <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-200">Fallback zichtbaar</span>
                                 )}
                                 {playlistWithCount.shared_with_count > 0 && (
-                                  <span className="rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-blue-200">Gedeeld met {playlistWithCount.shared_with_count}</span>
+                                  <span className="rounded-full bg-blue-500/15 px-2 py-0.5 text-[10px] font-semibold text-blue-200">Gedeeld met {playlistWithCount.shared_with_count}</span>
                                 )}
                               </div>
                               <div className="flex items-center justify-between">
@@ -1389,11 +1541,11 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
                                 <img
                                   src={playlistWithCount.cover_url}
                                   alt=""
-                                  className="mr-2 h-8 w-8 shrink-0 rounded object-cover"
+                                  className="mr-3 h-10 w-10 shrink-0 rounded-xl object-cover"
                                 />
                               ) : (
-                                <div className="mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded bg-violet-500/15">
-                                  <svg className="h-4 w-4 text-violet-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                                <div className="mr-3 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/[0.04]">
+                                  <svg className="h-4 w-4 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                                     <path d="M8 6h12M8 12h12M8 18h12M3 6h.01M3 12h.01M3 18h.01" />
                                   </svg>
                                 </div>
@@ -1401,11 +1553,11 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
                               <button
                                 type="button"
                                 onClick={() => { void openSavedPlaylist(playlistWithCount); }}
-                                className="min-w-0 flex-1 truncate text-left text-[11px] font-semibold text-white transition hover:text-violet-300"
+                                className="min-w-0 flex-1 truncate text-left text-[11px] font-semibold text-white transition hover:text-gray-200"
                               >
                                 {playlistWithCount.name}
                               </button>
-                              <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-300">
+                              <span className="shrink-0 rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-gray-300">
                                 {playlistWithCount.track_count}
                               </span>
                               {renderSavedPlaylistOptions(playlistWithCount)}
@@ -1425,21 +1577,21 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
               </details>
             )) : sortedSavedPlaylists.map((playlist) => {
               return (
-              <div key={playlist.id} className="mt-1 rounded-lg border border-gray-800 bg-gray-900/70 px-2.5 py-1.5">
+              <div key={playlist.id} className="mt-2 rounded-md border border-gray-700 bg-gray-950/75 px-3 py-2">
                 <div className="mb-1 flex flex-wrap items-center gap-1">
                   {playlist.is_owner ? (
-                    <span className="rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200">Eigen</span>
+                    <span className="rounded-full bg-white/[0.05] px-2 py-0.5 text-[10px] font-semibold text-gray-200">Van jou</span>
                   ) : (
-                    <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-sky-200">Gedeeld door {playlist.owner_username}</span>
+                    <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-semibold text-sky-200">Gedeeld door {playlist.owner_username}</span>
                   )}
                   {playlist.is_public && (
-                    <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-200">Publiek</span>
+                    <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-200">Publiek</span>
                   )}
                   {playlist.is_public_fallback && (
-                    <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-200">Fallback zichtbaar</span>
+                    <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-200">Fallback zichtbaar</span>
                   )}
                   {playlist.shared_with_count > 0 && (
-                    <span className="rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-blue-200">Gedeeld met {playlist.shared_with_count}</span>
+                    <span className="rounded-full bg-blue-500/15 px-2 py-0.5 text-[10px] font-semibold text-blue-200">Gedeeld met {playlist.shared_with_count}</span>
                   )}
                 </div>
                 <div className="flex items-center justify-between">
@@ -1447,11 +1599,11 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
                   <img
                     src={playlist.cover_url}
                     alt=""
-                    className="mr-2 h-8 w-8 shrink-0 rounded object-cover"
+                    className="mr-3 h-10 w-10 shrink-0 rounded-xl object-cover"
                   />
                 ) : (
-                  <div className="mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded bg-violet-500/15">
-                    <svg className="h-4 w-4 text-violet-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <div className="mr-3 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/[0.04]">
+                    <svg className="h-4 w-4 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                       <path d="M8 6h12M8 12h12M8 18h12M3 6h.01M3 12h.01M3 18h.01" />
                     </svg>
                   </div>
@@ -1459,11 +1611,11 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
                 <button
                   type="button"
                   onClick={() => { void openSavedPlaylist(playlist); }}
-                  className="min-w-0 flex-1 truncate text-left text-[11px] font-semibold text-white transition hover:text-violet-300"
+                  className="min-w-0 flex-1 truncate text-left text-[11px] font-semibold text-white transition hover:text-gray-200"
                 >
                   {playlist.name}
                 </button>
-                <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-300">
+                <span className="shrink-0 rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-gray-300">
                   {(playlist as UserPlaylistWithCount).track_count}
                 </span>
                 {renderSavedPlaylistOptions(playlist)}
@@ -1495,11 +1647,12 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
               value={sharedSortMode}
               onChange={(e) => setSharedSortMode(e.target.value as PlaylistSortMode)}
               className="mb-1 w-full sm:w-auto rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white max-w-full"
+              style={{ colorScheme: "dark" }}
             >
-              <option value="name_asc">Sortering: Naam A-Z</option>
-              <option value="name_desc">Sortering: Naam Z-A</option>
-              <option value="tracks_desc">Sortering: Meeste tracks</option>
-              <option value="newest">Sortering: Nieuwste import</option>
+              <option value="name_asc" style={{ color: "#111827", backgroundColor: "#ffffff" }}>Sortering: Naam A-Z</option>
+              <option value="name_desc" style={{ color: "#111827", backgroundColor: "#ffffff" }}>Sortering: Naam Z-A</option>
+              <option value="tracks_desc" style={{ color: "#111827", backgroundColor: "#ffffff" }}>Sortering: Meeste tracks</option>
+              <option value="newest" style={{ color: "#111827", backgroundColor: "#ffffff" }}>Sortering: Nieuwste import</option>
             </select>
             <div className="mb-1 grid grid-cols-2 gap-1">
               <button
@@ -1695,25 +1848,28 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
               )}
             </>
           )}
-          <details className="mb-2 rounded-lg border border-violet-700/70 bg-gradient-to-br from-violet-900/40 to-violet-900/20 p-2.5">
-            <summary className="cursor-pointer list-none text-[11px] font-semibold text-violet-200 flex items-center justify-between">
-              <span>Lege playlist maken</span>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-              </svg>
-            </summary>
+          {personalLibraryTab === "create" && (
+          <div className="mb-2 rounded-md border border-gray-700 bg-gray-900/80 p-2.5">
+            <div className="flex items-start justify-between gap-3">
+              <p className="text-[11px] font-semibold text-white">Lege playlist maken</p>
+              <div className="flex h-8 w-8 items-center justify-center rounded-xl border border-white/8 bg-white/[0.03] text-gray-300">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+              </div>
+            </div>
             <div className="mt-2 space-y-2">
               <input
                 type="text"
                 value={createPlaylistName}
                 onChange={(e) => setCreatePlaylistName(e.target.value)}
                 placeholder="Naam van de playlist..."
-                className="w-full rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[11px] text-white placeholder-gray-500 outline-none focus:border-violet-500"
+                className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[11px] text-white placeholder-gray-500 outline-none focus:border-emerald-400"
               />
               <select
                 value={createPlaylistGenreGroup}
                 onChange={(e) => setCreatePlaylistGenreGroup(e.target.value)}
-                className="w-full rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white"
+                className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[10px] text-white"
               >
                 <option value="">Kies genre (optioneel)</option>
                 {PLAYLIST_GENRE_GROUPS.map((group) => (
@@ -1738,7 +1894,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
                   }
                 }}
                 disabled={!createPlaylistName.trim() || createPlaylistBusy}
-                className="w-full rounded bg-violet-600 py-1.5 text-[10px] font-bold text-white transition hover:bg-violet-500 disabled:opacity-50"
+                className="w-full rounded-xl bg-[#1DB954] py-2 text-[10px] font-bold text-black transition hover:bg-[#34d26a] disabled:opacity-50"
               >
                 {createPlaylistBusy ? "Bezig..." : "Maak playlist"}
               </button>
@@ -1746,13 +1902,13 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
                 <p className="text-[10px] text-red-300">{createPlaylistError}</p>
               )}
             </div>
-          </details>
+          </div>
+          )}
 
-          <details className="mb-2 rounded-lg border border-violet-700/70 bg-gradient-to-br from-violet-900 to-violet-900/70 p-2.5">
-            <summary className="cursor-pointer list-none text-[11px] font-semibold text-violet-200">
-              CSV/Exportify importeren
-            </summary>
-            <p className="mt-1 text-[10px] text-violet-500">
+          {personalLibraryTab === "import" && (
+          <div className="mb-2 rounded-md border border-gray-700 bg-gray-900/80 p-2.5">
+            <p className="text-[11px] font-semibold text-white">CSV/Exportify importeren</p>
+            <p className="mt-1 text-[10px] text-gray-400">
               Upload meerdere Exportify CSV&apos;s of ZIP bestanden tegelijk (Ctrl/Shift in bestandsdialoog). We voegen samen en dedupliceren
               zoals bij admin-import. Naam is verplicht; daarna kun je je eigen playlist nog bewerken.
             </p>
@@ -1761,7 +1917,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
                 value={importGenreGroup}
                 onChange={(e) => setImportGenreGroup(e.target.value)}
                 onFocus={(e) => keepFieldVisibleOnMobile(e.currentTarget)}
-                className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white"
+                className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[10px] text-white"
               >
                 <option value="">Overkoepelend genre</option>
                 {PLAYLIST_GENRE_GROUPS.map((group) => (
@@ -1773,7 +1929,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
                 value={importSubgenre}
                 onChange={(e) => setImportSubgenre(e.target.value)}
                 placeholder="Subgenre (optioneel)"
-                className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white placeholder-gray-500"
+                className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[10px] text-white placeholder-gray-500"
               />
             </div>
             <div className="mt-2 grid gap-1.5 sm:grid-cols-[1fr_auto]">
@@ -1782,14 +1938,14 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
                 value={importCoverUrl}
                 onChange={(e) => setImportCoverUrl(e.target.value)}
                 placeholder="Playlist cover URL (optioneel)"
-                className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white placeholder-gray-500"
+                className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[10px] text-white placeholder-gray-500"
               />
-              <label className="flex items-center gap-1.5 rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-gray-200">
+              <label className="flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[10px] text-gray-200">
                 <input
                   type="checkbox"
                   checked={importAutoCover}
                   onChange={(e) => setImportAutoCover(e.target.checked)}
-                  className="h-3 w-3 accent-violet-500"
+                  className="h-3 w-3 accent-[#1DB954]"
                 />
                 Auto cover
               </label>
@@ -1799,7 +1955,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
               value={importPlaylistName}
               onChange={(e) => setImportPlaylistName(e.target.value)}
               placeholder="Playlist naam (verplicht; underscores → spaties in titel)"
-              className="mt-2 w-full rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[11px] text-white placeholder-gray-500 outline-none focus:border-violet-500"
+              className="mt-2 w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[11px] text-white placeholder-gray-500 outline-none focus:border-emerald-400"
             />
             <input
               type="file"
@@ -1812,7 +1968,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
                 setImportFiles(files);
                 setImportError(null);
               }}
-              className="mt-2 w-full text-[10px] text-gray-400 file:mr-2 file:rounded file:border-0 file:bg-gray-700 file:px-2 file:py-1 file:text-[10px] file:font-medium file:text-white"
+              className="mt-2 w-full text-[10px] text-gray-400 file:mr-2 file:rounded-xl file:border-0 file:bg-white/10 file:px-3 file:py-2 file:text-[10px] file:font-medium file:text-white"
             />
             {importFiles.length > 0 && (
               <p className="mt-1 text-[10px] text-gray-400">{importFiles.length} bestand(en) geselecteerd</p>
@@ -1821,13 +1977,14 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
               type="button"
               onClick={() => { void handleImportExportify(); }}
               disabled={importFiles.length === 0 || !importPlaylistName.trim() || importing}
-              className="mt-2 rounded bg-violet-600 px-2 py-1 text-[10px] font-semibold text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+              className="mt-2 rounded-xl bg-[#1DB954] px-3 py-2 text-[10px] font-semibold text-black transition hover:bg-[#34d26a] disabled:cursor-not-allowed disabled:opacity-50"
             >
               {importing ? "Importeren..." : "Importeer bestand"}
             </button>
             {importStatus && <p className="mt-1 text-[10px] text-green-300">{importStatus}</p>}
             {importError && <p className="mt-1 text-[10px] text-red-300">{importError}</p>}
-          </details>
+          </div>
+          )}
           <div ref={loadMoreRef} className="h-10 w-full sm:h-2" />
         </div>
       )}
@@ -1972,7 +2129,8 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
             const isAdded = addedTrackId === track.id;
             const isPending = pendingTrackId === track.id;
             const spotifyUrl = (track.spotify_url ?? "").trim();
-            const thumb = track.artwork_url ?? (spotifyUrl ? savedTrackThumbs[spotifyUrl] : "");
+            const explicitArtwork = (track.artwork_url ?? "").trim();
+            const thumb = explicitArtwork || (spotifyUrl ? (savedTrackThumbs[spotifyUrl] ?? "").trim() : "");
             const canLikeTrack = !isLikedTracksPlaylistName(selectedSavedPlaylist?.name);
             const canEditPlaylist = Boolean(selectedSavedPlaylist?.viewer_can_edit);
             return (
@@ -2037,7 +2195,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
                     title={track.title} 
                     artist={track.artist} 
                     spotify_url={track.spotify_url}
-                    artwork_url={track.artwork_url}
+                    artwork_url={thumb || null}
                     album={track.album}
                     showLike={canLikeTrack}
                     className="mr-1"
@@ -2084,7 +2242,8 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
             const isAdded = addedTrackId === track.id;
             const isPending = pendingTrackId === track.id;
             const spotifyUrl = (track.spotify_url ?? "").trim();
-            const thumb = track.artwork_url ?? (spotifyUrl ? savedTrackThumbs[spotifyUrl] : "");
+            const explicitArtwork = (track.artwork_url ?? "").trim();
+            const thumb = explicitArtwork || (spotifyUrl ? (savedTrackThumbs[spotifyUrl] ?? "").trim() : "");
             return (
               <div
                 key={track.id}
@@ -2130,7 +2289,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
                     title={track.title} 
                     artist={track.artist} 
                     spotify_url={track.spotify_url}
-                    artwork_url={track.artwork_url}
+                    artwork_url={thumb || null}
                     album={track.album}
                     className="mr-1"
                     iconSize={16}

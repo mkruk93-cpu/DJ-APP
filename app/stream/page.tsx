@@ -179,6 +179,7 @@ export default function StreamPage() {
   const radioMode = useRadioStore((s) => s.mode);
   const streamOnline = useRadioStore((s) => s.streamOnline);
   const pausedForIdle = useRadioStore((s) => s.pausedForIdle);
+  const playerPlaying = useRadioStore((s) => s.playerPlaying);
   const skipLocked = useRadioStore((s) => s.skipLocked);
   const store = useRadioStore;
   const isAdminUser = useIsAdmin();
@@ -943,7 +944,7 @@ export default function StreamPage() {
     const emitState = () => {
       socket.emit("listener:state", { 
         nickname: username,
-        listening: true 
+        listening: playerPlaying
       });
     };
 
@@ -955,7 +956,7 @@ export default function StreamPage() {
     return () => {
       socket.off("connect", emitState);
     };
-  }, [userAccount?.username]);
+  }, [playerPlaying, userAccount?.username]);
 
   // Handle Spotify OAuth callback (code in URL after redirect)
   useEffect(() => {
@@ -1030,19 +1031,21 @@ export default function StreamPage() {
       setTunnelRecoveryUntil(null);
       fetchState();
       if (userAccount?.username) {
-        socket.emit("listener:state", { nickname: userAccount.username, listening: true });
+        socket.emit("listener:state", { nickname: userAccount.username, listening: store.getState().playerPlaying });
       }
     });
 
     socket.on("disconnect", () => {
       const hadActiveStream = !!(store.getState().streamOnline || store.getState().currentTrack);
       store.getState().setConnected(false);
-      store.getState().setStreamOnline(false);
-      store.getState().setPausedForIdle(false);
-      store.getState().setCurrentTrack(null);
-      latestUpcomingRef.current = null;
-      latestQueueRef.current = [];
-      previousQueueLengthRef.current = 0;
+      if (!hadActiveStream) {
+        store.getState().setStreamOnline(false);
+        store.getState().setPausedForIdle(false);
+        store.getState().setCurrentTrack(null);
+        latestUpcomingRef.current = null;
+        latestQueueRef.current = [];
+        previousQueueLengthRef.current = 0;
+      }
       store.getState().setQueuePushVote(null);
       store.getState().setQueuePushLocked(false);
       store.getState().setSkipLocked(false);
@@ -1420,6 +1423,7 @@ export default function StreamPage() {
 
       // 3. Selective LocalStorage clear
       const whitelist = [
+        /^djapp:player-/,
         /^spotify-browser:/,
         /^shared-playlists-browser:/,
         /^fallback-selector:/,
