@@ -2040,24 +2040,29 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                               <p className="truncate text-sm font-medium text-white">{artist.name}</p>
                               <p className="truncate text-xs text-gray-400">
                                 {artist.country || 'Onbekend'}{artist.type ? ` • ${artist.type}` : ''}{artist.disambiguation ? ` • ${artist.disambiguation}` : ''}
-                              <input
-                                type="text"
-                                value={genreQuery}
-                                onChange={(e) => {
-                                  // Altijd eerst state updaten
-                                  const val = e.target.value;
-                                  setGenreQuery(val);
-                                  if (genreMenuRef.current) genreMenuRef.current.open = true;
-                                }}
-                                onFocus={() => {
-                                  if (genreMenuRef.current) genreMenuRef.current.open = true;
-                                }}
-                                placeholder="Zoek genre (hardstyle, trance, rock, metal...)"
-                                className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-fuchsia-500"
-                              />
-                            className={`ml-2 shrink-0 rounded p-1 transition ${isFav ? 'text-pink-400 hover:bg-pink-500/10' : 'text-gray-400 hover:bg-pink-500/10 hover:text-pink-400'}`}
-                            title={isFav ? "Verwijder uit favorieten" : "Toevoegen aan favorieten"}
-                          >
+                              </p>
+                              <div className="mt-1">
+                                <input
+                                  type="text"
+                                  value={genreQuery}
+                                  onChange={(e) => {
+                                    // Altijd eerst state updaten
+                                    const val = e.target.value;
+                                    setGenreQuery(val);
+                                    if (genreMenuRef.current) genreMenuRef.current.open = true;
+                                  }}
+                                  onFocus={() => {
+                                    if (genreMenuRef.current) genreMenuRef.current.open = true;
+                                  }}
+                                  placeholder="Zoek genre (hardstyle, trance, rock, metal...)"
+                                  className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-fuchsia-500"
+                                />
+                              </div>
+                            <button
+                              type="button"
+                              className={`ml-2 shrink-0 rounded p-1 transition ${isFav ? 'text-pink-400 hover:bg-pink-500/10' : 'text-gray-400 hover:bg-pink-500/10 hover:text-pink-400'}`}
+                              title={isFav ? "Verwijder uit favorieten" : "Toevoegen aan favorieten"}
+                            >
                             <svg className="h-4 w-4" fill={isFav ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                               <path strokeLinecap="round" strokeLinejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
                             </svg>
