@@ -61,13 +61,19 @@ export default function TrackActions({
 }: TrackActionsProps) {
   const [isLiked, setIsLiked] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
-  const [view, setView] = useState<"list" | "create">("list");
+  const [view, setView] = useState<"list" | "create" | "actions">("list");
   const [playlists, setPlaylists] = useState<UserPlaylist[]>([]);
   const [loading, setLoading] = useState(false);
   const [likedPlaylistId, setLikedPlaylistId] = useState<string | null>(null);
   const [newPlaylistName, setNewPlaylistName] = useState("");
   const [newPlaylistGenre, setNewPlaylistGenre] = useState("");
   const [dropdownStyle, setDropdownStyle] = useState<{ top: number; left: number; width: number; maxHeight: number } | null>(null);
+  const showActionMenu = additionalActions.length > 0;
+  const queuePushActions = additionalActions.filter((action) => action.key === "queue-push");
+  const queueRemoveActions = additionalActions.filter((action) => action.key === "queue-remove");
+  const otherExtraActions = additionalActions.filter(
+    (action) => action.key !== "queue-push" && action.key !== "queue-remove",
+  );
   const dropdownRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLDivElement>(null);
 
@@ -167,7 +173,7 @@ export default function TrackActions({
       }
     }
     setShowDropdown(!showDropdown);
-    setView("list");
+    setView(!showDropdown ? (showActionMenu ? "actions" : "list") : "list");
   };
 
   const addToPlaylist = async (e: React.MouseEvent, playlistId: string) => {
@@ -300,63 +306,12 @@ export default function TrackActions({
                 maxHeight: dropdownStyle.maxHeight,
               }}
             >
-              {view === "list" ? (
-                <div className="flex flex-col">
-                  {additionalActions.length > 0 && (
-                    <div className="overflow-y-auto py-1" style={{ maxHeight: Math.max(120, dropdownStyle.maxHeight - 52) }}>
-                      {additionalActions.map((action) => (
-                        <button
-                          type="button"
-                          key={action.key}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            action.onSelect(e);
-                            setShowDropdown(false);
-                          }}
-                          className="w-full px-3 py-2 text-left text-xs text-gray-200 transition hover:bg-violet-600/20 hover:text-violet-400"
-                        >
-                          {action.label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  <div className="overflow-y-auto py-1" style={{ maxHeight: Math.max(120, dropdownStyle.maxHeight - 52) }}>
-                    {playlists.length === 0 ? (
-                      <div className="px-3 py-2 text-xs text-gray-500 italic">
-                        Geen playlists gevonden
-                      </div>
-                    ) : (
-                      playlists.map((playlist) => (
-                        <button
-                          type="button"
-                          key={playlist.id}
-                          onClick={(e) => addToPlaylist(e, playlist.id)}
-                          className="w-full px-3 py-2 text-left text-xs text-gray-200 transition hover:bg-violet-600/20 hover:text-violet-400"
-                        >
-                          {playlist.name}
-                        </button>
-                      ))
-                    )}
-                  </div>
-                  <div className="border-t border-gray-800 p-1">
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); setView("create"); }}
-                      className="flex w-full items-center justify-center gap-1.5 rounded-md py-2 text-xs font-semibold text-violet-400 transition hover:bg-violet-400/10"
-                    >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                        <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-                      </svg>
-                      Nieuwe playlist
-                    </button>
-                  </div>
-                </div>
-              ) : (
+              {view === "create" ? (
                 <form onSubmit={handleCreateAndAdd} className="p-3">
                   <div className="mb-2 flex items-center justify-between">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Nieuwe playlist</span>
-                    <button 
-                      type="button" 
+                    <button
+                      type="button"
                       onClick={(e) => { e.stopPropagation(); setView("list"); }}
                       className="text-[10px] text-gray-400 hover:text-white"
                     >
@@ -391,6 +346,119 @@ export default function TrackActions({
                     {loading ? "Bezig..." : "Maak en voeg toe"}
                   </button>
                 </form>
+              ) : (
+                <div className="flex flex-col">
+                  {view === "actions" ? (
+                    <div className="flex flex-col">
+                      <div className="overflow-y-auto py-1" style={{ maxHeight: Math.max(120, dropdownStyle.maxHeight - 52) }}>
+                        {queuePushActions.map((action) => (
+                          <button
+                            type="button"
+                            key={action.key}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              action.onSelect(e);
+                              setShowDropdown(false);
+                            }}
+                            className="w-full px-3 py-2 text-left text-xs text-gray-200 transition hover:bg-violet-600/20 hover:text-violet-400"
+                          >
+                            {action.label}
+                          </button>
+                        ))}
+                        {otherExtraActions.map((action) => (
+                          <button
+                            type="button"
+                            key={action.key}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              action.onSelect(e);
+                              setShowDropdown(false);
+                            }}
+                            className="w-full px-3 py-2 text-left text-xs text-gray-200 transition hover:bg-violet-600/20 hover:text-violet-400"
+                          >
+                            {action.label}
+                          </button>
+                        ))}
+                        {queueRemoveActions.map((action) => (
+                          <button
+                            type="button"
+                            key={action.key}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              action.onSelect(e);
+                              setShowDropdown(false);
+                            }}
+                            className="w-full px-3 py-2 text-left text-xs text-red-200 transition hover:bg-red-500/15"
+                          >
+                            {action.label}
+                          </button>
+                        ))}
+                      </div>
+                      {showPlaylist && (
+                        <div className="border-t border-gray-800 p-1">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setView("list");
+                            }}
+                            className="flex w-full items-center justify-center gap-1.5 rounded-md py-2 text-xs font-semibold text-violet-400 transition hover:bg-violet-400/10"
+                          >
+                            Toevoegen aan afspeellijst
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      {showActionMenu && (
+                        <div className="flex items-center justify-between border-b border-gray-800 px-3 py-2 text-[10px] uppercase tracking-wider text-gray-500">
+                          <span>Afspeellijst kiezen</span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setView("actions");
+                            }}
+                            className="text-xs text-gray-400 hover:text-white"
+                          >
+                            Terug
+                          </button>
+                        </div>
+                      )}
+                      <div className="overflow-y-auto py-1" style={{ maxHeight: Math.max(120, dropdownStyle.maxHeight - 52) }}>
+                        {playlists.length === 0 ? (
+                          <div className="px-3 py-2 text-xs text-gray-500 italic">
+                            Geen playlists gevonden
+                          </div>
+                        ) : (
+                          playlists.map((playlist) => (
+                            <button
+                              type="button"
+                              key={playlist.id}
+                              onClick={(e) => addToPlaylist(e, playlist.id)}
+                              className="w-full px-3 py-2 text-left text-xs text-gray-200 transition hover:bg-violet-600/20 hover:text-violet-400"
+                            >
+                              {playlist.name}
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </>
+                  )}
+                  <div className="border-t border-gray-800 p-1">
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setView("create"); }}
+                      className="flex w-full items-center justify-center gap-1.5 rounded-md py-2 text-xs font-semibold text-violet-400 transition hover:bg-violet-400/10"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+                      </svg>
+                      Nieuwe playlist
+                    </button>
+                  </div>
+                </div>
               )}
             </div>,
             document.body,

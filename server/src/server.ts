@@ -81,6 +81,7 @@ import {
   getFallbackPreset,
   listFallbackPresets,
   saveFallbackPreset,
+  deleteFallbackPreset,
 } from './services/fallbackPresetStore.js';
 
 function getErrorMessage(err: unknown): string {
@@ -298,7 +299,7 @@ async function awardListenTimePoints(): Promise<void> {
     for (const [socketId, presence] of listenerPresenceBySocket.entries()) {
       if (!presence.listening) continue;
       const nick = (presence.nickname ?? '').trim();
-      if (!nick) continue;
+      if (!nick || nick.toLowerCase() === 'gast') continue;
       uniqueListeners.add(nick);
     }
     
@@ -503,7 +504,10 @@ function normalizeNickname(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   if (!trimmed) return null;
-  return trimmed.slice(0, 40);
+  const normalized = trimmed.slice(0, 40);
+  const lower = normalized.toLowerCase();
+  if (lower === 'onbekend' || lower === 'unknown') return null;
+  return normalized;
 }
 
 function normalizeDeviceId(value: unknown): string | null {
@@ -1456,12 +1460,13 @@ async function isKnownFallbackSelection(genreId: string | null): Promise<boolean
 }
 
 async function emitFallbackGenreUpdate(target?: { emit: (event: string, payload: unknown) => void }): Promise<void> {
-  const [activeGenreId, selectedBy, sharedMode, lockAutoplayFallback, hideLocalDiscovery] = await Promise.all([
+  const [activeGenreId, selectedBy, sharedMode, lockAutoplayFallback, hideLocalDiscovery, activePresetName] = await Promise.all([
     resolveActiveFallbackGenre(),
     getSetting<string | null>(sb, 'fallback_active_genre_by'),
     resolveSharedPlaybackMode(),
     getSetting<boolean>(sb, 'lock_autoplay_fallback'),
     getSetting<boolean>(sb, 'hide_local_discovery'),
+    getSetting<string | null>(sb, 'fallback_active_preset_name'),
   ]);
   const activeGenreIds = await resolveActiveFallbackGenres(activeGenreId, true);
   setSharedAutoPlaybackMode(sharedMode);
@@ -1477,6 +1482,7 @@ async function emitFallbackGenreUpdate(target?: { emit: (event: string, payload:
     genres,
     lockAutoplayFallback: !!lockAutoplayFallback,
     hideLocalDiscovery: !!hideLocalDiscovery,
+    activePresetName: activePresetName || null,
   };
   if (target) target.emit('fallback:genre:update', payload);
   else io.emit('fallback:genre:update', payload);
@@ -1530,18 +1536,18 @@ async function getCombinedFallbackGenres(): Promise<FallbackGenre[]> {
   }
   const sharedGenres: FallbackGenre[] = sharedPlaylists.map((playlist) => ({
     id: toSharedFallbackPlaylistId(playlist.id),
-    label: `Playlist · ${playlist.name} (${playlist.owner_username ?? 'onbekend'})`,
+    label: playlist.added_by ? `Playlist · ${playlist.name} (${playlist.added_by})` : `Playlist · ${playlist.name}`,
     trackCount: playlist.track_count,
     genre_group: playlist.genre_group ?? null,
     subgenre: playlist.subgenre ?? null,
     related_parent_playlist_id: playlist.related_parent_playlist_id ?? null,
-    owner_username: playlist.owner_username ?? null,
+    owner_username: playlist.added_by ?? null,
   }));
   const publicUserGenres: FallbackGenre[] = publicUserPlaylists
     .filter((playlist) => playlist.is_public_fallback)
     .map((playlist) => ({
-      id: toSharedFallbackPlaylistId(playlist.id),
-      label: `Playlist · ${playlist.name} (${playlist.owner_username ?? 'onbekend'})`,
+      id: playlist.id,
+      label: playlist.owner_username ? `Playlist · ${playlist.name} (${playlist.owner_username})` : `Playlist · ${playlist.name}`,
       trackCount: playlist.track_count ?? 0,
       genre_group: playlist.genre_group ?? null,
       subgenre: playlist.subgenre ?? null,
@@ -5605,7 +5611,7 @@ io.on('connection', (socket) => {
   socket.on('listener:state', (data: { nickname?: string; listening?: boolean }) => {
     const prev = listenerPresenceBySocket.get(socket.id);
     const nickname = normalizeNickname(data?.nickname) ?? prev?.nickname ?? '';
-    const listening = data?.listening !== false; // Default to true if not explicitly false
+    const listening = data?.listening !== false && !!nickname.trim(); // Only listen if we have a valid nickname
     listenerPresenceBySocket.set(socket.id, {
       nickname,
       listening,
@@ -6099,15 +6105,16 @@ io.on('connection', (socket) => {
     emitFallbackPresetUpdate(socket);
   });
 
-  socket.on('fallback:preset:save', (data: {
+  socket.on('fallback:preset:save', async (data: {
     name?: string;
     genreIds?: string[];
     sharedPlaybackMode?: string;
     selectedBy?: string;
   }) => {
     const name = String(data?.name ?? '').trim();
-    const genreIds = Array.isArray(data?.genreIds) ? data.genreIds.map((entry) => String(entry)) : [];
-    const selectedBy = normalizeNickname(data?.selectedBy) ?? 'onbekend';
+    const rawGenreIds = Array.isArray(data?.genreIds) ? data.genreIds.map((entry) => String(entry)) : [];
+    const genreIds = await normalizeFallbackGenreIds(rawGenreIds);
+    const selectedBy = normalizeNickname(data?.selectedBy) ?? null;
     const sharedMode = normalizeSharedPlaybackMode(data?.sharedPlaybackMode);
     const saved = saveFallbackPreset({
       name,
@@ -6134,7 +6141,7 @@ io.on('connection', (socket) => {
       socket.emit('error:toast', { message: 'Preset niet gevonden' });
       return;
     }
-    const selectedBy = normalizeNickname(data?.selectedBy) ?? 'onbekend';
+    const selectedBy = normalizeNickname(data?.selectedBy) ?? null;
     try {
       const requestedList = await normalizeFallbackGenreIds(preset.genreIds);
       const requested = requestedList[0] ?? null;
@@ -6146,6 +6153,7 @@ io.on('connection', (socket) => {
       await setSetting(sb, 'fallback_active_shared_playlist_ids', requestedList);
       await setSetting(sb, 'fallback_active_genre_by', selectedBy);
       await setSetting(sb, 'fallback_shared_playback_mode', preset.sharedPlaybackMode);
+      await setSetting(sb, 'fallback_active_preset_name', preset.name);
       setSharedAutoPlaybackMode(preset.sharedPlaybackMode);
       resetSharedAutoPlaybackCycleForSelection(requested);
       setActiveFallbackGenre(requested);
@@ -6158,6 +6166,31 @@ io.on('connection', (socket) => {
       socket.emit('error:toast', { message: 'Preset toepassen mislukt' });
     }
   });
+
+  socket.on('fallback:preset:delete', async (data: { id?: string; selectedBy?: string; token?: string }) => {
+      if (!(await canChangeAutoplayFallback(data?.token, socketNicknameById.get(socket.id)))) {
+        socket.emit('error:toast', { message: 'Autoplay fallback is vergrendeld (alleen admin)' });
+        return;
+      }
+      const presetId = String(data?.id ?? '').trim();
+      const preset = getFallbackPreset(presetId);
+      if (!preset) {
+        socket.emit('error:toast', { message: 'Preset niet gevonden' });
+        return;
+      }
+      const selectedBy = normalizeNickname(data?.selectedBy) ?? null;
+      if (preset.createdBy !== selectedBy) {
+        socket.emit('error:toast', { message: 'Je mag alleen je eigen presets verwijderen' });
+        return;
+      }
+      const deleted = deleteFallbackPreset(presetId);
+      if (!deleted) {
+        socket.emit('error:toast', { message: 'Kon preset niet verwijderen' });
+        return;
+      }
+      emitFallbackPresetUpdate();
+      socket.emit('info:toast', { message: `Preset verwijderd: ${preset.name}` });
+    });
 
   socket.on('fallback:genre:set', async (data: { genreId?: string; genreIds?: string[]; selectedBy?: string; selectedLabel?: string; sharedPlaybackMode?: string; token?: string }) => {
     if (!(await canChangeAutoplayFallback(data?.token, socketNicknameById.get(socket.id)))) {
@@ -6173,7 +6206,7 @@ io.on('connection', (socket) => {
       socket.emit('error:toast', { message: 'Dit genre is niet beschikbaar' });
       return;
     }
-    const selectedBy = normalizeNickname(data.selectedBy) ?? 'onbekend';
+    const selectedBy = normalizeNickname(data.selectedBy) ?? null;
     const requestedSharedMode = normalizeSharedPlaybackMode(data.sharedPlaybackMode);
     try {
       await setSetting(sb, 'fallback_active_genre', requested);
@@ -6182,6 +6215,7 @@ io.on('connection', (socket) => {
         : [requested];
       await setSetting(sb, 'fallback_active_shared_playlist_ids', activeGenreList);
       await setSetting(sb, 'fallback_active_genre_by', selectedBy);
+      await setSetting(sb, 'fallback_active_preset_name', null); // Clear preset name when manually selecting genres
       const sharedId = parseSharedFallbackPlaylistId(requested);
       if (sharedId) {
         await setSetting(sb, 'fallback_shared_playback_mode', requestedSharedMode);

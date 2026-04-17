@@ -1485,8 +1485,8 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
     const result = await submitUrl(
       candidate.url,
       candidate.thumbnail ?? undefined,
-      manualState.title,
-      manualState.artist,
+      candidate.title,
+      candidate.channel,
       {
         sourceType: manualState.sourceType,
         sourceGenre: manualState.sourceGenre,
@@ -1501,8 +1501,8 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
     startRecentAdd(
       `manual:${Date.now()}`,
       candidate.url,
-      manualState.title,
-      manualState.artist,
+      candidate.title,
+      candidate.channel,
     );
     setTimeout(() => {
       setResultStatus((prev) => ({ ...prev, [sourceKey]: "idle" }));

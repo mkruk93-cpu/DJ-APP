@@ -44,6 +44,7 @@ export default function Queue() {
   const storedNickname = typeof window !== "undefined" ? (localStorage.getItem("nickname") ?? "").trim() : "";
   const nickname = userAccount?.username || storedNickname || "";
   const [deferredQueue, setDeferredQueue] = useState<DeferredQueueItem[]>([]);
+  const [likedQueueItemIds, setLikedQueueItemIds] = useState<string[]>([]);
   const canRequestPush = mode !== "dj";
 
   function isOwnItem(item: { added_by?: string | null }): boolean {
@@ -220,9 +221,15 @@ export default function Queue() {
                     ? `${item.artist} - ${decodeHtmlEntities(item.title) ?? deriveTitleFromId(item.youtube_id)}`
                     : decodeHtmlEntities(item.title) ?? deriveTitleFromId(item.youtube_id)}
               </p>
-              <p className="hidden truncate text-[10px] text-gray-500 sm:block">
-                {item.added_by}
-              </p>
+              {item.added_by ? (
+                <p className="truncate text-[10px] text-gray-400">
+                  Aangevraagd door {item.added_by}
+                </p>
+              ) : (
+                <p className="truncate text-[10px] text-gray-500">
+                  Aangevraagd door onbekend
+                </p>
+              )}
             </div>
 
             <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
@@ -239,11 +246,14 @@ export default function Queue() {
                       spotify_url: null,
                       artwork_url: item.thumbnail ?? null,
                     });
+                    setLikedQueueItemIds((prev) =>
+                      prev.includes(item.id) ? prev : [...prev, item.id],
+                    );
                   } catch (err) {
                     console.error("[Queue] Failed to like track:", err);
                   }
                 }}
-                className="p-1 text-gray-400 transition hover:text-red-400"
+                className={`p-1 transition ${likedQueueItemIds.includes(item.id) ? "text-red-500" : "text-gray-400 hover:text-red-400"}`}
                 title="Toevoegen aan Liked Tracks"
               >
                 <svg

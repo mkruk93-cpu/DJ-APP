@@ -35,7 +35,6 @@ function normalizeBucketLabel(value: string | null | undefined, fallback: string
 function cleanFallbackLabel(label: string): string {
   return label
     .replace(/^Playlist ·\s*/i, "")
-    .replace(/\s*\(onbekend\)$/i, "")
     .trim();
 }
 
@@ -149,6 +148,7 @@ export default function FallbackGenreSelector() {
   const activeGenres = useRadioStore((s) => s.activeFallbackGenres);
   const activeGenreBy = useRadioStore((s) => s.activeFallbackGenreBy);
   const sharedPlaybackMode = useRadioStore((s) => s.activeFallbackSharedMode);
+  const activePresetName = useRadioStore((s) => s.activeFallbackPresetName);
   const lockAutoplayFallback = useRadioStore((s) => s.lockAutoplayFallback);
   const hideLocalDiscovery = useRadioStore((s) => s.hideLocalDiscovery);
   const isAdmin = useIsAdmin();
@@ -234,7 +234,7 @@ export default function FallbackGenreSelector() {
 
   const effectiveSelectedGenreIds = optimisticSelectedGenreIds ?? selectedGenreIds;
   const selectedSharedGenres = useMemo(
-    () => effectiveSelectedGenreIds.filter((id) => id.startsWith("shared:")),
+    () => effectiveSelectedGenreIds.filter((id) => id.startsWith("shared:") || id.startsWith("user:")),
     [effectiveSelectedGenreIds],
   );
 
@@ -250,7 +250,7 @@ export default function FallbackGenreSelector() {
   }, [optimisticSelectedGenreIds, selectedGenreIds]);
 
   function getSectionForGenreId(id: string): FallbackSection {
-    if (id.startsWith("shared:")) return "playlists";
+    if (id.startsWith("shared:") || id.startsWith("user:")) return "playlists";
     if (id.startsWith("auto:")) return "auto";
     return "local";
   }
@@ -269,6 +269,10 @@ export default function FallbackGenreSelector() {
   }
   const shouldRender = connected && sortedGenres.length > 0;
   const activeLabel = useMemo(() => {
+    // Als er een preset actief is, toon de preset naam
+    if (activePresetName) {
+      return activePresetName;
+    }
     // Als er meerdere playlists geselecteerd zijn, toon het aantal
     if (selectedSharedGenres.length > 1) {
       return `${selectedSharedGenres.length} playlists`;
@@ -285,7 +289,7 @@ export default function FallbackGenreSelector() {
     }
     const activeGenreLabel = sortedGenres.find((g) => g.id === activeGenre)?.label;
     return activeGenreLabel ? cleanFallbackLabel(activeGenreLabel) : activeGenre ?? "Kies genre";
-  }, [sortedGenres, activeGenre, selectedSharedGenres]);
+  }, [sortedGenres, activeGenre, selectedSharedGenres, activePresetName]);
 
   useEffect(() => {
     function updateMobileState() {
@@ -301,6 +305,10 @@ export default function FallbackGenreSelector() {
       if (!menuRef.current?.open || !summaryRef.current) return;
       const rect = summaryRef.current.getBoundingClientRect();
       const top = Math.max(8, Math.round(rect.bottom + 8));
+      if (isMobile) {
+        setMenuLayout({ top, left: 0, width: window.innerWidth });
+        return;
+      }
       const left = Math.max(8, Math.min(rect.left, window.innerWidth - 320 - 8));
       const width = Math.min(Math.max(rect.width, 320), window.innerWidth - left - 8);
       setMenuLayout({ top, left, width });
@@ -316,8 +324,8 @@ export default function FallbackGenreSelector() {
 
   function emitSharedSelection(nextSelected: string[]): void {
     if (fallbackChangeBlocked) return;
-    const selectedBy = userAccount?.username?.trim() || localStorage.getItem("nickname")?.trim() || "onbekend";
-    const normalized = Array.from(new Set(nextSelected.filter((id) => id.startsWith("shared:"))));
+    const selectedBy = userAccount?.username?.trim() || localStorage.getItem("nickname")?.trim() || undefined;
+    const normalized = Array.from(new Set(nextSelected.filter((id) => id.startsWith("shared:") || id.startsWith("user:"))));
     const primary = normalized[0] ?? activeGenre ?? null;
     if (!primary) return;
     const selectedLabel = sortedSharedPlaylists.find((playlist) => playlist.id === primary)?.label ?? primary;
@@ -333,7 +341,7 @@ export default function FallbackGenreSelector() {
 
   function emitSelection(nextSelected: string[]): void {
     if (fallbackChangeBlocked) return;
-    const selectedBy = userAccount?.username?.trim() || localStorage.getItem("nickname")?.trim() || "onbekend";
+    const selectedBy = userAccount?.username?.trim() || localStorage.getItem("nickname")?.trim() || undefined;
     const normalized = Array.from(new Set(nextSelected.map((id) => id.trim()).filter(Boolean)));
     const primary = normalized[0] ?? activeGenre ?? null;
     if (!primary) return;
@@ -395,7 +403,7 @@ export default function FallbackGenreSelector() {
 
   function applyPreset(preset: SharedFallbackPreset): void {
     if (fallbackChangeBlocked) return;
-    const selectedBy = userAccount?.username?.trim() || localStorage.getItem("nickname")?.trim() || "onbekend";
+    const selectedBy = userAccount?.username?.trim() || localStorage.getItem("nickname")?.trim() || undefined;
     const baseSection = preset.genreIds[0] ? getSectionForGenreId(preset.genreIds[0]) : null;
     if (!baseSection) return;
     const sameSectionIds = preset.genreIds.filter((id) => getSectionForGenreId(id) === baseSection);
@@ -414,7 +422,7 @@ export default function FallbackGenreSelector() {
     const name = presetName.trim();
     const currentSectionSelected = selectedGenreIds.filter((id) => getSectionForGenreId(id) === activeSection);
     if (!name || currentSectionSelected.length === 0) return;
-    const selectedBy = userAccount?.username?.trim() || localStorage.getItem("nickname")?.trim() || "onbekend";
+    const selectedBy = userAccount?.username?.trim() || localStorage.getItem("nickname")?.trim() || undefined;
     getSocket().emit("fallback:preset:save", {
       name,
       genreIds: currentSectionSelected,
@@ -494,7 +502,7 @@ export default function FallbackGenreSelector() {
   return (
     <details
       ref={menuRef}
-      className="group relative z-[200]"
+      className="group relative z-[260]"
       onToggle={(e) => {
         if (fallbackChangeBlocked) {
           e.preventDefault();
@@ -506,6 +514,10 @@ export default function FallbackGenreSelector() {
         }
         const rect = summaryRef.current.getBoundingClientRect();
         const top = Math.max(8, Math.round(rect.bottom + 8));
+        if (isMobile) {
+          setMenuLayout({ top, left: 0, width: window.innerWidth });
+          return;
+        }
         const left = Math.max(8, Math.min(rect.left, window.innerWidth - 320 - 8));
         const width = Math.min(Math.max(rect.width, 320), window.innerWidth - left - 8);
         setMenuLayout({ top, left, width });
@@ -543,7 +555,7 @@ export default function FallbackGenreSelector() {
         <span className="justify-self-end text-gray-400 transition group-open:rotate-180">▾</span>
       </summary>
       <div
-        className="fixed z-[210] overflow-y-auto rounded-md border border-gray-700 bg-gray-900/95 p-1 shadow-lg shadow-black/40 sm:max-h-60"
+        className="fixed z-[270] overflow-y-auto rounded-md border border-gray-700 bg-gray-900/95 p-1 shadow-lg shadow-black/40 sm:max-h-60"
         style={
           menuLayout !== null
             ? { top: menuLayout.top, left: menuLayout.left, width: menuLayout.width, maxHeight: `calc(100dvh - ${menuLayout.top + 8}px)` }
@@ -668,7 +680,7 @@ export default function FallbackGenreSelector() {
                       onClick={() => applyPreset(preset)}
                       className="flex w-full items-center justify-between rounded border border-gray-700 bg-gray-800/70 px-2 py-1 text-left text-[10px] text-gray-200 transition hover:border-violet-500/70 hover:bg-gray-800"
                     >
-                      <span className="truncate">{preset.name}</span>
+                      <span className="truncate">{preset.name}{preset.createdBy ? ` (${preset.createdBy})` : ''}</span>
                       <span className="ml-2 text-gray-500">{preset.genreIds.length}</span>
                     </button>
                   ))

@@ -164,6 +164,34 @@ const sharedPlaylistRandomPlayedKeys = new Map<string, Set<string>>();
 let mixedAutoSourceCursor = 0;
 let localFallbackCursor = 0;
 
+const AUTO_FALLBACK_GIVE_UP_AFTER = 3;
+const failedAutoFallbackQueryCounts = new Map<string, number>();
+const rejectedAutoFallbackQueryKeys = new Set<string>();
+
+function getAutoFallbackQueryKey(sourceKey: string, cycleKey: string): string {
+  return `${sourceKey}:${cycleKey}`;
+}
+
+function isRejectedAutoFallbackQuery(sourceKey: string, cycleKey: string): boolean {
+  return rejectedAutoFallbackQueryKeys.has(getAutoFallbackQueryKey(sourceKey, cycleKey));
+}
+
+function registerAutoFallbackQuerySuccess(sourceKey: string, cycleKey: string): void {
+  const key = getAutoFallbackQueryKey(sourceKey, cycleKey);
+  failedAutoFallbackQueryCounts.delete(key);
+  rejectedAutoFallbackQueryKeys.delete(key);
+}
+
+function registerAutoFallbackQueryFailure(sourceKey: string, cycleKey: string): number {
+  const key = getAutoFallbackQueryKey(sourceKey, cycleKey);
+  const attempts = (failedAutoFallbackQueryCounts.get(key) ?? 0) + 1;
+  failedAutoFallbackQueryCounts.set(key, attempts);
+  if (attempts >= AUTO_FALLBACK_GIVE_UP_AFTER) {
+    rejectedAutoFallbackQueryKeys.add(key);
+  }
+  return attempts;
+}
+
 type AutoSourceItem =
   | { type: 'genre'; key: string; genreId: string }
   | { type: 'liked'; key: string }
@@ -935,8 +963,24 @@ const SEARCH_LIVE_KEYWORDS = [
   'live',
   'live at',
   'live version',
+  'live set',
+  'dj set',
+  'full set',
+  'live mix',
   'concert',
+  'festival',
+  'recorded at',
+  'anthem',
+  'uptempo mix',
+  '@ ',
 ];
+
+function hasLiveSetSignal(haystackNorm: string, expectedTitleNorm: string): boolean {
+  if (hasUnexpectedKeyword(haystackNorm, expectedTitleNorm, SEARCH_LIVE_KEYWORDS)) return true;
+  const liveLocationMatch = haystackNorm.match(/\b(?:in|at)\s+[a-z]{3,}\b/);
+  if (liveLocationMatch && !expectedTitleNorm.includes(liveLocationMatch[0])) return true;
+  return false;
+}
 
 type AutoSearchScoreResult = {
   score: number;
@@ -1135,7 +1179,7 @@ function evaluateSearchResultForAutoSubmission(
     return { score: -100, reasons: ['wrong-version'], isLive: false };
   }
 
-  const isLive = hasUnexpectedKeyword(haystackNorm, wantedTitleNorm, SEARCH_LIVE_KEYWORDS);
+  const isLive = hasLiveSetSignal(haystackNorm, wantedTitleNorm);
   if (strictMetadata && isLive && !allowLiveFallback) {
     return { score: -100, reasons: ['live-version'], isLive: true };
   }
@@ -1178,7 +1222,7 @@ function evaluateSearchResultForAutoSubmission(
   }
 
   if (isLive) {
-    score -= allowLiveFallback ? 6 : 12;
+    score -= allowLiveFallback ? 32 : 46;
     reasons.push(allowLiveFallback ? 'live-fallback' : 'live');
   }
 
@@ -1345,6 +1389,9 @@ async function resolveShortAutoCandidate(
         .filter(({ evaluation }) => evaluation.score > -100 && evaluation.isLive)
         .sort((a, b) => b.evaluation.score - a.evaluation.score);
       selected = liveRanked[0] ?? null;
+      if (selected) {
+        console.warn(`[resolve] Accepted live-set fallback: ${selected.row.title} (${selected.row.url}) for query: ${query}`);
+      }
     }
 
     if (!selected) {
@@ -2044,18 +2091,20 @@ async function prepareSharedAutoFallbackTrack(
       !recentAutoTrackKeys.includes(normalizeAutoKey(entry.recentKey)),
     );
     const pool = fresh.length > 0 ? fresh : candidates;
-    let choice: typeof pool[number] | undefined;
+    const availablePool = pool.filter((entry) => !isRejectedAutoFallbackQuery(expectedSourceKey, entry.cycleKey));
+    if (availablePool.length === 0) return null;
+    let choice: typeof availablePool[number] | undefined;
     if (playbackMode === 'ordered') {
       const cursor = sharedPlaylistOrderCursor.get(playlistId) ?? 0;
-      const index = ((cursor % pool.length) + pool.length) % pool.length;
-      choice = pool[index];
-      sharedPlaylistOrderCursor.set(playlistId, (index + 1) % pool.length);
+      const index = ((cursor % availablePool.length) + availablePool.length) % availablePool.length;
+      choice = availablePool[index];
+      sharedPlaylistOrderCursor.set(playlistId, (index + 1) % availablePool.length);
     } else {
       const playedSet = sharedPlaylistRandomPlayedKeys.get(playlistId) ?? new Set<string>();
-      let randomPool = pool.filter((entry) => !playedSet.has(entry.cycleKey));
+      let randomPool = availablePool.filter((entry) => !playedSet.has(entry.cycleKey));
       if (randomPool.length === 0) {
         playedSet.clear();
-        randomPool = pool;
+        randomPool = availablePool;
       }
       choice = randomPool[Math.floor(Math.random() * randomPool.length)];
       sharedPlaylistRandomPlayedKeys.set(playlistId, playedSet);
@@ -2078,15 +2127,36 @@ async function prepareSharedAutoFallbackTrack(
     }
     if (!isAutoSourceStillActive(expectedSourceKey)) return null;
     if (!selected) {
-      recordMissingTrackLookup({
-        source: 'auto_shared',
-        query: choice.query,
-        strictMetadata: true,
-        expectedArtist: choice.artist,
-        expectedTitle: choice.title,
-      });
-      console.warn(`[auto-download] No short candidate (shared:${playlistId}) for query: ${choice.query}`);
-      return null;
+      const attempts = registerAutoFallbackQueryFailure(expectedSourceKey, choice.cycleKey);
+      if (attempts >= AUTO_FALLBACK_GIVE_UP_AFTER) {
+        const relaxed = await resolveShortAutoCandidate(choice.query, undefined, {
+          expectedArtist: choice.artist ?? null,
+          expectedTitle: choice.title,
+          strictMetadata: false,
+          minDurationSeconds: 60,
+          maxDurationSeconds: AUTO_SHARED_MAX_DURATION_SECONDS * 2,
+        });
+        if (relaxed) {
+          selected = relaxed;
+          registerAutoFallbackQuerySuccess(expectedSourceKey, choice.cycleKey);
+          console.warn(`[auto-download] Warning: using relaxed fallback for ${choice.query} (shared:${playlistId}): ${selected.title ?? selected.url}`);
+        } else {
+          recordMissingTrackLookup({
+            source: 'auto_shared',
+            query: choice.query,
+            strictMetadata: true,
+            expectedArtist: choice.artist,
+            expectedTitle: choice.title,
+          });
+          console.warn(`[auto-download] Giving up after ${AUTO_FALLBACK_GIVE_UP_AFTER} attempts: ${choice.query} (shared:${playlistId})`);
+          return null;
+        }
+      } else {
+        console.warn(`[auto-download] Failed ${attempts}/${AUTO_FALLBACK_GIVE_UP_AFTER}: ${choice.query} (shared:${playlistId})`);
+        return null;
+      }
+    } else {
+      registerAutoFallbackQuerySuccess(expectedSourceKey, choice.cycleKey);
     }
 
     const selectedPseudo: QueueItem = {
@@ -2213,19 +2283,21 @@ async function prepareUserAutoFallbackTrack(
     if (candidates.length === 0) return null;
     const fresh = candidates.filter((entry) => !recentAutoTrackKeys.includes(normalizeAutoKey(entry.recentKey)));
     const pool = fresh.length > 0 ? fresh : candidates;
-    let choice: typeof pool[number] | undefined;
+    const availablePool = pool.filter((entry) => !isRejectedAutoFallbackQuery(expectedSourceKey, entry.cycleKey));
+    if (availablePool.length === 0) return null;
+    let choice: typeof availablePool[number] | undefined;
 
     if (playbackMode === 'ordered') {
       const cursor = sharedPlaylistOrderCursor.get(playlistId) ?? 0;
-      const index = ((cursor % pool.length) + pool.length) % pool.length;
-      choice = pool[index];
-      sharedPlaylistOrderCursor.set(playlistId, (index + 1) % pool.length);
+      const index = ((cursor % availablePool.length) + availablePool.length) % availablePool.length;
+      choice = availablePool[index];
+      sharedPlaylistOrderCursor.set(playlistId, (index + 1) % availablePool.length);
     } else {
       const playedSet = sharedPlaylistRandomPlayedKeys.get(playlistId) ?? new Set<string>();
-      let randomPool = pool.filter((entry) => !playedSet.has(entry.cycleKey));
+      let randomPool = availablePool.filter((entry) => !playedSet.has(entry.cycleKey));
       if (randomPool.length === 0) {
         playedSet.clear();
-        randomPool = pool;
+        randomPool = availablePool;
       }
       choice = randomPool[Math.floor(Math.random() * randomPool.length)];
       sharedPlaylistRandomPlayedKeys.set(playlistId, playedSet);
@@ -2246,7 +2318,32 @@ async function prepareUserAutoFallbackTrack(
       if (selected) break;
     }
     if (!isAutoSourceStillActive(expectedSourceKey)) return null;
-    if (!selected) return null;
+    if (!selected) {
+      const attempts = registerAutoFallbackQueryFailure(expectedSourceKey, choice.cycleKey);
+      if (attempts >= AUTO_FALLBACK_GIVE_UP_AFTER) {
+        const relaxed = await resolveShortAutoCandidate(choice.query, undefined, {
+          expectedArtist: choice.artist ?? null,
+          expectedTitle: choice.title,
+          strictMetadata: false,
+          minDurationSeconds: 60,
+          maxDurationSeconds: AUTO_SHARED_MAX_DURATION_SECONDS * 2,
+        });
+        if (relaxed) {
+          selected = relaxed;
+          registerAutoFallbackQuerySuccess(expectedSourceKey, choice.cycleKey);
+          console.warn(`[auto-download] Warning: using relaxed fallback for ${choice.query} (user:${playlistId}): ${selected.title ?? selected.url}`);
+        } else {
+          rejectedAutoFallbackQueryKeys.add(getAutoFallbackQueryKey(expectedSourceKey, choice.cycleKey));
+          console.warn(`[auto-download] Giving up after ${AUTO_FALLBACK_GIVE_UP_AFTER} attempts: ${choice.query} (user:${playlistId})`);
+          return null;
+        }
+      } else {
+        console.warn(`[auto-download] Failed ${attempts}/${AUTO_FALLBACK_GIVE_UP_AFTER}: ${choice.query} (user:${playlistId})`);
+        return null;
+      }
+    } else {
+      registerAutoFallbackQuerySuccess(expectedSourceKey, choice.cycleKey);
+    }
 
     const selectedPseudo: QueueItem = {
       ...pseudo,
@@ -2831,13 +2928,20 @@ async function shouldForceDualMono(audioFile: string): Promise<boolean> {
 
 function isProtectedPlaybackFile(filePath: string): boolean {
   if (!filePath) return false;
-  if (activePlaybackFile === filePath) return true;
-  if (nextReady?.audioFile === filePath) return true;
-  if (autoReadyBuffer.some((entry) => entry.audioFile === filePath)) return true;
-  if (preloadBuffer.some((entry) => entry.audioFile === filePath)) return true;
-  if (pendingSwap?.ready.audioFile === filePath) return true;
-  if (completedSwap?.ready.audioFile === filePath) return true;
+  const normalized = normalizePlaybackPath(filePath);
+  if (activePlaybackFile && normalizePlaybackPath(activePlaybackFile) === normalized) return true;
+  if (nextReady?.audioFile && normalizePlaybackPath(nextReady.audioFile) === normalized) return true;
+  if (autoReadyBuffer.some((entry) => normalizePlaybackPath(entry.audioFile) === normalized)) return true;
+  if (preloadBuffer.some((entry) => normalizePlaybackPath(entry.audioFile) === normalized)) return true;
+  if (pendingSwap?.ready.audioFile && normalizePlaybackPath(pendingSwap.ready.audioFile) === normalized) return true;
+  if (completedSwap?.ready.audioFile && normalizePlaybackPath(completedSwap.ready.audioFile) === normalized) return true;
   return false;
+}
+
+const MIN_CLEANUP_AGE_MS = 5_000;
+
+function normalizePlaybackPath(filePath: string): string {
+  return path.normalize(filePath);
 }
 
 function cleanupFileIfSafe(filePath: string, reason: string): void {
@@ -2845,6 +2949,15 @@ function cleanupFileIfSafe(filePath: string, reason: string): void {
   if (isProtectedPlaybackFile(filePath)) {
     console.warn(`[cleanup] Skipped protected file (${reason}): ${filePath}`);
     return;
+  }
+  try {
+    const stat = fs.statSync(filePath);
+    if (Date.now() - stat.mtimeMs < MIN_CLEANUP_AGE_MS) {
+      console.warn(`[cleanup] Skipped recently created file (${reason}): ${filePath}`);
+      return;
+    }
+  } catch {
+    // If the file is already gone, let cleanupFile handle the missing path.
   }
   cleanupFile(filePath);
 }
@@ -4703,12 +4816,17 @@ function downloadAudio(item: QueueItem, cacheDir: string): Promise<string> {
                 return;
               }
 
-              const files = fs.readdirSync(cacheDir)
-                .filter((f) => f.startsWith(uniqueTag))
+              const rawFiles = fs.readdirSync(cacheDir)
+                .filter((f) => f.startsWith(uniqueTag));
+              const finalFiles = rawFiles
+                .filter((f) => !f.endsWith('.part') && !f.endsWith('.tmp'));
+              const filesToCheck = finalFiles.length > 0 ? finalFiles : rawFiles;
+              const files = filesToCheck
                 .map((f) => path.join(cacheDir, f))
                 .filter((f) => {
                   try {
-                    return fs.existsSync(f) && fs.statSync(f).size > 0;
+                    const stat = fs.statSync(f);
+                    return stat.isFile() && stat.size > 0;
                   } catch {
                     return false;
                   }

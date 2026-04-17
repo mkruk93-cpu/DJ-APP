@@ -111,3 +111,12 @@ export function getFallbackPreset(id: string): FallbackPresetSummary | null {
   const found = store.presets.find((entry) => entry.id === id.trim());
   return found ? toSummary(found) : null;
 }
+
+export function deleteFallbackPreset(id: string): boolean {
+  const store = readStore();
+  const index = store.presets.findIndex((entry) => entry.id === id.trim());
+  if (index === -1) return false;
+  store.presets.splice(index, 1);
+  writeStore(store);
+  return true;
+}

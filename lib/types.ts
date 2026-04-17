@@ -122,6 +122,7 @@ export interface RadioState {
   activeFallbackGenres: string[];
   activeFallbackGenreBy: string | null;
   activeFallbackSharedMode: 'random' | 'ordered';
+  activeFallbackPresetName: string | null;
   mode: Mode;
   modeSettings: ModeSettings;
   listenerCount: number;

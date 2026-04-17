@@ -11,6 +11,7 @@ interface RadioStore extends RadioState {
   setActiveFallbackGenres: (genreIds: string[]) => void;
   setActiveFallbackGenreBy: (nickname: string | null) => void;
   setActiveFallbackSharedMode: (mode: "random" | "ordered") => void;
+  setActiveFallbackPresetName: (presetName: string | null) => void;
   setMode: (mode: Mode, settings: ModeSettings) => void;
   setModeSettings: (settings: ModeSettings) => void;
   setListenerCount: (count: number) => void;
@@ -47,6 +48,7 @@ export const useRadioStore = create<RadioStore>((set) => ({
   activeFallbackGenres: [],
   activeFallbackGenreBy: null,
   activeFallbackSharedMode: "random",
+  activeFallbackPresetName: null,
   mode: 'radio',
   modeSettings: {
     democracy_threshold: 51,
@@ -94,6 +96,7 @@ export const useRadioStore = create<RadioStore>((set) => ({
   setActiveFallbackGenres: (activeFallbackGenres) => set({ activeFallbackGenres }),
   setActiveFallbackGenreBy: (activeFallbackGenreBy) => set({ activeFallbackGenreBy }),
   setActiveFallbackSharedMode: (activeFallbackSharedMode) => set({ activeFallbackSharedMode }),
+  setActiveFallbackPresetName: (activeFallbackPresetName) => set({ activeFallbackPresetName }),
   setMode: (mode, modeSettings) => set({ mode, modeSettings }),
   setModeSettings: (modeSettings) => set({ modeSettings }),
   setListenerCount: (listenerCount) => set({ listenerCount }),

@@ -1109,12 +1109,14 @@ export default function StreamPage() {
       genres: Array<{ id: string; label: string; trackCount: number }>;
       lockAutoplayFallback?: boolean;
       hideLocalDiscovery?: boolean;
+      activePresetName?: string | null;
     }) => {
       store.getState().setFallbackGenres(data.genres ?? []);
       store.getState().setActiveFallbackGenre(data.activeGenreId ?? null);
       store.getState().setActiveFallbackGenres(Array.isArray(data.activeGenreIds) ? data.activeGenreIds : []);
       store.getState().setActiveFallbackGenreBy(data.selectedBy ?? null);
       store.getState().setActiveFallbackSharedMode(data.sharedPlaybackMode ?? "random");
+      store.getState().setActiveFallbackPresetName(data.activePresetName ?? null);
       if (typeof data.lockAutoplayFallback === "boolean") {
         store.getState().setLockAutoplayFallback(data.lockAutoplayFallback);
       }

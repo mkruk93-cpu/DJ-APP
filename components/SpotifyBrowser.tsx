@@ -75,7 +75,17 @@ type View = "playlists" | "tracks" | "importedTracks" | "sharedTracks";
 type TrackSource = "liked" | "playlist" | null;
 type PlaylistSortMode = "name_asc" | "name_desc" | "tracks_desc" | "newest";
 type PlaylistViewMode = "grouped" | "all";
-type PersonalLibraryTab = "playlists" | "artists" | "create" | "import";
+type PersonalLibraryTab = "playlists" | "artists" | "create" | "import" | "presets";
+
+type FallbackPreset = {
+  id: string;
+  name: string;
+  genreIds: string[];
+  sharedPlaybackMode: "random" | "ordered";
+  createdBy: string | null;
+  createdAt: string;
+};
+
 const IMPORTED_TRACK_PAGE_SIZE = 120;
 const PLAYLIST_GENRE_GROUPS = [
   "Hard Dance",
@@ -104,6 +114,14 @@ function keepFieldVisibleOnMobile(target: HTMLElement): void {
 function normalizeBucketLabel(value: string | null | undefined, fallback: string): string {
   const safe = (value ?? "").trim();
   return safe || fallback;
+}
+
+function normalizePresetCreator(value: string | null | undefined): string | null {
+  const safe = (value ?? "").trim();
+  if (!safe) return null;
+  const lower = safe.toLowerCase();
+  if (lower === 'onbekend' || lower === 'unknown') return null;
+  return safe.slice(0, 40);
 }
 
 function groupPlaylistsByGenre<T extends { name: string; genre_group: string | null; subgenre: string | null }>(
@@ -205,6 +223,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
   const [favoriteArtistsLoading, setFavoriteArtistsLoading] = useState(false);
   const [artistLibraryFilter, setArtistLibraryFilter] = useState("");
   const [personalLibraryTab, setPersonalLibraryTab] = useState<PersonalLibraryTab>("playlists");
+  const [personalPresets, setPersonalPresets] = useState<FallbackPreset[]>([]);
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [importFiles, setImportFiles] = useState<File[]>([]);
@@ -217,6 +236,30 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
   const [createPlaylistBusy, setCreatePlaylistBusy] = useState(false);
   const [createPlaylistError, setCreatePlaylistError] = useState<string | null>(null);
   const [createPlaylistName, setCreatePlaylistName] = useState("");
+  const [appliedPresetId, setAppliedPresetId] = useState<string | null>(null);
+
+  const currentNickname = useMemo(() => {
+    if (typeof window === "undefined") return null;
+    const nickname = userAccount?.username?.trim() || localStorage.getItem("nickname")?.trim() || "";
+    return normalizePresetCreator(nickname);
+  }, [userAccount?.username]);
+  const filteredPersonalPresets = useMemo(() => {
+    if (!currentNickname) return [];
+    return personalPresets.filter((preset) => normalizePresetCreator(preset.createdBy) === currentNickname);
+  }, [personalPresets, currentNickname]);
+
+  useEffect(() => {
+    const socket = getSocket();
+    const onPresetUpdate = (data: { presets?: FallbackPreset[] }) => {
+      setPersonalPresets(Array.isArray(data?.presets) ? data.presets : []);
+    };
+    socket.on("fallback:presets:update", onPresetUpdate);
+    socket.emit("fallback:presets:get");
+    return () => {
+      socket.off("fallback:presets:update", onPresetUpdate);
+    };
+  }, []);
+
   const [createPlaylistGenreGroup, setCreatePlaylistGenreGroup] = useState("");
   const [savedPlaylists, setSavedPlaylists] = useState<UserPlaylist[]>([]);
   const [savedPlaylistsLoading, setSavedPlaylistsLoading] = useState(false);
@@ -252,6 +295,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
   const [sharedTracksLoadingMore, setSharedTracksLoadingMore] = useState(false);
   const [playlistCoverById, setPlaylistCoverById] = useState<Record<string, string>>({});
   const [trackContextMenu, setTrackContextMenu] = useState<{ x: number; y: number; track: UserPlaylistTrack } | null>(null);
+  const [trackContextStyle, setTrackContextStyle] = useState<{ left: number; top: number } | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const trackHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -354,6 +398,23 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
 
   function openTrackContextMenu(track: UserPlaylistTrack, x: number, y: number) {
     if (!selectedSavedPlaylist?.viewer_can_edit) return;
+    if (typeof window !== "undefined") {
+      const menuWidth = 220;
+      const menuHeight = 88;
+      const viewportPadding = 8;
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      const left = Math.min(
+        Math.max(viewportPadding, x),
+        Math.max(viewportPadding, viewportWidth - menuWidth - viewportPadding),
+      );
+      const top = y + menuHeight + viewportPadding > viewportHeight
+        ? Math.max(viewportPadding, y - menuHeight - viewportPadding)
+        : Math.max(viewportPadding, y);
+      setTrackContextStyle({ left, top });
+    } else {
+      setTrackContextStyle(null);
+    }
     setTrackContextMenu({ x, y, track });
   }
 
@@ -372,7 +433,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
       alert("Autoplay fallback is vergrendeld. Alleen admin kan dit aanpassen.");
       return;
     }
-    const selectedBy = (typeof window !== "undefined" ? localStorage.getItem("nickname") : null)?.trim() || "onbekend";
+    const selectedBy = (typeof window !== "undefined" ? localStorage.getItem("nickname") : null)?.trim() || undefined;
     getSocket().emit("fallback:genre:set", {
       genreId: `user:${playlist.id}`,
       selectedBy,
@@ -1641,12 +1702,16 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
               <span className="rounded-full border border-white/8 bg-white/[0.03] px-2.5 py-1">
                 {personalTrackCount} tracks
               </span>
+              <span className="rounded-full border border-white/8 bg-white/[0.03] px-2.5 py-1">
+                {filteredPersonalPresets.length} presets
+              </span>
             </div>
 
-            <div className="grid grid-cols-2 gap-1 sm:grid-cols-4">
+            <div className="grid grid-cols-3 gap-1 sm:grid-cols-5">
               {[
                 { key: "playlists", label: "Playlists" },
                 { key: "artists", label: "Artiesten" },
+                { key: "presets", label: "Presets" },
                 { key: "create", label: "Maken" },
                 { key: "import", label: "Import" },
               ].map((tab) => {
@@ -1656,13 +1721,13 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
                     key={tab.key}
                     type="button"
                     onClick={() => setPersonalLibraryTab(tab.key as PersonalLibraryTab)}
-                    className={`rounded-md border px-2.5 py-1.5 text-left text-[11px] transition ${
+                    className={`rounded-md border px-2 py-1 text-left text-[10px] font-semibold transition ${
                       isActive
                         ? "border-violet-500/50 bg-violet-500/15 text-violet-100"
                         : "border-gray-700 bg-gray-800/70 text-gray-300 hover:border-violet-500/40 hover:bg-gray-800"
                     }`}
                   >
-                    <span className="block font-semibold">{tab.label}</span>
+                    <span className="block truncate">{tab.label}</span>
                   </button>
                 );
               })}
@@ -1737,6 +1802,75 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
                     )}
                     <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-white">{artist.name}</span>
                   </button>
+                ))}
+              </div>
+            )}
+          </div>
+          )}
+
+          {showPlaylistSections && personalLibraryTab === "presets" && (
+          <div className="mb-2 rounded-md border border-gray-700 bg-gray-900/80 p-2.5">
+            <div className="mb-3 flex items-center justify-between">
+              <p className="text-[11px] font-semibold text-white">Autofallback presets</p>
+              <button
+                type="button"
+                onClick={() => { getSocket().emit("fallback:presets:get"); }}
+                className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] font-semibold text-gray-300 transition hover:border-white/15 hover:bg-white/[0.05]"
+              >
+                Ververs
+              </button>
+            </div>
+            {filteredPersonalPresets.length === 0 ? (
+              <p className="text-[10px] text-gray-400">Nog geen presets beschikbaar.</p>
+            ) : (
+              <div className="grid gap-2">
+                {filteredPersonalPresets.map((preset) => (
+                  <div
+                    key={preset.id}
+                    className={`group flex w-full items-center justify-between rounded-md border bg-gray-800/70 px-3 py-2 text-[11px] text-white transition hover:border-violet-500/40 hover:bg-gray-800 ${
+                      appliedPresetId === preset.id
+                        ? "border-green-500/60"
+                        : "border-gray-700"
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAppliedPresetId(preset.id);
+                        setTimeout(() => setAppliedPresetId(null), 2000);
+                        getSocket().emit("fallback:preset:apply", {
+                          id: preset.id,
+                          selectedBy: currentNickname || undefined,
+                          token: getRadioToken(),
+                        });
+                      }}
+                      className="min-w-0 flex-1 truncate text-left font-semibold text-white"
+                    >
+                      {preset.name}
+                    </button>
+                    <div className="ml-3 flex items-center gap-2">
+                      {appliedPresetId === preset.id && (
+                        <span className="text-[10px] font-semibold text-green-400">
+                          Autoplay Preset Ingesteld
+                        </span>
+                      )}
+                      <span className="shrink-0 text-[10px] text-gray-400">{preset.genreIds.length} bronnen</span>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          getSocket().emit("fallback:preset:delete", {
+                            id: preset.id,
+                            selectedBy: currentNickname || undefined,
+                            token: getRadioToken(),
+                          });
+                        }}
+                        className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-1 text-[10px] font-semibold text-gray-300 transition hover:border-white/15 hover:bg-white/[0.05]"
+                      >
+                        Verwijder
+                      </button>
+                    </div>
+                  </div>
                 ))}
               </div>
             )}
@@ -2526,7 +2660,10 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
       {trackContextMenu && selectedSavedPlaylist?.viewer_can_edit && (
         <div
           className="fixed z-[90] overflow-hidden rounded-lg border border-red-800/60 bg-gray-950 shadow-2xl"
-          style={{ left: trackContextMenu.x, top: trackContextMenu.y }}
+          style={{
+            left: trackContextStyle?.left ?? trackContextMenu.x,
+            top: trackContextStyle?.top ?? trackContextMenu.y,
+          }}
           onClick={(e) => e.stopPropagation()}
         >
           <button
@@ -2552,7 +2689,16 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
       {selectionMode && selectedSavedPlaylist?.viewer_can_edit && bulkMenuPos && (
         <div
           className="fixed z-[95] w-[min(92vw,360px)] rounded-lg border border-violet-700/50 bg-gray-950/95 p-2 shadow-2xl"
-          style={{ left: Math.max(8, bulkMenuPos.x - 40), top: Math.max(8, bulkMenuPos.y + 8) }}
+          style={{
+            left: Math.max(
+              8,
+              Math.min(
+                bulkMenuPos.x - 40,
+                window.innerWidth - Math.min(window.innerWidth * 0.92, 360) - 8,
+              ),
+            ),
+            top: Math.max(8, bulkMenuPos.y + 8),
+          }}
           onClick={(e) => e.stopPropagation()}
         >
           <div className="mb-2 flex items-center justify-between">

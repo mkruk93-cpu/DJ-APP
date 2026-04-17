@@ -399,7 +399,8 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   }
   useEffect(() => {
     if (typeof window === "undefined") return;
-    nicknameRef.current = (localStorage.getItem("nickname") ?? "Gast").trim() || "Gast";
+    const storedNickname = localStorage.getItem("nickname");
+    nicknameRef.current = storedNickname ? storedNickname.trim() : "";
     const storedVolume = loadStoredVolume();
     if (storedVolume !== null) {
       setVolume(storedVolume);
@@ -444,8 +445,8 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     setPlayerPlaying(playing);
 
     const socket = getSocket();
-    const isListening = playing && volume > 0;
-    if (socket && socket.connected) {
+    const isListening = playing && volume > 0 && nicknameRef.current.trim();
+    if (socket && socket.connected && nicknameRef.current.trim()) {
       socket.emit("listener:state", {
         nickname: nicknameRef.current,
         listening: isListening,
@@ -487,19 +488,23 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   useEffect(() => {
     const socket = getSocket();
     function onSocketConnect() {
-      const isListening = playingRef.current && volume > 0;
-      socket.emit("listener:state", {
-        nickname: nicknameRef.current,
-        listening: isListening,
-      });
+      const isListening = playingRef.current && volume > 0 && nicknameRef.current.trim();
+      if (nicknameRef.current.trim()) {
+        socket.emit("listener:state", {
+          nickname: nicknameRef.current,
+          listening: isListening,
+        });
+      }
     }
     socket.on("connect", onSocketConnect);
     return () => {
       socket.off("connect", onSocketConnect);
-      socket.emit("listener:state", {
-        nickname: nicknameRef.current,
-        listening: false,
-      });
+      if (nicknameRef.current.trim()) {
+        socket.emit("listener:state", {
+          nickname: nicknameRef.current,
+          listening: false,
+        });
+      }
     };
   }, [volume]);
 

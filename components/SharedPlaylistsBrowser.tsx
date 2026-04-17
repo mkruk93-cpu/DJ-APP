@@ -476,7 +476,7 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
       setStatus("Autoplay fallback is vergrendeld (alleen admin kan dit wijzigen).");
       return;
     }
-    const selectedBy = (typeof window !== "undefined" ? localStorage.getItem("nickname") : null)?.trim() || "onbekend";
+    const selectedBy = (typeof window !== "undefined" ? localStorage.getItem("nickname") : null)?.trim() || undefined;
     getSocket().emit("fallback:genre:set", {
       genreId: playlist.kind === "user_public" ? playlist.id : `shared:${playlist.id}`,
       selectedBy,
@@ -741,10 +741,12 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                                   {renderPlaylistKindLabel(playlist)}
                                 </p>
                               </div>
-                              <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-300">
-                                {playlist.track_count}
-                              </span>
-                              {renderPlaylistOptions(playlist)}
+                              <div className="ml-auto flex shrink-0 items-center gap-1">
+                                <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-300">
+                                  {playlist.track_count}
+                                </span>
+                                {renderPlaylistOptions(playlist)}
+                              </div>
                             </div>
                             {editDraft?.id === playlist.id && (
                               <div className="rounded border border-violet-800/60 bg-violet-950/25 p-2 text-[10px] text-gray-200">
@@ -832,10 +834,12 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                       {renderPlaylistKindLabel(playlist)}
                     </p>
                   </div>
-                  <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-300">
-                    {playlist.track_count}
-                  </span>
-                  {renderPlaylistOptions(playlist)}
+                  <div className="ml-auto flex shrink-0 items-center gap-1">
+                    <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-300">
+                      {playlist.track_count}
+                    </span>
+                    {renderPlaylistOptions(playlist)}
+                  </div>
                 </div>
                 {editDraft?.id === playlist.id && (
                   <div className="rounded border border-violet-800/60 bg-violet-950/25 p-2 text-[10px] text-gray-200">
