@@ -310,6 +310,8 @@ export default function SharedPlaylistManager() {
                       {(playlist.genre_group || playlist.subgenre)
                         ? ` · ${[playlist.genre_group, playlist.subgenre].filter(Boolean).join(" / ")}`
                         : ""}
+                      {playlist.kind === 'user_public' ? ' · Persoonlijk publiek' : ' · Publiek gedeeld'}
+                      {playlist.owner_username ? ` · door ${playlist.owner_username}` : ''}
                     </p>
                     </div>
                   </div>

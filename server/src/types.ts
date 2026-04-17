@@ -54,6 +54,7 @@ export interface FallbackGenre {
   genre_group?: string | null;
   subgenre?: string | null;
   related_parent_playlist_id?: string | null;
+  owner_username?: string | null;
 }
 
 export interface ModeSettings {

@@ -39,6 +39,7 @@ import {
   getUserPlaylistTracksPage as getStoredUserPlaylistTracksPage,
   deleteUserPlaylist as deleteStoredUserPlaylist,
   addTrackToUserPlaylist,
+  appendTracksToUserPlaylist,
   removeTrackFromUserPlaylist,
   backfillUserPlaylistTrackArtwork,
   getOrCreateLikedTracksPlaylist,
@@ -51,7 +52,10 @@ import {
   listFavoriteArtists,
   addFavoriteArtist,
   removeFavoriteArtist,
+  updateFavoriteArtistMetadata,
+  followPublicPlaylist,
   isFavoriteArtist,
+  deletePublicUserPlaylistById,
   type PlaylistGenreMeta as UserPlaylistGenreMeta,
 } from './services/userPlaylistStore.js';
 import {
@@ -876,6 +880,15 @@ function parseArtistTitle(input: string): { artist: string | null; title: string
   return { artist: null, title: trimmed };
 }
 
+function normalizeMetadataText(input: string | null | undefined): string | null {
+  const raw = String(input ?? '')
+    .replace(/\uFFFD+/g, ' ')
+    .replace(/[?]{2,}/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return raw || null;
+}
+
 function normalizeSearchText(input: string | null | undefined): string {
   const confusableMap: Record<string, string> = {
     '\u056c': 'l', // Armenian small letter used in spoofed titles, e.g. S?UT
@@ -1517,21 +1530,23 @@ async function getCombinedFallbackGenres(): Promise<FallbackGenre[]> {
   }
   const sharedGenres: FallbackGenre[] = sharedPlaylists.map((playlist) => ({
     id: toSharedFallbackPlaylistId(playlist.id),
-    label: `Playlist · ${playlist.name}`,
+    label: `Playlist · ${playlist.name} (${playlist.owner_username ?? 'onbekend'})`,
     trackCount: playlist.track_count,
     genre_group: playlist.genre_group ?? null,
     subgenre: playlist.subgenre ?? null,
     related_parent_playlist_id: playlist.related_parent_playlist_id ?? null,
+    owner_username: playlist.owner_username ?? null,
   }));
   const publicUserGenres: FallbackGenre[] = publicUserPlaylists
     .filter((playlist) => playlist.is_public_fallback)
     .map((playlist) => ({
-      id: playlist.id,
-      label: `Playlist · ${playlist.name} (${playlist.owner_username})`,
+      id: toSharedFallbackPlaylistId(playlist.id),
+      label: `Playlist · ${playlist.name} (${playlist.owner_username ?? 'onbekend'})`,
       trackCount: playlist.track_count ?? 0,
       genre_group: playlist.genre_group ?? null,
       subgenre: playlist.subgenre ?? null,
       related_parent_playlist_id: playlist.related_parent_playlist_id ?? null,
+      owner_username: playlist.owner_username ?? null,
     }));
   return [...localGenres, likedGenre, ...autoGenres, ...sharedGenres, ...publicUserGenres];
 }
@@ -1546,7 +1561,7 @@ function getEffectiveListenerCount(): number {
   if (activeWebListeners.size > 0) return activeWebListeners.size;
   const streamListeners = streamHub.listenerCount;
   if (streamListeners > 0) return streamListeners;
-  return io.engine.clientsCount;
+  return 0;
 }
 
 function clampInt(value: number, min: number, max: number): number {
@@ -2949,6 +2964,44 @@ app.post('/api/user-playlists/:id/tracks', async (req, res) => {
   }
 });
 
+app.post('/api/user-playlists/:id/import', upload.any(), async (req, res) => {
+  const identity = getUserIdentityFromRequest(req);
+  if (!identity) {
+    return res.status(400).json({ error: 'nickname en device_id zijn verplicht' });
+  }
+  const playlistId = String(req.params.id ?? '').trim();
+  if (!playlistId) {
+    return res.status(400).json({ error: 'Playlist id ontbreekt' });
+  }
+  const uploaded = Array.isArray(req.files) ? req.files : [];
+  if (uploaded.length === 0) {
+    return res.status(400).json({ error: 'Bestand ontbreekt (field: file/files)' });
+  }
+  const onlyCsv = uploaded.every((file) => extname(file.originalname ?? '').toLowerCase() === '.csv');
+  if (!onlyCsv) {
+    return res.status(400).json({ error: 'Alleen .csv bestanden zijn toegestaan' });
+  }
+  try {
+    const merged = mergeExportifyTracksFromUploads(uploaded);
+    if (merged.length === 0 || merged[0].tracks.length === 0) {
+      return res.status(400).json({ error: 'Geen geldige tracks gevonden in upload' });
+    }
+    const trackInputs = merged[0].tracks.map((track, index) => ({
+      title: track.title.slice(0, 300),
+      artist: track.artist.slice(0, 300),
+      album: track.album?.slice(0, 300) ?? null,
+      spotify_url: track.spotifyUrl?.slice(0, 600) ?? null,
+      position: index + 1,
+    }));
+    const result = await appendTracksToUserPlaylist(identity, playlistId, trackInputs);
+    if (!result.success) return res.status(404).json({ error: 'Playlist niet gevonden of je bent geen eigenaar' });
+    return res.json({ ok: true, playlistId, added: result.added, total: result.total });
+  } catch (err) {
+    console.error('[rest] /api/user-playlists/:id/import POST error:', err);
+    return res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
 app.post('/api/user-playlists/:id/tracks/artwork-backfill', async (req, res) => {
   const identity = getUserIdentityFromRequest(req);
   if (!identity) {
@@ -3027,6 +3080,37 @@ app.post('/api/favorite-artists', async (req, res) => {
   } catch (err) {
     console.error('[rest] /api/favorite-artists POST error:', err);
     res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
+app.patch('/api/favorite-artists/:mbid', async (req, res) => {
+  const identity = getUserIdentityFromRequest(req);
+  if (!identity) {
+    return res.status(400).json({ error: 'nickname en device_id zijn verplicht' });
+  }
+  const mbid = String(req.params.mbid ?? '').trim();
+  if (!mbid) {
+    return res.status(400).json({ error: 'mbid ontbreekt' });
+  }
+  const imageRaw = req.body && typeof req.body === 'object' && Object.prototype.hasOwnProperty.call(req.body, 'image_url')
+    ? String((req.body as Record<string, unknown>).image_url ?? '').trim()
+    : null;
+  const countryRaw = req.body && typeof req.body === 'object' && Object.prototype.hasOwnProperty.call(req.body, 'country')
+    ? String((req.body as Record<string, unknown>).country ?? '').trim()
+    : null;
+  if (imageRaw === null && countryRaw === null) {
+    return res.status(400).json({ error: 'Geen metadata update meegegeven' });
+  }
+  try {
+    const updated = await updateFavoriteArtistMetadata(identity, mbid, {
+      image_url: imageRaw ? imageRaw : null,
+      country: countryRaw ? countryRaw : null,
+    });
+    if (!updated) return res.status(404).json({ error: 'Favoriete artiest niet gevonden' });
+    return res.json(updated);
+  } catch (err) {
+    console.error('[rest] /api/favorite-artists/:mbid PATCH error:', err);
+    return res.status(500).json({ error: getErrorMessage(err) });
   }
 });
 
@@ -3126,6 +3210,25 @@ app.patch('/api/user-playlists/:id', async (req, res) => {
     return res.json({ ok: true, playlist: updated });
   } catch (err) {
     console.error('[rest] /api/user-playlists/:id PATCH error:', err);
+    return res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
+app.post('/api/user-playlists/:id/follow-public', async (req, res) => {
+  const identity = getUserIdentityFromRequest(req);
+  if (!identity) {
+    return res.status(400).json({ error: 'nickname en device_id zijn verplicht' });
+  }
+  const playlistId = String(req.params.id ?? '').trim();
+  if (!playlistId) {
+    return res.status(400).json({ error: 'Playlist id ontbreekt' });
+  }
+  try {
+    const followed = await followPublicPlaylist(identity, playlistId);
+    if (!followed) return res.status(404).json({ error: 'Publieke playlist niet gevonden' });
+    return res.json({ ok: true, playlist: followed });
+  } catch (err) {
+    console.error('[rest] /api/user-playlists/:id/follow-public POST error:', err);
     return res.status(500).json({ error: getErrorMessage(err) });
   }
 });
@@ -3609,7 +3712,13 @@ app.delete('/api/shared-playlists/:id', async (req, res) => {
     return res.status(400).json({ error: 'Playlist id ontbreekt' });
   }
   try {
-    const deleted = await deleteSharedPlaylist(playlistId);
+    let deleted = false;
+    if (playlistId.startsWith('user:')) {
+      const publicPlaylistId = playlistId.slice(5);
+      deleted = await deletePublicUserPlaylistById(publicPlaylistId);
+    } else {
+      deleted = await deleteSharedPlaylist(playlistId);
+    }
     if (!deleted) return res.status(404).json({ error: 'Playlist niet gevonden' });
     const usage = await getSharedStoreUsage();
     return res.json({ ok: true, usage });
@@ -5306,6 +5415,7 @@ async function addQueueItemFromSubmission(
         sourceType === 'spotify'
         || sourceType === 'user_playlist'
         || sourceType === 'shared_playlist'
+        || sourceType === 'public_playlist'
         || sourceType === 'search';
       const manualCandidates: SubmissionManualCandidate[] | null = canPromptManualPick
         ? rankedStrict
@@ -5409,7 +5519,7 @@ async function addQueueItemFromSubmission(
     thumbnail: thumbForQueue ?? null,
     duration: info.duration ?? null,
   };
-  const resolvedArtist = resolved.artist;
+  const resolvedArtistFinal = resolved.artist;
   if (options?.resolveOnly) {
     return {
       item: null,
@@ -5419,7 +5529,7 @@ async function addQueueItemFromSubmission(
       selectionMeta: null,
     };
   }
-  const item = await addToQueue(sb, url, addedBy, mergedTitle, resolvedArtist, thumbForQueue);
+  const item = await addToQueue(sb, url, addedBy, mergedTitle, resolvedArtistFinal, thumbForQueue);
   const sourceTypeNorm = (submission.source_type ?? '').trim().toLowerCase();
   const sourcePlaylistNorm = (submission.source_playlist ?? '').trim() || null;
   const sourceGenreNorm = (submission.source_genre ?? '').trim() || null;
@@ -5580,7 +5690,7 @@ io.on('connection', (socket) => {
         }
       }
 
-      const { item, error, manualCandidates, selectionMeta } = await addQueueItemFromSubmission(submission, addedBy);
+      const { item, error, manualCandidates, resolved, selectionMeta } = await addQueueItemFromSubmission(submission, addedBy);
       if (!item) {
         if (manualCandidates && manualCandidates.length > 0) {
           ack?.({

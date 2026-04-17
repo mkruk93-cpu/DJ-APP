@@ -236,8 +236,9 @@ export default function StreamPage() {
   const isStreamUnavailable = communityUiActive ? false : (!streamOnline && !pausedForIdle);
   const tabsAllowed = communityUiActive ? true : !isStreamUnavailable;
   const showRequests = radioMode === "dj";
-  const showRadioPanel = communityUiActive && radioMode !== "dj";
-  const showQueuePanel = communityUiActive && radioMode !== "dj";
+  const hideQueueUiForRadioUsers = radioMode === "radio" && !isAdminUser;
+  const showRadioPanel = communityUiActive && radioMode !== "dj" && !hideQueueUiForRadioUsers;
+  const showQueuePanel = communityUiActive && radioMode !== "dj" && !hideQueueUiForRadioUsers;
   const showRequestedPanel = communityUiActive && radioMode === "dj";
   const voteState = useRadioStore((s) => s.voteState);
   const syncedCurrentTrack = useSyncedTrack(radioMode === "dj" ? null : radioTrack);
@@ -676,12 +677,19 @@ export default function StreamPage() {
         return;
       }
 
-      // If no overlays, handle exit confirmation
+      // If no overlays, first navigate back to default in-app screen.
+      if (activeTabRef.current !== "chat") {
+        setActiveTab("chat");
+        setChatBadge(false);
+        return;
+      }
+
+      // If no overlays and we're on root tab, handle exit confirmation.
       const now = Date.now();
       const lastPress = parseInt(sessionStorage.getItem("backPressTime") || "0", 10);
       
       if (now - lastPress < 2000) {
-        // Double press - exit app
+        // Double press on root screen - exit app
         sessionStorage.removeItem("backPressTime");
         showToast("Tot ziens!", 2000);
         // Use history to clear the page or minimize
@@ -692,9 +700,9 @@ export default function StreamPage() {
           window.history.go(-window.history.length);
         }
       } else {
-        // First press - show confirmation
+        // First press on root screen - show confirmation
         sessionStorage.setItem("backPressTime", String(now));
-        showToast("Druk nogmaals op back om af te sluiten", 2500);
+        showToast("Nogmaals back sluit de app", 2500);
       }
     };
 
@@ -716,7 +724,7 @@ export default function StreamPage() {
       closeAdminOverlay();
       closeMobileMenu();
     };
-  }, []);
+  }, [setChatBadge]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1562,7 +1570,7 @@ export default function StreamPage() {
       </div>
       
       {/* Admin Notification Toast */}
-      <AdminNotificationToast onApprovalComplete={handleApprovalComplete} />
+      {isAdminUser && <AdminNotificationToast onApprovalComplete={handleApprovalComplete} />}
       {/* Header */}
       <header
         className="relative z-50 shrink-0 border-b border-gray-800 bg-gray-900/80 px-2 py-1.5 backdrop-blur-sm sm:px-6 sm:py-3"

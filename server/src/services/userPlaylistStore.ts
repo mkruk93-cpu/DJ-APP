@@ -471,6 +471,41 @@ export async function addTrackToUserPlaylist(
   }, true);
 }
 
+export async function appendTracksToUserPlaylist(
+  owner: PlaylistOwner,
+  playlistId: string,
+  tracks: CreatePlaylistInputTrack[],
+): Promise<{ success: boolean; playlistId: string; added: number; total: number }> {
+  return withStoreAccess((store) => {
+    migrateOwnerPlaylists(store, owner);
+    const playlist = store.playlists.find((entry) => entry.id === playlistId && matchesOwner(entry, owner));
+    if (!playlist) return { success: false, playlistId, added: 0, total: 0 };
+    const seen = new Set(playlist.tracks.map((track) => getTrackMergeKey(track)));
+    let added = 0;
+    for (const track of tracks) {
+      const candidate: StoreTrack = {
+        id: randomUUID(),
+        title: String(track.title ?? '').trim(),
+        artist: track.artist ?? null,
+        album: track.album ?? null,
+        spotify_url: track.spotify_url ?? null,
+        artwork_url: track.artwork_url ?? null,
+        position: playlist.tracks.length + 1,
+      };
+      if (!candidate.title) continue;
+      const key = getTrackMergeKey(candidate);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      playlist.tracks.push(candidate);
+      added += 1;
+    }
+    playlist.tracks = playlist.tracks
+      .sort((a, b) => a.position - b.position)
+      .map((entry, index) => ({ ...entry, position: index + 1 }));
+    return { success: true, playlistId, added, total: playlist.tracks.length };
+  }, true);
+}
+
 export async function removeTrackFromUserPlaylist(
   owner: PlaylistOwner,
   playlistId: string,
@@ -572,6 +607,18 @@ export async function deleteUserPlaylist(
   return withStoreAccess((store) => {
     migrateOwnerPlaylists(store, owner);
     const index = store.playlists.findIndex((entry) => entry.id === playlistId && matchesOwner(entry, owner));
+    if (index < 0) return false;
+    if (isLikedTracksPlaylist(store.playlists[index]?.name)) return false;
+    store.playlists.splice(index, 1);
+    return true;
+  }, true);
+}
+
+export async function deletePublicUserPlaylistById(
+  playlistId: string,
+): Promise<boolean> {
+  return withStoreAccess((store) => {
+    const index = store.playlists.findIndex((entry) => entry.id === playlistId && entry.is_public);
     if (index < 0) return false;
     if (isLikedTracksPlaylist(store.playlists[index]?.name)) return false;
     store.playlists.splice(index, 1);
@@ -739,6 +786,44 @@ export async function removeFavoriteArtist(owner: PlaylistOwner, mbid: string): 
     if (index < 0) return false;
     store.favorite_artists.splice(index, 1);
     return true;
+  }, true);
+}
+
+export async function updateFavoriteArtistMetadata(
+  owner: PlaylistOwner,
+  mbid: string,
+  updates: { image_url?: string | null; country?: string | null },
+): Promise<FavoriteArtist | null> {
+  return withStoreAccess((store) => {
+    const ownerKey = getOwnerKey(owner.nickname);
+    const target = store.favorite_artists.find((a) => a.id === ownerKey && a.mbid === mbid);
+    if (!target) return null;
+    if (Object.prototype.hasOwnProperty.call(updates, 'image_url')) {
+      target.image_url = updates.image_url ?? null;
+    }
+    if (Object.prototype.hasOwnProperty.call(updates, 'country')) {
+      target.country = updates.country ?? null;
+    }
+    return target;
+  }, true);
+}
+
+export async function followPublicPlaylist(
+  owner: PlaylistOwner,
+  prefixedPlaylistId: string,
+): Promise<PlaylistSummary | null> {
+  return withStoreAccess((store) => {
+    migrateOwnerPlaylists(store, owner);
+    const playlistId = prefixedPlaylistId.startsWith('user:') ? prefixedPlaylistId.slice(5) : prefixedPlaylistId;
+    const playlist = store.playlists.find((entry) => entry.id === playlistId && entry.is_public);
+    if (!playlist) return null;
+    if (matchesOwner(playlist, owner)) return mapPlaylistSummary(playlist, owner);
+    const viewerKey = getOwnerKey(owner.nickname);
+    if (!viewerKey) return null;
+    if (!playlist.shared_with.includes(viewerKey)) {
+      playlist.shared_with.push(viewerKey);
+    }
+    return mapPlaylistSummary(playlist, owner);
   }, true);
 }
 

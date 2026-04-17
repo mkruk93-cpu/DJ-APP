@@ -2285,10 +2285,6 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                               <span className="shrink-0 rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
                                 Toegevoegd
                               </span>
-                            ) : isPending ? (
-                              <span className="shrink-0 rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200">
-                                Bezig...
-                              </span>
                             ) : null}
                           </button>
                           <div className="flex shrink-0 items-center gap-1.5">

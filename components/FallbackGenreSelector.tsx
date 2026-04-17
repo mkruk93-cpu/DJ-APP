@@ -14,7 +14,7 @@ import {
 } from "@/lib/genreDropdown";
 import type { GenreOption } from "@/lib/radioApi";
 
-type PlaylistSortMode = "name_asc" | "name_desc" | "tracks_desc";
+type PlaylistSortMode = "name_asc" | "name_desc" | "tracks_desc" | "owner_asc";
 type PlaylistViewMode = "grouped" | "all";
 type FallbackSection = "local" | "auto" | "playlists";
 
@@ -32,6 +32,13 @@ function normalizeBucketLabel(value: string | null | undefined, fallback: string
   return safe || fallback;
 }
 
+function cleanFallbackLabel(label: string): string {
+  return label
+    .replace(/^Playlist ·\s*/i, "")
+    .replace(/\s*\(onbekend\)$/i, "")
+    .trim();
+}
+
 function groupSharedPlaylistsByGenre(
   playlists: Array<{
     id: string;
@@ -39,6 +46,7 @@ function groupSharedPlaylistsByGenre(
     trackCount: number;
     genre_group?: string | null;
     subgenre?: string | null;
+    owner_username?: string | null;
   }>,
 ): Array<{
   genreLabel: string;
@@ -50,6 +58,7 @@ function groupSharedPlaylistsByGenre(
       trackCount: number;
       genre_group?: string | null;
       subgenre?: string | null;
+      owner_username?: string | null;
     }>;
   }>;
 }> {
@@ -80,6 +89,7 @@ function sortSharedPlaylists(
     trackCount: number;
     genre_group?: string | null;
     subgenre?: string | null;
+    owner_username?: string | null;
   }>,
   mode: PlaylistSortMode,
 ): Array<{
@@ -88,6 +98,7 @@ function sortSharedPlaylists(
   trackCount: number;
   genre_group?: string | null;
   subgenre?: string | null;
+  owner_username?: string | null;
 }> {
   const copy = playlists.slice();
   if (mode === "name_desc") {
@@ -96,6 +107,15 @@ function sortSharedPlaylists(
   }
   if (mode === "tracks_desc") {
     copy.sort((a, b) => (b.trackCount - a.trackCount) || a.label.localeCompare(b.label, "nl"));
+    return copy;
+  }
+  if (mode === "owner_asc") {
+    copy.sort((a, b) => {
+      const ownerA = (a.owner_username ?? "").trim().toLowerCase();
+      const ownerB = (b.owner_username ?? "").trim().toLowerCase();
+      if (ownerA !== ownerB) return ownerA.localeCompare(ownerB, "nl");
+      return a.label.localeCompare(b.label, "nl");
+    });
     return copy;
   }
   copy.sort((a, b) => a.label.localeCompare(b.label, "nl"));
@@ -136,7 +156,7 @@ export default function FallbackGenreSelector() {
   const menuRef = useRef<HTMLDetailsElement | null>(null);
   const summaryRef = useRef<HTMLElement | null>(null);
   const [isMobile, setIsMobile] = useState(false);
-  const [mobileMenuTop, setMobileMenuTop] = useState<number | null>(null);
+  const [menuLayout, setMenuLayout] = useState<{ top: number; left: number; width: number } | null>(null);
   const [activeSection, setActiveSection] = useState<FallbackSection>("local");
   const [playlistSortMode, setPlaylistSortMode] = useState<PlaylistSortMode>("name_asc");
   const [playlistViewMode, setPlaylistViewMode] = useState<PlaylistViewMode>("grouped");
@@ -256,13 +276,15 @@ export default function FallbackGenreSelector() {
     // Als er 1 playlist geselecteerd is, toon de naam
     if (selectedSharedGenres.length === 1) {
       const first = sortedGenres.find((g) => g.id === selectedSharedGenres[0]);
-      return first?.label ?? "Playlist";
+      return first ? cleanFallbackLabel(first.label) : "Playlist";
     }
     // Als actieve genre een playlist is, toon alleen de naam
     if (activeGenre?.startsWith("shared:")) {
-      return sortedGenres.find((g) => g.id === activeGenre)?.label ?? "Playlist";
+      const playlist = sortedGenres.find((g) => g.id === activeGenre);
+      return playlist ? cleanFallbackLabel(playlist.label) : "Playlist";
     }
-    return sortedGenres.find((g) => g.id === activeGenre)?.label ?? activeGenre ?? "Kies genre";
+    const activeGenreLabel = sortedGenres.find((g) => g.id === activeGenre)?.label;
+    return activeGenreLabel ? cleanFallbackLabel(activeGenreLabel) : activeGenre ?? "Kies genre";
   }, [sortedGenres, activeGenre, selectedSharedGenres]);
 
   useEffect(() => {
@@ -276,9 +298,12 @@ export default function FallbackGenreSelector() {
 
   useEffect(() => {
     function updateMenuPosition() {
-      if (!isMobile || !menuRef.current?.open || !summaryRef.current) return;
+      if (!menuRef.current?.open || !summaryRef.current) return;
       const rect = summaryRef.current.getBoundingClientRect();
-      setMobileMenuTop(Math.max(8, Math.round(rect.bottom + 8)));
+      const top = Math.max(8, Math.round(rect.bottom + 8));
+      const left = Math.max(8, Math.min(rect.left, window.innerWidth - 320 - 8));
+      const width = Math.min(Math.max(rect.width, 320), window.innerWidth - left - 8);
+      setMenuLayout({ top, left, width });
     }
     updateMenuPosition();
     window.addEventListener("resize", updateMenuPosition);
@@ -475,12 +500,15 @@ export default function FallbackGenreSelector() {
           e.preventDefault();
           return;
         }
-        if (!menuRef.current?.open || !isMobile || !summaryRef.current) {
-          setMobileMenuTop(null);
+        if (!menuRef.current?.open || !summaryRef.current) {
+          setMenuLayout(null);
           return;
         }
         const rect = summaryRef.current.getBoundingClientRect();
-        setMobileMenuTop(Math.max(8, Math.round(rect.bottom + 8)));
+        const top = Math.max(8, Math.round(rect.bottom + 8));
+        const left = Math.max(8, Math.min(rect.left, window.innerWidth - 320 - 8));
+        const width = Math.min(Math.max(rect.width, 320), window.innerWidth - left - 8);
+        setMenuLayout({ top, left, width });
       }}
     >
       <summary 
@@ -515,10 +543,10 @@ export default function FallbackGenreSelector() {
         <span className="justify-self-end text-gray-400 transition group-open:rotate-180">▾</span>
       </summary>
       <div
-        className={`${isMobile ? "fixed left-2 right-2 mt-0" : "absolute left-0 right-0 top-full mt-1"} z-[210] overflow-y-auto rounded-md border border-gray-700 bg-gray-900/95 p-1 shadow-lg shadow-black/40 sm:max-h-60`}
+        className="fixed z-[210] overflow-y-auto rounded-md border border-gray-700 bg-gray-900/95 p-1 shadow-lg shadow-black/40 sm:max-h-60"
         style={
-          isMobile && mobileMenuTop !== null
-            ? { top: mobileMenuTop, maxHeight: `calc(100dvh - ${mobileMenuTop + 8}px)` }
+          menuLayout !== null
+            ? { top: menuLayout.top, left: menuLayout.left, width: menuLayout.width, maxHeight: `calc(100dvh - ${menuLayout.top + 8}px)` }
             : undefined
         }
       >
@@ -847,6 +875,7 @@ export default function FallbackGenreSelector() {
                     <option value="name_asc">Sortering: Naam A-Z</option>
                     <option value="name_desc">Sortering: Naam Z-A</option>
                     <option value="tracks_desc">Sortering: Meeste tracks</option>
+                    <option value="owner_asc">Sortering: Eigenaar A-Z</option>
                   </select>
                 </div>
               </details>
@@ -881,7 +910,7 @@ export default function FallbackGenreSelector() {
                                     onChange={() => toggleSelection(playlist.id)}
                                     className="h-3.5 w-3.5 cursor-pointer accent-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
                                   />
-                                  <span className="truncate">{playlist.label.replace(/^Playlist ·\s*/i, "")}</span>
+                                  <span className="truncate">{cleanFallbackLabel(playlist.label)}</span>
                                 </span>
                                 <span className="ml-2 text-[10px] text-gray-500">{playlist.trackCount}</span>
                               </label>
@@ -911,7 +940,7 @@ export default function FallbackGenreSelector() {
                         onChange={() => toggleSelection(playlist.id)}
                         className="h-3.5 w-3.5 cursor-pointer accent-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
                       />
-                      <span className="truncate">{playlist.label.replace(/^Playlist ·\s*/i, "")}</span>
+                      <span className="truncate">{cleanFallbackLabel(playlist.label)}</span>
                     </span>
                     <span className="ml-2 text-[10px] text-gray-500">{playlist.trackCount}</span>
                   </label>

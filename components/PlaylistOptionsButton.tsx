@@ -46,6 +46,9 @@ export default function PlaylistOptionsButton({
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [filter, setFilter] = useState("");
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const [panelPosition, setPanelPosition] = useState<{ left: number; top: number } | null>(null);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -60,6 +63,43 @@ export default function PlaylistOptionsButton({
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (typeof window === "undefined") return;
+    const updatePanelPosition = () => {
+      const button = buttonRef.current;
+      const panel = panelRef.current;
+      if (!button || !panel) return;
+      const buttonRect = button.getBoundingClientRect();
+      const panelRect = panel.getBoundingClientRect();
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      const margin = 8;
+
+      let left = buttonRect.right - panelRect.width;
+      let top = buttonRect.bottom + 4;
+
+      if (left + panelRect.width > viewportWidth - margin) left = viewportWidth - panelRect.width - margin;
+      if (left < margin) left = margin;
+
+      if (top + panelRect.height > viewportHeight - margin) {
+        top = buttonRect.top - panelRect.height - 4;
+      }
+      if (top < margin) top = margin;
+
+      setPanelPosition({ left: Math.round(left), top: Math.round(top) });
+    };
+
+    const raf = requestAnimationFrame(updatePanelPosition);
+    window.addEventListener("resize", updatePanelPosition);
+    window.addEventListener("scroll", updatePanelPosition, true);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", updatePanelPosition);
+      window.removeEventListener("scroll", updatePanelPosition, true);
+    };
+  }, [open, mode, actions.length, users.length, filter, loadingUsers]);
 
   const filteredUsers = useMemo(() => {
     const needle = filter.trim().toLowerCase();
@@ -88,6 +128,7 @@ export default function PlaylistOptionsButton({
       onMouseDown={(e) => e.stopPropagation()}
     >
       <button
+        ref={buttonRef}
         type="button"
         onClick={() => {
           setOpen((prev) => !prev);
@@ -103,7 +144,11 @@ export default function PlaylistOptionsButton({
         <span className="h-0.5 w-0.5 rounded-full bg-current"></span>
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-56 overflow-hidden rounded-lg border border-gray-700 bg-gray-950 shadow-2xl">
+        <div
+          ref={panelRef}
+          className="fixed z-[120] w-56 max-w-[calc(100vw-16px)] overflow-hidden rounded-lg border border-gray-700 bg-gray-950 shadow-2xl"
+          style={panelPosition ? { left: panelPosition.left, top: panelPosition.top } : undefined}
+        >
           {mode === "menu" ? (
             <div className="py-1">
               {actions.map((action) => (

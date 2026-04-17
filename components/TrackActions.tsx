@@ -10,6 +10,12 @@ import {
   type UserPlaylist,
 } from "@/lib/userPlaylistsApi";
 
+interface TrackAction {
+  key: string;
+  label: string;
+  onSelect: (event: React.MouseEvent<HTMLButtonElement>) => void;
+}
+
 interface TrackActionsProps {
   title: string;
   artist: string | null;
@@ -20,6 +26,8 @@ interface TrackActionsProps {
   iconSize?: number;
   showLike?: boolean;
   showPlaylist?: boolean;
+  playlistIcon?: "plus" | "dots";
+  additionalActions?: TrackAction[];
 }
 
 const PLAYLIST_GENRE_GROUPS = [
@@ -48,6 +56,8 @@ export default function TrackActions({
   iconSize = 18,
   showLike = true,
   showPlaylist = true,
+  playlistIcon = "plus",
+  additionalActions = [],
 }: TrackActionsProps) {
   const [isLiked, setIsLiked] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
@@ -244,21 +254,38 @@ export default function TrackActions({
             onClick={toggleDropdown}
             disabled={loading}
             className="p-1.5 text-gray-400 transition-all duration-200 hover:scale-110 hover:text-violet-400 active:scale-95"
-            title="Toevoegen aan playlist"
+            title="Opties"
           >
-            <svg
-              width={iconSize}
-              height={iconSize}
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
+            {playlistIcon === "dots" ? (
+              <svg
+                width={iconSize}
+                height={iconSize}
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <circle cx="12" cy="12" r="1" />
+                <circle cx="12" cy="5" r="1" />
+                <circle cx="12" cy="19" r="1" />
+              </svg>
+            ) : (
+              <svg
+                width={iconSize}
+                height={iconSize}
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+            )}
           </button>
 
           {showDropdown && dropdownStyle && typeof document !== "undefined" && createPortal(
@@ -275,6 +302,24 @@ export default function TrackActions({
             >
               {view === "list" ? (
                 <div className="flex flex-col">
+                  {additionalActions.length > 0 && (
+                    <div className="overflow-y-auto py-1" style={{ maxHeight: Math.max(120, dropdownStyle.maxHeight - 52) }}>
+                      {additionalActions.map((action) => (
+                        <button
+                          type="button"
+                          key={action.key}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            action.onSelect(e);
+                            setShowDropdown(false);
+                          }}
+                          className="w-full px-3 py-2 text-left text-xs text-gray-200 transition hover:bg-violet-600/20 hover:text-violet-400"
+                        >
+                          {action.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <div className="overflow-y-auto py-1" style={{ maxHeight: Math.max(120, dropdownStyle.maxHeight - 52) }}>
                     {playlists.length === 0 ? (
                       <div className="px-3 py-2 text-xs text-gray-500 italic">

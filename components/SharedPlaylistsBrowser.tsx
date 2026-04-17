@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  deletePublicUserPlaylist,
+  followPublicPlaylistInLibrary,
   getSharedPlaylistTracksPage,
   getSpotifyOembed,
   importSharedPlaylistFiles,
@@ -484,6 +486,25 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
     setStatus(`Autoplay fallback ingesteld op: ${playlist.name}`);
   }
 
+  async function handleDeletePlaylist(playlist: SharedPlaylist) {
+    if (!window.confirm(`Verwijder "${playlist.name}"?`)) return;
+    setError(null);
+    setStatus(null);
+    try {
+      await deletePublicUserPlaylist(playlist.id);
+      setStatus(`"${playlist.name}" verwijderd.`);
+      await loadSharedPlaylists();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Kon playlist niet verwijderen.");
+    }
+  }
+
+  function renderPlaylistKindLabel(playlist: SharedPlaylist): string {
+    const typeLabel = playlist.kind === "user_public" ? "Persoonlijk publiek" : "Publiek gedeeld";
+    const ownerLabel = playlist.owner_username ? `door ${playlist.owner_username}` : null;
+    return [typeLabel, ownerLabel].filter(Boolean).join(" · ");
+  }
+
   function renderPlaylistOptions(playlist: SharedPlaylist) {
     const actions: MenuAction[] = [
       {
@@ -500,6 +521,28 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
         tone: "default" as const,
         onSelect: () => openPlaylistEdit(playlist),
       });
+    }
+    if (playlist.kind === "user_public") {
+      if (!isPlaylistOwner(playlist)) {
+        actions.push({
+          key: "show-own-library",
+          label: "Toon in mijn SpotifyBrowser",
+          tone: "accent" as const,
+          onSelect: () => {
+            void followPublicPlaylistInLibrary(playlist.id)
+              .then(() => setStatus(`"${playlist.name}" toegevoegd aan je SpotifyBrowser.`))
+              .catch((err) => setError(err instanceof Error ? err.message : "Kon playlist niet toevoegen."));
+          },
+        });
+      }
+      if (isPlaylistOwner(playlist)) {
+        actions.push({
+          key: "delete",
+          label: "Verwijder playlist",
+          tone: "danger" as const,
+          onSelect: () => { void handleDeletePlaylist(playlist); },
+        });
+      }
     }
     return <PlaylistOptionsButton actions={actions} />;
   }
@@ -686,13 +729,18 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                                   </svg>
                                 </div>
                               )}
-                              <button
-                                type="button"
-                                onClick={() => { void openPlaylist(playlist); }}
-                                className="min-w-0 flex-1 truncate text-left text-[11px] font-semibold text-white"
-                              >
-                                {playlist.name}
-                              </button>
+                              <div className="min-w-0">
+                                <button
+                                  type="button"
+                                  onClick={() => { void openPlaylist(playlist); }}
+                                  className="min-w-0 truncate text-left text-[11px] font-semibold text-white"
+                                >
+                                  {playlist.name}
+                                </button>
+                                <p className="truncate text-[10px] text-gray-400">
+                                  {renderPlaylistKindLabel(playlist)}
+                                </p>
+                              </div>
                               <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-300">
                                 {playlist.track_count}
                               </span>
@@ -772,13 +820,18 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                       </svg>
                     </div>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => { void openPlaylist(playlist); }}
-                    className="min-w-0 flex-1 truncate text-left text-[11px] font-semibold text-white"
-                  >
-                    {playlist.name}
-                  </button>
+                  <div className="min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => { void openPlaylist(playlist); }}
+                      className="truncate text-left text-[11px] font-semibold text-white"
+                    >
+                      {playlist.name}
+                    </button>
+                    <p className="truncate text-[10px] text-gray-400">
+                      {renderPlaylistKindLabel(playlist)}
+                    </p>
+                  </div>
                   <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-300">
                     {playlist.track_count}
                   </span>

@@ -7,6 +7,7 @@ import { getRadioToken } from "@/lib/auth";
 import { useAuth } from "@/lib/authContext";
 import { decodeHtmlEntities } from "@/lib/trackDisplay";
 import TrackActions from "@/components/TrackActions";
+import { addTrackToUserPlaylist, getLikedTracksPlaylist } from "@/lib/userPlaylistsApi";
 
 function deriveTitleFromId(sourceId: string): string {
   if (!sourceId) return "Nummer wordt geladen...";
@@ -103,14 +104,14 @@ export default function Queue() {
               {deferredQueue.map((item, idx) => (
                 <div
                   key={item.id}
-                  className="flex items-center gap-2 rounded-md border border-violet-900/50 bg-violet-900/20 px-2 py-1.5"
+                  className="flex items-center gap-2 rounded-md border border-violet-900/50 bg-violet-900/20 px-2 py-2"
                 >
-                  <span className="w-4 shrink-0 text-center text-[11px] text-violet-200/80">{idx + 1}</span>
+                  <span className="w-4 shrink-0 text-center text-xs text-violet-200/80">{idx + 1}</span>
                   {item.thumbnail ? (
                     <img
                       src={item.thumbnail}
                       alt=""
-                      className="h-8 w-12 shrink-0 rounded object-cover"
+                      className="h-8 w-10 shrink-0 rounded object-cover"
                     />
                   ) : null}
                   <div className="min-w-0 flex-1">
@@ -125,12 +126,48 @@ export default function Queue() {
                       Wordt automatisch toegevoegd zodra een nummer afgelopen is
                     </p>
                   </div>
+                  <button
+                    type="button"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      try {
+                        const liked = await getLikedTracksPlaylist();
+                        await addTrackToUserPlaylist(liked.id, {
+                          title: item.title ?? deriveTitleFromId(item.youtube_url),
+                          artist: item.artist ?? null,
+                          album: null,
+                          spotify_url: null,
+                          artwork_url: item.thumbnail ?? null,
+                        });
+                      } catch (err) {
+                        console.error("[Queue] Failed to like deferred track:", err);
+                      }
+                    }}
+                    className="p-1 text-violet-200/80 transition hover:text-red-400"
+                    title="Toevoegen aan Liked Tracks"
+                  >
+                    <svg
+                      width="15"
+                      height="15"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l8.84-8.84 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+                    </svg>
+                  </button>
                   <TrackActions
                     title={item.title ?? deriveTitleFromId(item.youtube_url)}
                     artist={item.artist ?? null}
                     artwork_url={item.thumbnail ?? null}
                     className="mr-1"
                     iconSize={15}
+                    showLike={false}
+                    showPlaylist={true}
+                    playlistIcon="dots"
                   />
                   <button
                     type="button"
@@ -161,9 +198,9 @@ export default function Queue() {
         {queue.map((item, index) => (
           <div
             key={item.id}
-            className="group flex items-center gap-1.5 rounded-md border border-gray-800 bg-gray-800/40 px-1.5 py-1 transition hover:border-gray-700 sm:gap-2 sm:px-2 sm:py-1.5"
+            className="group flex items-center gap-2 rounded-md border border-gray-800 bg-gray-800/40 px-2 py-2 transition hover:border-gray-700 sm:gap-2 sm:px-2 sm:py-1.5"
           >
-            <span className="w-4 shrink-0 text-center text-[10px] text-gray-500 sm:text-xs">
+            <span className="w-4 shrink-0 text-center text-xs text-gray-500 sm:text-xs">
               {index + 1}
             </span>
 
@@ -171,64 +208,87 @@ export default function Queue() {
               <img
                 src={item.thumbnail}
                 alt=""
-                className="h-6 w-8 shrink-0 rounded object-cover sm:h-7 sm:w-10"
+                className="h-8 w-10 shrink-0 rounded object-cover sm:h-7 sm:w-10"
               />
             )}
 
             <div className="min-w-0 flex-1 text-left">
-              <p className="truncate text-[10px] font-medium leading-tight text-white sm:text-xs">
+              <p className="truncate text-xs font-medium leading-tight text-white sm:text-xs">
                 {item.artist && item.title && item.title.toLowerCase().startsWith(item.artist.toLowerCase())
                   ? decodeHtmlEntities(item.title)
                   : item.artist
                     ? `${item.artist} - ${decodeHtmlEntities(item.title) ?? deriveTitleFromId(item.youtube_id)}`
                     : decodeHtmlEntities(item.title) ?? deriveTitleFromId(item.youtube_id)}
               </p>
-              <p className="truncate text-[9px] text-gray-500 sm:text-[10px]">
+              <p className="hidden truncate text-[10px] text-gray-500 sm:block">
                 {item.added_by}
               </p>
             </div>
 
             <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
+              <button
+                type="button"
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  try {
+                    const liked = await getLikedTracksPlaylist();
+                    await addTrackToUserPlaylist(liked.id, {
+                      title: item.title ?? deriveTitleFromId(item.youtube_id),
+                      artist: item.artist ?? null,
+                      album: null,
+                      spotify_url: null,
+                      artwork_url: item.thumbnail ?? null,
+                    });
+                  } catch (err) {
+                    console.error("[Queue] Failed to like track:", err);
+                  }
+                }}
+                className="p-1 text-gray-400 transition hover:text-red-400"
+                title="Toevoegen aan Liked Tracks"
+              >
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l8.84-8.84 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+                </svg>
+              </button>
               <TrackActions
                 title={item.title ?? deriveTitleFromId(item.youtube_id)}
                 artist={item.artist ?? null}
                 artwork_url={item.thumbnail ?? null}
                 className="mr-0.5"
                 iconSize={13}
+                showLike={false}
+                showPlaylist={true}
+                playlistIcon="dots"
+                additionalActions={[
+                  ...(canRequestPush && index !== 0 ? [{
+                    key: "queue-push",
+                    label: "Stem als volgende",
+                    onSelect: () => {
+                      getSocket().emit("queuePushVote:start", { id: item.id, added_by: nickname || "onbekend" });
+                    },
+                  }] : []),
+                  ...(mode !== "dj" && (isOwnItem(item) || isAdminUser()) ? [{
+                    key: "queue-remove",
+                    label: "Verwijder uit wachtrij",
+                    onSelect: () => {
+                      const token = isAdminUser() ? getRadioToken() : undefined;
+                      getSocket().emit("queue:remove", {
+                        id: item.id,
+                        token: token ?? undefined,
+                      });
+                    },
+                  }] : []),
+                ]}
               />
-              {canRequestPush && (
-                <button
-                  onClick={() => {
-                    getSocket().emit("queuePushVote:start", { id: item.id, added_by: nickname || "onbekend" });
-                  }}
-                  disabled={!!queuePushVote || index === 0}
-                  className="rounded p-0.5 text-violet-300 transition hover:bg-violet-500/10 hover:text-violet-200 disabled:opacity-40 sm:p-1"
-                  title="Stem om als volgende te zetten"
-                >
-                  <svg className="h-3 w-3 sm:h-4 sm:w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M13 5l7 7-7 7" />
-                  </svg>
-                </button>
-              )}
-
-              {mode !== "dj" && (isOwnItem(item) || isAdminUser()) && (
-                <button
-                  onClick={() => {
-                    const token = isAdminUser() ? getRadioToken() : undefined;
-                    getSocket().emit("queue:remove", {
-                      id: item.id,
-                      token: token ?? undefined,
-                      added_by: nickname || "onbekend",
-                    });
-                  }}
-                  className="rounded p-0.5 text-gray-500 transition hover:bg-red-500/10 hover:text-red-400 sm:p-1"
-                  title="Verwijderen"
-                >
-                  <svg className="h-3 w-3 sm:h-4 sm:w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              )}
             </div>
           </div>
         ))}

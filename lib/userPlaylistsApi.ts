@@ -144,6 +144,11 @@ export async function deleteUserPlaylist(playlistId: string): Promise<void> {
   await parseOrThrow<{ ok: boolean }>(res);
 }
 
+export async function deletePublicUserPlaylist(playlistId: string): Promise<void> {
+  const strippedId = playlistId.startsWith('user:') ? playlistId.slice(5) : playlistId;
+  return deleteUserPlaylist(strippedId);
+}
+
 export async function addTrackToUserPlaylist(playlistId: string, track: { title: string; artist: string | null; album?: string | null; spotify_url?: string | null; artwork_url?: string | null; position?: number }): Promise<{ ok: boolean; playlistId: string }> {
   const { nickname, deviceId } = getUserIdentity(true);
   const safeId = encodeURIComponent(playlistId);
@@ -219,6 +224,40 @@ export async function updateUserPlaylistSharing(
   });
   const data = await parseOrThrow<{ ok: boolean; playlist: UserPlaylist }>(res);
   return data.playlist;
+}
+
+export async function followPublicPlaylistInLibrary(playlistId: string): Promise<UserPlaylist> {
+  const { nickname, deviceId } = getUserIdentity(true);
+  const safeId = encodeURIComponent(playlistId);
+  const res = await fetch(`${getServerUrl()}/api/user-playlists/${safeId}/follow-public`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nickname, device_id: deviceId }),
+  });
+  const data = await parseOrThrow<{ ok: boolean; playlist: UserPlaylist }>(res);
+  return data.playlist;
+}
+
+export async function importIntoUserPlaylist(
+  playlistId: string,
+  files: File[],
+): Promise<{ ok: boolean; playlistId: string; added: number; total: number }> {
+  if (!files.length) {
+    throw new Error("Geen bestanden geselecteerd");
+  }
+  const { nickname, deviceId } = getUserIdentity(true);
+  const safeId = encodeURIComponent(playlistId);
+  const form = new FormData();
+  for (const file of files) {
+    form.append("files", file);
+  }
+  form.append("nickname", nickname);
+  form.append("device_id", deviceId);
+  const res = await fetch(`${getServerUrl()}/api/user-playlists/${safeId}/import`, {
+    method: "POST",
+    body: form,
+  });
+  return parseOrThrow<{ ok: boolean; playlistId: string; added: number; total: number }>(res);
 }
 
 export async function listKnownUsers(query = "", limit = 200): Promise<string[]> {
@@ -495,6 +534,25 @@ export async function removeFavoriteArtist(mbid: string): Promise<{ ok: boolean 
     body: JSON.stringify({ nickname, device_id: deviceId }),
   });
   return parseOrThrow<{ ok: boolean }>(res);
+}
+
+export async function updateFavoriteArtist(
+  mbid: string,
+  updates: { image_url?: string | null; country?: string | null },
+): Promise<FavoriteArtist> {
+  const { nickname, deviceId } = getUserIdentity(true);
+  const safeMbid = encodeURIComponent(mbid);
+  const res = await fetch(`${getServerUrl()}/api/favorite-artists/${safeMbid}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      nickname,
+      device_id: deviceId,
+      image_url: updates.image_url ?? null,
+      country: updates.country ?? null,
+    }),
+  });
+  return parseOrThrow<FavoriteArtist>(res);
 }
 
 export async function isFavoriteArtist(mbid: string): Promise<boolean> {

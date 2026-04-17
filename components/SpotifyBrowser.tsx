@@ -20,12 +20,16 @@ import {
   getSharedPlaylistTracksPage,
   getSpotifyOembed,
   importUserPlaylistFiles,
+  importIntoUserPlaylist,
   listAllSharedPlaylists,
   listKnownUsers,
   listUserPlaylists,
   removeTrackFromUserPlaylist,
+  addTrackToUserPlaylist,
   backfillUserPlaylistTrackArtwork,
+  followPublicPlaylistInLibrary,
   updateUserPlaylistSharing,
+  updateFavoriteArtist,
   type SharedPlaylist,
   type PlaylistGenreMetaInput,
   type UserPlaylist,
@@ -168,6 +172,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
   const { userAccount } = useAuth();
   const username = userAccount?.username || "";
   const lockAutoplayFallback = useRadioStore((s) => s.lockAutoplayFallback);
+  const serverUrl = useRadioStore((s) => s.serverUrl);
 
   // Locally extend UserPlaylist to include track_count for UI
   type UserPlaylistWithCount = UserPlaylist & { track_count?: number };
@@ -198,6 +203,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
   const [importing, setImporting] = useState(false);
   const [favoriteArtists, setFavoriteArtists] = useState<FavoriteArtist[]>([]);
   const [favoriteArtistsLoading, setFavoriteArtistsLoading] = useState(false);
+  const [artistLibraryFilter, setArtistLibraryFilter] = useState("");
   const [personalLibraryTab, setPersonalLibraryTab] = useState<PersonalLibraryTab>("playlists");
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
@@ -221,6 +227,13 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
   const [savedTracksOffset, setSavedTracksOffset] = useState(0);
   const [savedTracksHasMore, setSavedTracksHasMore] = useState(false);
   const [selectedSavedPlaylist, setSelectedSavedPlaylist] = useState<UserPlaylist | null>(null);
+  const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
+  const [bulkTargetPlaylistId, setBulkTargetPlaylistId] = useState("");
+  const [bulkNewPlaylistName, setBulkNewPlaylistName] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [playlistImportTargetId, setPlaylistImportTargetId] = useState<string | null>(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [bulkMenuPos, setBulkMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [savedTrackThumbs, setSavedTrackThumbs] = useState<Record<string, string>>({});
   // Shared playlists and tracks state
   const [sharedSortMode, setSharedSortMode] = useState<PlaylistSortMode>("name_asc");
@@ -237,6 +250,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
   const [sharedTracksError, setSharedTracksError] = useState<string | null>(null);
   const [sharedTracksLoading, setSharedTracksLoading] = useState(false);
   const [sharedTracksLoadingMore, setSharedTracksLoadingMore] = useState(false);
+  const [playlistCoverById, setPlaylistCoverById] = useState<Record<string, string>>({});
   const [trackContextMenu, setTrackContextMenu] = useState<{ x: number; y: number; track: UserPlaylistTrack } | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
@@ -247,8 +261,11 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
   const thumbnailLoadingRef = useRef<Set<string>>(new Set());
   const thumbnailQueueRef = useRef<string[]>([]);
   const thumbnailWorkersRef = useRef(0);
+  const updatePlaylistInputRef = useRef<HTMLInputElement | null>(null);
   const artworkBackfillQueueRef = useRef<Map<string, string>>(new Map());
   const artworkBackfillTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const playlistCoverLoadingRef = useRef<Set<string>>(new Set());
+  const trackArtworkLookupRef = useRef<Set<string>>(new Set());
   const viewRef = useRef<View>("playlists");
 
   // Spotify functionaliteit
@@ -340,6 +357,16 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
     setTrackContextMenu({ x, y, track });
   }
 
+  function startSelectionModeFromMenu(): void {
+    if (!trackContextMenu) return;
+    setSelectionMode(true);
+    setBulkMenuPos({ x: trackContextMenu.x, y: trackContextMenu.y });
+    setSelectedTrackIds((prev) => (
+      prev.includes(trackContextMenu.track.id) ? prev : [...prev, trackContextMenu.track.id]
+    ));
+    setTrackContextMenu(null);
+  }
+
   function setPlaylistAsAutoplayFallback(playlist: UserPlaylist) {
     if (lockAutoplayFallback && !getRadioToken()) {
       alert("Autoplay fallback is vergrendeld. Alleen admin kan dit aanpassen.");
@@ -407,26 +434,54 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
 
   function renderSavedPlaylistOptions(playlist: UserPlaylist) {
     const canManagePlaylist = playlist.viewer_can_edit && !isLikedTracksPlaylistName(playlist.name);
-    const actions: MenuAction[] = [
-      {
-        key: "auto",
-        label: "Gebruik als autoplay fallback",
+    const actions: MenuAction[] = [];
+    if (playlist.viewer_can_edit) {
+      actions.push(
+        {
+          key: "auto",
+          label: "Gebruik als autoplay fallback",
+          tone: "accent" as const,
+          onSelect: () => setPlaylistAsAutoplayFallback(playlist),
+        },
+        {
+          key: "public",
+          label: playlist.is_public ? "Maak niet publiek" : "Maak publiek zichtbaar",
+          tone: playlist.is_public ? "success" as const : "default" as const,
+          onSelect: () => handleTogglePublicPlaylist({ stopPropagation() {} } as React.MouseEvent, playlist),
+        },
+        {
+          key: "fallback",
+          label: playlist.is_public_fallback ? "Verberg uit publieke fallback" : "Toon in publieke fallback",
+          tone: playlist.is_public_fallback ? "warning" as const : "default" as const,
+          onSelect: () => handleTogglePublicFallback({ stopPropagation() {} } as React.MouseEvent, playlist),
+        },
+      );
+    } else if (playlist.is_public && !playlist.shared_with_viewer) {
+      actions.push({
+        key: "follow-public",
+        label: "Toon in mijn SpotifyBrowser",
         tone: "accent" as const,
-        onSelect: () => setPlaylistAsAutoplayFallback(playlist),
-      },
-      {
-        key: "public",
-        label: playlist.is_public ? "Maak niet publiek" : "Maak publiek zichtbaar",
-        tone: playlist.is_public ? "success" as const : "default" as const,
-        onSelect: () => handleTogglePublicPlaylist({ stopPropagation() {} } as React.MouseEvent, playlist),
-      },
-      {
-        key: "fallback",
-        label: playlist.is_public_fallback ? "Verberg uit publieke fallback" : "Toon in publieke fallback",
-        tone: playlist.is_public_fallback ? "warning" as const : "default" as const,
-        onSelect: () => handleTogglePublicFallback({ stopPropagation() {} } as React.MouseEvent, playlist),
-      },
-    ];
+        onSelect: () => {
+          void followPublicPlaylistInLibrary(playlist.id)
+            .then(async () => {
+              await loadSavedPlaylists();
+              setImportStatus(`"${playlist.name}" staat nu in je SpotifyBrowser.`);
+            })
+            .catch((err) => setImportError(err instanceof Error ? err.message : "Kon playlist niet toevoegen aan je bibliotheek."));
+        },
+      });
+    }
+    if (playlist.viewer_can_edit) {
+      actions.push({
+        key: "update-list",
+        label: "Lijst updaten (CSV)",
+        tone: "accent" as const,
+        onSelect: () => {
+          setPlaylistImportTargetId(playlist.id);
+          updatePlaylistInputRef.current?.click();
+        },
+      });
+    }
     if (canManagePlaylist) {
       actions.push({
         key: "delete",
@@ -447,6 +502,19 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
     );
   }
 
+  function renderPlaylistVisibilityMeta(playlist: UserPlaylistWithCount) {
+    const labels: string[] = [];
+    labels.push(playlist.is_owner ? "Van jou" : `Gedeeld door ${playlist.owner_username}`);
+    if (playlist.is_public) labels.push("Publiek");
+    if (playlist.is_public_fallback) labels.push("Fallback zichtbaar");
+    if (playlist.shared_with_count > 0) labels.push(`Gedeeld met ${playlist.shared_with_count}`);
+    return (
+      <p className="mb-1 truncate text-[10px] text-gray-400">
+        {labels.join(" · ")}
+      </p>
+    );
+  }
+
   const reloadFavoriteArtists = useCallback(async () => {
     setFavoriteArtistsLoading(true);
     try {
@@ -459,6 +527,34 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
       setFavoriteArtistsLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (!serverUrl || favoriteArtists.length === 0) return;
+    const missing = favoriteArtists.filter((artist) => !(artist.image_url ?? "").trim());
+    if (missing.length === 0) return;
+    const controller = new AbortController();
+    void (async () => {
+      for (const artist of missing.slice(0, 30)) {
+        if (controller.signal.aborted) break;
+        const artistName = (artist.name ?? "").trim();
+        if (!artistName) continue;
+        try {
+          const res = await fetch(`${serverUrl}/api/artist-image?artist=${encodeURIComponent(artistName)}`, { signal: controller.signal });
+          if (!res.ok) continue;
+          const data = await res.json() as { image?: string };
+          const image = (data.image ?? "").trim();
+          if (!image) continue;
+          setFavoriteArtists((prev) => prev.map((entry) => (
+            entry.mbid === artist.mbid ? { ...entry, image_url: image } : entry
+          )));
+          await updateFavoriteArtist(artist.mbid, { image_url: image });
+        } catch {
+          // Ignore per-artist lookup failures.
+        }
+      }
+    })();
+    return () => controller.abort();
+  }, [favoriteArtists, serverUrl]);
 
   useEffect(() => {
     if (showPlaylistSections) {
@@ -603,6 +699,79 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
     }
   }
 
+  const resolvePlaylistCoverFromFirstTrack = useCallback(async (playlistId: string, source: "saved" | "shared"): Promise<string | null> => {
+    try {
+      const page = source === "saved"
+        ? await getUserPlaylistTracksPage(playlistId, 8, 0)
+        : await getSharedPlaylistTracksPage(playlistId, 8, 0);
+      for (const track of page.items) {
+        const explicitArtwork = (track.artwork_url ?? "").trim();
+        if (explicitArtwork) return explicitArtwork;
+        const spotifyUrl = (track.spotify_url ?? "").trim();
+        if (!spotifyUrl) continue;
+        const cached = (savedTrackThumbs[spotifyUrl] ?? "").trim();
+        if (cached) return cached;
+        try {
+          const meta = await getSpotifyOembed(spotifyUrl);
+          const thumb = (meta.thumbnail_url ?? "").trim();
+          if (thumb) {
+            setSavedTrackThumbs((prev) => (prev[spotifyUrl] ? prev : { ...prev, [spotifyUrl]: thumb }));
+            return thumb;
+          }
+        } catch {
+          // Keep scanning next track.
+        }
+      }
+    } catch {
+      // Ignore cover probing failures.
+    }
+    return null;
+  }, [savedTrackThumbs]);
+
+  const ensurePlaylistCovers = useCallback((playlists: Array<UserPlaylist | SharedPlaylist>, source: "saved" | "shared") => {
+    for (const playlist of playlists) {
+      const playlistId = String(playlist.id ?? "").trim();
+      if (!playlistId) continue;
+      const explicitCover = (playlist.cover_url ?? "").trim();
+      if (explicitCover) {
+        setPlaylistCoverById((prev) => (prev[playlistId] ? prev : { ...prev, [playlistId]: explicitCover }));
+        continue;
+      }
+      if (playlistCoverById[playlistId]) continue;
+      if (playlistCoverLoadingRef.current.has(playlistId)) continue;
+      playlistCoverLoadingRef.current.add(playlistId);
+      void resolvePlaylistCoverFromFirstTrack(playlistId, source)
+        .then((cover) => {
+          if (!cover) return;
+          setPlaylistCoverById((prev) => ({ ...prev, [playlistId]: cover }));
+        })
+        .finally(() => {
+          playlistCoverLoadingRef.current.delete(playlistId);
+        });
+    }
+  }, [playlistCoverById, resolvePlaylistCoverFromFirstTrack]);
+
+  useEffect(() => {
+    if (savedPlaylists.length > 0) ensurePlaylistCovers(savedPlaylists, "saved");
+  }, [savedPlaylists, ensurePlaylistCovers]);
+
+  useEffect(() => {
+    if (sharedPlaylists.length > 0) ensurePlaylistCovers(sharedPlaylists, "shared");
+  }, [sharedPlaylists, ensurePlaylistCovers]);
+
+  useEffect(() => {
+    if (view !== "importedTracks") return;
+    const visibleIds = new Set(savedTracks.map((track) => track.id));
+    setSelectedTrackIds((prev) => prev.filter((id) => visibleIds.has(id)));
+  }, [savedTracks, view]);
+
+  useEffect(() => {
+    if (view === "importedTracks") return;
+    setSelectionMode(false);
+    setBulkMenuPos(null);
+    setSelectedTrackIds([]);
+  }, [view]);
+
   async function loadSavedTracksPage(playlistId: string, append: boolean) {
     if (append) setSavedTracksLoadingMore(true);
     else setSavedTracksLoading(true);
@@ -645,10 +814,65 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
     setView("importedTracks");
     setFilter("");
     setSavedTracks([]);
+    setSelectedTrackIds([]);
+    setBulkTargetPlaylistId("");
+    setBulkNewPlaylistName("");
     setSavedTracksOffset(0);
     setSavedTracksHasMore(false);
     setSavedTracksError(null);
     await loadSavedTracksPage(playlist.id, false);
+  }
+
+  async function ensureBulkTargetPlaylist(): Promise<string | null> {
+    const existingTarget = bulkTargetPlaylistId.trim();
+    if (existingTarget) return existingTarget;
+    const requestedName = bulkNewPlaylistName.trim();
+    if (!requestedName) return null;
+    const created = await createEmptyUserPlaylist(requestedName);
+    await loadSavedPlaylists();
+    setBulkTargetPlaylistId(created.id);
+    setBulkNewPlaylistName("");
+    return created.id;
+  }
+
+  async function applyBulkAction(action: "copy" | "move" | "delete"): Promise<void> {
+    if (!selectedSavedPlaylist?.viewer_can_edit) return;
+    const ids = selectedTrackIds;
+    if (ids.length === 0) return;
+    const sourceId = selectedSavedPlaylist.id;
+    const selectedTracks = savedTracks.filter((track) => ids.includes(track.id));
+    if (selectedTracks.length === 0) return;
+    setBulkBusy(true);
+    try {
+      if (action === "delete") {
+        await Promise.all(selectedTracks.map((track) => removeTrackFromUserPlaylist(sourceId, track.id)));
+      } else {
+        const targetId = await ensureBulkTargetPlaylist();
+        if (!targetId) {
+          setImportError("Kies eerst een doel-playlist of maak een nieuwe.");
+          return;
+        }
+        for (const track of selectedTracks) {
+          await addTrackToUserPlaylist(targetId, {
+            title: track.title,
+            artist: track.artist,
+            album: track.album,
+            spotify_url: track.spotify_url,
+            artwork_url: track.artwork_url,
+          });
+        }
+        if (action === "move") {
+          await Promise.all(selectedTracks.map((track) => removeTrackFromUserPlaylist(sourceId, track.id)));
+        }
+      }
+      setSelectedTrackIds([]);
+      await loadSavedTracksPage(sourceId, false);
+      await loadSavedPlaylists();
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : "Bulk actie mislukt.");
+    } finally {
+      setBulkBusy(false);
+    }
   }
 
   async function loadSharedTracksPage(playlistId: string, append: boolean) {
@@ -807,6 +1031,35 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
       setImportError(err instanceof Error ? err.message : "Import mislukt.");
     } finally {
       setImporting(false);
+    }
+  }
+
+  async function handleUpdateExistingPlaylistFromCsv(files: FileList | null): Promise<void> {
+    const targetId = playlistImportTargetId;
+    if (!targetId || !files || files.length === 0) return;
+    const selectedFiles = Array.from(files).filter((file) => file.name.toLowerCase().endsWith(".csv"));
+    if (selectedFiles.length === 0) {
+      setImportError("Kies minimaal 1 CSV-bestand.");
+      return;
+    }
+    setImporting(true);
+    setImportError(null);
+    setImportStatus(null);
+    try {
+      const result = await importIntoUserPlaylist(targetId, selectedFiles);
+      setImportStatus(`Playlist bijgewerkt: ${result.added} nieuwe tracks toegevoegd (totaal ${result.total}).`);
+      await loadSavedPlaylists();
+      if (selectedSavedPlaylist?.id === targetId) {
+        await loadSavedTracksPage(targetId, false);
+      }
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : "Playlist updaten mislukt.");
+    } finally {
+      setImporting(false);
+      setPlaylistImportTargetId(null);
+      if (updatePlaylistInputRef.current) {
+        updatePlaylistInputRef.current.value = "";
+      }
     }
   }
 
@@ -1136,6 +1389,15 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
     () => sortPlaylists(filteredSharedPlaylists, sharedSortMode),
     [filteredSharedPlaylists, sharedSortMode],
   );
+  const filteredFavoriteArtists = useMemo(() => {
+    const q = artistLibraryFilter.trim().toLowerCase();
+    if (!q) return favoriteArtists;
+    return favoriteArtists.filter((artist) => {
+      const name = (artist.name ?? "").toLowerCase();
+      const country = (artist.country ?? "").toLowerCase();
+      return name.includes(q) || country.includes(q);
+    });
+  }, [favoriteArtists, artistLibraryFilter]);
   const groupedSavedPlaylists = useMemo(() => groupPlaylistsByGenre(sortedSavedPlaylists), [sortedSavedPlaylists]);
   const groupedSharedPlaylists = useMemo(() => groupPlaylistsByGenre(sortedSharedPlaylists), [sortedSharedPlaylists]);
   const personalPlaylistCount = savedPlaylists.length;
@@ -1235,6 +1497,41 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
     pumpThumbnailQueue();
   }, [view, filteredSavedTracks, filteredSharedTracks, savedTrackThumbs, pumpThumbnailQueue, scheduleArtworkBackfill]);
 
+  useEffect(() => {
+    if (!serverUrl) return;
+    if (view !== "importedTracks" && view !== "sharedTracks") return;
+    const visibleTracks = view === "sharedTracks" ? filteredSharedTracks : filteredSavedTracks;
+    for (const track of visibleTracks) {
+      const trackId = String(track.id ?? "").trim();
+      if (!trackId) continue;
+      const explicitArtwork = (track.artwork_url ?? "").trim();
+      const spotifyUrl = (track.spotify_url ?? "").trim();
+      const spotifyThumb = spotifyUrl ? (savedTrackThumbs[spotifyUrl] ?? "").trim() : "";
+      if (explicitArtwork || spotifyThumb) continue;
+      if (trackArtworkLookupRef.current.has(trackId)) continue;
+      const artist = (track.artist ?? "").trim();
+      if (!artist) continue;
+      trackArtworkLookupRef.current.add(trackId);
+      void fetch(`${serverUrl}/api/artwork?artist=${encodeURIComponent(artist)}&limit=8`)
+        .then(async (res) => {
+          if (!res.ok) return;
+          const albums = await res.json() as Array<{ artworkUrl100?: string; artistName?: string }>;
+          const first = albums.find((item) => (item.artworkUrl100 ?? "").trim());
+          const art = (first?.artworkUrl100 ?? "").trim().replace("100x100", "300x300");
+          if (!art) return;
+          if (view === "sharedTracks") {
+            setSharedTracks((prev) => prev.map((entry) => entry.id === trackId ? { ...entry, artwork_url: art } : entry));
+          } else {
+            setSavedTracks((prev) => prev.map((entry) => entry.id === trackId ? { ...entry, artwork_url: art } : entry));
+            scheduleArtworkBackfill([{ trackId, artwork_url: art }]);
+          }
+        })
+        .finally(() => {
+          trackArtworkLookupRef.current.delete(trackId);
+        });
+    }
+  }, [serverUrl, view, filteredSavedTracks, filteredSharedTracks, savedTrackThumbs, scheduleArtworkBackfill]);
+
   useEffect(() => () => {
     if (artworkBackfillTimerRef.current) {
       clearTimeout(artworkBackfillTimerRef.current);
@@ -1314,6 +1611,14 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
       {authStatus && (
         <p className="shrink-0 text-[11px] text-amber-300">{authStatus}</p>
       )}
+      <input
+        ref={updatePlaylistInputRef}
+        type="file"
+        multiple
+        accept=".csv,text/csv,application/csv,application/vnd.ms-excel"
+        className="hidden"
+        onChange={(e) => { void handleUpdateExistingPlaylistFromCsv(e.target.files); }}
+      />
 
       {/* Loading */}
       {(loading || savedTracksLoading || sharedTracksLoading) && (
@@ -1377,15 +1682,27 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
                 {favoriteArtistsLoading ? "Laden..." : "Ververs"}
               </button>
             </div>
+            <NoAutofillInput
+              type="search"
+              name={`artist-library-filter-${Math.random().toString(36).substring(7)}`}
+              autoComplete="off"
+              spellCheck={false}
+              value={artistLibraryFilter}
+              onChange={(e) => setArtistLibraryFilter(e.target.value)}
+              placeholder="Zoek in artiesten..."
+              className="mb-2 w-full rounded-md border border-gray-700 bg-gray-800 px-2.5 py-1 text-xs text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
+            />
             {favoriteArtistsLoading ? (
               <div className="flex items-center justify-center py-3">
                 <span className="block h-4 w-4 animate-spin rounded-full border-2 border-gray-500 border-t-transparent" />
               </div>
             ) : favoriteArtists.length === 0 ? (
               <p className="text-[10px] text-gray-400">Nog geen favorieten. Zoek naar een artiest en klik op het hartje om toe te voegen.</p>
+            ) : filteredFavoriteArtists.length === 0 ? (
+              <p className="text-[10px] text-gray-400">Geen artiesten gevonden voor je zoekopdracht.</p>
             ) : (
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {favoriteArtists.map((artist) => (
+                {filteredFavoriteArtists.map((artist) => (
                   <button
                     key={artist.mbid}
                     type="button"
@@ -1518,28 +1835,14 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
                       <div className="mt-1 space-y-1">
                         {subgroup.items.map((playlist: UserPlaylist) => {
                           const playlistWithCount = playlist as UserPlaylistWithCount;
+                          const playlistCover = (playlistWithCount.cover_url ?? "").trim() || (playlistCoverById[playlistWithCount.id] ?? "").trim();
                           return (
                             <div key={playlistWithCount.id} className="rounded-md border border-gray-700 bg-gray-950/75 px-3 py-2">
-                              <div className="mb-1 flex flex-wrap items-center gap-1">
-                                {playlistWithCount.is_owner ? (
-                                  <span className="rounded-full bg-white/[0.05] px-2 py-0.5 text-[10px] font-semibold text-gray-200">Van jou</span>
-                                ) : (
-                                  <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-semibold text-sky-200">Gedeeld door {playlistWithCount.owner_username}</span>
-                                )}
-                                {playlistWithCount.is_public && (
-                                  <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-200">Publiek</span>
-                                )}
-                                {playlistWithCount.is_public_fallback && (
-                                  <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-200">Fallback zichtbaar</span>
-                                )}
-                                {playlistWithCount.shared_with_count > 0 && (
-                                  <span className="rounded-full bg-blue-500/15 px-2 py-0.5 text-[10px] font-semibold text-blue-200">Gedeeld met {playlistWithCount.shared_with_count}</span>
-                                )}
-                              </div>
+                              {renderPlaylistVisibilityMeta(playlistWithCount)}
                               <div className="flex items-center justify-between">
-                              {playlistWithCount.cover_url ? (
+                              {playlistCover ? (
                                 <img
-                                  src={playlistWithCount.cover_url}
+                                  src={playlistCover}
                                   alt=""
                                   className="mr-3 h-10 w-10 shrink-0 rounded-xl object-cover"
                                 />
@@ -1576,28 +1879,14 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
                 </div>
               </details>
             )) : sortedSavedPlaylists.map((playlist) => {
+              const playlistCover = (playlist.cover_url ?? "").trim() || (playlistCoverById[playlist.id] ?? "").trim();
               return (
               <div key={playlist.id} className="mt-2 rounded-md border border-gray-700 bg-gray-950/75 px-3 py-2">
-                <div className="mb-1 flex flex-wrap items-center gap-1">
-                  {playlist.is_owner ? (
-                    <span className="rounded-full bg-white/[0.05] px-2 py-0.5 text-[10px] font-semibold text-gray-200">Van jou</span>
-                  ) : (
-                    <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-semibold text-sky-200">Gedeeld door {playlist.owner_username}</span>
-                  )}
-                  {playlist.is_public && (
-                    <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-200">Publiek</span>
-                  )}
-                  {playlist.is_public_fallback && (
-                    <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-200">Fallback zichtbaar</span>
-                  )}
-                  {playlist.shared_with_count > 0 && (
-                    <span className="rounded-full bg-blue-500/15 px-2 py-0.5 text-[10px] font-semibold text-blue-200">Gedeeld met {playlist.shared_with_count}</span>
-                  )}
-                </div>
+                {renderPlaylistVisibilityMeta(playlist as UserPlaylistWithCount)}
                 <div className="flex items-center justify-between">
-                {playlist.cover_url ? (
+                {playlistCover ? (
                   <img
-                    src={playlist.cover_url}
+                    src={playlistCover}
                     alt=""
                     className="mr-3 h-10 w-10 shrink-0 rounded-xl object-cover"
                   />
@@ -2125,6 +2414,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
 
       {view === "importedTracks" && !savedTracksLoading && (
         <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto pb-14 sm:pb-2">
+          {/* Bulk selectie wordt geopend via contextmenu/long-press */}
           {filteredSavedTracks.map((track) => {
             const isAdded = addedTrackId === track.id;
             const isPending = pendingTrackId === track.id;
@@ -2157,6 +2447,19 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
                   isAdded ? "bg-green-500/10" : "hover:bg-gray-800/80"
                 }`}
               >
+                {canEditPlaylist && selectionMode && (
+                  <input
+                    type="checkbox"
+                    checked={selectedTrackIds.includes(track.id)}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setSelectedTrackIds((prev) => (
+                        checked ? Array.from(new Set([...prev, track.id])) : prev.filter((id) => id !== track.id)
+                      ));
+                    }}
+                    className="h-3.5 w-3.5 shrink-0 accent-violet-500"
+                  />
+                )}
                 <button
                   type="button"
                   onClick={() => handleAddSavedTrack(track)}
@@ -2228,11 +2531,100 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
         >
           <button
             type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              startSelectionModeFromMenu();
+            }}
+            className="block w-full border-b border-gray-800 px-3 py-2 text-left text-xs text-violet-200 transition hover:bg-violet-500/15"
+          >
+            Selecteer tracks (bulk)
+          </button>
+          <button
+            type="button"
             onClick={(e) => selectedSavedPlaylist && handleDeleteTrack(e, selectedSavedPlaylist.id, trackContextMenu.track.id, trackContextMenu.track.title)}
             className="block w-full px-3 py-2 text-left text-xs text-red-200 transition hover:bg-red-500/15"
           >
             Verwijder uit playlist
           </button>
+        </div>
+      )}
+
+      {selectionMode && selectedSavedPlaylist?.viewer_can_edit && bulkMenuPos && (
+        <div
+          className="fixed z-[95] w-[min(92vw,360px)] rounded-lg border border-violet-700/50 bg-gray-950/95 p-2 shadow-2xl"
+          style={{ left: Math.max(8, bulkMenuPos.x - 40), top: Math.max(8, bulkMenuPos.y + 8) }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-[11px] font-semibold text-violet-200">{selectedTrackIds.length} geselecteerd</span>
+            <button
+              type="button"
+              onClick={() => {
+                setSelectionMode(false);
+                setSelectedTrackIds([]);
+              }}
+              className="rounded border border-gray-700 px-2 py-0.5 text-[10px] text-gray-300 transition hover:border-red-500 hover:text-red-300"
+            >
+              Sluiten
+            </button>
+          </div>
+          <div className="grid gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                if (selectedTrackIds.length === filteredSavedTracks.length) setSelectedTrackIds([]);
+                else setSelectedTrackIds(filteredSavedTracks.map((track) => track.id));
+              }}
+              className="rounded border border-gray-700 px-2 py-1 text-left text-[11px] text-gray-200 transition hover:border-violet-500"
+            >
+              {selectedTrackIds.length === filteredSavedTracks.length ? "Selectie wissen" : "Selecteer alles"}
+            </button>
+            <select
+              value={bulkTargetPlaylistId}
+              onChange={(e) => setBulkTargetPlaylistId(e.target.value)}
+              className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[11px] text-white"
+            >
+              <option value="">Doelplaylist kiezen</option>
+              {savedPlaylists
+                .filter((playlist) => playlist.viewer_can_edit && playlist.id !== selectedSavedPlaylist.id)
+                .map((playlist) => (
+                  <option key={playlist.id} value={playlist.id}>{playlist.name}</option>
+                ))}
+            </select>
+            <input
+              type="text"
+              value={bulkNewPlaylistName}
+              onChange={(e) => setBulkNewPlaylistName(e.target.value)}
+              placeholder="...of nieuwe playlistnaam"
+              className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[11px] text-white placeholder-gray-500"
+            />
+            <div className="grid grid-cols-3 gap-1">
+              <button
+                type="button"
+                onClick={() => { void applyBulkAction("copy"); }}
+                disabled={bulkBusy || selectedTrackIds.length === 0}
+                className="rounded border border-blue-600/50 bg-blue-500/15 px-2 py-1 text-[11px] font-semibold text-blue-200 transition hover:bg-blue-500/25 disabled:opacity-50"
+              >
+                Kopieer
+              </button>
+              <button
+                type="button"
+                onClick={() => { void applyBulkAction("move"); }}
+                disabled={bulkBusy || selectedTrackIds.length === 0}
+                className="rounded border border-violet-600/50 bg-violet-500/15 px-2 py-1 text-[11px] font-semibold text-violet-100 transition hover:bg-violet-500/25 disabled:opacity-50"
+              >
+                Verplaats
+              </button>
+              <button
+                type="button"
+                onClick={() => { void applyBulkAction("delete"); }}
+                disabled={bulkBusy || selectedTrackIds.length === 0}
+                className="rounded border border-red-600/50 bg-red-500/15 px-2 py-1 text-[11px] font-semibold text-red-200 transition hover:bg-red-500/25 disabled:opacity-50"
+              >
+                Verwijder
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

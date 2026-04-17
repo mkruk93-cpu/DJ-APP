@@ -487,9 +487,10 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   useEffect(() => {
     const socket = getSocket();
     function onSocketConnect() {
+      const isListening = playingRef.current && volume > 0;
       socket.emit("listener:state", {
         nickname: nicknameRef.current,
-        listening: playing,
+        listening: isListening,
       });
     }
     socket.on("connect", onSocketConnect);
@@ -500,7 +501,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
         listening: false,
       });
     };
-  }, [playing]);
+  }, [volume]);
 
   const syncedRadioTrack = useSyncedTrack(radioTrack);
   const isJingleTrack = !!syncedRadioTrack && (
@@ -705,9 +706,9 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
         castArtist = track.artist ?? "Live radio";
       }
       
-      const castArtwork = currentArtwork 
-        ?? (syncedRadio?.thumbnail ?? null) 
-        ?? (preferSupabase ? track.artwork_url : null) 
+      const castArtwork = currentArtwork
+        ?? (track.artwork_url ?? null)
+        ?? (syncedRadio?.thumbnail ?? null)
         ?? "/icons/krukkex-icon-512x512.png";
 
       navigator.mediaSession.metadata = new MediaMetadata({
@@ -1794,28 +1795,23 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
                 {displayTitle && <p className="truncate text-sm font-semibold text-white">{displayTitle}</p>}
                 {displayArtist && <p className="truncate text-xs text-violet-400">{displayArtist}</p>}
                 {isRadioMode && (radioRequestedBy || syncedRadioTrack) && (
-                  <p className="truncate text-[10px] text-gray-500">
-                    {selectionLabel ? (
-                      <>
-                        Keuze: <span className="text-gray-300">{selectionLabel}</span>
-                        {selectionPlaylistLabel ? (
-                          <>
-                            {" "}
-                            · playlist <span className="text-violet-300">{selectionPlaylistLabel.replace(/^Playlist ·\s*/i, "")}</span>
-                          </>
-                        ) : null}
-                      </>
-                    ) : radioIsRandom ? (
-                      <>Keuze: <span className="text-gray-300">Random selectie</span></>
-                    ) : (
-                      <>Keuze: <span className="text-gray-300">Wachtrij</span></>
-                    )}
-                    {radioRequestedBy ? (
-                      <>
-                        {" "}· door <span className="text-violet-300">{radioRequestedBy}</span>
-                      </>
+                  <div className="mt-1 space-y-0.5 text-[10px] text-gray-500">
+                    <p className="truncate">
+                      Keuze: <span className="text-gray-300">
+                        {selectionLabel ?? (radioIsRandom ? "Random selectie" : "Wachtrij")}
+                      </span>
+                    </p>
+                    {selectionPlaylistLabel ? (
+                      <p className="truncate">
+                        Playlist: <span className="text-violet-300">{selectionPlaylistLabel.replace(/^Playlist ·\s*/i, "")}</span>
+                      </p>
                     ) : null}
-                  </p>
+                    {radioRequestedBy ? (
+                      <p className="truncate">
+                        Aangevraagd door <span className="text-violet-300">{radioRequestedBy}</span>
+                      </p>
+                    ) : null}
+                  </div>
                 )}
                 {canLikeTrack && (
                   <div className="mt-0.5 flex items-center gap-1.5">
