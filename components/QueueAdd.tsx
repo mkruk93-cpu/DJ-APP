@@ -1217,12 +1217,15 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
   if (!canAdd) return null;
 
   function handleInputChange(value: string) {
+    // Always update state first for input sync
     setInput(value);
     setFeedback(null);
 
+    // Debounce/search logic after state update
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
-    if (isSupportedUrl(value.trim())) {
+    const trimmed = value.trim();
+    if (isSupportedUrl(trimmed)) {
       setResults([]);
       setSearchOffsetSafe(0);
       setSearchHasMore(false);
@@ -1231,9 +1234,8 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
       return;
     }
 
-    const query = value.trim();
-    if (query.length >= 2) {
-      debounceRef.current = setTimeout(() => search(query, false), 260);
+    if (trimmed.length >= 2) {
+      debounceRef.current = setTimeout(() => search(trimmed, false), 260);
     } else {
       setResults([]);
       setSearchOffsetSafe(0);
@@ -1935,14 +1937,16 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                       spellCheck={false}
                       value={artistSearchQuery}
                       onChange={(e) => {
-                        setArtistSearchQuery(e.target.value);
+                        // Altijd eerst state updaten
+                        const val = e.target.value;
+                        setArtistSearchQuery(val);
                         if (showFavoriteArtists) setShowFavoriteArtists(false);
                         setSelectedArtist(null);
                         setArtistTracks([]);
                         setArtistAlbums([]);
                         if (debounceRef.current) clearTimeout(debounceRef.current);
-                        if (e.target.value.length >= 2) {
-                          debounceRef.current = setTimeout(() => searchArtists(e.target.value), 300);
+                        if (val.length >= 2) {
+                          debounceRef.current = setTimeout(() => searchArtists(val), 300);
                         } else {
                           setArtistResults([]);
                           setShowArtistResults(false);
@@ -2036,19 +2040,21 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                               <p className="truncate text-sm font-medium text-white">{artist.name}</p>
                               <p className="truncate text-xs text-gray-400">
                                 {artist.country || 'Onbekend'}{artist.type ? ` • ${artist.type}` : ''}{artist.disambiguation ? ` • ${artist.disambiguation}` : ''}
-                              </p>
-                            </div>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              await toggleFavoriteArtistState({
-                                id: artist.id,
-                                name: artist.name,
-                                image: artist.image,
-                                country: artist.country,
-                              });
+                              <input
+                                type="text"
+                                value={genreQuery}
+                                onChange={(e) => {
+                                  // Altijd eerst state updaten
+                                  const val = e.target.value;
+                                  setGenreQuery(val);
+                                  if (genreMenuRef.current) genreMenuRef.current.open = true;
+                                }}
+                                onFocus={() => {
+                                  if (genreMenuRef.current) genreMenuRef.current.open = true;
+                                }}
+                                placeholder="Zoek genre (hardstyle, trance, rock, metal...)"
+                                className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-fuchsia-500"
+                              />
                             }}
                             className={`ml-2 shrink-0 rounded p-1 transition ${isFav ? 'text-pink-400 hover:bg-pink-500/10' : 'text-gray-400 hover:bg-pink-500/10 hover:text-pink-400'}`}
                             title={isFav ? "Verwijder uit favorieten" : "Toevoegen aan favorieten"}

@@ -1665,7 +1665,9 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
         autoComplete="off"
         spellCheck={false}
         value={filter}
-        onChange={(e) => setFilter(e.target.value)}
+        onChange={(e) => {
+          setFilter(e.target.value);
+        }}
         placeholder={view === "playlists" ? "Filter playlists..." : "Filter tracks..."}
         className="w-full shrink-0 rounded-md border border-gray-700 bg-gray-800 px-2.5 py-1 text-xs text-white placeholder-gray-500 outline-none transition focus:border-[#1DB954]"
       />
@@ -2285,13 +2287,17 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
               <input
                 type="text"
                 value={createPlaylistName}
-                onChange={(e) => setCreatePlaylistName(e.target.value)}
+                onChange={(e) => {
+                  setCreatePlaylistName(e.target.value);
+                }}
                 placeholder="Naam van de playlist..."
                 className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[11px] text-white placeholder-gray-500 outline-none focus:border-emerald-400"
               />
               <select
                 value={createPlaylistGenreGroup}
-                onChange={(e) => setCreatePlaylistGenreGroup(e.target.value)}
+                onChange={(e) => {
+                  setCreatePlaylistGenreGroup(e.target.value);
+                }}
                 className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[10px] text-white"
               >
                 <option value="">Kies genre (optioneel)</option>
@@ -2338,7 +2344,9 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
             <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
               <select
                 value={importGenreGroup}
-                onChange={(e) => setImportGenreGroup(e.target.value)}
+                onChange={(e) => {
+                  setImportGenreGroup(e.target.value);
+                }}
                 onFocus={(e) => keepFieldVisibleOnMobile(e.currentTarget)}
                 className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[10px] text-white"
               >
@@ -2350,7 +2358,9 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
               <input
                 type="text"
                 value={importSubgenre}
-                onChange={(e) => setImportSubgenre(e.target.value)}
+                onChange={(e) => {
+                  setImportSubgenre(e.target.value);
+                }}
                 placeholder="Subgenre (optioneel)"
                 className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[10px] text-white placeholder-gray-500"
               />
@@ -2359,7 +2369,9 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
               <input
                 type="text"
                 value={importCoverUrl}
-                onChange={(e) => setImportCoverUrl(e.target.value)}
+                onChange={(e) => {
+                  setImportCoverUrl(e.target.value);
+                }}
                 placeholder="Playlist cover URL (optioneel)"
                 className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[10px] text-white placeholder-gray-500"
               />
@@ -2376,7 +2388,9 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
             <input
               type="text"
               value={importPlaylistName}
-              onChange={(e) => setImportPlaylistName(e.target.value)}
+              onChange={(e) => {
+                setImportPlaylistName(e.target.value);
+              }}
               placeholder="Playlist naam (verplicht; underscores → spaties in titel)"
               className="mt-2 w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[11px] text-white placeholder-gray-500 outline-none focus:border-emerald-400"
             />

@@ -612,7 +612,10 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
         autoComplete="off"
         spellCheck={false}
         value={filter}
-        onChange={(e) => setFilter(e.target.value)}
+        onChange={(e) => {
+          // Altijd eerst state updaten
+          setFilter(e.target.value);
+        }}
         placeholder={view === "playlists" ? "Filter playlists..." : "Filter tracks..."}
         className="w-full shrink-0 rounded-md border border-gray-700 bg-gray-800 px-2.5 py-1 text-xs text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
       />
@@ -754,14 +757,20 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                                 <input
                                   type="text"
                                   value={editDraft.name}
-                                  onChange={(e) => setEditDraft((d) => (d ? { ...d, name: e.target.value } : d))}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setEditDraft((d) => (d ? { ...d, name: val } : d));
+                                  }}
                                   className="mb-1 w-full rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[10px] text-white"
                                   placeholder="Naam"
                                 />
                                 <div className="mb-1 grid gap-1 sm:grid-cols-2">
                                   <select
                                     value={editDraft.genre_group}
-                                    onChange={(e) => setEditDraft((d) => (d ? { ...d, genre_group: e.target.value } : d))}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setEditDraft((d) => (d ? { ...d, genre_group: val } : d));
+                                    }}
                                     className="rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[10px] text-white"
                                   >
                                     <option value="">Overkoepelend genre</option>
@@ -772,7 +781,10 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                                   <input
                                     type="text"
                                     value={editDraft.subgenre}
-                                    onChange={(e) => setEditDraft((d) => (d ? { ...d, subgenre: e.target.value } : d))}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setEditDraft((d) => (d ? { ...d, subgenre: val } : d));
+                                    }}
                                     placeholder="Subgenre"
                                     className="rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[10px] text-white placeholder-gray-500"
                                   />
@@ -780,7 +792,10 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                                 <input
                                   type="text"
                                   value={editDraft.cover_url}
-                                  onChange={(e) => setEditDraft((d) => (d ? { ...d, cover_url: e.target.value } : d))}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setEditDraft((d) => (d ? { ...d, cover_url: val } : d));
+                                  }}
                                   placeholder="Cover URL (https...)"
                                   className="mb-1 w-full rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[10px] text-white placeholder-gray-500"
                                 />
@@ -910,7 +925,9 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
             <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
               <select
                 value={importGenreGroup}
-                onChange={(e) => setImportGenreGroup(e.target.value)}
+                onChange={(e) => {
+                  setImportGenreGroup(e.target.value);
+                }}
                 onFocus={(e) => keepFieldVisibleOnMobile(e.currentTarget)}
                 className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white"
               >
@@ -922,7 +939,9 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
               <input
                 type="text"
                 value={importSubgenre}
-                onChange={(e) => setImportSubgenre(e.target.value)}
+                onChange={(e) => {
+                  setImportSubgenre(e.target.value);
+                }}
                 placeholder="Subgenre (optioneel)"
                 className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white placeholder-gray-500"
               />
@@ -931,7 +950,9 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
               <input
                 type="text"
                 value={importCoverUrl}
-                onChange={(e) => setImportCoverUrl(e.target.value)}
+                onChange={(e) => {
+                  setImportCoverUrl(e.target.value);
+                }}
                 placeholder="Playlist cover URL (optioneel)"
                 className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white placeholder-gray-500"
               />
@@ -948,7 +969,9 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
             <input
               type="text"
               value={importName}
-              onChange={(e) => setImportName(e.target.value)}
+              onChange={(e) => {
+                setImportName(e.target.value);
+              }}
               placeholder="Playlist naam (verplicht; underscores → spaties in titel)"
               className="mt-2 w-full rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[11px] text-white placeholder-gray-500 outline-none focus:border-violet-500"
             />
