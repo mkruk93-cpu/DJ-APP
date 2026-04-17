@@ -2055,7 +2055,6 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                                 placeholder="Zoek genre (hardstyle, trance, rock, metal...)"
                                 className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-fuchsia-500"
                               />
-                            }}
                             className={`ml-2 shrink-0 rounded p-1 transition ${isFav ? 'text-pink-400 hover:bg-pink-500/10' : 'text-gray-400 hover:bg-pink-500/10 hover:text-pink-400'}`}
                             title={isFav ? "Verwijder uit favorieten" : "Toevoegen aan favorieten"}
                           >
