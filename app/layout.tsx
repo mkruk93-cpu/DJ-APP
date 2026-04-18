@@ -2,7 +2,6 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import PwaRegistrar from "@/components/PwaRegistrar";
 import PwaRefreshButton from "@/components/PwaRefreshButton";
-import PreventPullToRefresh from "@/components/PreventPullToRefresh";
 import { AuthProvider } from "@/lib/authContext";
 
 export const metadata: Metadata = {
@@ -81,6 +80,26 @@ export default function RootLayout({
             }
           `
         }} />
+        <script dangerouslySetInnerHTML={{ __html: `
+          (function() {
+            var startY = 0;
+            document.addEventListener('touchstart', function(e) {
+              startY = e.touches[0].pageY;
+            }, { passive: true });
+            document.addEventListener('touchmove', function(e) {
+              var y = e.touches[0].pageY;
+              if (y <= startY) return;
+              var el = e.target;
+              while (el && el !== document.documentElement) {
+                var style = window.getComputedStyle(el);
+                var oy = style.overflowY;
+                if ((oy === 'auto' || oy === 'scroll' || oy === 'overlay') && el.scrollTop > 0) return;
+                el = el.parentElement;
+              }
+              e.preventDefault();
+            }, { passive: false });
+          })();
+        `}} />
         <script src="/viewport-fix.js" />
       </head>
       <body
@@ -92,7 +111,6 @@ export default function RootLayout({
         }}
       >
         <AuthProvider>
-          <PreventPullToRefresh />
           <PwaRegistrar />
           <PwaRefreshButton />
           {children}
