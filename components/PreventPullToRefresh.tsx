@@ -1,6 +1,18 @@
 "use client";
 import { useEffect } from "react";
 
+function canScrollUp(el: EventTarget | null): boolean {
+  let node = el as Element | null;
+  while (node && node !== document.documentElement) {
+    const style = window.getComputedStyle(node);
+    const overflowY = style.overflowY;
+    const isScrollable = overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay";
+    if (isScrollable && node.scrollTop > 0) return true;
+    node = node.parentElement;
+  }
+  return false;
+}
+
 export default function PreventPullToRefresh() {
   useEffect(() => {
     let startY = 0;
@@ -11,8 +23,8 @@ export default function PreventPullToRefresh() {
 
     const onTouchMove = (e: TouchEvent) => {
       const y = e.touches[0].clientY;
-      const el = document.scrollingElement ?? document.documentElement;
-      if (el.scrollTop === 0 && y > startY) {
+      const pullingDown = y > startY;
+      if (pullingDown && !canScrollUp(e.target)) {
         e.preventDefault();
       }
     };
