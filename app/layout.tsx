@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import PwaRegistrar from "@/components/PwaRegistrar";
 import PwaRefreshButton from "@/components/PwaRefreshButton";
+import PreventPullToRefresh from "@/components/PreventPullToRefresh";
 import { AuthProvider } from "@/lib/authContext";
 
 export const metadata: Metadata = {
@@ -91,6 +92,7 @@ export default function RootLayout({
         }}
       >
         <AuthProvider>
+          <PreventPullToRefresh />
           <PwaRegistrar />
           <PwaRefreshButton />
           {children}
