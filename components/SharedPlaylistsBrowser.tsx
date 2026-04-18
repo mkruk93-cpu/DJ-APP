@@ -156,6 +156,7 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
   const [tracksOffset, setTracksOffset] = useState(0);
   const [tracksHasMore, setTracksHasMore] = useState(false);
   const [loadingMoreTracks, setLoadingMoreTracks] = useState(false);
+  const [sharedScrollPos, setSharedScrollPos] = useState<Record<string, number>>({});
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
   const [playlistCoverById, setPlaylistCoverById] = useState<Record<string, string>>({});
   const [trackContextMenu, setTrackContextMenu] = useState<{ x: number; y: number; track: UserPlaylistTrack } | null>(null);
@@ -234,6 +235,34 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
       setLoading(false);
     }
   }
+
+  // Onthoud scrollpositie bij wisselen van view
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+
+    const handleScroll = () => {
+      setSharedScrollPos(prev => ({
+        ...prev,
+        [view]: list.scrollTop
+      }));
+    };
+
+    list.addEventListener("scroll", handleScroll);
+    return () => list.removeEventListener("scroll", handleScroll);
+  }, [view]);
+
+  // Herstel scrollpositie bij terugkeer naar een view
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const savedPos = sharedScrollPos[view];
+    if (typeof savedPos === "number") {
+      requestAnimationFrame(() => {
+        if (list) list.scrollTop = savedPos;
+      });
+    }
+  }, [view, tracks, sharedPlaylists]);
 
   useEffect(() => {
     void loadSharedPlaylists();
@@ -716,7 +745,7 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
       )}
 
       {view === "playlists" && !loading && (
-        <div className="min-h-0 flex-1 space-y-px overflow-y-auto pb-14 sm:pb-2">
+        <div className="min-h-0 flex-1 space-y-px overflow-y-auto sm:pb-2">
           <div className="mb-2 rounded-md border border-blue-700/70 bg-blue-950/20 p-2">
             {sharedUsage && (
               <p className="mb-1 text-[10px] text-blue-300/80">
@@ -1074,14 +1103,14 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
       )}
 
       {view === "tracks" && !loading && (
-        <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto pb-14 sm:pb-2">
+        <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto sm:pb-2">
           {filteredTracks.map((track) => {
             const isAdded = addedTrackId === track.id;
             const isPending = pendingTrackId === track.id;
             const spotifyUrl = (track.spotify_url ?? "").trim();
-            const thumb = spotifyUrl ? thumbs[spotifyUrl] : "";
-            const canEditTrack = !!selectedPlaylist && isPlaylistOwner(selectedPlaylist);
-            return (
+            const explicitArtwork = (track.artwork_url ?? "").trim();
+            const thumb = explicitArtwork || (spotifyUrl ? (thumbs[spotifyUrl] ?? "").trim() : "");
+            const canEditTrack = !!selectedPlaylist && isPlaylistOwner(selectedPlaylist);            return (
               <div
                 key={track.id}
                 onContextMenu={(e) => {
@@ -1101,7 +1130,7 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                 onTouchEnd={clearTrackHoldTimer}
                 onTouchMove={clearTrackHoldTimer}
                 onTouchCancel={clearTrackHoldTimer}
-                className={`group flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition ${
+                className={`group flex w-full items-center rounded-md transition ${
                   isAdded ? "bg-green-500/10" : "hover:bg-gray-800/80"
                 }`}
               >
@@ -1109,28 +1138,30 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                   type="button"
                   onClick={() => handleAddTrack(track)}
                   disabled={submitting || isPending}
-                  className="flex min-w-0 flex-1 items-center gap-2 disabled:opacity-60"
+                  className="flex min-w-0 flex-1 items-center gap-2 px-1.5 py-1 text-left disabled:opacity-60"
                 >
-                {thumb ? (
-                  <img src={thumb} alt="" className="h-10 w-10 shrink-0 rounded object-cover" />
-                ) : (
-                  <div className="h-10 w-10 shrink-0 rounded bg-gray-800" />
-                )}
-                <div className="min-w-0 flex-1 text-left">
-                  <p className="truncate text-xs font-medium text-white">{track.title}</p>
-                  <p className="truncate text-[10px] text-gray-400">{track.artist ?? "Unknown"}</p>
-                </div>
-                {isAdded ? (
-                  <span className="shrink-0 rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
-                    Toegevoegd
-                  </span>
-                ) : isPending ? (
-                  <span className="shrink-0 rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200">
-                    Bezig...
-                  </span>
-                ) : null}
+                  {thumb ? (
+                    <img src={thumb} alt="" className="h-10 w-10 shrink-0 rounded object-cover shadow-sm" />
+                  ) : (
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-gray-800 text-gray-600">
+                      <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" /></svg>
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-medium text-white">{track.title}</p>
+                    <p className="truncate text-[10px] text-gray-400">{track.artist ?? "Unknown"}</p>
+                  </div>
+                  {isAdded ? (
+                    <span className="shrink-0 rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
+                      Toegevoegd
+                    </span>
+                  ) : isPending ? (
+                    <span className="shrink-0 rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200">
+                      Bezig...
+                    </span>
+                  ) : null}
                 </button>
-                <div className="flex shrink-0 items-center gap-1.5">
+                <div className="flex shrink-0 items-center gap-1.5 pr-1.5">
                   <TrackActions 
                     title={track.title} 
                     artist={track.artist} 
@@ -1149,7 +1180,7 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
           {loadingMoreTracks && (
             <p className="py-2 text-center text-[11px] text-gray-500">Meer tracks laden...</p>
           )}
-          <div ref={loadMoreRef} className="h-10 w-full sm:h-2" />
+          <div ref={loadMoreRef} className="w-full h-2" />
         </div>
       )}
 

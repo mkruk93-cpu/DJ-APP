@@ -496,9 +496,9 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="min-h-screen">
+    <div className="flex h-screen flex-col bg-gray-950 overflow-hidden">
       {!embedded && (
-        <header className="border-b border-gray-800 bg-gray-900/80 px-6 py-4 backdrop-blur-sm">
+        <header className="sticky top-0 z-50 shrink-0 border-b border-gray-800 bg-gray-900/80 px-6 py-4 backdrop-blur-sm">
           <div className="flex items-center justify-between">
             <h1 className="text-lg font-bold text-white">Admin Dashboard</h1>
             <button
@@ -516,7 +516,7 @@ export default function AdminPage() {
         </header>
       )}
 
-      <main className={`mx-auto max-w-4xl space-y-4 ${embedded ? "p-2" : "p-6"}`}>
+      <main className={`mx-auto w-full max-w-4xl flex-1 space-y-4 overflow-y-auto ${embedded ? "p-2" : "p-6"}`}>
         <details open className="overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
           <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-semibold text-white transition hover:bg-gray-800/60">
             Gebruiker Goedkeuringen

@@ -90,9 +90,9 @@ interface AudioPlayerProps {
 const VOLUME_STORAGE_KEY_BASE = "djapp:player-volume";
 const PLAY_INTENT_STORAGE_KEY = "djapp:player-should-play";
 // Tolerate temporary network jitter before forcing a stream reload.
-const LIVE_RECOVER_WAIT_MS = 7500;
-const LIVE_RECOVER_MIN_INTERVAL_MS = 12000;
-const LIVE_HEALTHCHECK_INTERVAL_MS = 20000;
+const LIVE_RECOVER_WAIT_MS = 6000;
+const LIVE_RECOVER_MIN_INTERVAL_MS = 10000;
+const LIVE_HEALTHCHECK_INTERVAL_MS = 15000;
 
 function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
   const rn = r / 255;
@@ -773,6 +773,14 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
       }
     };
   }, [clearReconnectTimer, clearWaitingTimer, currentArtwork, persistPlayIntent, preferSupabase, src, startPlayback, track, syncedRadioTrack]);
+
+  // Trigger stream refresh on track change to clear buffer and ensure fresh start
+  useEffect(() => {
+    if (syncedRadioTrack?.id && playingRef.current && src) {
+      console.log("[AudioPlayer] Track changed, refreshing stream buffer...");
+      refreshStream();
+    }
+  }, [syncedRadioTrack?.id, src]);
 
   // Synchronize mediaSession playbackState with component state
   useEffect(() => {

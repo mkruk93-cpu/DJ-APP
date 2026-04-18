@@ -269,7 +269,10 @@ export default function FallbackGenreSelector() {
   }
   const shouldRender = connected && sortedGenres.length > 0;
   const activeLabel = useMemo(() => {
-    if (activePresetName) {
+    // Als er een actieve preset is, toon die ALLEEN als de huidige selectie overeenkomt (versimpeld)
+    // Maar de gebruiker wil dat bij aanpassing de naam weggaat.
+    // Dus we tonen de preset naam alleen als er geen optimistische selectie is en de store zegt dat hij actief is.
+    if (activePresetName && !optimisticSelectedGenreIds) {
       return activePresetName;
     }
     // Als er meerdere playlists geselecteerd zijn, toon het aantal
@@ -282,13 +285,13 @@ export default function FallbackGenreSelector() {
       return first ? cleanFallbackLabel(first.label) : "Playlist";
     }
     // Als actieve genre een playlist is, toon alleen de naam
-    if (activeGenre?.startsWith("shared:")) {
+    if (activeGenre?.startsWith("shared:") || activeGenre?.startsWith("user:")) {
       const playlist = sortedGenres.find((g) => g.id === activeGenre);
       return playlist ? cleanFallbackLabel(playlist.label) : "Playlist";
     }
     const activeGenreLabel = sortedGenres.find((g) => g.id === activeGenre)?.label;
     return activeGenreLabel ? cleanFallbackLabel(activeGenreLabel) : activeGenre ?? "Kies genre";
-  }, [sortedGenres, activeGenre, selectedSharedGenres, activePresetName]);
+  }, [sortedGenres, activeGenre, selectedSharedGenres, activePresetName, optimisticSelectedGenreIds]);
 
   useEffect(() => {
     function updateMobileState() {

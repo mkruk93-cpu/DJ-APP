@@ -30,6 +30,7 @@ import {
   backfillUserPlaylistTrackArtwork,
   followPublicPlaylistInLibrary,
   updateUserPlaylistSharing,
+  updateSharedPlaylistAsOwner,
   updateFavoriteArtist,
   type SharedPlaylist,
   type PlaylistGenreMetaInput,
@@ -260,6 +261,16 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
   const [createPlaylistName, setCreatePlaylistName] = useState("");
   const [appliedPresetId, setAppliedPresetId] = useState<string | null>(null);
 
+  const [editDraft, setEditDraft] = useState<{
+    id: string;
+    name: string;
+    genre_group: string;
+    subgenre: string;
+    cover_url: string;
+  } | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
+  const [personalLibraryScrollPos, setPersonalLibraryScrollPos] = useState<Record<string, number>>({});
+
   const currentNickname = useMemo(() => {
     if (typeof window === "undefined") return null;
     const nickname = userAccount?.username?.trim() || localStorage.getItem("nickname")?.trim() || "";
@@ -309,6 +320,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
   const [selectionMode, setSelectionMode] = useState(false);
   const [bulkMenuPos, setBulkMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [savedTrackThumbs, setSavedTrackThumbs] = useState<Record<string, string>>({});
+
   // Shared playlists and tracks state
   const [sharedSortMode, setSharedSortMode] = useState<PlaylistSortMode>("name_asc");
   const [sharedPlaylistViewMode, setSharedPlaylistViewMode] = useState<PlaylistViewMode>("grouped");
@@ -377,6 +389,35 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
     setSharedTracksError(null);
     void loadSavedPlaylists(); // Refresh playlists when going back
   }, []);
+
+  // Onthoud scrollpositie bij wisselen van view
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+
+    const handleScroll = () => {
+      setPersonalLibraryScrollPos(prev => ({
+        ...prev,
+        [view]: list.scrollTop
+      }));
+    };
+
+    list.addEventListener("scroll", handleScroll);
+    return () => list.removeEventListener("scroll", handleScroll);
+  }, [view]);
+
+  // Herstel scrollpositie bij terugkeer naar een view of na re-render
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const savedPos = personalLibraryScrollPos[view];
+    if (typeof savedPos === "number") {
+      // Gebruik requestAnimationFrame om te wachten tot de DOM stabiel is
+      requestAnimationFrame(() => {
+        if (list) list.scrollTop = savedPos;
+      });
+    }
+  }, [view, savedTracks, sharedTracks, savedPlaylists]);
 
   async function handleDeletePlaylist(e: React.MouseEvent, playlistId: string, name: string) {
     e.stopPropagation();
@@ -488,20 +529,6 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
     setTrackContextMenu(null);
   }
 
-  function setPlaylistAsAutoplayFallback(playlist: UserPlaylist) {
-    if (lockAutoplayFallback && !getRadioToken()) {
-      alert("Autoplay fallback is vergrendeld. Alleen admin kan dit aanpassen.");
-      return;
-    }
-    const selectedBy = (typeof window !== "undefined" ? localStorage.getItem("nickname") : null)?.trim() || undefined;
-    getSocket().emit("fallback:genre:set", {
-      genreId: `user:${playlist.id}`,
-      selectedBy,
-      sharedPlaybackMode: "random",
-      token: getRadioToken() ?? undefined,
-    });
-  }
-
   async function handleSharePlaylist(e: React.MouseEvent, playlist: UserPlaylist) {
     e.stopPropagation();
     const target = window.prompt(`Met welke gebruiker wil je "${playlist.name}" delen?`);
@@ -558,6 +585,20 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
     const actions: MenuAction[] = [];
     if (playlist.viewer_can_edit) {
       actions.push(
+        {
+          key: "edit",
+          label: "Gegevens bewerken",
+          tone: "default" as const,
+          onSelect: () => {
+            setEditDraft({
+              id: playlist.id,
+              name: playlist.name,
+              genre_group: playlist.genre_group ?? "",
+              subgenre: playlist.subgenre ?? "",
+              cover_url: playlist.cover_url ?? "",
+            });
+          },
+        },
         {
           key: "auto",
           label: "Gebruik als autoplay fallback",
@@ -1045,6 +1086,30 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
     await loadSharedTracksPage(playlist.id, false);
   }
 
+  async function setPlaylistAsAutoplayFallback(playlist: UserPlaylist) {
+    if (lockAutoplayFallback && !getRadioToken()) {
+      setImportError("Autoplay is vergrendeld (alleen admin).");
+      return;
+    }
+    setImportStatus(`Bezig met instellen van "${playlist.name}"...`);
+    try {
+      // Zorg dat de playlist publiek gedeeld is, anders kan de fallback-server er niet bij
+      await updateUserPlaylistSharing(playlist.id, { is_public: true });
+      
+      const selectedBy = currentNickname;
+      getSocket().emit("fallback:genre:set", {
+        genreId: `user:${playlist.id}`,
+        selectedBy,
+        sharedPlaybackMode: "random",
+        token: getRadioToken() ?? undefined,
+      });
+      setImportStatus(`"${playlist.name}" is nu ingesteld als autoplay fallback.`);
+      await loadSavedPlaylists(); // Refresh om de status te tonen
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : "Instellen mislukt.");
+    }
+  }
+
   async function removeSavedPlaylist(playlist: UserPlaylist) {
     setImportError(null);
     try {
@@ -1057,6 +1122,27 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
       }
     } catch (err) {
       setImportError(err instanceof Error ? err.message : "Verwijderen mislukt.");
+    }
+  }
+
+  async function savePlaylistEdit() {
+    if (!editDraft) return;
+    setEditSaving(true);
+    setImportError(null);
+    try {
+      await updateSharedPlaylistAsOwner(editDraft.id, {
+        playlistName: editDraft.name.trim(),
+        genre_group: editDraft.genre_group.trim() || null,
+        subgenre: editDraft.subgenre.trim() || null,
+        cover_url: editDraft.cover_url.trim() || null,
+      });
+      setEditDraft(null);
+      await loadSavedPlaylists();
+      setImportStatus("Playlist bijgewerkt.");
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : "Opslaan mislukt.");
+    } finally {
+      setEditSaving(false);
     }
   }
 
@@ -1720,39 +1806,9 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
         </div>
       )}
 
-      {/* Filter */}
-      <NoAutofillInput
-        type="search"
-        name={`spotify-filter-${Math.random().toString(36).substring(7)}`}
-        autoComplete="off"
-        spellCheck={false}
-        value={filter}
-        onChange={(e) => setFilter(e.target.value)}
-        placeholder={view === "playlists" ? "Filter playlists..." : "Filter tracks..."}
-        className="w-full shrink-0 rounded-md border border-gray-700 bg-gray-800 px-2.5 py-1 text-xs text-white placeholder-gray-500 outline-none transition focus:border-[#1DB954]"
-      />
-      {authStatus && (
-        <p className="shrink-0 text-[11px] text-amber-300">{authStatus}</p>
-      )}
-      <input
-        ref={updatePlaylistInputRef}
-        type="file"
-        multiple
-        accept=".csv,text/csv,application/csv,application/vnd.ms-excel"
-        className="hidden"
-        onChange={(e) => { void handleUpdateExistingPlaylistFromCsv(e.target.files); }}
-      />
-
-      {/* Loading */}
-      {(loading || savedTracksLoading || sharedTracksLoading) && (
-        <div className="flex shrink-0 items-center justify-center py-3">
-          <span className="block h-4 w-4 animate-spin rounded-full border-2 border-[#1DB954] border-t-transparent" />
-        </div>
-      )}
-
       {/* Playlist list */}
       {view === "playlists" && !loading && (
-        <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto pb-14 sm:pb-2">
+        <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto sm:pb-2">
           <div className="mb-2 rounded-md border border-gray-700 bg-gray-900/80 p-2.5 shadow-[0_8px_20px_rgba(0,0,0,0.22)]">
             <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[10px] text-gray-400">
               <span className="rounded-full border border-white/8 bg-white/[0.03] px-2.5 py-1">
@@ -2581,7 +2637,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
       )}
 
       {view === "tracks" && spotifyEnabled && !loading && (
-        <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto pb-14 sm:pb-2">
+        <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto sm:pb-2">
           {filteredTracks.map((track) => {
             const trackKey = track.id ?? `${track.name ?? "unknown"}:${track.artists?.map((a) => a?.name).join(",") ?? "unknown"}`;
             const artists = track.artists?.map((a) => a?.name).filter(Boolean).join(", ") || "";
@@ -2661,7 +2717,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
       )}
 
       {view === "importedTracks" && !savedTracksLoading && (
-        <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto pb-14 sm:pb-2">
+        <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto sm:pb-2">
           {/* Bulk selectie wordt geopend via contextmenu/long-press */}
           {filteredSavedTracks.map((track) => {
             const isAdded = addedTrackId === track.id;
@@ -2899,7 +2955,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
       )}
 
       {view === "sharedTracks" && !sharedTracksLoading && (
-        <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto pb-14 sm:pb-2">
+        <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto sm:pb-2">
           {filteredSharedTracks.map((track) => {
             const isAdded = addedTrackId === track.id;
             const isPending = pendingTrackId === track.id;
@@ -2984,6 +3040,83 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
           <div ref={loadMoreRef} className="h-10 w-full sm:h-2" />
         </div>
       )}
+
+      {editDraft && (
+        <div 
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+          onClick={() => setEditDraft(null)}
+        >
+          <div 
+            className="w-full max-w-sm rounded-xl border border-gray-700 bg-gray-950 p-4 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="mb-4 text-sm font-bold text-white">Playlist bewerken</h3>
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-gray-400">Naam</label>
+                <input
+                  autoFocus
+                  type="text"
+                  value={editDraft.name}
+                  onChange={(e) => setEditDraft({ ...editDraft, name: e.target.value })}
+                  className="w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-xs text-white outline-none focus:border-violet-500"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-gray-400">Genre</label>
+                  <select
+                    value={editDraft.genre_group}
+                    onChange={(e) => setEditDraft({ ...editDraft, genre_group: e.target.value })}
+                    className="w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-xs text-white"
+                  >
+                    <option value="">Kies genre</option>
+                    {PLAYLIST_GENRE_GROUPS.map((g) => (
+                      <option key={g} value={g}>{g}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-gray-400">Subgenre</label>
+                  <input
+                    type="text"
+                    value={editDraft.subgenre}
+                    onChange={(e) => setEditDraft({ ...editDraft, subgenre: e.target.value })}
+                    className="w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-xs text-white"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-gray-400">Cover URL (optioneel)</label>
+                <input
+                  type="text"
+                  value={editDraft.cover_url}
+                  onChange={(e) => setEditDraft({ ...editDraft, cover_url: e.target.value })}
+                  placeholder="https://..."
+                  className="w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-xs text-white"
+                />
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditDraft(null)}
+                  className="flex-1 rounded-lg border border-gray-700 bg-gray-800 py-2 text-xs font-bold text-gray-300 transition hover:bg-gray-700"
+                >
+                  Annuleren
+                </button>
+                <button
+                  type="button"
+                  onClick={savePlaylistEdit}
+                  disabled={editSaving || !editDraft.name.trim()}
+                  className="flex-1 rounded-lg bg-violet-600 py-2 text-xs font-bold text-white transition hover:bg-violet-500 disabled:opacity-50"
+                >
+                  {editSaving ? "Opslaan..." : "Opslaan"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
-  )
+  );
 }

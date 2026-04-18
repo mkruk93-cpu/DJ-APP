@@ -287,6 +287,10 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
   
   const [isMobile, setIsMobile] = useState(false);
   const [mobileGenreMenuTop, setMobileGenreMenuTop] = useState<number | null>(null);
+  
+  // Cache voor tab-states
+  const tabStatesRef = useRef<Record<string, any>>({});
+
   const mode = useRadioStore((s) => s.mode);
   const queue = useRadioStore((s) => s.queue);
   const hideLocalDiscovery = useRadioStore((s) => s.hideLocalDiscovery);
@@ -1139,8 +1143,30 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
     loadGenreHits(activeGenre, false);
   }, [includeLocal, hideLocalDiscovery]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Lightweight: No auto-retry to reduce server load
-  // The server now always returns something, so no need for aggressive retrying
+  // Scroll-herstel effect
+  useEffect(() => {
+    const cachedState = tabStatesRef.current[source];
+    if (cachedState?.scrollTop !== undefined) {
+      const container =
+        source === "search"
+          ? searchListRef.current
+          : source === "genres"
+            ? genreListRef.current
+            : artistTracksListRef.current;
+      if (container) {
+        requestAnimationFrame(() => {
+          container.scrollTop = cachedState.scrollTop;
+        });
+      }
+    }
+  }, [source]);
+
+  function handleScroll(e: React.UIEvent<HTMLDivElement>) {
+    tabStatesRef.current[source] = {
+      ...tabStatesRef.current[source],
+      scrollTop: e.currentTarget.scrollTop,
+    };
+  }
 
   useEffect(() => {
     function updateMobileState() {
@@ -1415,30 +1441,60 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
   }
 
   function switchSource(newSource: SearchSource) {
+    // Sla huidige staat op voordat we wisselen
+    tabStatesRef.current[source] = {
+      input,
+      results,
+      searchOffset: searchOffsetRef.current,
+      searchQuery,
+      includeSets,
+      includeLocal,
+      activeGenre,
+      genreHits,
+      genreHitsOffset: genreOffsetRef.current,
+    };
+
     setSource(newSource);
-    setResults([]);
-    setSearchOffsetSafe(0);
-    setSearchHasMore(false);
-    setSearchQuery("");
-    setShowResults(false);
     setFeedback(null);
-    if (newSource === "genres") {
-      setInput("");
-      setGenreHits([]);
-      setGenreOffsetSafe(0);
-      setGenreHasMore(false);
-      genreNoProgressPagesRef.current = 0;
-      setActiveGenre(null);
-      loadGenres(genreQuery);
-      return;
-    }
-    if (newSource === "spotify" || newSource === "playlists") return;
-    const query = input.trim();
-    if (query.length >= 2 && !isSupportedUrl(query)) {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(() => {
-        search(query, false);
-      }, 100);
+
+    // Herstel staat als deze bestaat
+    const cachedState = tabStatesRef.current[newSource];
+    if (cachedState) {
+      setInput(cachedState.input ?? "");
+      setResults(cachedState.results ?? []);
+      setSearchOffsetSafe(cachedState.searchOffset ?? 0);
+      setSearchQuery(cachedState.searchQuery ?? "");
+      setIncludeSets(cachedState.includeSets ?? false);
+      setIncludeLocal(cachedState.includeLocal ?? false);
+      setActiveGenre(cachedState.activeGenre ?? null);
+      setGenreHits(cachedState.genreHits ?? []);
+      setGenreOffsetSafe(cachedState.genreHitsOffset ?? 0);
+      setShowResults(cachedState.results?.length > 0);
+    } else {
+      // Reset voor nieuwe tabs
+      setResults([]);
+      setSearchOffsetSafe(0);
+      setSearchHasMore(false);
+      setSearchQuery("");
+      setShowResults(false);
+      
+      if (newSource === "genres") {
+        setInput("");
+        setGenreHits([]);
+        setGenreOffsetSafe(0);
+        setGenreHasMore(false);
+        genreNoProgressPagesRef.current = 0;
+        setActiveGenre(null);
+        loadGenres(genreQuery);
+      } else if (newSource === "search") {
+        const query = input.trim();
+        if (query.length >= 2 && !isSupportedUrl(query)) {
+          if (debounceRef.current) clearTimeout(debounceRef.current);
+          debounceRef.current = setTimeout(() => {
+            search(query, false);
+          }, 100);
+        }
+      }
     }
   }
 
@@ -1705,8 +1761,10 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
           )}
         </div>
 
-        {source === "spotify" ? (
-          <div className="min-h-0 flex-1">
+        {/* Tab content containers */}
+        <div className="min-h-0 flex-1 flex flex-col relative overflow-hidden p-1.5">
+          {/* Spotify / Personal tab */}
+          <div className={`min-h-0 flex-1 flex flex-col ${source === "spotify" ? "flex" : "hidden"}`}>
             <SpotifyErrorBoundary onReset={() => switchSource("video")}>
               <SpotifyBrowser onAddTrack={handleSpotifyAdd} submitting={submitting} onSelectFavoriteArtist={(artist) => {
                 setSource("search");
@@ -1730,11 +1788,14 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
               }} />
             </SpotifyErrorBoundary>
           </div>
-        ) : source === "playlists" ? (
-          <div className="min-h-0 flex-1">
+
+          {/* Public Playlists tab */}
+          <div className={`min-h-0 flex-1 flex flex-col ${source === "playlists" ? "flex" : "hidden"}`}>
             <SharedPlaylistsBrowser onAddTrack={handleSpotifyAdd} submitting={submitting} />
           </div>
-        ) : source === "genres" ? (
+
+          {/* Genres tab */}
+          {source === "genres" ? (
           <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
             <div className="shrink-0">
               <input
@@ -1776,7 +1837,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                 <span className="justify-self-end text-gray-400 transition group-open:rotate-180">▾</span>
               </summary>
               <div
-                className={`${isMobile ? "fixed left-2 right-2 mt-0" : "relative mt-1"} z-[150] overflow-y-auto rounded-md border border-gray-700 bg-gray-900/95 p-1 shadow-lg shadow-black/40 sm:relative sm:mt-1 sm:left-auto sm:right-auto sm:max-h-60`}
+                className={`${isMobile ? "fixed left-2 right-2 mt-0" : "relative mt-1"} z-[150] overflow-y-auto rounded-md border border-gray-700 bg-gray-950/95 p-1 shadow-lg shadow-black/40 sm:relative sm:mt-1 sm:left-auto sm:right-auto sm:max-h-60`}
                 style={
                   isMobile && mobileGenreMenuTop !== null
                     ? { top: mobileGenreMenuTop, maxHeight: `calc(100dvh - ${mobileGenreMenuTop + 8}px)` }
@@ -1863,7 +1924,10 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
             {showGenreHitsPanel && (
               <div
                 ref={genreListRef}
-                onScroll={handleGenreListScroll}
+                onScroll={(e) => {
+                  handleGenreListScroll(e);
+                  handleScroll(e);
+                }}
                 className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70"
               >
               {genreHitsLoading ? (
@@ -2059,7 +2123,6 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                                   <p className="truncate text-xs text-gray-400">
                                     {artist.country || 'Onbekend'}{artist.type ? ` • ${artist.type}` : ''}{artist.disambiguation ? ` • ${artist.disambiguation}` : ''}
                                   </p>
-                                  {/* Genre search input removed from artist result dropdown */}
                                 </div>
                               </button>
                               <button
@@ -2203,6 +2266,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                 ) : (
                   <div 
                     ref={artistTracksListRef}
+                    onScroll={handleScroll}
                     className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70"
                   >
                     {artistTracks
@@ -2327,164 +2391,145 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
               </div>
             )}
           </div>
-        ) : (
-         <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
-          {/* 1. Zoekveld Sectie */}
-          <div className="shrink-0 space-y-2">
-            <div className="relative">
-              <NoAutofillInput
-                type="search"
-                name={`search-input-${Math.random().toString(36).substring(7)}`}
-                autoComplete="off"
-                spellCheck={false}
-                value={input}
-                onChange={(e) => handleInputChange(e.target.value)}
-                onFocus={() => {
-                  if (results.length > 0) {
-                    setShowResults(true);
-                    setShowVideoHistory(false);
-                  } else {
-                    setShowVideoHistory(true);
-                  }
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Escape') {
-                    setShowVideoHistory(false);
-                    setShowResults(false);
-                  }
-                }}
-                onBlur={() => {
-                  if (!showResults && !showVideoHistory) return;
-                  setTimeout(() => {
-                    if (input.trim() === '') setShowVideoHistory(false);
-                    setShowResults(false);
-                  }, 150);
-                }}
-                placeholder="Zoek op SoundCloud of YouTube, of plak een link..."
-                className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 pr-40 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500"
-              />
-              
-              <button
-                type="button"
-                onClick={() => setIncludeSets((prev) => !prev)}
-                className={`absolute right-20 top-1/2 -translate-y-1/2 rounded-full border px-2 py-0.5 text-[10px] font-semibold transition ${
-                  includeSets
-                    ? "border-violet-500/70 bg-violet-500/20 text-violet-200"
-                    : "border-gray-600 bg-gray-800/80 text-gray-300 hover:border-gray-500"
-                }`}
-                aria-pressed={includeSets}
-                aria-label="Setjes tonen (langer dan 15 minuten)"
-                title="Setjes tonen (> 15 min)"
-              >
-                Sets tonen
-              </button>
-              
-              {!hideLocalDiscovery && (
-                <button
-                  type="button"
-                  onClick={() => setIncludeLocal((prev) => !prev)}
-                  className={`absolute right-3 top-1/2 -translate-y-1/2 rounded-full border px-2 py-0.5 text-[10px] font-semibold transition ${
-                    includeLocal
-                      ? "border-violet-500/70 bg-violet-500/20 text-violet-200"
-                      : "border-gray-600 bg-gray-800/80 text-gray-300 hover:border-gray-500"
-                  }`}
-                  aria-pressed={includeLocal}
-                  title="Lokale tracks meenemen"
-                >
-                  Lokaal
-                </button>
-              )}
-              
-              {searching && (
-                <div className="absolute right-36 top-1/2 -translate-y-1/2">
-                  <span className="block h-4 w-4 animate-spin rounded-full border-2 border-violet-400 border-t-transparent" />
-                </div>
-              )}
-              
-              {/* Zoekarchief / Geschiedenis */}
-              {showVideoHistory && videoHistory.length > 0 && (
-                <div className="absolute left-0 right-0 top-full z-[250] mt-1 max-h-72 overflow-y-auto overscroll-contain rounded-md border border-gray-700 bg-gray-900 shadow-lg">
-                  <div className="px-3 py-1.5 text-[11px] font-medium uppercase text-gray-500">Recente zoekopdrachten</div>
-                  {videoHistory.map((h) => (
-                    <div key={h.id} className="group flex w-full items-center px-3 py-1.5 text-left text-sm text-gray-300 hover:bg-gray-800">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setInput(h.query);
-                          handleInputChange(h.query);
-                          setShowVideoHistory(false);
-                        }}
-                        className="flex-1 truncate text-left"
-                      >
-                        {h.query}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => deleteHistoryItem('video', h.id)}
-                        className="ml-2 shrink-0 px-1 text-red-400 opacity-100 transition hover:text-red-300 sm:opacity-0 sm:group-hover:opacity-100"
-                        title="Verwijderen"
-                        aria-label={`Verwijder ${h.query} uit geschiedenis`}
-                      >
-                        ×
-                      </button>
+        ) : source === "video" ? (
+          <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
+            {/* Search input + submit */}
+            <div className="relative shrink-0">
+              <div className="flex gap-2">
+                <div className="relative min-w-0 flex-1">
+                  <NoAutofillInput
+                    type="search"
+                    name={`video-search-${Math.random().toString(36).substring(7)}`}
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={input}
+                    onChange={(e) => {
+                      handleInputChange(e.target.value);
+                      if (e.target.value.trim().length > 0) setShowVideoHistory(false);
+                    }}
+                    onFocus={() => {
+                      if (!input.trim() && videoHistory.length > 0) setShowVideoHistory(true);
+                    }}
+                    placeholder="Zoek of plak een YouTube/SoundCloud link..."
+                    className="w-full rounded-lg border border-gray-700 bg-gray-800/80 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-violet-500/50"
+                  />
+                  {searching && (
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                      <span className="block h-4 w-4 animate-spin rounded-full border-2 border-violet-400 border-t-transparent" />
                     </div>
-                  ))}
+                  )}
+                  {/* Video history dropdown */}
+                  {showVideoHistory && videoHistory.length > 0 && (
+                    <div className="absolute left-0 right-0 top-full z-40 mt-1 max-h-60 overflow-y-auto overscroll-contain rounded-md border border-gray-700 bg-gray-900 shadow-lg">
+                      <div className="px-3 py-1.5 text-[11px] font-medium uppercase text-gray-500">Recente zoekopdrachten</div>
+                      {videoHistory.map((h) => (
+                        <div key={h.id} className="group flex w-full items-center px-3 py-1.5 text-left text-sm text-gray-300 hover:bg-gray-800">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowVideoHistory(false);
+                              handleInputChange(h.query);
+                            }}
+                            className="flex-1 truncate text-left"
+                          >
+                            {h.query}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => deleteHistoryItem('video', h.id)}
+                            className="ml-2 shrink-0 px-1 text-red-400 opacity-100 transition hover:text-red-300 sm:opacity-0 sm:group-hover:opacity-100"
+                            title="Verwijderen"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              )}
-
-              {/* 2. Zoekresultaten Lijst */}
-              {showResults && results.length > 0 && (
-                <div
-                  ref={searchListRef}
-                  onScroll={handleSearchListScroll}
-                  onTouchEnd={handleSearchListTouch}
-                  onTouchMove={handleSearchListTouchMove}
-                  data-prevent-pull-refresh="1"
-                  className="absolute left-0 right-0 top-full z-[300] mt-1 max-h-80 overflow-y-auto overscroll-contain rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/50 sm:max-h-96"
-                  style={{ 
-                    WebkitOverflowScrolling: 'touch',
-                    touchAction: 'pan-y'
-                  }}
+                <button
+                  type="submit"
+                  disabled={submitting || !input.trim()}
+                  className="shrink-0 rounded-lg border border-violet-600/60 bg-violet-600/20 px-3 py-2 text-sm font-semibold text-violet-200 transition hover:bg-violet-600/30 disabled:opacity-50"
                 >
-                  {results.map((r) => {
-                    const status = resultStatus[`${source}:${r.id}`] ?? "idle";
-                    const isAdded = status === "added";
-                    const isPending = status === "pending";
-                    return (
+                  {submitting ? (
+                    <span className="block h-4 w-4 animate-spin rounded-full border-2 border-violet-400 border-t-transparent" />
+                  ) : (
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <circle cx="11" cy="11" r="7" /><path d="m21 21-4.35-4.35" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+              {/* Filters row */}
+              <div className="mt-1.5 flex items-center gap-3 px-0.5">
+                <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-gray-400 hover:text-gray-200">
+                  <input
+                    type="checkbox"
+                    checked={includeSets}
+                    onChange={(e) => setIncludeSets(e.target.checked)}
+                    className="h-3 w-3 rounded accent-violet-500"
+                  />
+                  Sets
+                </label>
+                {!hideLocalDiscovery && (
+                  <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-gray-400 hover:text-gray-200">
+                    <input
+                      type="checkbox"
+                      checked={includeLocal}
+                      onChange={(e) => setIncludeLocal(e.target.checked)}
+                      className="h-3 w-3 rounded accent-violet-500"
+                    />
+                    Lokale nummers
+                  </label>
+                )}
+              </div>
+            </div>
+
+            {/* Results list */}
+            {showResults && results.length > 0 && (
+              <div
+                ref={searchListRef}
+                onScroll={handleSearchListScroll}
+                onTouchStart={handleSearchListTouch}
+                onTouchMove={handleSearchListTouchMove}
+                className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70"
+              >
+                {results.map((result) => {
+                  const key = `${source}:${result.id}`;
+                  const status = resultStatus[key] ?? "idle";
+                  const isAdded = status === "added";
+                  const isPending = status === "pending";
+                  const isYT = result.url.includes("youtube.com") || result.url.includes("youtu.be");
+                  return (
                     <div
-                      key={r.id}
-                      className={`group flex w-full items-center gap-2 px-2.5 py-1 text-left transition first:rounded-t-xl last:rounded-b-xl ${
-                        isAdded ? "bg-green-500/10" : "hover:bg-gray-800/80"
-                      }`}
+                      key={result.id}
+                      className="flex items-center gap-2 border-b border-gray-800/60 px-2 py-2 last:border-0 hover:bg-gray-800/40"
                     >
                       <button
                         type="button"
-                        onClick={() => selectResult(r)}
-                        className="flex min-w-0 flex-1 items-center gap-2"
+                        onClick={() => selectResult(result)}
+                        disabled={submitting || isAdded || isPending}
+                        className="flex min-w-0 flex-1 items-center gap-2 disabled:opacity-60"
                       >
-                        {r.thumbnail ? (
-                          <img
-                            src={r.thumbnail}
-                            alt=""
-                            className="h-8 w-10 shrink-0 rounded object-cover lg:h-7 lg:w-9"
-                          />
+                        {result.thumbnail ? (
+                          <img src={result.thumbnail} alt="" className="h-10 w-14 shrink-0 rounded object-cover" />
                         ) : (
-                          <div className="flex h-8 w-10 shrink-0 items-center justify-center rounded bg-gray-800 text-[10px] text-gray-500 lg:h-7 lg:w-9">
-                            no art
-                          </div>
+                          <div className="h-10 w-14 shrink-0 rounded bg-gray-800" />
                         )}
                         <div className="min-w-0 flex-1 text-left">
-                          <p className="line-clamp-2 text-xs font-medium leading-snug text-white sm:line-clamp-1">{r.title}</p>
-                          <div className="mt-0.5 flex items-center gap-2 text-left">
-                            {r.channel && (
-                              <span className="truncate text-[11px] text-gray-400">{r.channel}</span>
-                            )}
-                            {r.duration !== null && (
-                              <span className="shrink-0 text-[11px] tabular-nums text-gray-500">
-                                {formatDuration(r.duration)}
-                              </span>
-                            )}
-                          </div>
+                          <p className="truncate text-xs font-medium text-white">{result.title}</p>
+                          <p className="flex items-center gap-1 truncate text-[10px] text-gray-400">
+                            <span className={isYT ? "text-red-400" : "text-orange-400"}>{isYT ? "YT" : "SC"}</span>
+                            <span>·</span>
+                            <span className="truncate">{result.channel}</span>
+                            {result.duration ? (
+                              <>
+                                <span>·</span>
+                                <span>{formatDuration(result.duration)}</span>
+                              </>
+                            ) : null}
+                          </p>
                         </div>
                         {isAdded ? (
                           <span className="shrink-0 rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
@@ -2496,42 +2541,29 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                           </span>
                         ) : null}
                       </button>
-                      <TrackActions 
-                        title={r.title} 
-                        artist={r.channel || ""} 
-                        artwork_url={r.thumbnail || null}
-                        className="mr-1"
+                      <TrackActions
+                        title={result.title}
+                        artist={result.channel}
+                        artwork_url={result.thumbnail ?? null}
+                        className="shrink-0"
                         iconSize={16}
                       />
                     </div>
-                    );
-                  })}
-                  {searchingMore && (
-                    <p className="px-3 py-2 text-[11px] text-gray-400">Meer resultaten laden...</p>
-                  )}
-                  <div ref={loadMoreRef} className="h-1 w-full" />
-                </div>
-              )}
-            </div>
-            
-            <button
-              type="submit"
-              disabled={submitting || !input.trim()}
-              className="w-full rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-violet-500 active:scale-[0.98] disabled:opacity-40"
-            >
-              {submitting ? "Checken..." : isUrl ? "Toevoegen" : "Zoeken"}
-            </button>
+                  );
+                })}
+                {searchingMore && (
+                  <p className="px-3 py-2 text-[11px] text-gray-400 animate-pulse">Meer laden...</p>
+                )}
+              </div>
+            )}
           </div>
-        </div>
-      )}
-
+        ) : null
+      }
       {feedback && (
         <p className={`text-sm ${feedback.ok ? "text-green-400" : "text-red-400"}`}>
           {feedback.msg}
         </p>
       )}
-    </form>
-
     {/* Handmatige Selectie Modal */}
     {pendingManualSelection && (
       <div className="absolute inset-0 z-[120] flex items-center justify-center bg-black/70 p-2">
@@ -2623,6 +2655,8 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
         </div>
       </div>
     )}
+        </div>
+  </form>
   </div>
 </QueueAddErrorBoundary>
   );

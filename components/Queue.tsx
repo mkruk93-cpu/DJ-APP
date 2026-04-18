@@ -49,10 +49,13 @@ export default function Queue() {
 
   function isOwnItem(item: { added_by?: string | null }): boolean {
     const itemOwner = (item.added_by ?? "").toLowerCase().trim();
+    if (!itemOwner) return false;
+    
     const currentUser = nickname.toLowerCase().trim();
-    // Also check stored nickname for legacy items
     const storedUser = storedNickname.toLowerCase().trim();
-    return (itemOwner === currentUser || itemOwner === storedUser) && currentUser !== "";
+    
+    // Vergelijk met huidige actieve nickname OF de opgeslagen nickname uit localStorage
+    return (itemOwner === currentUser || itemOwner === storedUser) && (currentUser !== "" || storedUser !== "");
   }
 
   function isAdminUser(): boolean {

@@ -151,6 +151,28 @@ export default function StreamPage() {
   const [adminOverlayOpen, setAdminOverlayOpen] = useState(false);
   const [profileModalUser, setProfileModalUser] = useState<string | null>(null);
   const [leaderboardOpen, setLeaderboardOpen] = useState(false);
+  const [mobileSheetExpanded, setMobileSheetExpanded] = useState(false);
+  const touchStartY = useRef<number | null>(null);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartY.current = e.touches[0].clientY;
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartY.current === null) return;
+    const touchEndY = e.changedTouches[0].clientY;
+    const deltaY = touchStartY.current - touchEndY;
+
+    // Swipe up (positive deltaY) to expand
+    if (deltaY > 60 && !mobileSheetExpanded) {
+      setMobileSheetExpanded(true);
+    }
+    // Swipe down (negative deltaY) to collapse
+    else if (deltaY < -60 && mobileSheetExpanded) {
+      setMobileSheetExpanded(false);
+    }
+    touchStartY.current = null;
+  };
 
   // Current user's nickname for profile comparison (combines auth account with localStorage fallback)
   const myNickname = userAccount?.username ?? (typeof window !== 'undefined' ? localStorage.getItem('nickname') ?? '' : '');
@@ -1801,7 +1823,9 @@ export default function StreamPage() {
 
       <main className="flex min-h-0 flex-1 flex-col gap-1 p-1 sm:gap-4 sm:p-4 lg:flex-row">
         {/* Player */}
-        <div className="min-h-0 shrink-0 overflow-hidden lg:w-full lg:max-w-2xl lg:shrink-0">
+        <div className={`min-h-0 shrink-0 overflow-hidden lg:w-full lg:max-w-2xl lg:shrink-0 transition-all duration-300 ease-in-out ${
+          mobileSheetExpanded ? "h-0 opacity-0 pointer-events-none mb-0" : "h-auto opacity-100"
+        }`}>
           {shouldPollCommunityWidgets && <ShoutoutBanner />}
           {mode === "twitch" && twitchLive && (
             <div className="space-y-1.5 sm:space-y-2">
@@ -1925,74 +1949,84 @@ export default function StreamPage() {
         </div>
 
         {/* Mobile: tab bar */}
-        <div className="z-[140] flex shrink-0 gap-1 rounded-lg bg-gray-800/60 p-1 lg:hidden">
-          <button
-            onClick={() => { setActiveTab("chat"); setChatBadge(false); }}
-            className={`relative flex-1 rounded-md px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition ${
-              activeTab === "chat"
-                ? "bg-violet-600 text-white shadow-sm"
-                : "text-gray-400 hover:text-white"
-            }`}
-          >
-            Chat
-            {chatBadge && activeTab !== "chat" && (
-              <span className="absolute right-2 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-violet-400 animate-pulse" />
+        <div 
+          className="z-[140] flex shrink-0 flex-col gap-1 rounded-t-xl bg-gray-800/80 p-1 lg:hidden lg:rounded-lg lg:bg-gray-800/60"
+          onTouchStart={handleTouchStart}
+          onTouchEnd={handleTouchEnd}
+        >
+          {/* Drag Handle */}
+          <div className="flex justify-center py-1">
+            <div className={`h-1 w-10 rounded-full transition-colors ${mobileSheetExpanded ? "bg-violet-500/60" : "bg-gray-600/80"}`} />
+          </div>
+          <div className="flex gap-1">
+            <button
+              onClick={() => { setActiveTab("chat"); setChatBadge(false); }}
+              className={`relative flex-1 rounded-md px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition ${
+                activeTab === "chat"
+                  ? "bg-violet-600 text-white shadow-sm"
+                  : "text-gray-400 hover:text-white"
+              }`}
+            >
+              Chat
+              {chatBadge && activeTab !== "chat" && (
+                <span className="absolute right-2 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-violet-400 animate-pulse" />
+              )}
+            </button>
+            {showRequests && (
+              <button
+                onClick={() => { setActiveTab("requests"); setRequestBadge(false); }}
+                className={`relative flex-1 rounded-md px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition ${
+                  activeTab === "requests"
+                    ? "bg-violet-600 text-white shadow-sm"
+                    : "text-gray-400 hover:text-white"
+                }`}
+              >
+                Verzoek
+                {requestBadge && activeTab !== "requests" && (
+                  <span className="absolute right-2 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-violet-400 animate-pulse" />
+                )}
+              </button>
             )}
-          </button>
-          {showRequests && (
-            <button
-              onClick={() => { setActiveTab("requests"); setRequestBadge(false); }}
-              className={`relative flex-1 rounded-md px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition ${
-                activeTab === "requests"
-                  ? "bg-violet-600 text-white shadow-sm"
-                  : "text-gray-400 hover:text-white"
-              }`}
-            >
-              Verzoek
-              {requestBadge && activeTab !== "requests" && (
-                <span className="absolute right-2 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-violet-400 animate-pulse" />
-              )}
-            </button>
-          )}
-          {showRadioPanel && (
-            <button
-              onClick={() => setActiveTab("radio")}
-              className={`relative flex-1 rounded-md px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition ${
-                activeTab === "radio"
-                  ? "bg-violet-600 text-white shadow-sm"
-                  : "text-gray-400 hover:text-white"
-              }`}
-            >
-              Aanvragen
-            </button>
-          )}
-          {showQueuePanel && (
-            <button
-              onClick={() => { setActiveTab("queue"); setQueueBadge(false); }}
-              className={`relative flex-1 rounded-md px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition ${
-                activeTab === "queue"
-                  ? "bg-violet-600 text-white shadow-sm"
-                  : "text-gray-400 hover:text-white"
-              }`}
-            >
-              Wachtrij
-              {queueBadge && activeTab !== "queue" && (
-                <span className="absolute right-2 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-violet-400 animate-pulse" />
-              )}
-            </button>
-          )}
-          {showRequestedPanel && (
-            <button
-              onClick={() => setActiveTab("requested")}
-              className={`relative flex-1 rounded-md px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition ${
-                activeTab === "requested"
-                  ? "bg-violet-600 text-white shadow-sm"
-                  : "text-gray-400 hover:text-white"
-              }`}
-            >
-              Lijst
-            </button>
-          )}
+            {showRadioPanel && (
+              <button
+                onClick={() => setActiveTab("radio")}
+                className={`relative flex-1 rounded-md px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition ${
+                  activeTab === "radio"
+                    ? "bg-violet-600 text-white shadow-sm"
+                    : "text-gray-400 hover:text-white"
+                }`}
+              >
+                Aanvragen
+              </button>
+            )}
+            {showQueuePanel && (
+              <button
+                onClick={() => { setActiveTab("queue"); setQueueBadge(false); }}
+                className={`relative flex-1 rounded-md px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition ${
+                  activeTab === "queue"
+                    ? "bg-violet-600 text-white shadow-sm"
+                    : "text-gray-400 hover:text-white"
+                }`}
+              >
+                Wachtrij
+                {queueBadge && activeTab !== "queue" && (
+                  <span className="absolute right-2 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-violet-400 animate-pulse" />
+                )}
+              </button>
+            )}
+            {showRequestedPanel && (
+              <button
+                onClick={() => setActiveTab("requested")}
+                className={`relative flex-1 rounded-md px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition ${
+                  activeTab === "requested"
+                    ? "bg-violet-600 text-white shadow-sm"
+                    : "text-gray-400 hover:text-white"
+                }`}
+              >
+                Lijst
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Content panels */}
