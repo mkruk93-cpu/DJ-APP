@@ -525,6 +525,38 @@ export async function removeTrackFromUserPlaylist(
   }, true);
 }
 
+export async function updateTrackInUserPlaylist(
+  owner: PlaylistOwner,
+  playlistId: string,
+  trackId: string,
+  updates: { title?: string | null; artist?: string | null },
+): Promise<{ id: string; title: string; artist: string | null; album: string | null; spotify_url: string | null; artwork_url: string | null; position: number } | null> {
+  return withStoreAccess((store) => {
+    migrateOwnerPlaylists(store, owner);
+    const playlist = store.playlists.find((entry) => entry.id === playlistId && matchesOwner(entry, owner));
+    if (!playlist) return null;
+    const track = playlist.tracks.find((entry) => entry.id === trackId);
+    if (!track) return null;
+
+    const nextTitle = typeof updates.title === 'string' ? updates.title.trim().slice(0, 300) : track.title;
+    const nextArtistRaw = typeof updates.artist === 'string' ? updates.artist.trim().slice(0, 300) : (track.artist ?? '');
+    const nextArtist = nextArtistRaw || null;
+    if (!nextTitle) return null;
+
+    track.title = nextTitle;
+    track.artist = nextArtist;
+    return {
+      id: track.id,
+      title: track.title,
+      artist: track.artist,
+      album: track.album,
+      spotify_url: track.spotify_url,
+      artwork_url: track.artwork_url,
+      position: track.position,
+    };
+  }, true);
+}
+
 export async function backfillUserPlaylistTrackArtwork(
   owner: PlaylistOwner,
   playlistId: string,

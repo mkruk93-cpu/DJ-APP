@@ -1,4 +1,4 @@
-import AdmZip from 'adm-zip';
+﻿import AdmZip from 'adm-zip';
 import { basename, extname } from 'node:path';
 import { parse } from 'csv-parse/sync';
 
@@ -104,7 +104,10 @@ function normalizeSpotifyUrl(value: string): string | null {
 }
 
 function normalizePlaylistName(fileName: string): string {
-  const raw = basename(fileName, extname(fileName)).trim();
+  const raw = basename(fileName, extname(fileName))
+    .trim()
+    .replace(/[\u2018\u2019\u201a\u201b\u2032\u2035]/g, "'")
+    .replace(/[\u201c\u201d\u201e\u201f\u2033\u2036]/g, '"');
   // Exportify saves filenames with spaces replaced by underscores; restore readable titles.
   const withSpaces = raw.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
   return withSpaces || 'Imported playlist';
@@ -123,51 +126,328 @@ function detectCsvDelimiter(text: string): ',' | ';' | '\t' {
   return ',';
 }
 
-function parseCsvBuffer(fileName: string, buffer: Buffer, maxTracks: number): ExportifyPlaylistImport {
-  let text = decodeCsvText(buffer)
+function getFirstNonEmptyLine(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0) ?? '';
+}
+
+function isMp3tagCsv(text: string): boolean {
+  const header = getFirstNonEmptyLine(text);
+  const normalized = header
+    .split(';')
+    .map((part) => normalizeHeader(part))
+    .filter(Boolean);
+  const required = ['title', 'artist', 'album', 'track', 'year', 'length', 'size', 'last modified', 'path', 'filename'];
+  return required.every((key, index) => normalized[index] === key);
+}
+
+function normalizeCsvCharacters(text: string): string {
+  return text
     .replace(/\u0000/g, '')
-    .replace(/\r\n/g, '\n');
-  
-  // Fix unescaped quotes and apostrophes that break CSV parsing
-  // The error "invalid closing quote: found non trimable byte after quote" happens when
-  // a quote character appears inside a field but isn't properly escaped with another quote
-  // We fix this by doubling any quote that appears to be inside a field
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[\u2018\u2019\u201a\u201b\u2032\u2035]/g, "'")
+    .replace(/[\u201c\u201d\u201e\u201f\u2033\u2036]/g, '"');
+}
+
+function sanitizeMalformedCsvQuotes(text: string, delimiter: ',' | ';' | '\t'): string {
   let result = '';
-  let inQuote = false;
-  for (let i = 0; i < text.length; i++) {
+  let inQuotes = false;
+  let fieldHasContent = false;
+
+  for (let i = 0; i < text.length; i += 1) {
     const char = text[i];
-    if (char === '"') {
-      if (inQuote && text[i + 1] === '"') {
-        // Already escaped quote, keep as-is
-        result += '""';
-        i++; // skip next quote
-      } else if (inQuote) {
-        // Closing quote
-        inQuote = false;
-        result += '"';
-      } else {
-        // Opening quote
-        inQuote = true;
-        result += '"';
-      }
-    } else {
+    const next = text[i + 1];
+
+    if (char === delimiter) {
       result += char;
+      if (!inQuotes) fieldHasContent = false;
+      continue;
     }
+
+    if (char === '\n') {
+      result += char;
+      if (!inQuotes) fieldHasContent = false;
+      continue;
+    }
+
+    if (char === '"') {
+      const nextIsEscapedQuote = next === '"';
+      const nextEndsField = next === delimiter || next === '\n' || typeof next === 'undefined';
+
+      if (nextIsEscapedQuote) {
+        result += '""';
+        i += 1;
+        inQuotes = true;
+        fieldHasContent = true;
+        continue;
+      }
+
+      if (!inQuotes) {
+        if (!fieldHasContent) {
+          result += '"';
+          inQuotes = true;
+        } else {
+          result += "'";
+          fieldHasContent = true;
+        }
+        continue;
+      }
+
+      if (nextEndsField) {
+        result += '"';
+        inQuotes = false;
+      } else {
+        // Broken interior quote inside a field: preserve readability instead of failing parse.
+        result += "'";
+        fieldHasContent = true;
+      }
+      continue;
+    }
+
+    if (!/\s/.test(char)) {
+      fieldHasContent = true;
+    }
+    result += char;
   }
-  text = result;
-  
-  const delimiter = detectCsvDelimiter(text);
-  const records = parse(text, {
+
+  return result;
+}
+
+function parseCsvRecords(text: string, delimiter: ',' | ';' | '\t'): Record<string, unknown>[] {
+  return parse(text, {
     columns: true,
     skip_empty_lines: true,
     bom: true,
     relax_column_count: true,
     relax_quotes: true,
+    skip_records_with_error: true,
     trim: true,
     delimiter,
     escape: '"',
     quote: '"',
   }) as Record<string, unknown>[];
+}
+
+function cleanLooseTagValue(value: string): string {
+  return value
+    .replace(/[\u0000-\u001f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeFileStem(value: string): string {
+  return basename(value)
+    .replace(/\.[A-Za-z0-9]{1,5}$/u, '')
+    .replace(/[\u2010-\u2015\u2212]+/g, '-')
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function stripKnownFilenamePrefixes(value: string): string {
+  let out = cleanLooseTagValue(value);
+  out = out.replace(/^(?:\(\d{1,4}\)\s*)+/u, '').trim();
+  out = out.replace(/^(?:\d{1,4}\s*[-.)]\s*)+/u, '').trim();
+  out = out.replace(/^(?:\d{1,4}\s+)/u, '').trim();
+  out = out.replace(/^(?:\[[^\]]+\]\s+)+/u, '').trim();
+  out = out.replace(/^(?:[^\p{L}\p{N}(]+)\s*/u, '').trim();
+  return out;
+}
+
+function cleanupArtistOrTitleFromFilename(value: string): string {
+  let out = stripKnownFilenamePrefixes(normalizeFileStem(value));
+  out = out.replace(/^\(\d{1,4}\)\s*/u, '').trim();
+  out = out.replace(/^\[([^\]]+)\]\s*$/u, '$1').trim();
+  out = out.replace(/^\[/u, '').replace(/\]$/u, '').trim();
+  out = out.replace(/\s*-\s*$/u, '').trim();
+  out = out.replace(/^\(([^)]+)\)\s+/u, '($1) ').trim();
+  return out;
+}
+
+function deriveArtistTitleFromFilename(fileName: string): { artist: string; title: string } | null {
+  const cleaned = cleanupArtistOrTitleFromFilename(fileName);
+  if (!cleaned || !cleaned.includes(' - ')) return null;
+  const [artistRaw, ...rest] = cleaned.split(' - ');
+  const artist = cleanLooseTagValue(artistRaw);
+  const title = cleanLooseTagValue(rest.join(' - '));
+  if (!artist || !title) return null;
+  return { artist, title };
+}
+
+function deriveArtistFromFilenameUsingTitle(fileName: string, title: string): string | null {
+  const stem = normalizeFileStem(fileName);
+  const safeTitle = cleanLooseTagValue(title);
+  if (!stem || !safeTitle) return null;
+
+  const normalizedStem = stem.toLowerCase();
+  const normalizedTitle = safeTitle.toLowerCase();
+  const titleIndex = normalizedStem.lastIndexOf(normalizedTitle);
+  if (titleIndex < 0) return null;
+
+  let artistPart = stem.slice(0, titleIndex).trim();
+  artistPart = artistPart.replace(/\s*-\s*$/u, '').trim();
+  artistPart = cleanupArtistOrTitleFromFilename(artistPart);
+  if (!artistPart) return null;
+  return artistPart;
+}
+
+function shouldPreferFilenameArtist(artist: string): boolean {
+  const value = cleanLooseTagValue(artist);
+  if (!value) return true;
+  if (/^[[(][^)\]]*$/u.test(value)) return true;
+  if (/^[^\p{L}\p{N}(]*[\p{L}\p{N}].*$/u.test(value) && /^[^\p{L}\p{N}(]/u.test(value)) return true;
+  if (/^\d{1,4}$/u.test(value)) return true;
+  if (/^(?:track\s*)?\d{1,4}$/iu.test(value)) return true;
+  if (/^(?:disc|cd)\s*\d{1,2}$/iu.test(value)) return true;
+  if (/^(?:ft|feat|featuring)\.?$/iu.test(value)) return true;
+  if (/\b(?:ft|feat|featuring)\.?$/iu.test(value)) return true;
+  if ((value.match(/[\[(]/g) ?? []).length > (value.match(/[\])]/g) ?? []).length) return true;
+  return false;
+}
+
+function cleanImportedTitle(value: string): string {
+  let out = cleanLooseTagValue(value);
+  out = out.replace(/^[^\[\](){},;:]{0,4}\]\s+/u, '').trim();
+  out = out.replace(/^[^\[\](){},;:]{0,4}\)\s+/u, '').trim();
+  return out;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function cleanImportedArtist(value: string, titleCandidate: string): string | null {
+  let out = cleanLooseTagValue(value)
+    .replace(/[\u2010-\u2015\u2212]+/g, '-')
+    .trim();
+
+  out = out.replace(/^(?:\[[^\]]+\]\s*)+/u, '').trim();
+  out = out.replace(/^[^\p{L}\p{N}(]+/u, '').trim();
+  out = out.replace(/^\(\d{1,4}\)\s*/u, '').trim();
+  out = out.replace(/^\d{2,4}[.)-]?\s+/u, '').trim();
+
+  const safeTitle = cleanLooseTagValue(titleCandidate);
+  if (safeTitle) {
+    const titleRegex = new RegExp(`\\s*-?\\s*${escapeRegExp(safeTitle)}\\s*$`, 'iu');
+    out = out.replace(titleRegex, '').trim();
+  }
+
+  out = out.replace(/\s*-\s*$/u, '').trim();
+  if (!out) return null;
+  if (/^\d{1,4}$/u.test(out)) return null;
+  return out;
+}
+
+function splitArtistTitleCandidate(value: string): { artist: string; title: string } | null {
+  const normalized = cleanLooseTagValue(value).replace(/[\u2010-\u2015\u2212]+/g, ' - ');
+  const match = normalized.match(/^(.+?)\s+-\s+(.+)$/u);
+  if (!match) return null;
+  const artist = cleanLooseTagValue(match[1] ?? '');
+  const title = cleanLooseTagValue(match[2] ?? '');
+  if (!artist || !title) return null;
+  if (/^\d{1,4}$/u.test(artist)) return null;
+  if (/\brelease date\b/iu.test(artist) || /\b320\s*kbps\b/iu.test(artist)) return null;
+  return { artist, title };
+}
+
+function parseMp3tagCsvBuffer(fileName: string, text: string, maxTracks: number): ExportifyPlaylistImport {
+  const lines = text
+    .split('\n')
+    .map((line) => line.replace(/\uFEFF/g, '').trim())
+    .filter(Boolean);
+  if (lines.length <= 1) {
+    return { name: normalizePlaylistName(fileName), tracks: [] };
+  }
+
+  const dedupe = new Set<string>();
+  const tracks: ExportifyTrackRow[] = [];
+
+  for (const rawLine of lines.slice(1)) {
+    const parts = rawLine.split(';');
+    while (parts.length > 0 && !parts[parts.length - 1]?.trim()) {
+      parts.pop();
+    }
+    if (parts.length < 10) continue;
+
+    const tail = parts.slice(-7);
+    const leading = parts.slice(0, -7);
+    const filenameValue = cleanLooseTagValue(tail[6] ?? '');
+    const derived = filenameValue ? deriveArtistTitleFromFilename(filenameValue) : null;
+
+    const titleCandidateRaw = cleanImportedTitle(leading[0] ?? '');
+    const artistCandidateRaw = cleanLooseTagValue(leading[1] ?? '');
+    const albumCandidate = cleanLooseTagValue(leading.slice(2).join(';'));
+    const splitTitleCandidate = splitArtistTitleCandidate(titleCandidateRaw);
+    const titleCandidate = splitTitleCandidate?.title ?? titleCandidateRaw;
+    const cleanedArtistCandidate = cleanImportedArtist(artistCandidateRaw, titleCandidate);
+    const suspiciousArtistCandidate = shouldPreferFilenameArtist(artistCandidateRaw)
+      || (cleanedArtistCandidate !== null && shouldPreferFilenameArtist(cleanedArtistCandidate));
+
+    const filenameArtistFromTitle = filenameValue && titleCandidate
+      ? deriveArtistFromFilenameUsingTitle(filenameValue, titleCandidate)
+      : null;
+    const combinedSplitArtist = splitTitleCandidate?.artist && cleanedArtistCandidate && cleanedArtistCandidate.length <= 6
+      ? `${cleanedArtistCandidate}. ${splitTitleCandidate.artist}`.replace(/\.\s+\./g, '.').trim()
+      : null;
+    const title = titleCandidate || derived?.title || null;
+    const artist = filenameArtistFromTitle
+      || combinedSplitArtist
+      || (suspiciousArtistCandidate ? derived?.artist ?? null : null)
+      || cleanedArtistCandidate
+      || splitTitleCandidate?.artist
+      || derived?.artist
+      || null;
+    if (!title || !artist || /^\d{1,4}$/u.test(artist)) continue;
+
+    const dedupeKey = `${artist.toLowerCase()}|${title.toLowerCase()}`;
+    if (dedupe.has(dedupeKey)) continue;
+    dedupe.add(dedupeKey);
+
+    tracks.push({
+      title,
+      artist,
+      album: albumCandidate || null,
+      spotifyUrl: null,
+      position: tracks.length + 1,
+    });
+
+    if (tracks.length >= maxTracks) break;
+  }
+
+  return {
+    name: normalizePlaylistName(fileName),
+    tracks,
+  };
+}
+
+function parseCsvBuffer(fileName: string, buffer: Buffer, maxTracks: number): ExportifyPlaylistImport {
+  const baseText = normalizeCsvCharacters(decodeCsvText(buffer));
+  if (isMp3tagCsv(baseText)) {
+    return parseMp3tagCsvBuffer(fileName, baseText, maxTracks);
+  }
+  const delimiter = detectCsvDelimiter(baseText);
+  let records: Record<string, unknown>[] = [];
+  let lastError: unknown = null;
+
+  for (const candidate of [
+    baseText,
+    sanitizeMalformedCsvQuotes(baseText, delimiter),
+    sanitizeMalformedCsvQuotes(baseText.replace(/^\uFEFF/, ''), delimiter),
+  ]) {
+    try {
+      records = parseCsvRecords(candidate, delimiter);
+      if (records.length > 0) break;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  if (records.length === 0 && lastError) {
+    throw lastError;
+  }
 
   const dedupe = new Set<string>();
   const tracks: ExportifyTrackRow[] = [];
@@ -266,3 +546,4 @@ export function parseExportifyUpload(
   }
   return playlists;
 }
+

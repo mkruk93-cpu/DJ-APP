@@ -186,6 +186,23 @@ export async function removeTrackFromUserPlaylist(playlistId: string, trackId: s
   return parseOrThrow<{ ok: boolean }>(res);
 }
 
+export async function updateTrackInUserPlaylist(
+  playlistId: string,
+  trackId: string,
+  updates: { title?: string | null; artist?: string | null },
+): Promise<UserPlaylistTrack> {
+  const { nickname, deviceId } = getUserIdentity(true);
+  const safeId = encodeURIComponent(playlistId);
+  const safeTrackId = encodeURIComponent(trackId);
+  const res = await fetch(`${getServerUrl()}/api/user-playlists/${safeId}/tracks/${safeTrackId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nickname, device_id: deviceId, ...updates }),
+  });
+  const payload = await parseOrThrow<{ ok: boolean; track: UserPlaylistTrack }>(res);
+  return payload.track;
+}
+
 export async function getLikedTracksPlaylist(): Promise<{ id: string; name: string }> {
   const params = withIdentityParams();
   const res = await fetch(`${getServerUrl()}/api/user-playlists/liked-tracks?${params.toString()}`);
@@ -290,6 +307,7 @@ export interface SharedPlaylist {
   imported_at: string;
   track_count: number;
   added_by: string | null;
+  spotify_url?: string | null;
   genre_group: string | null;
   subgenre: string | null;
   related_parent_playlist_id: string | null;
@@ -428,6 +446,23 @@ export async function updateSharedPlaylistAsOwner(
   });
   const result = await parseOrThrow<{ ok: boolean; playlist: SharedPlaylist }>(res);
   return result.playlist;
+}
+
+export async function updateTrackInSharedPlaylistAsOwner(
+  playlistId: string,
+  trackId: string,
+  updates: { title?: string | null; artist?: string | null },
+): Promise<SharedPlaylist> {
+  const { nickname, deviceId } = getUserIdentity(true);
+  const safeId = encodeURIComponent(playlistId);
+  const safeTrackId = encodeURIComponent(trackId);
+  const res = await fetch(`${getServerUrl()}/api/shared-playlists/${safeId}/tracks/${safeTrackId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nickname, device_id: deviceId, ...updates }),
+  });
+  const payload = await parseOrThrow<{ ok: boolean; playlist: SharedPlaylist }>(res);
+  return payload.playlist;
 }
 
 export async function updateSharedPlaylistAdmin(

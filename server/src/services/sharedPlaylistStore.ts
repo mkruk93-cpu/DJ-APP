@@ -519,6 +519,41 @@ export async function appendTracksToSharedPlaylist(
   });
 }
 
+export async function updateSharedPlaylistTrack(
+  playlistId: string,
+  trackId: string,
+  updates: { title?: string | null; artist?: string | null },
+): Promise<SharedPlaylistSummary | null> {
+  return withWriteLock((store) => {
+    const playlist = store.playlists.find((entry) => entry.id === playlistId);
+    if (!playlist) return null;
+    const track = playlist.tracks.find((entry) => entry.id === trackId);
+    if (!track) return null;
+
+    const nextTitle = typeof updates.title === 'string' ? updates.title.trim().slice(0, 300) : track.title;
+    const nextArtistRaw = typeof updates.artist === 'string' ? updates.artist.trim().slice(0, 300) : (track.artist ?? '');
+    const nextArtist = nextArtistRaw || null;
+    if (!nextTitle) return null;
+
+    track.title = nextTitle;
+    track.artist = nextArtist;
+    playlist.track_count = playlist.tracks.length;
+    return {
+      id: playlist.id,
+      name: playlist.name,
+      source: playlist.source,
+      created_at: playlist.created_at,
+      imported_at: playlist.imported_at,
+      track_count: playlist.track_count,
+      added_by: playlist.added_by,
+      genre_group: playlist.genre_group ?? null,
+      subgenre: playlist.subgenre ?? null,
+      related_parent_playlist_id: playlist.related_parent_playlist_id ?? null,
+      cover_url: playlist.cover_url ?? null,
+    };
+  });
+}
+
 export async function deleteSharedPlaylistTrack(
   playlistId: string,
   trackId: string,

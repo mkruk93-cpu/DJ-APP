@@ -165,7 +165,7 @@ export default function TrackActions({
       setLoading(true);
       try {
         const list = await listUserPlaylists();
-        setPlaylists(list);
+        setPlaylists(list.filter((playlist) => playlist.is_owner || playlist.viewer_can_edit));
       } catch (err) {
         console.error("[TrackActions] Failed to list playlists:", err);
       } finally {

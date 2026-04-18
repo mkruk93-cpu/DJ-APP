@@ -1,19 +1,3 @@
-  // Playlist cover cache (playlistId -> url)
-  const [playlistCoverById, setPlaylistCoverById] = useState<Record<string, string>>({});
-
-  // Haal albumart op voor playlists zonder cover_url
-  useEffect(() => {
-    const missing = sharedPlaylists.filter((pl) => !pl.cover_url && pl.spotify_url);
-    missing.forEach((pl) => {
-      if (playlistCoverById[pl.id]) return;
-      getSpotifyOembed(pl.spotify_url)
-        .then((meta) => {
-          const thumb = (meta?.thumbnail_url ?? "").trim();
-          if (thumb) setPlaylistCoverById((prev) => ({ ...prev, [pl.id]: thumb }));
-        })
-        .catch(() => {});
-    });
-  }, [sharedPlaylists, playlistCoverById]);
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -23,6 +7,7 @@ import {
   getSharedPlaylistTracksPage,
   getSpotifyOembed,
   importSharedPlaylistFiles,
+  updateTrackInSharedPlaylistAsOwner,
   updateSharedPlaylistAsOwner,
   listAllSharedPlaylists,
   type PlaylistGenreMetaInput,
@@ -172,9 +157,13 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
   const [tracksHasMore, setTracksHasMore] = useState(false);
   const [loadingMoreTracks, setLoadingMoreTracks] = useState(false);
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
+  const [playlistCoverById, setPlaylistCoverById] = useState<Record<string, string>>({});
+  const [trackContextMenu, setTrackContextMenu] = useState<{ x: number; y: number; track: UserPlaylistTrack } | null>(null);
+  const [trackContextStyle, setTrackContextStyle] = useState<{ left: number; top: number } | null>(null);
   const thumbLoadingRef = useRef<Set<string>>(new Set());
   const thumbQueueRef = useRef<string[]>([]);
   const thumbWorkersRef = useRef(0);
+  const trackHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<View>("playlists");
@@ -192,6 +181,35 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
     },
     [viewerNickname],
   );
+
+  function clearTrackHoldTimer() {
+    if (trackHoldTimerRef.current) {
+      clearTimeout(trackHoldTimerRef.current);
+      trackHoldTimerRef.current = null;
+    }
+  }
+
+  function openTrackContextMenu(track: UserPlaylistTrack, x: number, y: number) {
+    if (!selectedPlaylist || !isPlaylistOwner(selectedPlaylist)) return;
+    if (typeof window !== "undefined") {
+      const menuWidth = 220;
+      const menuHeight = 52;
+      const viewportPadding = 8;
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      const left = Math.min(
+        Math.max(viewportPadding, x),
+        Math.max(viewportPadding, viewportWidth - menuWidth - viewportPadding),
+      );
+      const top = y + menuHeight + viewportPadding > viewportHeight
+        ? Math.max(viewportPadding, y - menuHeight - viewportPadding)
+        : Math.max(viewportPadding, y);
+      setTrackContextStyle({ left, top });
+    } else {
+      setTrackContextStyle(null);
+    }
+    setTrackContextMenu({ x, y, track });
+  }
 
   const backToPlaylists = useCallback(() => {
     setView("playlists");
@@ -224,6 +242,19 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
   useEffect(() => {
     viewRef.current = view;
   }, [view]);
+
+  useEffect(() => {
+    function closeTrackMenu() {
+      setTrackContextMenu(null);
+      clearTrackHoldTimer();
+    }
+    window.addEventListener("click", closeTrackMenu);
+    window.addEventListener("scroll", closeTrackMenu, true);
+    return () => {
+      window.removeEventListener("click", closeTrackMenu);
+      window.removeEventListener("scroll", closeTrackMenu, true);
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -274,6 +305,22 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
     localStorage.setItem(getStorageKey(), payload);
     localStorage.setItem(getLegacyStorageKey(), payload);
   }, [playlistSortMode, playlistViewMode, showHelp, collapsedGenres, collapsedSubgenres, hasStoredCollapseState]);
+
+  // Haal albumart op voor playlists zonder cover_url
+  useEffect(() => {
+    const missing = sharedPlaylists.filter((pl) => !pl.cover_url && pl.spotify_url);
+    missing.forEach((pl) => {
+      if (playlistCoverById[pl.id]) return;
+      const spotifyUrl = pl.spotify_url?.trim();
+      if (!spotifyUrl) return;
+      getSpotifyOembed(spotifyUrl)
+        .then((meta) => {
+          const thumb = (meta?.thumbnail_url ?? "").trim();
+          if (thumb) setPlaylistCoverById((prev) => ({ ...prev, [pl.id]: thumb }));
+        })
+        .catch(() => {});
+    });
+  }, [sharedPlaylists, playlistCoverById]);
 
   const loadTracksPage = useCallback(async (playlistId: string, append: boolean) => {
     if (append) setLoadingMoreTracks(true);
@@ -484,6 +531,35 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
       setAddedTrackId(null);
     } finally {
       setPendingTrackId(null);
+    }
+  }
+
+  async function handleEditTrackFromMenu(): Promise<void> {
+    if (!selectedPlaylist || !isPlaylistOwner(selectedPlaylist) || !trackContextMenu) return;
+    const track = trackContextMenu.track;
+    const currentTitle = track.title ?? "";
+    const currentArtist = track.artist ?? "";
+    const nextTitle = window.prompt("Nieuwe tracknaam:", currentTitle);
+    if (nextTitle === null) return;
+    const trimmedTitle = nextTitle.trim();
+    if (!trimmedTitle) {
+      setError("Tracknaam mag niet leeg zijn.");
+      return;
+    }
+    const nextArtist = window.prompt("Nieuwe artiest:", currentArtist);
+    if (nextArtist === null) return;
+    try {
+      await updateTrackInSharedPlaylistAsOwner(selectedPlaylist.id, track.id, {
+        title: trimmedTitle,
+        artist: nextArtist.trim() || null,
+      });
+      setTracks((prev) => prev.map((entry) => (
+        entry.id === track.id ? { ...entry, title: trimmedTitle, artist: nextArtist.trim() || null } : entry
+      )));
+      setTrackContextMenu(null);
+      setStatus("Track bijgewerkt.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Track bijwerken mislukt.");
     }
   }
 
@@ -767,10 +843,10 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                             {editDraft?.id === playlist.id && (
                               <div className="rounded border border-violet-800/60 bg-violet-950/25 p-2 text-[10px] text-gray-200">
                                 <p className="mb-1 font-semibold text-violet-200">Playlist bewerken</p>
-                                <input
-                                  type="text"
+                                <NoAutofillInput
                                   value={editDraft.name}
                                   onChange={(e) => setEditDraft((d) => (d ? { ...d, name: e.target.value } : d))}
+                                  autoComplete="off"
                                   className="mb-1 w-full rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[10px] text-white"
                                   placeholder="Naam"
                                 />
@@ -785,18 +861,18 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                                       <option key={group} value={group}>{group}</option>
                                     ))}
                                   </select>
-                                  <input
-                                    type="text"
+                                  <NoAutofillInput
                                     value={editDraft.subgenre}
                                     onChange={(e) => setEditDraft((d) => (d ? { ...d, subgenre: e.target.value } : d))}
+                                    autoComplete="off"
                                     placeholder="Subgenre"
                                     className="rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[10px] text-white placeholder-gray-500"
                                   />
                                 </div>
-                                <input
-                                  type="text"
+                                <NoAutofillInput
                                   value={editDraft.cover_url}
                                   onChange={(e) => setEditDraft((d) => (d ? { ...d, cover_url: e.target.value } : d))}
+                                  autoComplete="off"
                                   placeholder="Cover URL (https...)"
                                   className="mb-1 w-full rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[10px] text-white placeholder-gray-500"
                                 />
@@ -860,10 +936,10 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                 {editDraft?.id === playlist.id && (
                   <div className="rounded border border-violet-800/60 bg-violet-950/25 p-2 text-[10px] text-gray-200">
                     <p className="mb-1 font-semibold text-violet-200">Playlist bewerken</p>
-                    <input
-                      type="text"
+                    <NoAutofillInput
                       value={editDraft.name}
                       onChange={(e) => setEditDraft((d) => (d ? { ...d, name: e.target.value } : d))}
+                      autoComplete="off"
                       className="mb-1 w-full rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[10px] text-white"
                       placeholder="Naam"
                     />
@@ -878,18 +954,18 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                           <option key={group} value={group}>{group}</option>
                         ))}
                       </select>
-                      <input
-                        type="text"
+                      <NoAutofillInput
                         value={editDraft.subgenre}
                         onChange={(e) => setEditDraft((d) => (d ? { ...d, subgenre: e.target.value } : d))}
+                        autoComplete="off"
                         placeholder="Subgenre"
                         className="rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[10px] text-white placeholder-gray-500"
                       />
                     </div>
-                    <input
-                      type="text"
+                    <NoAutofillInput
                       value={editDraft.cover_url}
                       onChange={(e) => setEditDraft((d) => (d ? { ...d, cover_url: e.target.value } : d))}
+                      autoComplete="off"
                       placeholder="Cover URL (https...)"
                       className="mb-1 w-full rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[10px] text-white placeholder-gray-500"
                     />
@@ -920,8 +996,8 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
               Nieuwe playlist toevoegen
             </summary>
             <p className="mt-1 text-[10px] text-gray-500">
-              Upload meerdere Exportify CSV&apos;s tegelijk (Ctrl/Shift in bestandsdialoog). We voegen samen en dedupliceren
-              zoals bij admin-import. Naam is verplicht; daarna kun je je eigen playlist nog bewerken via Bewerk.
+              Upload een of meer Exportify CSV&apos;s, of een `.csv` die je op pc met Mp3tag uit je muziekmappen hebt gemaakt.
+              We voegen samen en dedupliceren. Naam is verplicht; daarna kun je je eigen playlist nog bewerken via Bewerk.
             </p>
             <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
               <select
@@ -935,19 +1011,19 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                   <option key={group} value={group}>{group}</option>
                 ))}
               </select>
-              <input
-                type="text"
+              <NoAutofillInput
                 value={importSubgenre}
                 onChange={(e) => setImportSubgenre(e.target.value)}
+                autoComplete="off"
                 placeholder="Subgenre (optioneel)"
                 className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white placeholder-gray-500"
               />
             </div>
             <div className="mt-2 grid gap-1.5 sm:grid-cols-[1fr_auto]">
-              <input
-                type="text"
+              <NoAutofillInput
                 value={importCoverUrl}
                 onChange={(e) => setImportCoverUrl(e.target.value)}
+                autoComplete="off"
                 placeholder="Playlist cover URL (optioneel)"
                 className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] text-white placeholder-gray-500"
               />
@@ -961,10 +1037,10 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                 Auto cover
               </label>
             </div>
-            <input
-              type="text"
+            <NoAutofillInput
               value={importName}
               onChange={(e) => setImportName(e.target.value)}
+              autoComplete="off"
               placeholder="Playlist naam (verplicht; underscores → spaties in titel)"
               className="mt-2 w-full rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[11px] text-white placeholder-gray-500 outline-none focus:border-violet-500"
             />
@@ -1004,9 +1080,27 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
             const isPending = pendingTrackId === track.id;
             const spotifyUrl = (track.spotify_url ?? "").trim();
             const thumb = spotifyUrl ? thumbs[spotifyUrl] : "";
+            const canEditTrack = !!selectedPlaylist && isPlaylistOwner(selectedPlaylist);
             return (
               <div
                 key={track.id}
+                onContextMenu={(e) => {
+                  if (!canEditTrack) return;
+                  e.preventDefault();
+                  openTrackContextMenu(track, e.clientX, e.clientY);
+                }}
+                onTouchStart={(e) => {
+                  if (!canEditTrack) return;
+                  clearTrackHoldTimer();
+                  const touch = e.touches[0];
+                  if (!touch) return;
+                  trackHoldTimerRef.current = setTimeout(() => {
+                    openTrackContextMenu(track, touch.clientX, touch.clientY);
+                  }, 450);
+                }}
+                onTouchEnd={clearTrackHoldTimer}
+                onTouchMove={clearTrackHoldTimer}
+                onTouchCancel={clearTrackHoldTimer}
                 className={`group flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition ${
                   isAdded ? "bg-green-500/10" : "hover:bg-gray-800/80"
                 }`}
@@ -1056,6 +1150,28 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
             <p className="py-2 text-center text-[11px] text-gray-500">Meer tracks laden...</p>
           )}
           <div ref={loadMoreRef} className="h-10 w-full sm:h-2" />
+        </div>
+      )}
+
+      {trackContextMenu && selectedPlaylist && isPlaylistOwner(selectedPlaylist) && (
+        <div
+          className="fixed z-[90] overflow-hidden rounded-lg border border-blue-800/60 bg-gray-950 shadow-2xl"
+          style={{
+            left: trackContextStyle?.left ?? trackContextMenu.x,
+            top: trackContextStyle?.top ?? trackContextMenu.y,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              void handleEditTrackFromMenu();
+            }}
+            className="block w-full px-3 py-2 text-left text-xs text-blue-100 transition hover:bg-blue-500/15"
+          >
+            Bewerk artiest/titel
+          </button>
         </div>
       )}
     </div>

@@ -41,6 +41,7 @@ import {
   addTrackToUserPlaylist,
   appendTracksToUserPlaylist,
   removeTrackFromUserPlaylist,
+  updateTrackInUserPlaylist,
   backfillUserPlaylistTrackArtwork,
   getOrCreateLikedTracksPlaylist,
   getUserPlaylistUsage,
@@ -69,6 +70,7 @@ import {
   deleteSharedPlaylist,
   appendTracksToSharedPlaylist,
   deleteSharedPlaylistTrack,
+  updateSharedPlaylistTrack,
   getSharedPlaylistSummaryById,
   hasSharedPlaylist,
   parseSharedFallbackPlaylistId,
@@ -3023,11 +3025,11 @@ app.post('/api/user-playlists/:id/tracks/artwork-backfill', async (req, res) => 
   }
   const updates = updatesRaw
     .slice(0, 300)
-    .map((entry) => ({
+    .map((entry: unknown) => ({
       trackId: String((entry as { trackId?: unknown }).trackId ?? '').trim(),
       artwork_url: String((entry as { artwork_url?: unknown }).artwork_url ?? '').trim() || null,
     }))
-    .filter((entry) => !!entry.trackId && !!entry.artwork_url);
+    .filter((entry: { trackId: string; artwork_url: string | null }) => !!entry.trackId && !!entry.artwork_url);
   if (updates.length === 0) {
     return res.status(400).json({ error: 'Geen geldige artwork updates' });
   }
@@ -3039,6 +3041,31 @@ app.post('/api/user-playlists/:id/tracks/artwork-backfill', async (req, res) => 
     return res.json({ ok: true, ...result });
   } catch (err) {
     console.error('[rest] /api/user-playlists/:id/tracks/artwork-backfill POST error:', err);
+    return res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
+app.patch('/api/user-playlists/:id/tracks/:trackId', async (req, res) => {
+  const identity = getUserIdentityFromRequest(req);
+  if (!identity) {
+    return res.status(400).json({ error: 'nickname en device_id zijn verplicht' });
+  }
+  const playlistId = String(req.params.id ?? '').trim();
+  const trackId = String(req.params.trackId ?? '').trim();
+  const title = typeof req.body?.title === 'string' ? req.body.title : null;
+  const artist = typeof req.body?.artist === 'string' ? req.body.artist : null;
+  if (!playlistId || !trackId) {
+    return res.status(400).json({ error: 'Playlist id of track id ontbreekt' });
+  }
+  if (title === null && artist === null) {
+    return res.status(400).json({ error: 'Geen trackwijzigingen ontvangen' });
+  }
+  try {
+    const track = await updateTrackInUserPlaylist(identity, playlistId, trackId, { title, artist });
+    if (!track) return res.status(404).json({ error: 'Playlist of track niet gevonden' });
+    return res.json({ ok: true, track });
+  } catch (err) {
+    console.error('[rest] /api/user-playlists/:id/tracks/:trackId PATCH error:', err);
     return res.status(500).json({ error: getErrorMessage(err) });
   }
 });
@@ -3751,6 +3778,43 @@ app.delete('/api/shared-playlists/:id/tracks/:trackId', async (req, res) => {
     return res.json({ ok: true, playlist: updated, usage });
   } catch (err) {
     console.error('[rest] /api/shared-playlists/:id/tracks/:trackId DELETE error:', err);
+    return res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
+app.patch('/api/shared-playlists/:id/tracks/:trackId', async (req, res) => {
+  const identity = getUserIdentityFromRequest(req);
+  if (!identity) {
+    return res.status(400).json({ error: 'nickname en device_id zijn verplicht' });
+  }
+  const playlistId = String(req.params.id ?? '').trim();
+  const trackId = String(req.params.trackId ?? '').trim();
+  if (!playlistId || !trackId) {
+    return res.status(400).json({ error: 'Playlist id en track id zijn verplicht' });
+  }
+  try {
+    const existing = await getSharedPlaylistSummaryById(playlistId);
+    if (!existing) {
+      return res.status(404).json({ error: 'Playlist niet gevonden' });
+    }
+    const ownerNick = normalizeNickname(existing.added_by);
+    const requesterNick = normalizeNickname(identity.nickname);
+    if (!ownerNick || !requesterNick || ownerNick !== requesterNick) {
+      return res.status(403).json({ error: 'Alleen de eigenaar mag tracks aanpassen' });
+    }
+    const title = typeof req.body?.title === 'string' ? req.body.title : null;
+    const artist = typeof req.body?.artist === 'string' ? req.body.artist : null;
+    if (title === null && artist === null) {
+      return res.status(400).json({ error: 'Geen trackwijzigingen ontvangen' });
+    }
+    const updated = await updateSharedPlaylistTrack(playlistId, trackId, { title, artist });
+    if (!updated) {
+      return res.status(404).json({ error: 'Playlist of track niet gevonden' });
+    }
+    const usage = await getSharedStoreUsage();
+    return res.json({ ok: true, playlist: updated, usage });
+  } catch (err) {
+    console.error('[rest] /api/shared-playlists/:id/tracks/:trackId PATCH error:', err);
     return res.status(500).json({ error: getErrorMessage(err) });
   }
 });

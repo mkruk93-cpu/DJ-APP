@@ -25,6 +25,7 @@ import {
   listKnownUsers,
   listUserPlaylists,
   removeTrackFromUserPlaylist,
+  updateTrackInUserPlaylist,
   addTrackToUserPlaylist,
   backfillUserPlaylistTrackArtwork,
   followPublicPlaylistInLibrary,
@@ -124,6 +125,25 @@ function normalizePresetCreator(value: string | null | undefined): string | null
   return safe.slice(0, 40);
 }
 
+function matchesPresetGenreId(presetGenreId: string, playlistId: string): boolean {
+  const normalizedPresetId = (presetGenreId ?? "").trim();
+  const normalizedPlaylistId = (playlistId ?? "").trim();
+  if (!normalizedPresetId || !normalizedPlaylistId) return false;
+  return normalizedPresetId === normalizedPlaylistId
+    || normalizedPresetId === `user:${normalizedPlaylistId}`
+    || normalizedPresetId === `shared:${normalizedPlaylistId}`
+    || normalizedPresetId === `shared:${normalizedPlaylistId}:ordered`;
+}
+
+function cleanPresetSourceLabel(value: string): string {
+  return value
+    .replace(/^Playlist\s*[·:-]\s*/i, "")
+    .replace(/^shared:/i, "")
+    .replace(/^user:/i, "")
+    .replace(/:ordered$/i, "")
+    .trim();
+}
+
 function groupPlaylistsByGenre<T extends { name: string; genre_group: string | null; subgenre: string | null }>(
   playlists: T[],
 ): Array<{ genreLabel: string; subgroups: Array<{ subgenreLabel: string; items: T[] }> }> {
@@ -191,6 +211,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
   const { userAccount } = useAuth();
   const username = userAccount?.username || "";
   const lockAutoplayFallback = useRadioStore((s) => s.lockAutoplayFallback);
+  const fallbackGenres = useRadioStore((s) => s.fallbackGenres);
   const serverUrl = useRadioStore((s) => s.serverUrl);
 
   // Locally extend UserPlaylist to include track_count for UI
@@ -248,6 +269,15 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
     if (!currentNickname) return [];
     return personalPresets.filter((preset) => normalizePresetCreator(preset.createdBy) === currentNickname);
   }, [personalPresets, currentNickname]);
+  const fallbackGenreLabelById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const genre of fallbackGenres) {
+      const id = (genre.id ?? "").trim();
+      const label = cleanPresetSourceLabel(genre.label ?? "");
+      if (id && label) map.set(id, label);
+    }
+    return map;
+  }, [fallbackGenres]);
 
   useEffect(() => {
     const socket = getSocket();
@@ -373,6 +403,34 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
     }
   }
 
+  async function handleEditTrackFromMenu(): Promise<void> {
+    if (!selectedSavedPlaylist?.viewer_can_edit || !trackContextMenu) return;
+    const track = trackContextMenu.track;
+    const currentTitle = track.title ?? "";
+    const currentArtist = track.artist ?? "";
+    const nextTitle = window.prompt("Nieuwe tracknaam:", currentTitle);
+    if (nextTitle === null) return;
+    const trimmedTitle = nextTitle.trim();
+    if (!trimmedTitle) {
+      alert("Tracknaam mag niet leeg zijn.");
+      return;
+    }
+    const nextArtist = window.prompt("Nieuwe artiest:", currentArtist);
+    if (nextArtist === null) return;
+    try {
+      const updated = await updateTrackInUserPlaylist(selectedSavedPlaylist.id, track.id, {
+        title: trimmedTitle,
+        artist: nextArtist.trim() || null,
+      });
+      setSavedTracks((prev) => prev.map((entry) => (
+        entry.id === updated.id ? { ...entry, title: updated.title, artist: updated.artist } : entry
+      )));
+      setTrackContextMenu(null);
+    } catch (err) {
+      alert("Bewerken mislukt: " + (err instanceof Error ? err.message : "onbekende fout"));
+    }
+  }
+
   function clearTrackHoldTimer() {
     if (trackHoldTimerRef.current) {
       clearTimeout(trackHoldTimerRef.current);
@@ -402,7 +460,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
     if (!selectedSavedPlaylist?.viewer_can_edit) return;
     if (typeof window !== "undefined") {
       const menuWidth = 220;
-      const menuHeight = 88;
+      const menuHeight = 124;
       const viewportPadding = 8;
       const viewportWidth = window.innerWidth;
       const viewportHeight = window.innerHeight;
@@ -1827,8 +1885,30 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
               ) : (
                 <div className="grid gap-2">
                   {filteredPersonalPresets.map((preset) => {
-                    // openPresetIds state op component-niveau
-                    const presetPlaylists = savedPlaylists.filter((pl) => preset.genreIds.includes(pl.id));
+                    const presetSources = preset.genreIds.map((genreId, index) => {
+                      const savedMatch = savedPlaylists.find((pl) => matchesPresetGenreId(genreId, pl.id));
+                      if (savedMatch) {
+                        return {
+                          key: `${preset.id}:${genreId}:${index}`,
+                          name: savedMatch.name,
+                          meta: `${savedMatch.track_count ?? 0} tracks`,
+                        };
+                      }
+                      const sharedMatch = sharedPlaylists.find((pl) => matchesPresetGenreId(genreId, pl.id));
+                      if (sharedMatch) {
+                        return {
+                          key: `${preset.id}:${genreId}:${index}`,
+                          name: sharedMatch.name,
+                          meta: `${sharedMatch.track_count ?? 0} tracks`,
+                        };
+                      }
+                      const fallbackLabel = fallbackGenreLabelById.get(genreId) ?? cleanPresetSourceLabel(genreId);
+                      return {
+                        key: `${preset.id}:${genreId}:${index}`,
+                        name: fallbackLabel || genreId,
+                        meta: null,
+                      };
+                    });
                     const open = openPresetIds.includes(preset.id);
                     return (
                       <div
@@ -1886,17 +1966,21 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
                             </button>
                           </div>
                         </div>
-                        {open && presetPlaylists.length > 0 && (
+                        {open && (
                           <div className="mt-2 rounded bg-gray-900/70 p-2">
                             <p className="mb-1 text-[10px] text-gray-400">Playlists in deze preset:</p>
-                            <ul className="space-y-1">
-                              {presetPlaylists.map((pl) => (
-                                <li key={pl.id} className="flex items-center gap-2 text-[10px] text-gray-200">
-                                  <span className="truncate flex-1">{pl.name}</span>
-                                  <span className="text-gray-400">({pl.track_count ?? 0} tracks)</span>
-                                </li>
-                              ))}
-                            </ul>
+                            {presetSources.length > 0 ? (
+                              <ul className="space-y-1">
+                                {presetSources.map((source) => (
+                                  <li key={source.key} className="flex items-center gap-2 text-[10px] text-gray-200">
+                                    <span className="truncate flex-1">{source.name}</span>
+                                    {source.meta ? <span className="text-gray-400">({source.meta})</span> : null}
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <p className="text-[10px] text-gray-500">Geen bronnen gevonden in deze preset.</p>
+                            )}
                           </div>
                         )}
                       </div>
@@ -2312,10 +2396,10 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
               </div>
             </div>
             <div className="mt-2 space-y-2">
-              <input
-                type="text"
+              <NoAutofillInput
                 value={createPlaylistName}
                 onChange={(e) => setCreatePlaylistName(e.target.value)}
+                autoComplete="off"
                 placeholder="Naam van de playlist..."
                 className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[11px] text-white placeholder-gray-500 outline-none focus:border-emerald-400"
               />
@@ -2362,8 +2446,8 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
           <div className="mb-2 rounded-md border border-gray-700 bg-gray-900/80 p-2.5">
             <p className="text-[11px] font-semibold text-white">CSV/Exportify importeren</p>
             <p className="mt-1 text-[10px] text-gray-400">
-              Upload meerdere Exportify CSV&apos;s of ZIP bestanden tegelijk (Ctrl/Shift in bestandsdialoog). We voegen samen en dedupliceren
-              zoals bij admin-import. Naam is verplicht; daarna kun je je eigen playlist nog bewerken.
+              Upload een of meer Exportify CSV&apos;s of ZIP bestanden, of een `.csv` die je op pc met Mp3tag uit je muziekmappen hebt gemaakt.
+              We voegen samen en dedupliceren. Naam is verplicht; daarna kun je je eigen playlist nog bewerken.
             </p>
             <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
               <select
@@ -2377,19 +2461,19 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
                   <option key={group} value={group}>{group}</option>
                 ))}
               </select>
-              <input
-                type="text"
+              <NoAutofillInput
                 value={importSubgenre}
                 onChange={(e) => setImportSubgenre(e.target.value)}
+                autoComplete="off"
                 placeholder="Subgenre (optioneel)"
                 className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[10px] text-white placeholder-gray-500"
               />
             </div>
             <div className="mt-2 grid gap-1.5 sm:grid-cols-[1fr_auto]">
-              <input
-                type="text"
+              <NoAutofillInput
                 value={importCoverUrl}
                 onChange={(e) => setImportCoverUrl(e.target.value)}
+                autoComplete="off"
                 placeholder="Playlist cover URL (optioneel)"
                 className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[10px] text-white placeholder-gray-500"
               />
@@ -2403,10 +2487,10 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
                 Auto cover
               </label>
             </div>
-            <input
-              type="text"
+            <NoAutofillInput
               value={importPlaylistName}
               onChange={(e) => setImportPlaylistName(e.target.value)}
+              autoComplete="off"
               placeholder="Playlist naam (verplicht; underscores → spaties in titel)"
               className="mt-2 w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[11px] text-white placeholder-gray-500 outline-none focus:border-emerald-400"
             />
@@ -2696,6 +2780,16 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
           }}
           onClick={(e) => e.stopPropagation()}
         >
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              void handleEditTrackFromMenu();
+            }}
+            className="block w-full border-b border-gray-800 px-3 py-2 text-left text-xs text-blue-100 transition hover:bg-blue-500/15"
+          >
+            Bewerk artiest/titel
+          </button>
           <button
             type="button"
             onClick={(e) => {
