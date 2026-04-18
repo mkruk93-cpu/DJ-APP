@@ -51,36 +51,28 @@ export default function RootLayout({
         <meta name="mobile-web-app-capable" content="yes" />
         <style dangerouslySetInnerHTML={{
           __html: `
-            /* Force notification bar color on all platforms */
             @supports (padding-top: env(safe-area-inset-top)) {
               html { background-color: #030712 !important; }
             }
-            /* Override any purple theme colors */
             :root { --theme-color: #030712; }
-            /* Disable pull-to-refresh on mobile */
             html, body {
               overscroll-behavior: none !important;
               -webkit-overflow-scrolling: touch;
             }
-            /* Prevent refresh gestures */
             body {
               touch-action: pan-x pan-y;
             }
-            /* PWA specific fixes */
             @media (display-mode: standalone) {
-              /* Force header visibility in PWA mode */
               header {
                 display: block !important;
                 visibility: visible !important;
                 opacity: 1 !important;
                 min-height: 60px !important;
               }
-              /* Prevent content jumping in PWA */
               body {
                 position: relative;
               }
             }
-            /* Force header visibility on all platforms */
             header {
               display: block !important;
               visibility: visible !important;
@@ -88,8 +80,16 @@ export default function RootLayout({
             }
           `
         }} />
+        <script src="/viewport-fix.js" />
       </head>
-      <body className="min-h-dvh bg-gray-950 text-gray-100 antialiased" style={{ overscrollBehavior: 'none' }}>
+      <body
+        className="min-h-dvh bg-gray-950 text-gray-100 antialiased flex flex-col"
+        style={{
+          overscrollBehavior: 'none',
+          minHeight: 'calc(var(--vh, 1vh) * 100)',
+          height: 'calc(var(--vh, 1vh) * 100)'
+        }}
+      >
         <AuthProvider>
           <PwaRegistrar />
           <PwaRefreshButton />

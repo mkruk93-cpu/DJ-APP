@@ -1,6 +1,10 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback, useMemo, Component, type ReactNode } from "react";
+// Voor diacritics strippen
+function stripDiacritics(str: string): string {
+  return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
 import { getSocket } from "@/lib/socket";
 import { useRadioStore } from "@/lib/radioStore";
 import { canPerformAction } from "@/lib/types";
@@ -621,7 +625,8 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
-  const search = useCallback((query: string, append = false) => {
+  // SoundCloud/YouTube search met fallback op genormaliseerde query
+  const search = useCallback((query: string, append = false, _isFallback = false) => {
     if (!serverUrl || query.length < 2) {
       latestSearchRunRef.current += 1;
       setResults([]);
@@ -666,12 +671,21 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
     )
       .then((groups) => {
         if (runId !== latestSearchRunRef.current) return;
-        
         // Close search history dropdown when results are loaded
         setShowVideoHistory(false);
 
         const deduped = dedupeSearchResults(groups.flat());
         const visible = filterSetResults(deduped);
+
+        // Fallback: als geen resultaten en nog geen fallback gedaan, probeer genormaliseerde query
+        if (!append && !_isFallback && visible.length === 0) {
+          const normalized = stripDiacritics(query).replace(/[^\w\s-]/g, "");
+          if (normalized !== query) {
+            search(normalized, false, true);
+            return;
+          }
+        }
+
         setResults((prev) => {
           const next = !append ? visible : dedupeSearchResults([...prev, ...visible]);
           // Cache the results for initial search to speed up source/tab switching
@@ -821,7 +835,9 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
       setArtistTracks((prev) => {
         const next = append ? [...prev, ...tracks] : tracks;
         // Basic dedupe
-        const deduped = Array.from(new Map(next.map(t => [t.url || `${t.name}-${t.artist?.name}`, t])).values());
+        const deduped: LastFmTrack[] = Array.from(
+          new Map(next.map((t) => [`${t.url || `${t.name}-${t.artist?.name}`}`, t])).values()
+        );
         totalCount = deduped.length;
         // Cache the results for initial load
         if (!append) artistCacheRef.current.set(artistName, deduped);
@@ -1558,7 +1574,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
 
   return (
     <QueueAddErrorBoundary>
-      <div ref={wrapperRef} className="relative z-[100] flex min-h-0 flex-1 flex-col">
+      <div ref={wrapperRef} style={{}} className="relative z-[100] flex min-h-0 flex-1 flex-col">
       <form onSubmit={handleSubmit} className="relative z-[100] flex min-h-0 flex-1 flex-col gap-2 rounded-xl border border-gray-800 bg-gray-900 p-3 shadow-lg shadow-violet-500/5 sm:p-4">
         <label className="block shrink-0 text-xs font-semibold uppercase tracking-wider text-violet-400">
           Nummer toevoegen
@@ -2025,7 +2041,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                       {artistResults.map((artist) => {
                         const isFav = isArtistFavorited(artist.id, artist.name);
                         return (
-                          <div key={artist.id} className="group flex w-full items-center px-3 py-2 text-left hover:bg-gray-800 first:rounded-t-md last:rounded-b-md">
+                          <div key={artist.id} className="group flex w-full items-center gap-2 rounded-md px-2 py-1.5 hover:bg-gray-800 first:rounded-t-md last:rounded-b-md">
                             {/* Wrapper voor beide buttons */}
                             <div className="flex min-w-0 flex-1 items-center gap-2">
                               <button
@@ -2043,23 +2059,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                                   <p className="truncate text-xs text-gray-400">
                                     {artist.country || 'Onbekend'}{artist.type ? ` • ${artist.type}` : ''}{artist.disambiguation ? ` • ${artist.disambiguation}` : ''}
                                   </p>
-                                  <div className="mt-1">
-                                    <input
-                                      type="text"
-                                      value={genreQuery}
-                                      onChange={(e) => {
-                                        // Altijd eerst state updaten
-                                        const val = e.target.value;
-                                        setGenreQuery(val);
-                                        if (genreMenuRef.current) genreMenuRef.current.open = true;
-                                      }}
-                                      onFocus={() => {
-                                        if (genreMenuRef.current) genreMenuRef.current.open = true;
-                                      }}
-                                      placeholder="Zoek genre (hardstyle, trance, rock, metal...)"
-                                      className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none transition focus:border-fuchsia-500"
-                                    />
-                                  </div>
+                                  {/* Genre search input removed from artist result dropdown */}
                                 </div>
                               </button>
                               <button
@@ -2299,6 +2299,10 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                             {isAdded ? (
                               <span className="shrink-0 rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-300">
                                 Toegevoegd
+                              </span>
+                            ) : isPending ? (
+                              <span className="shrink-0 rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200">
+                                Bezig...
                               </span>
                             ) : null}
                           </button>

@@ -269,6 +269,11 @@ export default function FallbackGenreSelector() {
   }
   const shouldRender = connected && sortedGenres.length > 0;
   const activeLabel = useMemo(() => {
+    // Als er een preset actief is, maar de geselecteerde genres NIET overeenkomen met de preset, toon het aantal playlists
+    if (activePresetName && selectedSharedGenres.length > 0) {
+      // Preset actief, maar genres handmatig aangepast
+      return `${selectedSharedGenres.length} playlists`;
+    }
     // Als er een preset actief is, toon de preset naam
     if (activePresetName) {
       return activePresetName;
@@ -543,11 +548,12 @@ export default function FallbackGenreSelector() {
               className={`block whitespace-nowrap ${shouldScroll ? "marquee-text" : ""}`}
               style={{
                 animation: shouldScroll ? 'marquee-scroll-slow 14s linear infinite' : 'none',
+                display: 'inline-block',
               }}
             >
               {activeLabel}
               {shouldScroll && (
-                <span className="mx-8" aria-hidden="true">{activeLabel}</span>
+                <span aria-hidden="true" className="mx-8">{activeLabel}</span>
               )}
             </span>
           </span>

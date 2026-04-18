@@ -36,12 +36,37 @@
   --foreground: #e5e5e5;
 }
 
+
+
 body {
   margin: 0;
   background: var(--background);
   color: var(--foreground);
   font-family: system-ui, -apple-system, sans-serif;
   overflow-x: hidden;
+  min-height: 100vh;
+  min-height: 100dvh;
+  min-height: calc(var(--vh, 1vh) * 100);
+  overscroll-behavior: none;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  height: calc(var(--vh, 1vh) * 100);
+}
+
+html, body {
+  /* Prevent body scroll when keyboard opens */
+  max-height: 100vh;
+  max-height: 100dvh;
+  max-height: calc(var(--vh, 1vh) * 100);
+  overflow-y: hidden;
+}
+
+input, textarea {
+  direction: ltr !important;
+  unicode-bidi: plaintext !important;
 }
 
 /* Custom scrollbar for chat */

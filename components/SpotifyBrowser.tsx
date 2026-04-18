@@ -187,6 +187,7 @@ function isLikedTracksPlaylistName(name: string | null | undefined): boolean {
 }
 
 export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", onSelectFavoriteArtist }: SpotifyBrowserProps) {
+  const [openPresetIds, setOpenPresetIds] = useState<string[]>([]);
   const { userAccount } = useAuth();
   const username = userAccount?.username || "";
   const lockAutoplayFallback = useRadioStore((s) => s.lockAutoplayFallback);
@@ -327,6 +328,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
   const checkConnection = useCallback(() => false, []);
 
   const backToPlaylists = useCallback(() => {
+    setAppliedPresetId(null); // Clear preset when returning to playlists
     setView("playlists");
     setTracks([]);
     setTracksNext(null);
@@ -870,6 +872,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
     if (typeof window !== "undefined" && viewRef.current === "playlists") {
       window.history.pushState({ ...(window.history.state ?? {}), __inAppBack: "spotify-saved" }, "");
     }
+    setAppliedPresetId(null); // Clear preset when selecting a saved playlist
     setSelectedSavedPlaylist(playlist);
     setSelectedSharedPlaylist(null);
     setView("importedTracks");
@@ -1211,6 +1214,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
     if (typeof window !== "undefined" && viewRef.current === "playlists") {
       window.history.pushState({ ...(window.history.state ?? {}), __inAppBack: "spotify-playlist" }, "");
     }
+    setAppliedPresetId(null); // Clear preset when selecting a playlist
     setSelectedPlaylist(playlist);
     setTrackSource("playlist");
     setView("tracks");
@@ -1665,9 +1669,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
         autoComplete="off"
         spellCheck={false}
         value={filter}
-        onChange={(e) => {
-          setFilter(e.target.value);
-        }}
+        onChange={(e) => setFilter(e.target.value)}
         placeholder={view === "playlists" ? "Filter playlists..." : "Filter tracks..."}
         className="w-full shrink-0 rounded-md border border-gray-700 bg-gray-800 px-2.5 py-1 text-xs text-white placeholder-gray-500 outline-none transition focus:border-[#1DB954]"
       />
@@ -1765,8 +1767,6 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
               </div>
             ) : favoriteArtists.length === 0 ? (
               <p className="text-[10px] text-gray-400">Nog geen favorieten. Zoek naar een artiest en klik op het hartje om toe te voegen.</p>
-            ) : filteredFavoriteArtists.length === 0 ? (
-              <p className="text-[10px] text-gray-400">Geen artiesten gevonden voor je zoekopdracht.</p>
             ) : (
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {filteredFavoriteArtists.map((artist) => (
@@ -1811,72 +1811,100 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
           )}
 
           {showPlaylistSections && personalLibraryTab === "presets" && (
-          <div className="mb-2 rounded-md border border-gray-700 bg-gray-900/80 p-2.5">
-            <div className="mb-3 flex items-center justify-between">
-              <p className="text-[11px] font-semibold text-white">Autofallback presets</p>
-              <button
-                type="button"
-                onClick={() => { getSocket().emit("fallback:presets:get"); }}
-                className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] font-semibold text-gray-300 transition hover:border-white/15 hover:bg-white/[0.05]"
-              >
-                Ververs
-              </button>
-            </div>
-            {filteredPersonalPresets.length === 0 ? (
-              <p className="text-[10px] text-gray-400">Nog geen presets beschikbaar.</p>
-            ) : (
-              <div className="grid gap-2">
-                {filteredPersonalPresets.map((preset) => (
-                  <div
-                    key={preset.id}
-                    className={`group flex w-full items-center justify-between rounded-md border bg-gray-800/70 px-3 py-2 text-[11px] text-white transition hover:border-violet-500/40 hover:bg-gray-800 ${
-                      appliedPresetId === preset.id
-                        ? "border-green-500/60"
-                        : "border-gray-700"
-                    }`}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAppliedPresetId(preset.id);
-                        setTimeout(() => setAppliedPresetId(null), 2000);
-                        getSocket().emit("fallback:preset:apply", {
-                          id: preset.id,
-                          selectedBy: currentNickname || undefined,
-                          token: getRadioToken(),
-                        });
-                      }}
-                      className="min-w-0 flex-1 truncate text-left font-semibold text-white"
-                    >
-                      {preset.name}
-                    </button>
-                    <div className="ml-3 flex items-center gap-2">
-                      {appliedPresetId === preset.id && (
-                        <span className="text-[10px] font-semibold text-green-400">
-                          Autoplay Preset Ingesteld
-                        </span>
-                      )}
-                      <span className="shrink-0 text-[10px] text-gray-400">{preset.genreIds.length} bronnen</span>
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          getSocket().emit("fallback:preset:delete", {
-                            id: preset.id,
-                            selectedBy: currentNickname || undefined,
-                            token: getRadioToken(),
-                          });
-                        }}
-                        className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-1 text-[10px] font-semibold text-gray-300 transition hover:border-white/15 hover:bg-white/[0.05]"
-                      >
-                        Verwijder
-                      </button>
-                    </div>
-                  </div>
-                ))}
+            <div className="mb-2 rounded-md border border-gray-700 bg-gray-900/80 p-2.5">
+              <div className="mb-3 flex items-center justify-between">
+                <p className="text-[11px] font-semibold text-white">Autofallback presets</p>
+                <button
+                  type="button"
+                  onClick={() => { getSocket().emit("fallback:presets:get"); }}
+                  className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] font-semibold text-gray-300 transition hover:border-white/15 hover:bg-white/[0.05]"
+                >
+                  Ververs
+                </button>
               </div>
-            )}
-          </div>
+              {filteredPersonalPresets.length === 0 ? (
+                <p className="text-[10px] text-gray-400">Nog geen presets beschikbaar.</p>
+              ) : (
+                <div className="grid gap-2">
+                  {filteredPersonalPresets.map((preset) => {
+                    // openPresetIds state op component-niveau
+                    const presetPlaylists = savedPlaylists.filter((pl) => preset.genreIds.includes(pl.id));
+                    const open = openPresetIds.includes(preset.id);
+                    return (
+                      <div
+                        key={preset.id}
+                        className={`group rounded-md border bg-gray-800/70 px-3 py-2 text-[11px] text-white transition hover:border-violet-500/40 hover:bg-gray-800 ${
+                          appliedPresetId === preset.id
+                            ? "border-green-500/60"
+                            : "border-gray-700"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAppliedPresetId(preset.id);
+                              setTimeout(() => setAppliedPresetId(null), 2000);
+                              getSocket().emit("fallback:preset:apply", {
+                                id: preset.id,
+                                selectedBy: currentNickname || undefined,
+                                token: getRadioToken(),
+                              });
+                            }}
+                            className="min-w-0 flex-1 truncate text-left font-semibold text-white"
+                          >
+                            {preset.name}
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={open ? "Sluit preset" : "Toon playlists"}
+                            onClick={() => setOpenPresetIds((ids: string[]) => open ? ids.filter((id: string) => id !== preset.id) : [...ids, preset.id])}
+                            className="ml-2 rounded px-1 py-0.5 text-[13px] text-gray-400 hover:text-violet-300 focus:outline-none"
+                          >
+                            <span style={{ display: 'inline-block', transform: open ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▶</span>
+                          </button>
+                          <div className="ml-3 flex items-center gap-2">
+                            {appliedPresetId === preset.id && (
+                              <span className="text-[10px] font-semibold text-green-400">
+                                Autoplay Preset Ingesteld
+                              </span>
+                            )}
+                            <span className="shrink-0 text-[10px] text-gray-400">{preset.genreIds.length} bronnen</span>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                getSocket().emit("fallback:preset:delete", {
+                                  id: preset.id,
+                                  selectedBy: currentNickname || undefined,
+                                  token: getRadioToken(),
+                                });
+                              }}
+                              className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-1 text-[10px] font-semibold text-gray-300 transition hover:border-white/15 hover:bg-white/[0.05]"
+                            >
+                              Verwijder
+                            </button>
+                          </div>
+                        </div>
+                        {open && presetPlaylists.length > 0 && (
+                          <div className="mt-2 rounded bg-gray-900/70 p-2">
+                            <p className="mb-1 text-[10px] text-gray-400">Playlists in deze preset:</p>
+                            <ul className="space-y-1">
+                              {presetPlaylists.map((pl) => (
+                                <li key={pl.id} className="flex items-center gap-2 text-[10px] text-gray-200">
+                                  <span className="truncate flex-1">{pl.name}</span>
+                                  <span className="text-gray-400">({pl.track_count ?? 0} tracks)</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           )}
 
           {showPlaylistSections && personalLibraryTab === "playlists" && (
@@ -2287,17 +2315,13 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
               <input
                 type="text"
                 value={createPlaylistName}
-                onChange={(e) => {
-                  setCreatePlaylistName(e.target.value);
-                }}
+                onChange={(e) => setCreatePlaylistName(e.target.value)}
                 placeholder="Naam van de playlist..."
                 className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[11px] text-white placeholder-gray-500 outline-none focus:border-emerald-400"
               />
               <select
                 value={createPlaylistGenreGroup}
-                onChange={(e) => {
-                  setCreatePlaylistGenreGroup(e.target.value);
-                }}
+                onChange={(e) => setCreatePlaylistGenreGroup(e.target.value)}
                 className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[10px] text-white"
               >
                 <option value="">Kies genre (optioneel)</option>
@@ -2344,9 +2368,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
             <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
               <select
                 value={importGenreGroup}
-                onChange={(e) => {
-                  setImportGenreGroup(e.target.value);
-                }}
+                onChange={(e) => setImportGenreGroup(e.target.value)}
                 onFocus={(e) => keepFieldVisibleOnMobile(e.currentTarget)}
                 className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[10px] text-white"
               >
@@ -2358,9 +2380,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
               <input
                 type="text"
                 value={importSubgenre}
-                onChange={(e) => {
-                  setImportSubgenre(e.target.value);
-                }}
+                onChange={(e) => setImportSubgenre(e.target.value)}
                 placeholder="Subgenre (optioneel)"
                 className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[10px] text-white placeholder-gray-500"
               />
@@ -2369,9 +2389,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
               <input
                 type="text"
                 value={importCoverUrl}
-                onChange={(e) => {
-                  setImportCoverUrl(e.target.value);
-                }}
+                onChange={(e) => setImportCoverUrl(e.target.value)}
                 placeholder="Playlist cover URL (optioneel)"
                 className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[10px] text-white placeholder-gray-500"
               />
@@ -2388,9 +2406,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
             <input
               type="text"
               value={importPlaylistName}
-              onChange={(e) => {
-                setImportPlaylistName(e.target.value);
-              }}
+              onChange={(e) => setImportPlaylistName(e.target.value)}
               placeholder="Playlist naam (verplicht; underscores → spaties in titel)"
               className="mt-2 w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[11px] text-white placeholder-gray-500 outline-none focus:border-emerald-400"
             />
