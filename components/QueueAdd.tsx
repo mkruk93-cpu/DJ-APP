@@ -1630,7 +1630,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
 
   return (
     <QueueAddErrorBoundary>
-      <div ref={wrapperRef} style={{}} className="relative z-[100] flex min-h-0 flex-1 flex-col">
+      <div ref={wrapperRef} style={{ overscrollBehavior: 'contain', touchAction: 'pan-y' }} className="relative z-[100] flex min-h-0 flex-1 flex-col">
       <form onSubmit={handleSubmit} className="relative z-[100] flex min-h-0 flex-1 flex-col gap-2 rounded-xl border border-gray-800 bg-gray-900 p-3 shadow-lg shadow-violet-500/5 sm:p-4">
         <label className="block shrink-0 text-xs font-semibold uppercase tracking-wider text-violet-400">
           Nummer toevoegen
