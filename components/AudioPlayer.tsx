@@ -257,7 +257,6 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     function healthCheck() {
       const audio = audioRef.current;
       if (!audio) return;
-      if (typeof document !== "undefined" && document.hidden) return;
       if (!playIntentRef.current || userPaused.current) return;
       if (navigator.onLine === false) return;
       // Als audio hoort te spelen, maar is gepauzeerd of heeft geen geluid, forceer herstart
@@ -659,8 +658,6 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
 
     function onVisibilityOrFocus() {
       if (document.visibilityState === "hidden") {
-        clearReconnectTimer();
-        clearWaitingTimer();
         return;
       }
       if (!src || !shouldAttemptPlayback()) return;

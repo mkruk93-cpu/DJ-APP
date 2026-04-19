@@ -228,7 +228,6 @@ function dedupeSearchResults(items: SearchResult[]): SearchResult[] {
 
 export default function QueueAdd({ username }: { username?: string } = {}) {
   const [hydrated, setHydrated] = useState(false);
-  const [isExpanded, setIsExpanded] = useState(true);
   const [input, setInput] = useState("");
   const [feedback, setFeedback] = useState<{ msg: string; ok: boolean } | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -1632,21 +1631,12 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
   return (
     <QueueAddErrorBoundary>
       <div ref={wrapperRef} style={{ overscrollBehavior: 'none', touchAction: 'pan-y' }} className="relative z-[100] flex min-h-0 flex-1 flex-col">
-      <form onSubmit={handleSubmit} className={`relative z-[100] flex min-h-0 flex-1 flex-col gap-2 rounded-xl border border-gray-800 bg-gray-900 p-3 shadow-lg shadow-violet-500/5 sm:p-4 ${!isExpanded ? 'h-[50px] overflow-hidden' : ''}`}>
-        <label className="flex items-center justify-between shrink-0 text-xs font-semibold uppercase tracking-wider text-violet-400">
+      <form onSubmit={handleSubmit} className="relative z-[100] flex min-h-0 flex-1 flex-col gap-2 rounded-xl border border-gray-800 bg-gray-900 p-3 shadow-lg shadow-violet-500/5 sm:p-4">
+        <label className="block shrink-0 text-xs font-semibold uppercase tracking-wider text-violet-400">
           Nummer toevoegen
-          <button 
-             type="button" 
-             onClick={() => setIsExpanded(!isExpanded)}
-             className="p-1 rounded-md bg-gray-800 hover:bg-gray-700 transition"
-          >
-            <svg className={`w-3 h-3 transition-transform ${isExpanded ? '' : 'rotate-180'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M18 15l-6-6-6 6"/></svg>
-          </button>
         </label>
 
-        {isExpanded && (
-          <>
-            {/* Source tabs */},old_string:
+        {/* Source tabs */}
         <div className="flex shrink-0 items-center gap-1 rounded-lg bg-gray-800 p-0.5">
           <button
             type="button"
@@ -1938,7 +1928,6 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                   handleGenreListScroll(e);
                   handleScroll(e);
                 }}
-                style={{ overscrollBehavior: 'contain', touchAction: 'pan-y' }}
                 className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70"
               >
               {genreHitsLoading ? (
@@ -2278,7 +2267,6 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                   <div 
                     ref={artistTracksListRef}
                     onScroll={handleScroll}
-                    style={{ overscrollBehavior: 'contain', touchAction: 'pan-y' }}
                     className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70"
                   >
                     {artistTracks
@@ -2505,7 +2493,6 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                 onScroll={handleSearchListScroll}
                 onTouchStart={handleSearchListTouch}
                 onTouchMove={handleSearchListTouchMove}
-                style={{ overscrollBehavior: 'contain', touchAction: 'pan-y' }}
                 className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70"
               >
                 {results.map((result) => {
@@ -2650,8 +2637,27 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
         </div>
       </div>
     )}
+
+    {/* Undo Melding */}
+    {recentAdd && (
+      <div className="pointer-events-none absolute left-0 right-0 top-2 z-[70] px-2">
+        <div className="pointer-events-auto flex items-center justify-between gap-2 rounded-lg border border-violet-800/60 bg-violet-950/95 px-3 py-2 text-xs text-violet-100 shadow-lg shadow-violet-900/30 backdrop-blur">
+          <span className="min-w-0 flex-1 truncate">
+            Toegevoegd: <span className="font-semibold">{recentAdd.title}</span> · {undoSecondsLeft}s
+          </span>
+          <button
+            type="button"
+            onClick={undoRecentAdd}
+            className="rounded-md border border-violet-600/70 px-2 py-1 font-semibold text-violet-100 transition hover:bg-violet-800/50"
+          >
+            Ongedaan maken
+          </button>
+        </div>
+      </div>
+    )}
+        </div>
   </form>
-</div>
+  </div>
 </QueueAddErrorBoundary>
   );
 }

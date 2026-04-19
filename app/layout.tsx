@@ -60,7 +60,7 @@ export default function RootLayout({
               -webkit-overflow-scrolling: touch;
             }
             body {
-              touch-action: pan-y;
+              touch-action: pan-x pan-y;
             }
             @media (display-mode: standalone) {
               header {
@@ -80,6 +80,26 @@ export default function RootLayout({
             }
           `
         }} />
+        <script dangerouslySetInnerHTML={{ __html: `
+          (function() {
+            var startY = 0;
+            document.addEventListener('touchstart', function(e) {
+              startY = e.touches[0].pageY;
+            }, { passive: true });
+            document.addEventListener('touchmove', function(e) {
+              var y = e.touches[0].pageY;
+              if (y <= startY) return;
+              var el = e.target;
+              while (el && el !== document.documentElement) {
+                var style = window.getComputedStyle(el);
+                var oy = style.overflowY;
+                if ((oy === 'auto' || oy === 'scroll' || oy === 'overlay') && el.scrollTop > 0) return;
+                el = el.parentElement;
+              }
+              e.preventDefault();
+            }, { passive: false });
+          })();
+        `}} />
         <script src="/viewport-fix.js" />
       </head>
       <body
