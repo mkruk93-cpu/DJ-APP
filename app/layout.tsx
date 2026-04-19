@@ -60,7 +60,7 @@ export default function RootLayout({
               -webkit-overflow-scrolling: touch;
             }
             body {
-              touch-action: pan-x pan-y;
+              touch-action: pan-y;
             }
             @media (display-mode: standalone) {
               header {
