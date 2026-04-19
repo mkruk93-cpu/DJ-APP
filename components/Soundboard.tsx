@@ -32,19 +32,11 @@ export default function Soundboard() {
     };
   }, []);
 
-  const getControlServerUrl = () => {
-    const envUrl = process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
-    if (envUrl && envUrl.length > 5) return envUrl.replace(/\/$/, '');
-    
-    if (typeof window !== 'undefined') {
-      const port = window.location.port === '3000' ? '3001' : window.location.port;
-      return `${window.location.protocol}//${window.location.hostname}:${port}`;
-    }
-    return 'http://localhost:3001';
-  };
-
   const playSample = (id: string) => {
-    getSocket().emit('soundboard:play', { sampleId: id });
+    const socket = getSocket();
+    if (socket) {
+      socket.emit('soundboard:play', { sampleId: id });
+    }
   };
 
   const startRecording = async () => {
@@ -91,29 +83,27 @@ export default function Soundboard() {
     try {
       const formData = new FormData();
       formData.append('audio', blob, 'voice-message.webm');
-      const nickname = userAccount?.username || localStorage.getItem('radio_nickname') || 'Onbekend';
+      const nickname = userAccount?.username || 'Onbekend';
       formData.append('nickname', nickname);
 
       const adminToken = localStorage.getItem('radio_admin_token') || '';
-      const url = `${getControlServerUrl()}/api/soundboard/voice`;
       
-      const response = await fetch(url, {
+      // We praten nu tegen de interne Next.js API route
+      const response = await fetch('/api/soundboard/voice', {
         method: 'POST',
         headers: { 
           'X-Admin-Token': adminToken,
-          'Authorization': `Bearer ${adminToken}`
         },
-        mode: 'cors',
         body: formData,
       });
 
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || `Server fout (${response.status})`);
+        throw new Error(data.error || `Server fout ${response.status}`);
       }
     } catch (err) {
-      console.error('Fout bij uploaden spraakbericht:', err);
-      alert(`Verbindingsfout: De server is niet bereikbaar op ${getControlServerUrl()}`);
+      console.error('Upload fout:', err);
+      alert('Kon bericht niet verzenden via de API.');
     } finally {
       setIsUploading(false);
       setIsRecording(false);
@@ -128,28 +118,26 @@ export default function Soundboard() {
     try {
       const formData = new FormData();
       formData.append('audio', file);
-      const nickname = userAccount?.username || localStorage.getItem('radio_nickname') || 'Onbekend';
+      const nickname = userAccount?.username || 'Onbekend';
       formData.append('nickname', nickname);
 
       const adminToken = localStorage.getItem('radio_admin_token') || '';
-      const url = `${getControlServerUrl()}/api/soundboard/upload`;
-
-      const response = await fetch(url, {
+      
+      const response = await fetch('/api/soundboard/upload', {
         method: 'POST',
         headers: { 
           'X-Admin-Token': adminToken,
-          'Authorization': `Bearer ${adminToken}`
         },
-        mode: 'cors',
         body: formData,
       });
 
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || 'Upload mislukt');
+      
       if (fileInputRef.current) fileInputRef.current.value = '';
     } catch (err) {
       console.error('Fout bij uploaden sample:', err);
-      alert(err instanceof Error ? err.message : 'Kon sample niet uploaden.');
+      alert(err instanceof Error ? err.message : 'Upload mislukt.');
     } finally {
       setIsUploading(false);
     }

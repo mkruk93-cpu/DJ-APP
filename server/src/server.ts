@@ -180,14 +180,16 @@ app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', origin || '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, X-Admin-Token, x-admin-token, Authorization');
-  res.header('Access-Control-Allow-Credentials', 'false'); // Belangrijk: false voor fetch naar localhost
+  res.header('Access-Control-Allow-Credentials', 'true');
   if (req.method === 'OPTIONS') { res.sendStatus(204); return; }
   next();
 });
+
 app.use(express.json());
+
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: USER_PLAYLIST_MAX_UPLOAD_BYTES },
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limiet voor alle uploads
 });
 
 // Genre management routes (admin only)
