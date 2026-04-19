@@ -27,14 +27,22 @@ export default function PreventPullToRefresh({ active = false }: PreventPullToRe
 
     const onTouchMove = (e: TouchEvent) => {
       const y = e.touches[0].clientY;
-      const pullingDown = y > startY;
+      const deltaY = y - startY;
       
-      // If active is true (sheet expanded), we always want to prevent pull-to-refresh
-      // when swiping down from the top area.
-      if (pullingDown && (active || !canScrollUp(e.target))) {
-        // Only prevent if we are at the top of the window
-        if (window.scrollY <= 0) {
-          e.preventDefault();
+      // pullingDown threshold: even a tiny 1px movement is enough to trigger browser logic
+      const pullingDown = deltaY > 0;
+      
+      if (pullingDown && window.scrollY <= 0) {
+        // If active (sheet up), we MUST prevent it to allow swiping the sheet down 
+        // without Chrome taking over.
+        if (active) {
+          if (e.cancelable) e.preventDefault();
+          return;
+        }
+
+        // If not active, only prevent if the element itself cannot scroll up further
+        if (!canScrollUp(e.target)) {
+          if (e.cancelable) e.preventDefault();
         }
       }
     };

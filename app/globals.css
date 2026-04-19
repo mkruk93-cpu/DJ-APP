@@ -62,7 +62,8 @@ html, body {
   max-height: 100dvh;
   max-height: calc(var(--vh, 1vh) * 100);
   overflow-y: hidden;
-  overscroll-behavior: none;
+  overscroll-behavior-y: none !important;
+  overscroll-behavior: none !important;
 }
 
 input, textarea {
