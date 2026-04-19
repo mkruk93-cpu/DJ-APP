@@ -228,6 +228,7 @@ function dedupeSearchResults(items: SearchResult[]): SearchResult[] {
 
 export default function QueueAdd({ username }: { username?: string } = {}) {
   const [hydrated, setHydrated] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(true);
   const [input, setInput] = useState("");
   const [feedback, setFeedback] = useState<{ msg: string; ok: boolean } | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -1631,12 +1632,21 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
   return (
     <QueueAddErrorBoundary>
       <div ref={wrapperRef} style={{ overscrollBehavior: 'none', touchAction: 'pan-y' }} className="relative z-[100] flex min-h-0 flex-1 flex-col">
-      <form onSubmit={handleSubmit} className="relative z-[100] flex min-h-0 flex-1 flex-col gap-2 rounded-xl border border-gray-800 bg-gray-900 p-3 shadow-lg shadow-violet-500/5 sm:p-4">
-        <label className="block shrink-0 text-xs font-semibold uppercase tracking-wider text-violet-400">
+      <form onSubmit={handleSubmit} className={`relative z-[100] flex min-h-0 flex-1 flex-col gap-2 rounded-xl border border-gray-800 bg-gray-900 p-3 shadow-lg shadow-violet-500/5 sm:p-4 ${!isExpanded ? 'h-[50px] overflow-hidden' : ''}`}>
+        <label className="flex items-center justify-between shrink-0 text-xs font-semibold uppercase tracking-wider text-violet-400">
           Nummer toevoegen
+          <button 
+             type="button" 
+             onClick={() => setIsExpanded(!isExpanded)}
+             className="p-1 rounded-md bg-gray-800 hover:bg-gray-700 transition"
+          >
+            <svg className={`w-3 h-3 transition-transform ${isExpanded ? '' : 'rotate-180'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M18 15l-6-6-6 6"/></svg>
+          </button>
         </label>
 
-        {/* Source tabs */}
+        {isExpanded && (
+          <>
+            {/* Source tabs */},old_string:
         <div className="flex shrink-0 items-center gap-1 rounded-lg bg-gray-800 p-0.5">
           <button
             type="button"
