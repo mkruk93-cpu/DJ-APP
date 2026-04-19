@@ -2668,9 +2668,8 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
         </div>
       </div>
     )}
-        </div>
   </form>
-  </div>
+</div>
 </QueueAddErrorBoundary>
   );
 }
