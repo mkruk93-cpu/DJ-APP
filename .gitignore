@@ -35,6 +35,22 @@ server/dist/
 server/data/*.json
 server/data/*.jsonl
 server/data/jingles/
+server/data/samples/
+server/data/exportify_inbox/
+
+# Audio bestanden algemeen
+*.mp3
+*.wav
+*.m4a
+*.ogg
+*.opus
+*.webm
+*.aac
+*.flac
+
+# Specifieke download mappen op de desktop (indien in de repo)
+Desktop/Rekordbox Stream App/StreamRequests/
+Desktop/Rekordbox Stream App/RekordBoxSongExporter/OutputFiles/
 
 # Voorkom dat build-informatie van TypeScript wordt gepusht
 *.tsbuildinfo
