@@ -34,10 +34,11 @@ export default function Soundboard() {
 
   const getControlServerUrl = () => {
     const envUrl = process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
-    if (envUrl) return envUrl;
-    // Fallback naar de hostname van de huidige pagina maar op poort 3001 (standaard voor de server)
+    if (envUrl && envUrl.length > 5) return envUrl.replace(/\/$/, '');
+    
     if (typeof window !== 'undefined') {
-      return `${window.location.protocol}//${window.location.hostname}:3001`;
+      const port = window.location.port === '3000' ? '3001' : window.location.port;
+      return `${window.location.protocol}//${window.location.hostname}:${port}`;
     }
     return 'http://localhost:3001';
   };
@@ -61,12 +62,12 @@ export default function Soundboard() {
 
       mediaRecorder.onstop = async () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        // Stop alle tracks direct
         stream.getTracks().forEach(track => track.stop());
         
         if (audioChunksRef.current.length > 0) {
           await uploadVoiceMessage(audioBlob);
         }
+        setIsRecording(false);
       };
 
       mediaRecorder.start();
@@ -90,26 +91,32 @@ export default function Soundboard() {
     try {
       const formData = new FormData();
       formData.append('audio', blob, 'voice-message.webm');
-      // Gebruik een fallback nickname als userAccount nog niet geladen is
       const nickname = userAccount?.username || localStorage.getItem('radio_nickname') || 'Onbekend';
       formData.append('nickname', nickname);
 
       const adminToken = localStorage.getItem('radio_admin_token') || '';
-      const response = await fetch(`${getControlServerUrl()}/api/soundboard/voice`, {
+      const url = `${getControlServerUrl()}/api/soundboard/voice`;
+      
+      const response = await fetch(url, {
         method: 'POST',
-        headers: { 'X-Admin-Token': adminToken },
+        headers: { 
+          'X-Admin-Token': adminToken,
+          'Authorization': `Bearer ${adminToken}`
+        },
+        mode: 'cors',
         body: formData,
       });
 
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || 'Server weigerde het bericht');
+        throw new Error(data.error || `Server fout (${response.status})`);
       }
     } catch (err) {
       console.error('Fout bij uploaden spraakbericht:', err);
-      alert('Kon spraakbericht niet verzenden: ' + (err instanceof Error ? err.message : 'Verbindingsfout'));
+      alert(`Verbindingsfout: De server is niet bereikbaar op ${getControlServerUrl()}`);
     } finally {
       setIsUploading(false);
+      setIsRecording(false);
     }
   };
 
@@ -125,9 +132,15 @@ export default function Soundboard() {
       formData.append('nickname', nickname);
 
       const adminToken = localStorage.getItem('radio_admin_token') || '';
-      const response = await fetch(`${getControlServerUrl()}/api/soundboard/upload`, {
+      const url = `${getControlServerUrl()}/api/soundboard/upload`;
+
+      const response = await fetch(url, {
         method: 'POST',
-        headers: { 'X-Admin-Token': adminToken },
+        headers: { 
+          'X-Admin-Token': adminToken,
+          'Authorization': `Bearer ${adminToken}`
+        },
+        mode: 'cors',
         body: formData,
       });
 
