@@ -22,10 +22,10 @@ export default function Soundboard() {
     const socket = getSocket();
     if (!socket) return;
 
-    socket.emit('soundboard:list');
     socket.on('soundboard:list', (list: Sample[]) => {
       setSamples(list);
     });
+    socket.emit('soundboard:list');
 
     return () => {
       socket.off('soundboard:list');
@@ -35,7 +35,8 @@ export default function Soundboard() {
   const playSample = (id: string) => {
     const socket = getSocket();
     if (socket) {
-      socket.emit('soundboard:play', { sampleId: id });
+      const adminToken = localStorage.getItem('radio_admin_token') || '';
+      socket.emit('soundboard:play', { sampleId: id, token: adminToken });
     }
   };
 

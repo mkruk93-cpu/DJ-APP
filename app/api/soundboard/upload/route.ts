@@ -5,7 +5,7 @@ export async function POST(req: NextRequest) {
     const formData = await req.formData();
     const adminToken = req.headers.get('X-Admin-Token') || '';
     
-    const targetUrl = 'http://localhost:3001/api/soundboard/upload';
+    const targetUrl = 'http://127.0.0.1:3001/api/soundboard/upload';
 
     const response = await fetch(targetUrl, {
       method: 'POST',

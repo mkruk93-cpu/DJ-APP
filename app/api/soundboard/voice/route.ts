@@ -6,7 +6,7 @@ export async function POST(req: NextRequest) {
     const adminToken = req.headers.get('X-Admin-Token') || '';
     
     // De radio-server draait lokaal op de server op poort 3001
-    const targetUrl = 'http://localhost:3001/api/soundboard/voice';
+    const targetUrl = 'http://127.0.0.1:3001/api/soundboard/voice';
 
     const response = await fetch(targetUrl, {
       method: 'POST',

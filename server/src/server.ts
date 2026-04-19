@@ -14,7 +14,7 @@ import { seedSettings, getActiveMode, getActiveFallbackGenre, getModeSettings, g
 import { getQueue, addToQueue, removeFromQueue, reorderQueue, fetchVideoInfo, extractYoutubeId, extractSourceId, isSoundcloudUrl, getThumbnailUrl, encodeLocalFileUrl } from './queue.js';
 import { canPerformAction } from './permissions.js';
 import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, isPlayCycleRunning, playerEvents, setKeepFiles, getJingleSettings, setJingleSettings, getJingleSelection, setJingleSelection, getJingleCatalog, invalidatePreload, invalidateNextReady, removeQueueItemFromPreload, setActiveFallbackGenre, setActiveFallbackGenres, setActiveSharedFallbackPlaylists, setSharedAutoPlaybackMode, resetSharedAutoPlaybackCycleForSelection, setQueueItemSelectionMeta, setHideLocalDiscoveryForFallback } from './player.js';
-import { soundboardManager } from './services/soundboard.js';
+import { soundboardManager, SAMPLE_DIR } from './services/soundboard.js';
 import { isCurrentDJ, getDJSchedule, claimDJSlot } from './services/djSchedule.js';
 import { youtubeSearch, soundcloudSearch, spotdlSearch } from './services/search.js';
 import { musicBrainzAutocomplete, lastFmGetArtistInfo, lastFmGetTopTracks, lastFmGetTopAlbums, iTunesSearchArtwork, lastFmGetArtistImage, lastFmGetLovedTracks, lastFmGetRecentTracks } from './services/musicSearch.js';
@@ -129,7 +129,9 @@ const USER_PLAYLIST_MAX_STORED_TRACKS_PER_USER = 20_000;
 const SHARED_PLAYLIST_MAX_PLAYLISTS = 500;
 const SHARED_PLAYLIST_MAX_TRACKS = 150_000;
 const SHARED_PLAYLIST_MAX_TRACKS_PER_PLAYLIST = 3000;
-const SHARED_EXPORTIFY_INBOX_DIR = process.env.SHARED_EXPORTIFY_INBOX_DIR ?? pathJoin(process.cwd(), 'data', 'exportify_inbox');
+const SHARED_EXPORTIFY_INBOX_DIR = fs.existsSync(pathJoin(process.cwd(), 'data', 'exportify_inbox'))
+  ? pathJoin(process.cwd(), 'data', 'exportify_inbox')
+  : pathJoin(process.cwd(), 'server', 'data', 'exportify_inbox');
 const SHARED_IMPORT_POLL_MS = Math.max(15_000, parseInt(process.env.SHARED_IMPORT_POLL_MS ?? '60000', 10) || 60_000);
 const SPOTIFY_OEMBED_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -237,7 +239,7 @@ app.post('/api/soundboard/upload', upload.single('audio'), async (req, res) => {
     // Converteer naar WAV in de samples map (gegarandeerde compatibiliteit)
     const safeBaseName = basename(req.file.originalname, originalExt).replace(/[^a-z0-9]/gi, '_').toLowerCase();
     const finalFileName = `${safeBaseName}.wav`;
-    const finalPath = pathJoin(process.cwd(), 'data', 'samples', finalFileName);
+    const finalPath = pathJoin(SAMPLE_DIR, finalFileName);
     
     await new Promise((resolve, reject) => {
       const conv = spawn('ffmpeg', [
@@ -5785,6 +5787,7 @@ io.on('connection', (socket) => {
   else socket.emit('queuePushVote:end', null);
   socket.emit('queuePush:lock', { locked: queuePushLocked });
   socket.emit('skip:lock', { locked: isSkipLocked() });
+  socket.emit('soundboard:list', soundboardManager.getSamples());
 
   // ── auth:verify ──
   socket.on('auth:verify', (data: { token: string }, callback?: (valid: boolean) => void) => {
@@ -6548,8 +6551,8 @@ async function main(): Promise<void> {
   setActiveSharedFallbackPlaylists(startupFallbackGenres.filter((id) => !!parseSharedFallbackPlaylistId(id)));
   console.log(`[fallback] Active genre: ${startupFallbackGenre ?? 'none'}`);
 
-  httpServer.listen(PORT, () => {
-    console.log(`[server] Listening on http://localhost:${PORT}`);
+  httpServer.listen(PORT, '0.0.0.0', () => {
+    console.log(`[server] Listening on port ${PORT}`);
     console.log(`[server] CORS allowed: ${FRONTEND_URL}`);
     if (ICECAST) {
       console.log(`[server] Streaming via Icecast: ${ICECAST.host}:${ICECAST.port}${ICECAST.mount}`);

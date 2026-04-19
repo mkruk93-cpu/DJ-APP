@@ -3,7 +3,19 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 
-const SAMPLE_DIR = path.join(process.cwd(), 'data', 'samples');
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Zoek naar de data/samples map relatief aan dit bestand, of in de root van de server
+export const SAMPLE_DIR = fs.existsSync(path.join(process.cwd(), 'data', 'samples'))
+  ? path.join(process.cwd(), 'data', 'samples')
+  : fs.existsSync(path.join(process.cwd(), 'server', 'data', 'samples'))
+    ? path.join(process.cwd(), 'server', 'data', 'samples')
+    : path.join(process.cwd(), 'data', 'samples'); // Fallback naar root/data/samples
+
+console.log(`[soundboard] Sample directory set to: ${SAMPLE_DIR}`);
 
 interface Sample {
   id: string;
