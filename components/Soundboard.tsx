@@ -32,6 +32,16 @@ export default function Soundboard() {
     };
   }, []);
 
+  const getControlServerUrl = () => {
+    const envUrl = process.env.NEXT_PUBLIC_CONTROL_SERVER_URL;
+    if (envUrl) return envUrl;
+    // Fallback naar de hostname van de huidige pagina maar op poort 3001 (standaard voor de server)
+    if (typeof window !== 'undefined') {
+      return `${window.location.protocol}//${window.location.hostname}:3001`;
+    }
+    return 'http://localhost:3001';
+  };
+
   const playSample = (id: string) => {
     getSocket().emit('soundboard:play', { sampleId: id });
   };
@@ -51,23 +61,28 @@ export default function Soundboard() {
 
       mediaRecorder.onstop = async () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        await uploadVoiceMessage(audioBlob);
+        // Stop alle tracks direct
         stream.getTracks().forEach(track => track.stop());
+        
+        if (audioChunksRef.current.length > 0) {
+          await uploadVoiceMessage(audioBlob);
+        }
       };
 
       mediaRecorder.start();
       setIsRecording(true);
     } catch (err) {
       console.error('Microfoon toegang geweigerd:', err);
-      alert('Microfoon toegang is vereist om een bericht in te spreken.');
+      alert('Microfoon toegang is vereist.');
+      setIsRecording(false);
     }
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop();
-      setIsRecording(false);
     }
+    setIsRecording(false);
   };
 
   const uploadVoiceMessage = async (blob: Blob) => {
@@ -75,19 +90,24 @@ export default function Soundboard() {
     try {
       const formData = new FormData();
       formData.append('audio', blob, 'voice-message.webm');
-      formData.append('nickname', userAccount?.username || '');
+      // Gebruik een fallback nickname als userAccount nog niet geladen is
+      const nickname = userAccount?.username || localStorage.getItem('radio_nickname') || 'Onbekend';
+      formData.append('nickname', nickname);
+
       const adminToken = localStorage.getItem('radio_admin_token') || '';
-      const serverUrl = process.env.NEXT_PUBLIC_CONTROL_SERVER_URL || '';
-      
-      const response = await fetch(`${serverUrl}/api/soundboard/voice`, {
+      const response = await fetch(`${getControlServerUrl()}/api/soundboard/voice`, {
         method: 'POST',
         headers: { 'X-Admin-Token': adminToken },
         body: formData,
       });
-      if (!response.ok) throw new Error('Upload mislukt');
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || 'Server weigerde het bericht');
+      }
     } catch (err) {
       console.error('Fout bij uploaden spraakbericht:', err);
-      alert('Kon spraakbericht niet verzenden.');
+      alert('Kon spraakbericht niet verzenden: ' + (err instanceof Error ? err.message : 'Verbindingsfout'));
     } finally {
       setIsUploading(false);
     }
@@ -101,17 +121,17 @@ export default function Soundboard() {
     try {
       const formData = new FormData();
       formData.append('audio', file);
-      formData.append('nickname', userAccount?.username || '');
+      const nickname = userAccount?.username || localStorage.getItem('radio_nickname') || 'Onbekend';
+      formData.append('nickname', nickname);
+
       const adminToken = localStorage.getItem('radio_admin_token') || '';
-      const serverUrl = process.env.NEXT_PUBLIC_CONTROL_SERVER_URL || '';
-      
-      const response = await fetch(`${serverUrl}/api/soundboard/upload`, {
+      const response = await fetch(`${getControlServerUrl()}/api/soundboard/upload`, {
         method: 'POST',
         headers: { 'X-Admin-Token': adminToken },
         body: formData,
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || 'Upload mislukt');
       if (fileInputRef.current) fileInputRef.current.value = '';
     } catch (err) {
@@ -126,20 +146,19 @@ export default function Soundboard() {
 
   return (
     <div className="flex flex-col gap-5 p-4 bg-gray-900 rounded-xl border border-gray-800 shadow-xl">
-      {/* Header sectie */}
       <div className="flex items-center gap-2 border-b border-gray-800 pb-3">
         <span className="text-xl">🔊</span>
         <h3 className="text-lg font-bold text-white tracking-tight">Soundboard & Interactie</h3>
       </div>
 
-      {/* Actie knoppen - Inspreken & Uploaden */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <button
           onMouseDown={startRecording}
           onMouseUp={stopRecording}
+          onMouseLeave={stopRecording}
           onTouchStart={startRecording}
           onTouchEnd={stopRecording}
-          className={`relative flex items-center justify-center gap-3 px-4 py-4 rounded-xl text-sm font-bold transition-all shadow-lg ${
+          className={`relative flex items-center justify-center gap-3 px-4 py-4 rounded-xl text-sm font-bold transition-all shadow-lg select-none ${
             isRecording 
               ? 'bg-red-600 animate-pulse text-white scale-[0.98]' 
               : isUploading 
@@ -175,7 +194,6 @@ export default function Soundboard() {
         </button>
       </div>
 
-      {/* Grid met vaste samples */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h4 className="text-[11px] font-bold uppercase tracking-widest text-gray-500 px-1">Beschikbare Samples</h4>
