@@ -16,6 +16,9 @@ import { getUserPlaylistTracksForFallback } from './services/userPlaylistStore.j
 import { getTopTracksByGenre, getMergedGenreTags, getPriorityArtistsForGenre, resolveMergedGenreId, type GenreHitItem } from './services/discovery.js';
 import { getCachedGenreHits, makeGenreHitsCacheKey, setGenreHitsCacheEntry } from './genreHitsStore.js';
 import { recordMissingTrackLookup } from './services/missingTrackLog.js';
+import { soundboardManager } from './services/soundboard.js';
+import { isCurrentDJ } from './services/djSchedule.js';
+import net from 'node:net';
 
 export const playerEvents = new EventEmitter();
 
@@ -382,10 +385,13 @@ function getEncoderRateArgs(): string[] {
   return ['-b:a', STREAM_BITRATE];
 }
 
-function getEncoderFilterArgs(): string[] {
-  if (!STREAM_NORMALIZE) return [];
-  if (!STREAM_AUDIO_FILTER) return [];
-  return ['-af', STREAM_AUDIO_FILTER];
+function getEncoderFilterArgs(): string {
+  const filters: string[] = [];
+  if (STREAM_NORMALIZE && STREAM_AUDIO_FILTER) {
+    filters.push(STREAM_AUDIO_FILTER);
+  }
+  
+  return filters.join(',');
 }
 
 function getDecoderFilterArgs(forceDualMono = false): string[] {
@@ -3234,7 +3240,6 @@ function runSelfHealChecks(): void {
 function beginSeamlessSwap(ready: ReadyTrack): void {
   const newDecoder = spawn('ffmpeg', [
     '-hide_banner',
-    '-re',
     '-fflags', '+discardcorrupt',
     '-err_detect', 'ignore_err',
     '-i', ready.audioFile,
@@ -3493,15 +3498,7 @@ export type IcecastConfig = { host: string; port: number; password: string; moun
 let _streamHub: StreamHub | null = null;
 let _icecast: IcecastConfig | null = null;
 
-function ensureEncoder(): ChildProcess {
-  const encoderHasWritableStdin = !!encoder?.stdin && !encoder.stdin.destroyed && encoder.stdin.writable;
-  if (encoder && !encoder.killed && encoder.exitCode === null && encoderHasWritableStdin) return encoder;
-  if (encoder && (!encoderHasWritableStdin || encoder.killed || encoder.exitCode !== null)) {
-    // Stale encoder process: force replacement so decode never writes into dead stdin.
-    killEncoderProcess(encoder);
-    encoder = null;
-  }
-
+function spawnEncoder(): ChildProcess {
   let nextEncoder: ChildProcess;
   if (_icecast) {
     const icecastUrl = `icecast://source:${_icecast.password}@${_icecast.host}:${_icecast.port}${_icecast.mount}`;
@@ -3509,13 +3506,16 @@ function ensureEncoder(): ChildProcess {
 
     nextEncoder = spawn('ffmpeg', [
       '-hide_banner',
+      '-probesize', '32',
+      '-analyzeduration', '0',
       '-f', 's16le',
       '-ar', '44100',
       '-ac', '2',
       '-i', 'pipe:0',
-      ...getEncoderFilterArgs(),
+      '-af', getEncoderFilterArgs(),
       '-acodec', 'libmp3lame',
       ...getEncoderRateArgs(),
+      '-flush_packets', '1',
       '-f', 'mp3',
       '-content_type', 'audio/mpeg',
       icecastUrl,
@@ -3525,13 +3525,16 @@ function ensureEncoder(): ChildProcess {
 
     nextEncoder = spawn('ffmpeg', [
       '-hide_banner',
+      '-probesize', '32',
+      '-analyzeduration', '0',
       '-f', 's16le',
       '-ar', '44100',
       '-ac', '2',
       '-i', 'pipe:0',
-      ...getEncoderFilterArgs(),
+      '-af', getEncoderFilterArgs(),
       '-acodec', 'libmp3lame',
       ...getEncoderRateArgs(),
+      '-flush_packets', '1',
       '-f', 'mp3',
       'pipe:1',
     ]);
@@ -3541,7 +3544,8 @@ function ensureEncoder(): ChildProcess {
     });
   }
 
-  encoder = nextEncoder;
+  // Prevent crashes on EPIPE/ECONNRESET when encoder is killed or rotated
+  nextEncoder.stdin?.on('error', () => {});
 
   let encoderStderrTail = '';
   nextEncoder.stderr?.on('data', (chunk: Buffer) => {
@@ -3550,54 +3554,38 @@ function ensureEncoder(): ChildProcess {
       encoderStderrTail = encoderStderrTail.slice(-4000);
     }
   });
-  nextEncoder.stdin?.on('error', (err) => {
-    // Ignore stale error events from an older encoder process.
-    if (encoder !== nextEncoder) return;
-    if ((!isRunning || isExpectedEncoderShutdownWindow()) && (isWriteAfterEndError(err) || isBrokenPipeError(err))) return;
-    if (!isBrokenPipeError(err)) {
-      console.warn(`[encoder] stdin error: ${err.message}`);
-    }
-    // Don't null the encoder here as it might still be usable for reading
-  });
 
   nextEncoder.on('close', (code) => {
-    // Ignore stale close events from an older encoder process.
-    if (encoder !== nextEncoder) return;
-    const winSystemCode = toWindowsSystemErrorCode(code);
-    const tail = encoderStderrTail.trim().split('\n').slice(-2).join(' | ').trim();
-    const suffix = tail ? ` — ${tail}` : '';
-    if (isExpectedEncoderShutdownWindow() && (code === 0 || code === null || winSystemCode === 10053)) {
-      console.log(`[encoder] Exited after expected stop${suffix}`);
-    } else if (winSystemCode === 10053) {
-      console.warn(`[encoder] Exited with code ${code} (Windows socket 10053: verbinding met Icecast verbroken)${suffix}`);
-    } else if (code !== 0 && code !== null) {
-      console.warn(`[encoder] Exited with error code ${code}${suffix}`);
-    } else {
-      console.log(`[encoder] Exited cleanly${suffix}`);
-    }
-    encoder = null;
-    if (isRunning) {
-      // Add a small delay to prevent rapid restart loops
-      setTimeout(() => triggerSelfHeal(`encoder exited (${code})`), 500);
-    }
-  });
-
-  nextEncoder.on('error', (err) => {
-    // Ignore stale error events from an older encoder process.
-    if (encoder !== nextEncoder) return;
-    if (isExpectedEncoderShutdownWindow()) {
-      console.log(`[encoder] Ignored expected error during shutdown: ${err.message}`);
+    // Check if this was the 'current' encoder
+    if (encoder === nextEncoder) {
+      const winSystemCode = toWindowsSystemErrorCode(code);
+      const tail = encoderStderrTail.trim().split('\n').slice(-2).join(' | ').trim();
+      const suffix = tail ? ` — ${tail}` : '';
+      if (isExpectedEncoderShutdownWindow() && (code === 0 || code === null || winSystemCode === 10053)) {
+        console.log(`[encoder] Exited after expected stop${suffix}`);
+      } else if (winSystemCode === 10053) {
+        console.warn(`[encoder] Exited with code ${code} (Windows socket 10053: verbinding met Icecast verbroken)${suffix}`);
+      } else if (code !== 0 && code !== null) {
+        console.warn(`[encoder] Exited with error code ${code}${suffix}`);
+      }
       encoder = null;
-      return;
-    }
-    console.error(`[encoder] Error: ${err.message}`);
-    encoder = null;
-    if (isRunning) {
-      setTimeout(() => triggerSelfHeal(`encoder error (${err.message})`), 100);
     }
   });
 
   return nextEncoder;
+}
+
+function ensureEncoder(): ChildProcess {
+  const encoderHasWritableStdin = !!encoder?.stdin && !encoder.stdin.destroyed && encoder.stdin.writable;
+  if (encoder && !encoder.killed && encoder.exitCode === null && encoderHasWritableStdin) return encoder;
+  
+  if (encoder && (!encoderHasWritableStdin || encoder.killed || encoder.exitCode !== null)) {
+    killEncoderProcess(encoder);
+    encoder = null;
+  }
+
+  encoder = spawnEncoder();
+  return encoder;
 }
 
 export async function startPlayCycle(
@@ -3614,6 +3602,7 @@ export async function startPlayCycle(
   _cacheDir = cacheDir;
   _icecast = icecast;
   _streamHub = streamHub ?? null;
+  soundboardManager.startServer();
   selfHealGraceUntil = Date.now() + SELF_HEAL_START_GRACE_MS;
   expectedEncoderShutdownUntil = 0;
   lastAudioProgressAt = Date.now();
@@ -4298,7 +4287,7 @@ async function playNext(
       prepareNextTrack(sb, cacheDir, trackQueueId);
       void ensureAutoReadyBuffer(sb, cacheDir);
 
-      await pipeRunningDecoder(swap.decoder, ensureEncoder());
+      await pipeRunningDecoder(swap.decoder);
     }
     } catch (err) {
     const message = err instanceof Error ? err.message : 'Onbekende fout';
@@ -4381,7 +4370,6 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess, forceDualMono = f
 
     const decoder = spawn('ffmpeg', [
       '-hide_banner',
-      '-re',
       '-fflags', '+discardcorrupt',
       '-err_detect', 'ignore_err',
       '-i', audioFile,
@@ -4449,15 +4437,17 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess, forceDualMono = f
       markAudioProgress();
       waitingForDrain = false;
 
+      const currentEnc = ensureEncoder();
+
       // ── Check for seamless swap ──
       if (pendingSwap?.firstChunk) {
         const swap = pendingSwap;
         pendingSwap = null;
 
         // Write the NEW track's first audio chunk to the encoder
-        if (enc.stdin && !enc.stdin.destroyed && enc.stdin.writable) {
+        if (currentEnc.stdin && !currentEnc.stdin.destroyed && currentEnc.stdin.writable) {
           try {
-            enc.stdin.write(swap.firstChunk);
+            currentEnc.stdin.write(swap.firstChunk);
             markAudioProgress();
           } catch (err) {
             pipeError = true;
@@ -4477,16 +4467,20 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess, forceDualMono = f
         return;
       }
 
+      // ── Mix in Soundboard ──
+      const sbChunk = getSbChunk(chunk.length);
+      const finalChunk = sbChunk ? mixPCM(chunk, sbChunk) : chunk;
+
       // ── Normal: pipe old track's audio to encoder ──
-      if (enc.stdin && !enc.stdin.destroyed && enc.stdin.writable) {
+      if (currentEnc.stdin && !currentEnc.stdin.destroyed && currentEnc.stdin.writable) {
         try {
-          const ok = enc.stdin.write(chunk);
+          const ok = currentEnc.stdin.write(finalChunk);
           markAudioProgress();
           if (!ok) {
             waitingForDrain = true;
             resetChunkWatchdog(DECODER_DRAIN_TIMEOUT_MS);
             decoder.stdout?.pause();
-            enc.stdin.once('drain', () => {
+            currentEnc.stdin.once('drain', () => {
               if (settled || pipeError) return;
               waitingForDrain = false;
               resetChunkWatchdog();
@@ -4494,20 +4488,20 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess, forceDualMono = f
             });
           }
         } catch (err) {
-          pipeError = true;
-          killDecoderProcess(decoder);
           if (isBrokenPipeError(err)) {
-            finish(new Error('encoder write failed: EPIPE'));
+            // This happens during encoder rotation. Don't fail the track!
+            // The next chunk will call ensureEncoder() and get the new one.
+            console.log('[player] Encoder EPIPE (likely rotation) - waiting for next chunk');
           } else {
+            pipeError = true;
+            killDecoderProcess(decoder);
             finish(new Error(`encoder write failed: ${(err as Error).message}`));
           }
-          return;
         }
-      } else if (enc.exitCode !== null || !enc.stdin || enc.stdin.destroyed || !enc.stdin.writable) {
-        pipeError = true;
-        killDecoderProcess(decoder);
-        finish(new Error('Encoder stdin not available'));
-        return;
+      } else {
+        // Encoder might be temporarily null or destroyed during rotation.
+        // We log it but don't finish the track yet; give it a few chunks to recover.
+        console.warn('[player] Encoder stdin not available, waiting for self-heal...');
       }
     });
 
@@ -4536,7 +4530,52 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess, forceDualMono = f
  * Continue piping audio from an already-running decoder (post hot-swap).
  * Also supports chained skips — the same swap logic applies.
  */
-function pipeRunningDecoder(decoder: ChildProcess, enc: ChildProcess): Promise<void> {
+// ── Soundboard Mixing ──
+let sbMixBuffer: Buffer[] = [];
+soundboardManager.on('pcm', (chunk: Buffer) => {
+  sbMixBuffer.push(chunk);
+});
+
+function getSbChunk(size: number): Buffer | null {
+  if (sbMixBuffer.length === 0) return null;
+  
+  let total = 0;
+  const parts: Buffer[] = [];
+  while (sbMixBuffer.length > 0 && total < size) {
+    const next = sbMixBuffer[0];
+    const remaining = size - total;
+    if (next.length <= remaining) {
+      parts.push(sbMixBuffer.shift()!);
+      total += next.length;
+    } else {
+      parts.push(next.subarray(0, remaining));
+      sbMixBuffer[0] = next.subarray(remaining);
+      total += remaining;
+    }
+  }
+  return parts.length > 0 ? Buffer.concat(parts) : null;
+}
+
+function mixPCM(music: Buffer, sb: Buffer): Buffer {
+  const len = Math.min(music.length, sb.length);
+  const sampleCount = Math.floor(len / 2);
+  const out = Buffer.from(music);
+  
+  const musicView = new Int16Array(music.buffer, music.byteOffset, sampleCount);
+  const sbView = new Int16Array(sb.buffer, sb.byteOffset, sampleCount);
+  const outView = new Int16Array(out.buffer, out.byteOffset, sampleCount);
+
+  for (let i = 0; i < sampleCount; i++) {
+    const m = musicView[i];
+    const s = sbView[i];
+    const mixed = m + s;
+    outView[i] = mixed > 32767 ? 32767 : (mixed < -32768 ? -32768 : mixed);
+  }
+  
+  return out;
+}
+
+function pipeRunningDecoder(decoder: ChildProcess): Promise<void> {
   return new Promise((resolve, reject) => {
     currentDecoder = decoder;
     let settled = false;
@@ -4565,40 +4604,21 @@ function pipeRunningDecoder(decoder: ChildProcess, enc: ChildProcess): Promise<v
         chunkWatchdog = null;
       }
       currentDecoder = null;
-      enc.stdin?.removeListener('error', onStdinError);
-      enc.removeListener('close', onEncClose);
       if (err) {
+        console.error(`[player] pipeRunningDecoder failed: ${err.message}`);
         reject(err);
-        return;
+      } else {
+        resolve();
       }
-      resolve();
     }
-
-    function onStdinError(err: Error) {
-      if (pipeError) return;
-      pipeError = true;
-      if (!isExpectedEncoderShutdownWindow() && !isWriteAfterEndError(err)) {
-        console.warn(`[encoder] stdin error during chained decode: ${err.message}`);
-      }
-      killDecoderProcess(decoder);
-      finish();
-    }
-
-    function onEncClose() {
-      if (pipeError) return;
-      pipeError = true;
-      killDecoderProcess(decoder);
-      finish();
-    }
-
-    enc.stdin?.on('error', onStdinError);
-    enc.on('close', onEncClose);
 
     decoder.stdout?.on('data', (chunk: Buffer) => {
       if (settled || pipeError) return;
       resetChunkWatchdog();
       markAudioProgress();
       waitingForDrain = false;
+
+      const enc = ensureEncoder();
 
       // Support chained skips during the swapped track
       if (pendingSwap?.firstChunk) {
@@ -4619,9 +4639,13 @@ function pipeRunningDecoder(decoder: ChildProcess, enc: ChildProcess): Promise<v
         return;
       }
 
+      // ── Mix in Soundboard ──
+      const sbChunk = getSbChunk(chunk.length);
+      const finalChunk = sbChunk ? mixPCM(chunk, sbChunk) : chunk;
+
       if (enc.stdin && !enc.stdin.destroyed) {
         try {
-          const ok = enc.stdin.write(chunk);
+          const ok = enc.stdin.write(finalChunk);
           markAudioProgress();
           if (!ok) {
             waitingForDrain = true;
@@ -4637,8 +4661,12 @@ function pipeRunningDecoder(decoder: ChildProcess, enc: ChildProcess): Promise<v
         } catch {
           pipeError = true;
           killDecoderProcess(decoder);
-          finish(new Error('encoder write failed during chained decode'));
+          finish(new Error('encoder write failed during decode'));
         }
+      } else {
+        pipeError = true;
+        killDecoderProcess(decoder);
+        finish(new Error('Encoder stdin not available'));
       }
     });
 

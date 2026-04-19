@@ -14,6 +14,8 @@ import { seedSettings, getActiveMode, getActiveFallbackGenre, getModeSettings, g
 import { getQueue, addToQueue, removeFromQueue, reorderQueue, fetchVideoInfo, extractYoutubeId, extractSourceId, isSoundcloudUrl, getThumbnailUrl, encodeLocalFileUrl } from './queue.js';
 import { canPerformAction } from './permissions.js';
 import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, isPlayCycleRunning, playerEvents, setKeepFiles, getJingleSettings, setJingleSettings, getJingleSelection, setJingleSelection, getJingleCatalog, invalidatePreload, invalidateNextReady, removeQueueItemFromPreload, setActiveFallbackGenre, setActiveFallbackGenres, setActiveSharedFallbackPlaylists, setSharedAutoPlaybackMode, resetSharedAutoPlaybackCycleForSelection, setQueueItemSelectionMeta, setHideLocalDiscoveryForFallback } from './player.js';
+import { soundboardManager } from './services/soundboard.js';
+import { isCurrentDJ, getDJSchedule, claimDJSlot } from './services/djSchedule.js';
 import { youtubeSearch, soundcloudSearch, spotdlSearch } from './services/search.js';
 import { musicBrainzAutocomplete, lastFmGetArtistInfo, lastFmGetTopTracks, lastFmGetTopAlbums, iTunesSearchArtwork, lastFmGetArtistImage, lastFmGetLovedTracks, lastFmGetRecentTracks } from './services/musicSearch.js';
 import { startBridge } from './bridge.js';
@@ -190,6 +192,112 @@ const upload = multer({
 
 // Genre management routes (admin only)
 app.use('/api', genreManagementRouter);
+
+app.post('/api/soundboard/upload', upload.single('audio'), async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : (req.headers['x-admin-token'] as string);
+    const nickname = req.body.nickname;
+    
+    if (!isAdmin(token, nickname) && !(await isCurrentDJ(nickname ?? ''))) {
+      res.status(403).json({ error: 'Geen rechten voor soundboard upload' });
+      return;
+    }
+
+    if (!req.file) {
+      res.status(400).json({ error: 'Geen audio bestand ontvangen' });
+      return;
+    }
+
+    // Gebruik ffprobe om de duur te controleren
+    const originalExt = extname(req.file.originalname) || '.tmp';
+    const tempInputPath = pathJoin(tmpdir(), `upload-raw-${Date.now()}${originalExt}`);
+    fs.writeFileSync(tempInputPath, req.file.buffer);
+
+    const duration = await new Promise<number>((resolve) => {
+      const ffprobe = spawn('ffprobe', [
+        '-v', 'error',
+        '-show_entries', 'format=duration',
+        '-of', 'default=noprint_wrappers=1:nokey=1',
+        tempInputPath
+      ]);
+      let output = '';
+      ffprobe.stdout.on('data', (d) => output += d.toString());
+      ffprobe.on('close', () => resolve(parseFloat(output) || 0));
+    });
+
+    if (duration > 11) { // Iets ruimere marge voor afronding
+      if (fs.existsSync(tempInputPath)) fs.unlinkSync(tempInputPath);
+      res.status(400).json({ error: 'Sample is te lang (maximaal 10 seconden)' });
+      return;
+    }
+
+    // Converteer naar WAV in de samples map (gegarandeerde compatibiliteit)
+    const safeBaseName = basename(req.file.originalname, originalExt).replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    const finalFileName = `${safeBaseName}.wav`;
+    const finalPath = pathJoin(process.cwd(), 'data', 'samples', finalFileName);
+    
+    await new Promise((resolve, reject) => {
+      const conv = spawn('ffmpeg', [
+        '-i', tempInputPath,
+        '-ar', '44100',
+        '-ac', '2',
+        finalPath
+      ]);
+      conv.on('close', (code) => code === 0 ? resolve(true) : reject(new Error('Conversie mislukt')));
+    });
+
+    if (fs.existsSync(tempInputPath)) fs.unlinkSync(tempInputPath);
+    console.log(`[server] New sample uploaded and converted: ${finalFileName}`);
+
+    // Update manager
+    soundboardManager.reloadSamples();
+    const sampleId = basename(finalFileName, extname(finalFileName));
+    await soundboardManager.preloadSingleSample(sampleId);
+
+    // Informeer alle clients over de nieuwe lijst
+    io.emit('soundboard:list', soundboardManager.getSamples());
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[server] Sample upload error:', err);
+    res.status(500).json({ error: 'Interne fout bij uploaden sample' });
+  }
+});
+
+app.post('/api/soundboard/voice', upload.single('audio'), async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : (req.headers['x-admin-token'] as string);
+    const nickname = req.body.nickname;
+    
+    if (!isAdmin(token, nickname) && !(await isCurrentDJ(nickname ?? ''))) {
+      res.status(403).json({ error: 'Geen rechten voor soundboard' });
+      return;
+    }
+
+    if (!req.file) {
+      res.status(400).json({ error: 'Geen audio bestand ontvangen' });
+      return;
+    }
+
+    const tempPath = pathJoin(tmpdir(), `voice-message-${Date.now()}.webm`);
+    fs.writeFileSync(tempPath, req.file.buffer);
+
+    console.log(`[server] Received voice message, playing...`);
+    await soundboardManager.playSampleFromFile(tempPath);
+
+    // Verwijder het tijdelijke bestand na 30 seconden (ruim voldoende voor afspelen)
+    setTimeout(() => {
+      try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch {}
+    }, 30000);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[server] Voice message error:', err);
+    res.status(500).json({ error: 'Interne fout bij verwerken spraakbericht' });
+  }
+});
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -5680,6 +5788,44 @@ io.on('connection', (socket) => {
   socket.on('auth:verify', (data: { token: string }, callback?: (valid: boolean) => void) => {
     const valid = isAdmin(data.token, socketNicknameById.get(socket.id));
     if (typeof callback === 'function') callback(valid);
+  });
+
+  // ── Soundboard ──
+  socket.on('soundboard:play', async (data: { sampleId: string; token?: string }) => {
+    const nickname = socketNicknameById.get(socket.id);
+    const admin = isAdmin(data.token, nickname);
+    const isDJ = await isCurrentDJ(nickname ?? '');
+    if (!admin && !isDJ) {
+      socket.emit('error:toast', { message: 'Geen rechten voor soundboard' });
+      return;
+    }
+    soundboardManager.playSample(data.sampleId);
+  });
+
+  socket.on('soundboard:list', () => {
+    socket.emit('soundboard:list', soundboardManager.getSamples());
+  });
+
+  // ── DJ Schedule ──
+  socket.on('dj:getSchedule', async () => {
+    const schedule = await getDJSchedule();
+    socket.emit('dj:schedule', schedule);
+  });
+
+  socket.on('dj:claimSlot', async (data: { startTime: string; endTime: string; token?: string }) => {
+    const nickname = socketNicknameById.get(socket.id);
+    if (!nickname) {
+      socket.emit('error:toast', { message: 'Je moet een nickname hebben' });
+      return;
+    }
+    const success = await claimDJSlot(nickname, data.startTime, data.endTime);
+    if (success) {
+      const schedule = await getDJSchedule();
+      io.emit('dj:schedule', schedule);
+      socket.emit('info:toast', { message: 'Slot geclaimd!' });
+    } else {
+      socket.emit('error:toast', { message: 'Slot is al bezet of ongeldig' });
+    }
   });
 
   socket.on('listener:state', (data: { nickname?: string; listening?: boolean }) => {

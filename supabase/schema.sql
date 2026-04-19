@@ -272,3 +272,14 @@ CREATE TABLE search_history (
   created_at  timestamptz DEFAULT now()
 );
 CREATE INDEX idx_search_history_nickname ON search_history(nickname, search_type, created_at DESC);
+
+-- DJ Schedule table
+CREATE TABLE IF NOT EXISTS dj_schedule (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  nickname    text NOT NULL,
+  start_time  timestamptz NOT NULL,
+  end_time    timestamptz NOT NULL,
+  created_at  timestamptz DEFAULT now()
+);
+
+ALTER PUBLICATION supabase_realtime ADD TABLE dj_schedule;
