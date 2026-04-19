@@ -223,7 +223,7 @@ export async function createEmptyUserPlaylist(name: string, genreGroup?: string 
 export async function updateUserPlaylistSharing(
   playlistId: string,
   payload: {
-    share_username?: string | null;
+    shareWithUsername?: string | null;
     is_public?: boolean;
     is_public_fallback?: boolean;
   },

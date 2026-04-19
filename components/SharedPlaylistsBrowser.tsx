@@ -1103,7 +1103,11 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
       )}
 
       {view === "tracks" && !loading && (
-        <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto sm:pb-2">
+        <div 
+          ref={listRef} 
+          className="min-h-0 flex-1 space-y-px overflow-y-auto sm:pb-2"
+          style={{ touchAction: "pan-y", overscrollBehavior: "contain" }}
+        >
           {filteredTracks.map((track) => {
             const isAdded = addedTrackId === track.id;
             const isPending = pendingTrackId === track.id;

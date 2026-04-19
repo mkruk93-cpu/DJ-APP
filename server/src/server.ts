@@ -1546,7 +1546,6 @@ async function getCombinedFallbackGenres(): Promise<FallbackGenre[]> {
     owner_username: playlist.added_by ?? null,
   }));
   const publicUserGenres: FallbackGenre[] = publicUserPlaylists
-    .filter((playlist) => playlist.is_public_fallback)
     .map((playlist) => ({
       id: playlist.id,
       label: playlist.owner_username ? `Playlist · ${playlist.name} (${playlist.owner_username})` : `Playlist · ${playlist.name}`,
@@ -3213,7 +3212,10 @@ app.patch('/api/user-playlists/:id', async (req, res) => {
     return res.status(400).json({ error: 'Playlist id ontbreekt' });
   }
 
-  const shareUsername = normalizeNickname(getIdentityValueFromRequest(req, 'share_username'));
+  const shareUsername = normalizeNickname(
+    getIdentityValueFromRequest(req, 'shareWithUsername') || 
+    getIdentityValueFromRequest(req, 'share_username')
+  );
   const wantsPublic = req.body && typeof req.body === 'object' && Object.prototype.hasOwnProperty.call(req.body, 'is_public');
   const wantsPublicFallback = req.body && typeof req.body === 'object' && Object.prototype.hasOwnProperty.call(req.body, 'is_public_fallback');
   const nextPublic = wantsPublic ? Boolean((req.body as Record<string, unknown>).is_public) : undefined;
@@ -6280,6 +6282,7 @@ io.on('connection', (socket) => {
       await setSetting(sb, 'fallback_active_shared_playlist_ids', activeGenreList);
       await setSetting(sb, 'fallback_active_genre_by', selectedBy);
       await setSetting(sb, 'fallback_active_preset_name', null); // Clear preset name when manually selecting genres
+      
       const sharedId = parseSharedFallbackPlaylistId(requested);
       if (sharedId) {
         await setSetting(sb, 'fallback_shared_playback_mode', requestedSharedMode);

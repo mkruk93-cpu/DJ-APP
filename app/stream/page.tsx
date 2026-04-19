@@ -1593,12 +1593,13 @@ export default function StreamPage() {
       {isAdminUser && <AdminNotificationToast onApprovalComplete={handleApprovalComplete} />}
       {/* Header */}
       <header
-        className="relative z-50 shrink-0 border-b border-gray-800 bg-gray-900/80 px-2 py-1.5 backdrop-blur-sm sm:px-6 sm:py-3"
-        style={{ 
+        className="relative z-[150] shrink-0 border-b border-gray-800 bg-gray-900/80 px-2 py-1.5 backdrop-blur-sm sm:px-6 sm:py-3"
+        style={{
           paddingTop: "max(env(safe-area-inset-top), 0px)",
           minHeight: "56px"
         }}
       >
+
         <div className="flex w-full items-center gap-1.5">
           <h1 className="min-w-0 flex-1 truncate text-sm font-bold tracking-tight text-white sm:text-lg">
             🎵 <span className="text-violet-400">{process.env.NEXT_PUBLIC_TWITCH_CHANNEL ?? "Stream"}</span>

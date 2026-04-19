@@ -251,38 +251,61 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     };
   }, []);
 
+  // Network recovery: detect when connection returns
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleOnline = () => {
+      console.log("[AudioPlayer] Network back online, checking playback...");
+      const audio = audioRef.current;
+      if (!audio || !playIntentRef.current || userPaused.current) return;
+
+      // Als we online komen en de audio staat stil of heeft een error, forceer herstart
+      if (audio.paused || audio.readyState < 2 || audio.networkState === HTMLMediaElement.NETWORK_NO_SOURCE) {
+        console.log("[AudioPlayer] Forcing stream refresh after network switch...");
+        refreshStream();
+      }
+    };
+
+    window.addEventListener("online", handleOnline);
+    return () => window.removeEventListener("online", handleOnline);
+  }, [src, refreshStream]);
+
   // Health-check: controleer periodiek of audio nog speelt, anders forceer herstart
   useEffect(() => {
     if (!src) return;
     function healthCheck() {
       const audio = audioRef.current;
       if (!audio) return;
-      if (!playIntentRef.current || userPaused.current) return;
-      if (typeof navigator !== "undefined" && navigator.onLine === false) return;
       
-      // Als audio hoort te spelen, maar is gepauzeerd
-      if (playingRef.current && audio.paused && !audio.ended) {
-        // Probeer eerst gewoon te hervatten zonder reload (werkt vaker op mobiel als sessie nog actief is)
+      // Cruciaal: als playIntent true is maar audio speelt niet, moeten we actie ondernemen
+      if (!playIntentRef.current || userPaused.current) return;
+      
+      const isStuck = audio.paused || audio.ended || audio.readyState < 2;
+      
+      if (playingRef.current && isStuck) {
+        if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+
+        console.log("[AudioPlayer] Health check detected stall/stop, attempting resume...");
+        
+        // Probeer eerst te hervatten (vaak genoeg als de socket nog leeft)
         audio.play().catch(() => {
-          // Als dat faalt en we zijn in een kritieke staat, forceer dan pas reload
-          if (audio.readyState < 2 || audio.networkState === HTMLMediaElement.NETWORK_NO_SOURCE) {
-            console.log("[AudioPlayer] Health check failed critically, restarting stream...");
-            audio.src = `${src}${src.includes("?") ? "&" : "?"}health=${Date.now()}`;
-            audio.play().catch(() => {
-              setAutoplayBlocked(true);
-            });
-          }
+          // Als dat faalt (bijv. door netwerk switch), forceer een harde refresh
+          console.log("[AudioPlayer] Resume failed, forcing hard stream refresh...");
+          refreshStream();
         });
       }
     }
-    healthCheckTimerRef.current = setInterval(healthCheck, LIVE_HEALTHCHECK_INTERVAL_MS);
+    
+    // Check vaker in de achtergrond (korter interval voor sneller herstel)
+    healthCheckTimerRef.current = setInterval(healthCheck, 3000); 
     return () => {
       if (healthCheckTimerRef.current) {
         clearInterval(healthCheckTimerRef.current);
         healthCheckTimerRef.current = null;
       }
     };
-  }, [src]);
+  }, [src, refreshStream]);
 
   // Screen Wake Lock to prevent mobile sleep
   useEffect(() => {

@@ -534,7 +534,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
     const target = window.prompt(`Met welke gebruiker wil je "${playlist.name}" delen?`);
     if (!target?.trim()) return;
     try {
-      await updateUserPlaylistSharing(playlist.id, { share_username: target.trim() });
+      await updateUserPlaylistSharing(playlist.id, { shareWithUsername: target.trim() });
       await loadSavedPlaylists();
     } catch (err) {
       alert("Delen mislukt: " + (err instanceof Error ? err.message : "onbekende fout"));
@@ -543,7 +543,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
 
   async function handleSharePlaylistToUser(playlist: UserPlaylist, targetUsername: string) {
     try {
-      await updateUserPlaylistSharing(playlist.id, { share_username: targetUsername.trim() });
+      await updateUserPlaylistSharing(playlist.id, { shareWithUsername: targetUsername.trim() });
       await loadSavedPlaylists();
     } catch (err) {
       alert("Delen mislukt: " + (err instanceof Error ? err.message : "onbekende fout"));
@@ -1808,7 +1808,11 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
 
       {/* Playlist list */}
       {view === "playlists" && !loading && (
-        <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto sm:pb-2">
+        <div 
+          ref={listRef} 
+          className="min-h-0 flex-1 space-y-px overflow-y-auto sm:pb-2"
+          style={{ touchAction: "pan-y", overscrollBehavior: "contain" }}
+        >
           <div className="mb-2 rounded-md border border-gray-700 bg-gray-900/80 p-2.5 shadow-[0_8px_20px_rgba(0,0,0,0.22)]">
             <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[10px] text-gray-400">
               <span className="rounded-full border border-white/8 bg-white/[0.03] px-2.5 py-1">
@@ -2637,7 +2641,11 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
       )}
 
       {view === "tracks" && spotifyEnabled && !loading && (
-        <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto sm:pb-2">
+        <div 
+          ref={listRef} 
+          className="min-h-0 flex-1 space-y-px overflow-y-auto sm:pb-2"
+          style={{ touchAction: "pan-y", overscrollBehavior: "contain" }}
+        >
           {filteredTracks.map((track) => {
             const trackKey = track.id ?? `${track.name ?? "unknown"}:${track.artists?.map((a) => a?.name).join(",") ?? "unknown"}`;
             const artists = track.artists?.map((a) => a?.name).filter(Boolean).join(", ") || "";
@@ -2717,7 +2725,11 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
       )}
 
       {view === "importedTracks" && !savedTracksLoading && (
-        <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto sm:pb-2">
+        <div 
+          ref={listRef} 
+          className="min-h-0 flex-1 space-y-px overflow-y-auto sm:pb-2"
+          style={{ touchAction: "pan-y", overscrollBehavior: "contain" }}
+        >
           {/* Bulk selectie wordt geopend via contextmenu/long-press */}
           {filteredSavedTracks.map((track) => {
             const isAdded = addedTrackId === track.id;
@@ -2868,16 +2880,19 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
 
       {selectionMode && selectedSavedPlaylist?.viewer_can_edit && bulkMenuPos && (
         <div
-          className="fixed z-[95] w-[min(92vw,360px)] rounded-lg border border-violet-700/50 bg-gray-950/95 p-2 shadow-2xl"
+          className="fixed z-[160] w-[min(92vw,360px)] rounded-lg border border-violet-700/50 bg-gray-950/95 p-2 shadow-2xl"
           style={{
             left: Math.max(
               8,
               Math.min(
                 bulkMenuPos.x - 40,
-                window.innerWidth - Math.min(window.innerWidth * 0.92, 360) - 8,
+                (typeof window !== "undefined" ? window.innerWidth : 1000) - Math.min((typeof window !== "undefined" ? window.innerWidth : 1000) * 0.92, 360) - 8,
               ),
             ),
-            top: Math.max(8, bulkMenuPos.y + 8),
+            // Position above the touch point if there's no room below
+            top: (typeof window !== "undefined" && bulkMenuPos.y + 160 > window.innerHeight)
+              ? Math.max(8, bulkMenuPos.y - 140)
+              : Math.max(8, bulkMenuPos.y + 8),
           }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -2955,7 +2970,11 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
       )}
 
       {view === "sharedTracks" && !sharedTracksLoading && (
-        <div ref={listRef} className="min-h-0 flex-1 space-y-px overflow-y-auto sm:pb-2">
+        <div 
+          ref={listRef} 
+          className="min-h-0 flex-1 space-y-px overflow-y-auto sm:pb-2"
+          style={{ touchAction: "pan-y", overscrollBehavior: "contain" }}
+        >
           {filteredSharedTracks.map((track) => {
             const isAdded = addedTrackId === track.id;
             const isPending = pendingTrackId === track.id;
