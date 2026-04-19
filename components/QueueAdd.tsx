@@ -1928,6 +1928,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                   handleGenreListScroll(e);
                   handleScroll(e);
                 }}
+                style={{ overscrollBehavior: 'contain', touchAction: 'pan-y' }}
                 className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70"
               >
               {genreHitsLoading ? (
@@ -2267,6 +2268,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                   <div 
                     ref={artistTracksListRef}
                     onScroll={handleScroll}
+                    style={{ overscrollBehavior: 'contain', touchAction: 'pan-y' }}
                     className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70"
                   >
                     {artistTracks
@@ -2493,6 +2495,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                 onScroll={handleSearchListScroll}
                 onTouchStart={handleSearchListTouch}
                 onTouchMove={handleSearchListTouchMove}
+                style={{ overscrollBehavior: 'contain', touchAction: 'pan-y' }}
                 className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70"
               >
                 {results.map((result) => {
