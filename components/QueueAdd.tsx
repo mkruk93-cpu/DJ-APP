@@ -2650,24 +2650,6 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
         </div>
       </div>
     )}
-
-    {/* Undo Melding */}
-    {recentAdd && (
-      <div className="pointer-events-none absolute left-0 right-0 top-2 z-[70] px-2">
-        <div className="pointer-events-auto flex items-center justify-between gap-2 rounded-lg border border-violet-800/60 bg-violet-950/95 px-3 py-2 text-xs text-violet-100 shadow-lg shadow-violet-900/30 backdrop-blur">
-          <span className="min-w-0 flex-1 truncate">
-            Toegevoegd: <span className="font-semibold">{recentAdd.title}</span> · {undoSecondsLeft}s
-          </span>
-          <button
-            type="button"
-            onClick={undoRecentAdd}
-            className="rounded-md border border-violet-600/70 px-2 py-1 font-semibold text-violet-100 transition hover:bg-violet-800/50"
-          >
-            Ongedaan maken
-          </button>
-        </div>
-      </div>
-    )}
   </form>
 </div>
 </QueueAddErrorBoundary>
