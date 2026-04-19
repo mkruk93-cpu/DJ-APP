@@ -26,6 +26,7 @@ import AdminNotificationToast from "@/components/AdminNotificationToast";
 import PushNotification from "@/components/PushNotification";
 import ProfileModal from "@/components/ProfileModal";
 import Leaderboard from "@/components/Leaderboard";
+import PreventPullToRefresh from "@/components/PreventPullToRefresh";
 import type { Track, QueueItem, Mode, ModeSettings, VoteState, DurationVote, UpcomingTrack } from "@/lib/types";
 import { parseTrackDisplay } from "@/lib/trackDisplay";
 import { useSyncedTrack } from "@/lib/useSyncedTrack";
@@ -1588,6 +1589,7 @@ export default function StreamPage() {
       className="fixed inset-0 flex flex-col overflow-hidden bg-gray-950"
       style={{ height: "var(--app-dvh, 100dvh)", maxHeight: "var(--app-dvh, 100dvh)" }}
     >
+      <PreventPullToRefresh active={mobileSheetExpanded} />
       <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
         <div className="player-ambient absolute -left-20 top-10 h-72 w-72 rounded-full bg-violet-500/15 blur-3xl" />
         <div className="player-ambient absolute bottom-0 right-0 h-80 w-80 rounded-full bg-fuchsia-500/10 blur-3xl" />
@@ -1951,6 +1953,7 @@ export default function StreamPage() {
         {/* Mobile: tab bar */}
         <div 
           className="z-[140] flex shrink-0 flex-col gap-1 rounded-t-xl bg-gray-800/80 p-1 lg:hidden lg:rounded-lg lg:bg-gray-800/60"
+          style={{ overscrollBehavior: "contain" }}
           onTouchStart={handleTouchStart}
           onTouchEnd={handleTouchEnd}
         >

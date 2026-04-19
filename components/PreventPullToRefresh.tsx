@@ -13,7 +13,11 @@ function canScrollUp(el: EventTarget | null): boolean {
   return false;
 }
 
-export default function PreventPullToRefresh() {
+interface PreventPullToRefreshProps {
+  active?: boolean;
+}
+
+export default function PreventPullToRefresh({ active = false }: PreventPullToRefreshProps) {
   useEffect(() => {
     let startY = 0;
 
@@ -24,8 +28,14 @@ export default function PreventPullToRefresh() {
     const onTouchMove = (e: TouchEvent) => {
       const y = e.touches[0].clientY;
       const pullingDown = y > startY;
-      if (pullingDown && !canScrollUp(e.target)) {
-        e.preventDefault();
+      
+      // If active is true (sheet expanded), we always want to prevent pull-to-refresh
+      // when swiping down from the top area.
+      if (pullingDown && (active || !canScrollUp(e.target))) {
+        // Only prevent if we are at the top of the window
+        if (window.scrollY <= 0) {
+          e.preventDefault();
+        }
       }
     };
 
@@ -36,7 +46,7 @@ export default function PreventPullToRefresh() {
       document.removeEventListener("touchstart", onTouchStart);
       document.removeEventListener("touchmove", onTouchMove);
     };
-  }, []);
+  }, [active]);
 
   return null;
 }

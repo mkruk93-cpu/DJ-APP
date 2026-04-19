@@ -258,17 +258,20 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
       const audio = audioRef.current;
       if (!audio) return;
       if (!playIntentRef.current || userPaused.current) return;
-      if (navigator.onLine === false) return;
-      // Als audio hoort te spelen, maar is gepauzeerd of heeft geen geluid, forceer herstart
-      if (
-        playingRef.current &&
-        (audio.paused || audio.ended || audio.readyState < 2)
-      ) {
-        // Forceer reload van de stream
-        console.log("[AudioPlayer] Health check failed, restarting stream...");
-        audio.src = `${src}${src.includes("?") ? "&" : "?"}health=${Date.now()}`;
+      if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+      
+      // Als audio hoort te spelen, maar is gepauzeerd
+      if (playingRef.current && audio.paused && !audio.ended) {
+        // Probeer eerst gewoon te hervatten zonder reload (werkt vaker op mobiel als sessie nog actief is)
         audio.play().catch(() => {
-          setAutoplayBlocked(true);
+          // Als dat faalt en we zijn in een kritieke staat, forceer dan pas reload
+          if (audio.readyState < 2 || audio.networkState === HTMLMediaElement.NETWORK_NO_SOURCE) {
+            console.log("[AudioPlayer] Health check failed critically, restarting stream...");
+            audio.src = `${src}${src.includes("?") ? "&" : "?"}health=${Date.now()}`;
+            audio.play().catch(() => {
+              setAutoplayBlocked(true);
+            });
+          }
         });
       }
     }
@@ -280,6 +283,35 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
       }
     };
   }, [src]);
+
+  // Screen Wake Lock to prevent mobile sleep
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("wakeLock" in navigator)) return;
+    let wakeLock: any = null;
+    const requestWakeLock = async () => {
+      try {
+        if (playing && !userPaused.current) {
+          wakeLock = await (navigator as any).wakeLock.request("screen");
+        } else if (wakeLock) {
+          await wakeLock.release();
+          wakeLock = null;
+        }
+      } catch (err) {
+        // Ignore wake lock errors
+      }
+    };
+    void requestWakeLock();
+    const handleVisibility = () => {
+      if (wakeLock !== null && document.visibilityState === "visible") {
+        void requestWakeLock();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      if (wakeLock) void wakeLock.release();
+    };
+  }, [playing]);
 
   const buildFreshStreamUrl = useCallback((baseUrl: string): string => {
     const separator = baseUrl.includes("?") ? "&" : "?";
@@ -633,7 +665,10 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
         const waitingForMs = Date.now() - waitingSinceRef.current;
         const stillNoData = current.readyState < 3 || current.networkState === HTMLMediaElement.NETWORK_LOADING;
         if (waitingForMs >= LIVE_RECOVER_WAIT_MS && stillNoData) {
-          attemptRecover(1100, { forceReload: true, minIntervalMs: LIVE_RECOVER_MIN_INTERVAL_MS });
+          // Probeer eerst te hervatten zonder reload
+          current.play().catch(() => {
+            attemptRecover(1100, { forceReload: true, minIntervalMs: LIVE_RECOVER_MIN_INTERVAL_MS });
+          });
         }
       }, LIVE_RECOVER_WAIT_MS);
     }
@@ -772,12 +807,16 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   }, [clearReconnectTimer, clearWaitingTimer, currentArtwork, persistPlayIntent, preferSupabase, src, startPlayback, track, syncedRadioTrack]);
 
   // Trigger stream refresh on track change to clear buffer and ensure fresh start
+  // DISABLED: On mobile this causes interruptions and blocks autoplay.
+  // The server provides a continuous stream, so we just let it flow for stability.
+  /*
   useEffect(() => {
     if (syncedRadioTrack?.id && playingRef.current && src) {
       console.log("[AudioPlayer] Track changed, refreshing stream buffer...");
       refreshStream();
     }
   }, [syncedRadioTrack?.id, src]);
+  */
 
   // Synchronize mediaSession playbackState with component state
   useEffect(() => {
@@ -1519,7 +1558,14 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
         }}
         onStalled={() => {
           if (playingRef.current && !userPaused.current && src) {
-            attemptRecover(1500, { forceReload: true, minIntervalMs: LIVE_RECOVER_MIN_INTERVAL_MS });
+            const audio = audioRef.current;
+            if (audio && audio.paused) {
+              audio.play().catch(() => {
+                attemptRecover(2000, { forceReload: true, minIntervalMs: LIVE_RECOVER_MIN_INTERVAL_MS });
+              });
+            } else {
+              attemptRecover(2000, { forceReload: true, minIntervalMs: LIVE_RECOVER_MIN_INTERVAL_MS });
+            }
           }
         }}
       />
