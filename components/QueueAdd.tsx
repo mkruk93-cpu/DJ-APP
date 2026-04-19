@@ -1929,6 +1929,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                   handleScroll(e);
                 }}
                 className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70"
+                style={{ touchAction: "pan-y", overscrollBehavior: "contain" }}
               >
               {genreHitsLoading ? (
                 <p className="px-3 py-3 text-xs text-gray-400">Laden...</p>
@@ -2268,6 +2269,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                     ref={artistTracksListRef}
                     onScroll={handleScroll}
                     className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70"
+                    style={{ touchAction: "pan-y", overscrollBehavior: "contain" }}
                   >
                     {artistTracks
                       .filter(track => !artistTrackFilter || track.name.toLowerCase().includes(artistTrackFilter.toLowerCase()))
@@ -2420,7 +2422,10 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                   )}
                   {/* Video history dropdown */}
                   {showVideoHistory && videoHistory.length > 0 && (
-                    <div className="absolute left-0 right-0 top-full z-40 mt-1 max-h-60 overflow-y-auto overscroll-contain rounded-md border border-gray-700 bg-gray-900 shadow-lg">
+                    <div 
+                      className="absolute left-0 right-0 top-full z-40 mt-1 max-h-60 overflow-y-auto rounded-md border border-gray-700 bg-gray-900 shadow-lg"
+                      style={{ touchAction: "pan-y", overscrollBehavior: "contain" }}
+                    >
                       <div className="px-3 py-1.5 text-[11px] font-medium uppercase text-gray-500">Recente zoekopdrachten</div>
                       {videoHistory.map((h) => (
                         <div key={h.id} className="group flex w-full items-center px-3 py-1.5 text-left text-sm text-gray-300 hover:bg-gray-800">
@@ -2494,6 +2499,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                 onTouchStart={handleSearchListTouch}
                 onTouchMove={handleSearchListTouchMove}
                 className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/70"
+                style={{ touchAction: "pan-y", overscrollBehavior: "contain" }}
               >
                 {results.map((result) => {
                   const key = `${source}:${result.id}`;
@@ -2588,7 +2594,10 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
               </span>.
             </p>
           </div>
-          <div className="max-h-[52dvh] overflow-y-auto">
+          <div 
+            className="max-h-[52dvh] overflow-y-auto"
+            style={{ touchAction: "pan-y", overscrollBehavior: "contain" }}
+          >
             {pendingManualSelection.candidates.map((candidate) => (
               <button
                 key={`${candidate.provider}:${candidate.url}`}

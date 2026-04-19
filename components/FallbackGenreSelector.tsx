@@ -269,9 +269,8 @@ export default function FallbackGenreSelector() {
   }
   const shouldRender = connected && sortedGenres.length > 0;
   const activeLabel = useMemo(() => {
-    // Als er een actieve preset is, toon die ALLEEN als de huidige selectie overeenkomt (versimpeld)
-    // Maar de gebruiker wil dat bij aanpassing de naam weggaat.
-    // Dus we tonen de preset naam alleen als er geen optimistische selectie is en de store zegt dat hij actief is.
+    // Show preset name only if it exists AND the user hasn't made an optimistic (manual) change
+    // that hasn't been confirmed by the server yet.
     if (activePresetName && !optimisticSelectedGenreIds) {
       return activePresetName;
     }

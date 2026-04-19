@@ -1461,8 +1461,11 @@ async function isKnownFallbackSelection(genreId: string | null): Promise<boolean
   return false;
 }
 
-async function emitFallbackGenreUpdate(target?: { emit: (event: string, payload: unknown) => void }): Promise<void> {
-  const [activeGenreId, selectedBy, sharedMode, lockAutoplayFallback, hideLocalDiscovery, activePresetName] = await Promise.all([
+async function emitFallbackGenreUpdate(
+  target?: { emit: (event: string, payload: unknown) => void },
+  activePresetNameOverride?: string | null
+): Promise<void> {
+  const [activeGenreId, selectedBy, sharedMode, lockAutoplayFallback, hideLocalDiscovery, activePresetNameRaw] = await Promise.all([
     resolveActiveFallbackGenre(),
     getSetting<string | null>(sb, 'fallback_active_genre_by'),
     resolveSharedPlaybackMode(),
@@ -1470,6 +1473,10 @@ async function emitFallbackGenreUpdate(target?: { emit: (event: string, payload:
     getSetting<boolean>(sb, 'hide_local_discovery'),
     getSetting<string | null>(sb, 'fallback_active_preset_name'),
   ]);
+  
+  const activePresetName = typeof activePresetNameOverride !== 'undefined' 
+    ? activePresetNameOverride 
+    : activePresetNameRaw;
   const activeGenreIds = await resolveActiveFallbackGenres(activeGenreId, true);
   setSharedAutoPlaybackMode(sharedMode);
   setActiveFallbackGenre(activeGenreId);
@@ -1545,6 +1552,7 @@ async function getCombinedFallbackGenres(): Promise<FallbackGenre[]> {
     related_parent_playlist_id: playlist.related_parent_playlist_id ?? null,
     owner_username: playlist.added_by ?? null,
   }));
+
   const publicUserGenres: FallbackGenre[] = publicUserPlaylists
     .map((playlist) => ({
       id: playlist.id,
@@ -6292,7 +6300,7 @@ io.on('connection', (socket) => {
       setActiveFallbackGenre(requested);
       setActiveFallbackGenres(activeGenreList);
       setActiveSharedFallbackPlaylists(activeGenreList.filter((id) => !!parseSharedFallbackPlaylistId(id)));
-      await emitFallbackGenreUpdate();
+      await emitFallbackGenreUpdate(undefined, null);
       if (activeGenreList.length > 1) {
         socket.emit('info:toast', { message: `Autoplay mix ingesteld: ${activeGenreList.length} bronnen actief` });
       } else if (parseSharedFallbackPlaylistId(requested)) {

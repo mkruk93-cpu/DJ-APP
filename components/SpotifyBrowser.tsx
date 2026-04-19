@@ -569,9 +569,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
   async function handleTogglePublicFallback(e: React.MouseEvent, playlist: UserPlaylist) {
     e.stopPropagation();
     try {
-      const nextPublic = playlist.is_public ? undefined : true;
       await updateUserPlaylistSharing(playlist.id, {
-        is_public: nextPublic,
         is_public_fallback: !playlist.is_public_fallback,
       });
       await loadSavedPlaylists();

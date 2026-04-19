@@ -681,11 +681,10 @@ export async function updateUserPlaylistSharing(
 
     if (typeof updates.isPublic === 'boolean') {
       playlist.is_public = updates.isPublic;
-      if (!updates.isPublic) playlist.is_public_fallback = false;
     }
 
     if (typeof updates.isPublicFallback === 'boolean') {
-      playlist.is_public_fallback = playlist.is_public ? updates.isPublicFallback : false;
+      playlist.is_public_fallback = updates.isPublicFallback;
     }
 
     return mapPlaylistSummary(playlist, owner);
@@ -697,7 +696,7 @@ export async function listPublicUserPlaylists(limit = 100, offset = 0): Promise<
     const safeLimit = Math.max(1, Math.min(limit, 250));
     const safeOffset = Math.max(0, offset);
     return store.playlists
-      .filter((playlist) => playlist.is_public)
+      .filter((playlist) => playlist.is_public || playlist.is_public_fallback)
       .sort((a, b) => b.created_at.localeCompare(a.created_at))
       .slice(safeOffset, safeOffset + safeLimit)
       .map((playlist) => ({

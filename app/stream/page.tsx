@@ -26,7 +26,6 @@ import AdminNotificationToast from "@/components/AdminNotificationToast";
 import PushNotification from "@/components/PushNotification";
 import ProfileModal from "@/components/ProfileModal";
 import Leaderboard from "@/components/Leaderboard";
-import PreventPullToRefresh from "@/components/PreventPullToRefresh";
 import type { Track, QueueItem, Mode, ModeSettings, VoteState, DurationVote, UpcomingTrack } from "@/lib/types";
 import { parseTrackDisplay } from "@/lib/trackDisplay";
 import { useSyncedTrack } from "@/lib/useSyncedTrack";
