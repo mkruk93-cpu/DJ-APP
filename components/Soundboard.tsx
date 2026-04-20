@@ -17,7 +17,7 @@ export default function Soundboard() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+  const API_BASE = process.env.NEXT_PUBLIC_CONTROL_SERVER_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
   useEffect(() => {
     const socket = getSocket();
