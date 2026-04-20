@@ -3,6 +3,8 @@ import { getSocket } from '@/lib/socket';
 import { useIsAdmin } from '@/lib/useIsAdmin';
 import { useAuth } from '@/lib/authContext';
 
+import { useRadioStore } from '@/lib/radioStore';
+
 interface Sample {
   id: string;
   name: string;
@@ -11,13 +13,16 @@ interface Sample {
 export default function Soundboard() {
   const isAdmin = useIsAdmin();
   const { userAccount } = useAuth();
+  const serverUrl = useRadioStore((s) => s.serverUrl);
   const [samples, setSamples] = useState<Sample[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const API_BASE = process.env.NEXT_PUBLIC_CONTROL_SERVER_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+  
+  // Gebruik de serverUrl uit de store (die live wordt bijgewerkt vanuit de database)
+  const API_BASE = serverUrl || process.env.NEXT_PUBLIC_CONTROL_SERVER_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
   useEffect(() => {
     const socket = getSocket();
