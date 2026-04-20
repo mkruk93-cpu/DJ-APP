@@ -721,8 +721,8 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
       void loadSavedPlaylists();
       if (showSharedPlaylistsInSpotifyTab) void loadSharedPlaylists();
     }
-    // Spotify connectie niet meer nodig
-  }, [showPlaylistSections, showSharedPlaylistsInSpotifyTab]);
+    // Herlaad playlists als de gebruiker verandert
+  }, [showPlaylistSections, showSharedPlaylistsInSpotifyTab, userAccount?.username]);
 
   useEffect(() => {
     if (!showPlaylistSections) return;

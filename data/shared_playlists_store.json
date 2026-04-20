@@ -1,0 +1,1059 @@
+{
+    "playlists":  [
+                      {
+                          "source":  "manual-import",
+                          "subgenre":  "Various",
+                          "id":  "backup-playlist-id-7fb2625a-c2d2-4d85-9c9d-35d7c499f002",
+                          "tracks":  [
+                                         {
+                                             "id":  "track-id-7ec09b89-6592-47dd-8855-d57e44e0e063",
+                                             "artist":  "more kords",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "stuck in my zaag",
+                                             "position":  1
+                                         },
+                                         {
+                                             "id":  "track-id-b614772e-b4f4-4266-9fe7-6a7b8a09163a",
+                                             "artist":  "more kords",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "topic - stuck in my zaag",
+                                             "position":  2
+                                         },
+                                         {
+                                             "id":  "track-id-e549c3f3-75d2-478e-8eb3-b78ae8023801",
+                                             "artist":  "noiseflow, kior",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "krachland",
+                                             "position":  3
+                                         },
+                                         {
+                                             "id":  "track-id-6a667a05-d0e5-4612-bd30-b5bbfeb2e2d3",
+                                             "artist":  "more kords",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "more kords - zaag on the ceiling",
+                                             "position":  4
+                                         },
+                                         {
+                                             "id":  "track-id-7389c9fa-8851-473e-b7d7-6f4118d06535",
+                                             "artist":  "noiseflow",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "topic - overdrive",
+                                             "position":  5
+                                         },
+                                         {
+                                             "id":  "track-id-a3b82b87-0185-40ed-9434-33ea3e56a5c8",
+                                             "artist":  "more kords",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "just be zaag",
+                                             "position":  6
+                                         },
+                                         {
+                                             "id":  "track-id-894e04d1-43d7-439e-98a0-47a5d298cd65",
+                                             "artist":  "??????????",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "aint nobody loves me better makes me happy",
+                                             "position":  7
+                                         },
+                                         {
+                                             "id":  "track-id-3743b2a3-fdd4-424f-850d-c3b91635b2e1",
+                                             "artist":  "sefa",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "sefa \u0026 relianze - going under",
+                                             "position":  8
+                                         },
+                                         {
+                                             "id":  "track-id-99907c54-4e16-47b0-ab29-2934d04f2729",
+                                             "artist":  "sefa, vertile",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "battlefield",
+                                             "position":  9
+                                         },
+                                         {
+                                             "id":  "track-id-d632e756-62dd-472d-8046-7f14e6c5a9dc",
+                                             "artist":  "sefa \u0026 d-block \u0026 s-te-fan",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "infinity",
+                                             "position":  10
+                                         },
+                                         {
+                                             "id":  "track-id-ae078688-34a4-4ec5-92e8-1f5b666f812d",
+                                             "artist":  "dj. volkan uca",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "hasta siempre (feat. jessie black) [future house radio version]",
+                                             "position":  11
+                                         },
+                                         {
+                                             "id":  "track-id-8fd223bf-a647-4596-9e87-c8f77664429e",
+                                             "artist":  "more kords",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "make it zaag",
+                                             "position":  12
+                                         },
+                                         {
+                                             "id":  "track-id-7742e046-4c79-4853-a25b-6c40bc8f8f43",
+                                             "artist":  "neue deutsche säge",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "krachtekk",
+                                             "position":  13
+                                         },
+                                         {
+                                             "id":  "track-id-c187f32b-9175-4bdd-8bd2-f5f146215ebf",
+                                             "artist":  "wetnloud",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "krach the halls",
+                                             "position":  14
+                                         },
+                                         {
+                                             "id":  "track-id-50d64a44-c7c7-4697-b9b0-861acaf7ca08",
+                                             "artist":  "imagine dragons",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "radioactive (vaskan hardstyle remix)",
+                                             "position":  15
+                                         },
+                                         {
+                                             "id":  "track-id-9b86aaa3-0654-45a5-a6df-153880274524",
+                                             "artist":  "mark dekoda",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "rave harder techno bass",
+                                             "position":  16
+                                         },
+                                         {
+                                             "id":  "track-id-9ec9d431-52f0-401a-a296-28594b7bce3f",
+                                             "artist":  "stan sb",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "anyone out there (maduk remix)",
+                                             "position":  17
+                                         },
+                                         {
+                                             "id":  "track-id-5ca40192-e34c-4b41-b1af-50c1877c3954",
+                                             "artist":  "hybrid minds",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "lost (pola \u0026 bryson remix)",
+                                             "position":  18
+                                         },
+                                         {
+                                             "id":  "track-id-f3df677f-b9ba-4d3b-a934-27288c251cf2",
+                                             "artist":  "yosuf, cyber gunz, lil texas",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "krach nation army",
+                                             "position":  19
+                                         },
+                                         {
+                                             "id":  "track-id-c67c0f66-c432-4cf6-aaae-0ddcf3cc2f55",
+                                             "artist":  "d-mind",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "after the lies",
+                                             "position":  20
+                                         },
+                                         {
+                                             "id":  "track-id-5fa7498d-00b6-48f5-9357-5a076f380551",
+                                             "artist":  "sylence",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "opus",
+                                             "position":  21
+                                         },
+                                         {
+                                             "id":  "track-id-9d2cfd3b-866a-4dbd-9231-62955cfa463d",
+                                             "artist":  "sephyx",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "when hell freezes over",
+                                             "position":  22
+                                         },
+                                         {
+                                             "id":  "track-id-fad8e758-e207-4330-bcf6-54b366594c23",
+                                             "artist":  "demi kanon",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "fall behind | official hardstyle video",
+                                             "position":  23
+                                         },
+                                         {
+                                             "id":  "track-id-1528b903-d53f-49b6-acde-0f9caea6dba1",
+                                             "artist":  "[borders]",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "anywhere but nowhere",
+                                             "position":  24
+                                         },
+                                         {
+                                             "id":  "track-id-e832be92-1263-4b4f-9585-6e7dec718d05",
+                                             "artist":  "magik uk, ingrained instincts, jumpstreet",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "fungus (jumpstreet remix)",
+                                             "position":  25
+                                         },
+                                         {
+                                             "id":  "track-id-eb9ba739-2bf6-412f-bcc1-ebbb07ea94dd",
+                                             "artist":  "hyprdrve",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "go psycho ?? let\u0027s go psycho",
+                                             "position":  26
+                                         },
+                                         {
+                                             "id":  "track-id-962b7b31-c559-4fb1-a36f-4396400ce1c3",
+                                             "artist":  "tom \u0026 jame",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "just like that",
+                                             "position":  27
+                                         },
+                                         {
+                                             "id":  "track-id-100aeb18-76a1-4c05-bbd8-f1236732cb33",
+                                             "artist":  "aftershock \u0026 jgsw \u0026 tcm",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "we will rock you | 4k official video [hardstyle]",
+                                             "position":  28
+                                         },
+                                         {
+                                             "id":  "track-id-731c68ec-0fef-4b55-8e71-54b93969fbc0",
+                                             "artist":  "n2n;golf clap;amy miyu;kevin mckay",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "hot steppin\u0027 (kevin mckay edit) [feat. amy miyu]",
+                                             "position":  29
+                                         },
+                                         {
+                                             "id":  "track-id-68cde2cf-a9d7-4495-b1a5-fb2a1122249a",
+                                             "artist":  "kevu",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "sound of the underground",
+                                             "position":  30
+                                         },
+                                         {
+                                             "id":  "track-id-d83b860b-ac3d-401f-93f7-f7ea62d5cd26",
+                                             "artist":  "jay reeve, elyn",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "bitter sweet symphony (hardstyle mix)",
+                                             "position":  31
+                                         },
+                                         {
+                                             "id":  "track-id-94226b0f-78d8-406a-a801-a2944a5a1cd5",
+                                             "artist":  "mare, groove aspect",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "right away",
+                                             "position":  32
+                                         },
+                                         {
+                                             "id":  "track-id-d7ac6da5-9e2d-484f-8f25-474a91ecbac3",
+                                             "artist":  "frontliner \u0026 the prophet",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "new perspective",
+                                             "position":  33
+                                         },
+                                         {
+                                             "id":  "track-id-8da4fcac-f9d5-4482-a32c-2bd857c9e04c",
+                                             "artist":  "angerfist feat mc da mouth of madness",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "raise your fist again - hq official",
+                                             "position":  34
+                                         },
+                                         {
+                                             "id":  "track-id-693f0932-d4fc-4ccd-99d0-45c11abb829f",
+                                             "artist":  "blackpink",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "(jump) m/v",
+                                             "position":  35
+                                         },
+                                         {
+                                             "id":  "track-id-46f5c506-aae2-43e2-8585-b39a9183018c",
+                                             "artist":  "remzcore",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "sweater weather",
+                                             "position":  36
+                                         },
+                                         {
+                                             "id":  "track-id-8b8b101a-9d9c-4ec6-8ef4-bd4296d57cce",
+                                             "artist":  "eilen jewell",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "you cared enough to lie",
+                                             "position":  37
+                                         },
+                                         {
+                                             "id":  "track-id-3f4e3cf0-748f-4958-9007-1b6972dbce26",
+                                             "artist":  "bossels",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "your soul is mine",
+                                             "position":  38
+                                         },
+                                         {
+                                             "id":  "track-id-0c9c98f9-bd79-4a28-ad52-4cb052bd2bd6",
+                                             "artist":  "dj blyatman \u0026 dj pelix",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "our sound (official music video) ft. xek",
+                                             "position":  39
+                                         },
+                                         {
+                                             "id":  "track-id-81807fda-f5e5-4a69-ba3d-25a823410f2f",
+                                             "artist":  "hoch tirol",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "konis hupen (french bootleg)",
+                                             "position":  40
+                                         },
+                                         {
+                                             "id":  "track-id-07129628-6734-4116-b710-b6c079cf3749",
+                                             "artist":  "vieze asbak;offensief",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "samen naar de aldi (offensief remix)",
+                                             "position":  41
+                                         },
+                                         {
+                                             "id":  "track-id-2bc3a501-de8f-4727-944c-86b404b0717b",
+                                             "artist":  "klaus wunderlich",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "la felicidad",
+                                             "position":  42
+                                         },
+                                         {
+                                             "id":  "track-id-a9c2c67b-90fd-44dd-bc6d-79d48e77c8ae",
+                                             "artist":  "k3",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "radio",
+                                             "position":  43
+                                         },
+                                         {
+                                             "id":  "track-id-d39a9907-4b04-4212-99d3-3b001e73aa2a",
+                                             "artist":  "nsd",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "melinoe",
+                                             "position":  44
+                                         },
+                                         {
+                                             "id":  "track-id-d071f65e-428b-412b-9606-32d787c5dcea",
+                                             "artist":  "alex gaudino feat. shena",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "watch out",
+                                             "position":  45
+                                         },
+                                         {
+                                             "id":  "track-id-13074405-124e-485a-9d93-44eb879a4bc0",
+                                             "artist":  "paralocks",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "we will prevail (antagon rmx)",
+                                             "position":  46
+                                         },
+                                         {
+                                             "id":  "track-id-c1bccdd4-7f8e-42ca-8713-199f3ad5f9a1",
+                                             "artist":  "stram",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "ik lus graag soep",
+                                             "position":  47
+                                         },
+                                         {
+                                             "id":  "track-id-b9b84d56-deac-4ef8-8321-0826e5400c12",
+                                             "artist":  "headhunterz",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "dragonborn part 3 (oceans apart) - feat. sian evans",
+                                             "position":  48
+                                         },
+                                         {
+                                             "id":  "track-id-a541c792-6fbd-4bf1-9409-b47da84822d1",
+                                             "artist":  "ephoric",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "under the sun",
+                                             "position":  49
+                                         },
+                                         {
+                                             "id":  "track-id-dc90c5f8-bf0b-432b-97d6-3a7359a84d18",
+                                             "artist":  "14- wildstylez",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "no time to waste",
+                                             "position":  50
+                                         },
+                                         {
+                                             "id":  "track-id-a6d2ba46-32d6-42f9-bd8e-052eaf279af9",
+                                             "artist":  "wildstylez feat. noubya",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "shake the ground",
+                                             "position":  51
+                                         },
+                                         {
+                                             "id":  "track-id-576a2145-2ad5-4193-826e-9afe7af82623",
+                                             "artist":  "atmozfears \u0026 demi kanon ft. david spekter",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "yesterday",
+                                             "position":  52
+                                         },
+                                         {
+                                             "id":  "track-id-2e006d15-9a67-42d7-a1b4-ac305c2bebc5",
+                                             "artist":  "hardstyle mage, vaskan, zyzz music",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "safe and sound",
+                                             "position":  53
+                                         },
+                                         {
+                                             "id":  "track-id-c853deab-a38d-424c-a415-f63ce4ace126",
+                                             "artist":  "kathy hlad",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "my accordion polka",
+                                             "position":  54
+                                         },
+                                         {
+                                             "id":  "track-id-f95dc708-0536-4380-8afd-c31e51540aae",
+                                             "artist":  "darren styles",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "us against the world (da tweekaz remix)",
+                                             "position":  55
+                                         },
+                                         {
+                                             "id":  "track-id-a5ddaee8-8915-4956-86a7-336f19425e08",
+                                             "artist":  "eppo korthuis",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "slovenischer bauer tanz",
+                                             "position":  56
+                                         },
+                                         {
+                                             "id":  "track-id-e84e8238-4655-4e70-85e1-389f1cea38dc",
+                                             "artist":  "w\u0026w \u0026 axmo ft. sonja",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "rave love (official audio) [rave culture]",
+                                             "position":  57
+                                         },
+                                         {
+                                             "id":  "track-id-c9f49cc2-ba14-44da-bb75-60375ea10cd0",
+                                             "artist":  "gpf",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "gpf x riot shift - broccoli fuck (kimmercore\u0027s rimmercore piep fark remix)",
+                                             "position":  58
+                                         },
+                                         {
+                                             "id":  "track-id-287ff908-f34f-4fe4-90cd-5e8c7d1cd797",
+                                             "artist":  "ac/dc",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "highway to hell",
+                                             "position":  59
+                                         },
+                                         {
+                                             "id":  "track-id-902e3678-fb46-43be-ba2a-9e7ed3cf0eea",
+                                             "artist":  "the offspring",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "pretty fly (for a white guy) | live at woodstock 99",
+                                             "position":  60
+                                         },
+                                         {
+                                             "id":  "track-id-abb3e351-18a3-4ec4-a652-32b6f7841b13",
+                                             "artist":  "david guetta \u0026 bebe rexha",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "i\u0027m good (blue) [live performance]",
+                                             "position":  61
+                                         },
+                                         {
+                                             "id":  "track-id-cd021337-fc85-4d4e-8b8a-a691f4dd93ed",
+                                             "artist":  "neonlight",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "computer music |hd|",
+                                             "position":  62
+                                         },
+                                         {
+                                             "id":  "track-id-8c2b581a-c1f0-4887-86bf-2f7dbebae93f",
+                                             "artist":  "atmozfears",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "timebreaker",
+                                             "position":  63
+                                         },
+                                         {
+                                             "id":  "track-id-277fe67b-668e-4e2b-833d-cb1bea816221",
+                                             "artist":  "e-force x imthox x mc flo",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "black mirror | official hardstyle visualizer",
+                                             "position":  64
+                                         },
+                                         {
+                                             "id":  "track-id-b441c6a9-0d82-4bde-be47-aa48c7839116",
+                                             "artist":  "envine \u0026 rekall",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "open your mind | official hardstyle visualizer",
+                                             "position":  65
+                                         },
+                                         {
+                                             "id":  "track-id-b53fae07-d432-4ca6-bf5b-e827892fc3cd",
+                                             "artist":  "gewoon bram",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "op de fiets nei harkema",
+                                             "position":  66
+                                         },
+                                         {
+                                             "id":  "track-id-635c37ff-b6ee-4cfc-93f4-9fe4d77c6930",
+                                             "artist":  "the midnight",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "daytona",
+                                             "position":  67
+                                         },
+                                         {
+                                             "id":  "track-id-5eece199-497d-4414-877e-5a79265153ce",
+                                             "artist":  "kanine \u0026 arcando",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "lost tonight (ft. heights) [ukf release]",
+                                             "position":  68
+                                         },
+                                         {
+                                             "id":  "track-id-ddffd618-2e26-4973-8017-f2185553939a",
+                                             "artist":  "charles b \u0026 matt mirter",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "harder, better, faster, stronger",
+                                             "position":  69
+                                         },
+                                         {
+                                             "id":  "track-id-564789d8-389d-4d25-a6c1-8e193f233d7a",
+                                             "artist":  "tnt aka technoboy \u0027n\u0027 tuneboy",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "2003 (habion uptempo edit) *free download*",
+                                             "position":  70
+                                         },
+                                         {
+                                             "id":  "track-id-c498bfa3-62ad-4102-be17-9dfe7a811923",
+                                             "artist":  "sickmode \u0026 krowdexx",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "yeah",
+                                             "position":  71
+                                         },
+                                         {
+                                             "id":  "track-id-b98587e6-e2c8-4dcc-9877-50c814d162a2",
+                                             "artist":  "lny tnz x mandy",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "kicks [artwork video]",
+                                             "position":  72
+                                         },
+                                         {
+                                             "id":  "track-id-8ad4a898-618e-4843-b0c3-d7d728d0d637",
+                                             "artist":  "outsiders",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "kiss kiss bang",
+                                             "position":  73
+                                         },
+                                         {
+                                             "id":  "track-id-be253d55-81c8-41b6-a55a-e6ae85076d75",
+                                             "artist":  "basto",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "gregory\u0027s theme (radio edit)",
+                                             "position":  74
+                                         },
+                                         {
+                                             "id":  "track-id-0197afc1-e926-42dc-a59d-dd634aa316cf",
+                                             "artist":  "crypton x travis gunn",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "one with the light [euphoric hardcore visualizer]",
+                                             "position":  75
+                                         },
+                                         {
+                                             "id":  "track-id-8bdced38-c458-4529-bf6e-dfa70ffedaed",
+                                             "artist":  "buena vista social club",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "chan chan",
+                                             "position":  76
+                                         },
+                                         {
+                                             "id":  "track-id-833dbc10-6698-42e4-a743-1544af690891",
+                                             "artist":  "i see monstas",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "holdin on (skrillex and nero remix)",
+                                             "position":  77
+                                         },
+                                         {
+                                             "id":  "track-id-844ebd87-9d13-4a90-8984-13b880b33b34",
+                                             "artist":  "madzi, lianju",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "sand castle [arabic future house]",
+                                             "position":  78
+                                         },
+                                         {
+                                             "id":  "track-id-739667ea-bf39-4e77-94df-c60d47fb844b",
+                                             "artist":  "de jeugd van tegenwoordig",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "sterrenstof",
+                                             "position":  79
+                                         },
+                                         {
+                                             "id":  "track-id-97df910d-fa58-42d3-b765-bd53638e9991",
+                                             "artist":  "armin van buuren",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "blah blah blah",
+                                             "position":  80
+                                         },
+                                         {
+                                             "id":  "track-id-d335f7b0-ba4a-4a96-ba3b-0faef2604150",
+                                             "artist":  "lunakorpz",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "shut the f#ck up!",
+                                             "position":  81
+                                         },
+                                         {
+                                             "id":  "track-id-2fb514d9-3928-4c0f-b8d0-fc0bf41c00e1",
+                                             "artist":  "mary",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "jouw humeur is net een flipperkast",
+                                             "position":  82
+                                         },
+                                         {
+                                             "id":  "track-id-ed3aa414-e4d0-4ced-b987-e52c8161e58f",
+                                             "artist":  "het dorp",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "wim sonneveld (in hd)",
+                                             "position":  83
+                                         },
+                                         {
+                                             "id":  "track-id-4a233cb3-af2b-4e5f-a4d9-361926a3bf47",
+                                             "artist":  "de paladijns",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "jou liefste wens (hardstyle remix)",
+                                             "position":  84
+                                         },
+                                         {
+                                             "id":  "track-id-84a7284b-c6ec-41f3-9f68-0dbc7dc7b69e",
+                                             "artist":  "opgekonkerd",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "mijn benzine",
+                                             "position":  85
+                                         },
+                                         {
+                                             "id":  "track-id-043eddce-d2c5-4f49-b20c-415e0fc9c7c1",
+                                             "artist":  "koos alberts",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "zijn het je ogen",
+                                             "position":  86
+                                         },
+                                         {
+                                             "id":  "track-id-2d61051d-cc45-45fa-b91b-776223125225",
+                                             "artist":  "anita berends",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "765348",
+                                             "position":  87
+                                         },
+                                         {
+                                             "id":  "track-id-705ea9d6-73d4-4828-b190-2fb2669bbdf4",
+                                             "artist":  "various artists",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "benny- radio olympia",
+                                             "position":  88
+                                         },
+                                         {
+                                             "id":  "track-id-9409dd20-2486-4683-8ae7-c2b76b14c17b",
+                                             "artist":  "adjuzt;the straikerz;noxiouz;satirized",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "incoming - noxiouz \u0026 satirized remix",
+                                             "position":  89
+                                         },
+                                         {
+                                             "id":  "track-id-b4b38fdf-1ee5-41ae-9790-4d1b11ca5f63",
+                                             "artist":  "braz ft. mocromaniac, fresku, pietju bell \u0026 killer kamal",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "testosteronbommen (prod. san holo)",
+                                             "position":  90
+                                         },
+                                         {
+                                             "id":  "track-id-f9ba61f1-5e3a-4f55-8c8b-ca9f41392205",
+                                             "artist":  "prins s. en de geit",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "kinderboerderij (keiblij)",
+                                             "position":  91
+                                         },
+                                         {
+                                             "id":  "track-id-dd58d375-e9ff-4dd8-80e1-969d0519d01f",
+                                             "artist":  "d\u0027productions",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "douwe ardio amore ardio (hit 2018)",
+                                             "position":  92
+                                         },
+                                         {
+                                             "id":  "track-id-cf3d912a-02f5-4f16-a3fa-3bacf28e37fd",
+                                             "artist":  "satirized",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "bad boy",
+                                             "position":  93
+                                         },
+                                         {
+                                             "id":  "track-id-998214e0-ac73-4617-86d6-0de8339d62c9",
+                                             "artist":  "steve perry",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "steve perry * foolish heart 1985 hq",
+                                             "position":  94
+                                         },
+                                         {
+                                             "id":  "track-id-42600a59-7805-4736-8477-44a87bd3b8a1",
+                                             "artist":  "f. noize, the dark horror, milan on deck",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "oh sh!t",
+                                             "position":  95
+                                         },
+                                         {
+                                             "id":  "track-id-25607c8a-b2ac-4025-b0cf-136b12ffeff2",
+                                             "artist":  "akimbo;kemal",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "hasagi",
+                                             "position":  96
+                                         },
+                                         {
+                                             "id":  "track-id-ec1b5e47-3b3a-4044-acb5-f332c4b53417",
+                                             "artist":  "carlos velasco",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "puente sobre el rio kwai",
+                                             "position":  97
+                                         },
+                                         {
+                                             "id":  "track-id-4560796a-6cff-4c87-9adb-ed4226930d22",
+                                             "artist":  "satirized;noxiouz",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "fight 2.0 - noxiouz remix",
+                                             "position":  98
+                                         },
+                                         {
+                                             "id":  "track-id-4c6cc56c-e889-468e-8b35-afd3ec5cd985",
+                                             "artist":  "yoshiko;antenora",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "rip this",
+                                             "position":  99
+                                         },
+                                         {
+                                             "id":  "track-id-80400e90-ab51-4027-8e64-9d2ca057d07c",
+                                             "artist":  "het sneeuwbal trio",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "bibliothecaresse",
+                                             "position":  100
+                                         },
+                                         {
+                                             "id":  "track-id-aa1717c8-1e3a-4929-ab72-1ce85ce1ceff",
+                                             "artist":  "sneeuwbal trio",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "speelman (de kroegbaas is dronken) (piraten klassiekers)",
+                                             "position":  101
+                                         },
+                                         {
+                                             "id":  "track-id-20380235-a704-4eb4-af1d-7afd763586f1",
+                                             "artist":  "jan der polkaman",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "mehr bier polka",
+                                             "position":  102
+                                         },
+                                         {
+                                             "id":  "track-id-222b317f-eb9e-4b25-87f5-47e766874531",
+                                             "artist":  "unglued \u0026 phace",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "malware",
+                                             "position":  103
+                                         },
+                                         {
+                                             "id":  "track-id-f2ec7fbc-cb8e-414b-9ed9-62c5c8611e03",
+                                             "artist":  "gebroeders brouwer",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "tritsch tratsch polka",
+                                             "position":  104
+                                         },
+                                         {
+                                             "id":  "track-id-85a60439-b714-4d61-abf9-624b9f0eaaf2",
+                                             "artist":  "tol hansse",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "achter de rhododendron",
+                                             "position":  105
+                                         },
+                                         {
+                                             "id":  "track-id-a8ccc981-e31c-4e1a-8f16-e68231804b68",
+                                             "artist":  "billx;floxytek",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "kind of bad",
+                                             "position":  106
+                                         },
+                                         {
+                                             "id":  "track-id-d5a4c2a6-8ece-4fd2-a357-89cb38f0c62c",
+                                             "artist":  "noxiouz;mc robs",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "the catalyst",
+                                             "position":  107
+                                         },
+                                         {
+                                             "id":  "track-id-2e7167d1-6c3b-4b37-9e7d-9053dad2e0d8",
+                                             "artist":  "jantje plezier",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "opel astra (piraten klassiekers)",
+                                             "position":  108
+                                         },
+                                         {
+                                             "id":  "track-id-fa754bbc-a62a-4e87-bd51-35ee8728b23f",
+                                             "artist":  "douwe",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "ardio amore ardio(reversed)",
+                                             "position":  109
+                                         },
+                                         {
+                                             "id":  "track-id-972fac09-79e1-43ac-8572-f097518dbb1b",
+                                             "artist":  "southern creek players",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "the office theme (from the office)",
+                                             "position":  110
+                                         },
+                                         {
+                                             "id":  "track-id-661b470c-2392-45dc-b634-9d20d5130ba4",
+                                             "artist":  "kenai",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "don\u0027t go",
+                                             "position":  111
+                                         },
+                                         {
+                                             "id":  "track-id-a512df52-ea53-476f-affa-32f49a7c1c7b",
+                                             "artist":  "erika",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "herms neil ( germany marching song )",
+                                             "position":  112
+                                         },
+                                         {
+                                             "id":  "track-id-89f1cc4c-c42c-498d-8031-f39e14d02251",
+                                             "artist":  "the dark horror ft amon",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "cooler than me (revoltage edit) (uptempo hardcore)",
+                                             "position":  113
+                                         },
+                                         {
+                                             "id":  "track-id-523c30a5-aa7f-46af-88fe-5580fa9606e5",
+                                             "artist":  "otm",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "cocaine addict",
+                                             "position":  114
+                                         },
+                                         {
+                                             "id":  "track-id-7711f040-bf48-4c69-8022-e3f7a9f1962f",
+                                             "artist":  "bass chaserz",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "big dick (crude intentions - spuit me vol edit)",
+                                             "position":  115
+                                         },
+                                         {
+                                             "id":  "track-id-6884bb2c-3911-44b1-9e2a-ee41d90341b7",
+                                             "artist":  "blaaskaak de kikkerkoning help de taart staat in brand fanfare toeterdonk",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "ny concert 2019",
+                                             "position":  116
+                                         },
+                                         {
+                                             "id":  "track-id-7f617097-717f-4e7c-bfd8-3e2dfe8334f9",
+                                             "artist":  "partyraiser \u0026 repix",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "ode to the godfather",
+                                             "position":  117
+                                         },
+                                         {
+                                             "id":  "track-id-a44a1818-4a69-482e-ab3b-f7bea6020900",
+                                             "artist":  "neophyte",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "grondleggers",
+                                             "position":  118
+                                         },
+                                         {
+                                             "id":  "track-id-3a239eaa-5df6-4147-bdc1-4fbd32353aab",
+                                             "artist":  "rtc",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "god is a gabber (mesmerized uptempo mashup)",
+                                             "position":  119
+                                         },
+                                         {
+                                             "id":  "track-id-d33d6b3a-d891-4649-b590-5a6b80ffe393",
+                                             "artist":  "bomfunk mc\u0027s",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "freestyler",
+                                             "position":  120
+                                         },
+                                         {
+                                             "id":  "track-id-2cb4674b-de7a-4b76-9e0d-1222ab87acdb",
+                                             "artist":  "deepack vs showtek",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "skitzo",
+                                             "position":  121
+                                         },
+                                         {
+                                             "id":  "track-id-e55aa50e-bd9d-4e33-b707-a14cab78f564",
+                                             "artist":  "kim cames",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "bette davis eyes",
+                                             "position":  122
+                                         },
+                                         {
+                                             "id":  "track-id-50caf8a6-445f-4ef9-ba98-64d2a44e9797",
+                                             "artist":  "djeugdtegenwrdigvevo",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "de jeugd van tegenwoordig - wopwopwop",
+                                             "position":  123
+                                         },
+                                         {
+                                             "id":  "track-id-6f428d51-b5a7-4bd1-8ab7-ae570929b1fc",
+                                             "artist":  "fungus",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "kaap\u0027ren varen",
+                                             "position":  124
+                                         },
+                                         {
+                                             "id":  "track-id-943acf50-42c9-434e-9255-a1d8f56c1e5c",
+                                             "artist":  "premiere  stan christ",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "resentment [rcklss004]",
+                                             "position":  125
+                                         },
+                                         {
+                                             "id":  "track-id-9db28cfc-5704-425b-88d7-b3a75b0a6a52",
+                                             "artist":  "gerard schoonebeek",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "spookrijder",
+                                             "position":  126
+                                         },
+                                         {
+                                             "id":  "track-id-f5032eb5-d39b-4aa4-a75f-339e6ca21902",
+                                             "artist":  "the dark horror",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "out of my face",
+                                             "position":  127
+                                         },
+                                         {
+                                             "id":  "track-id-c12b19ea-f16d-4668-9cb2-faa6e96c7158",
+                                             "artist":  "the dark horror",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "you can\u0027t see (topic music)",
+                                             "position":  128
+                                         },
+                                         {
+                                             "id":  "track-id-cc891f8b-7a9b-43af-a1c4-2d83feba5c56",
+                                             "artist":  "infected mushroom",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "becoming insane",
+                                             "position":  129
+                                         },
+                                         {
+                                             "id":  "track-id-bb936fbf-6c57-4a8b-9064-b351be118c1d",
+                                             "artist":  "dr. peacock \u0026 hyrule war",
+                                             "spotify_url":  null,
+                                             "album":  null,
+                                             "title":  "the vast desert",
+                                             "position":  130
+                                         }
+                                     ],
+                          "imported_at":  "2026-04-20T17:34:59.579Z",
+                          "added_by":  "KrukkeX",
+                          "cover_url":  null,
+                          "created_at":  "2026-04-20T17:34:59.576Z",
+                          "related_parent_playlist_id":  null,
+                          "name":  "BACKUP",
+                          "track_count":  130,
+                          "genre_group":  "Backup"
+                      }
+                  ]
+}

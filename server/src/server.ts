@@ -203,15 +203,21 @@ app.post('/api/soundboard/upload', upload.single('audio'), async (req, res) => {
     const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : (req.headers['x-admin-token'] as string);
     const nickname = req.body.nickname;
     
+    console.log(`[server] Soundboard upload request from: ${nickname}`);
+    
     if (!isAdmin(token, nickname) && !(await isCurrentDJ(nickname ?? ''))) {
+      console.log(`[server] Soundboard upload denied - not admin/DJ: ${nickname}`);
       res.status(403).json({ error: 'Geen rechten voor soundboard upload' });
       return;
     }
 
     if (!req.file) {
+      console.warn('[server] Soundboard upload - no file received');
       res.status(400).json({ error: 'Geen audio bestand ontvangen' });
       return;
     }
+
+    console.log(`[server] Processing soundboard upload: ${req.file.originalname} (${req.file.size} bytes)`);
 
     // Gebruik ffprobe om de duur te controleren
     const originalExt = extname(req.file.originalname) || '.tmp';
@@ -232,6 +238,7 @@ app.post('/api/soundboard/upload', upload.single('audio'), async (req, res) => {
 
     if (duration > 11) { // Iets ruimere marge voor afronding
       if (fs.existsSync(tempInputPath)) fs.unlinkSync(tempInputPath);
+      console.log(`[server] Soundboard upload rejected - too long: ${duration}s`);
       res.status(400).json({ error: 'Sample is te lang (maximaal 10 seconden)' });
       return;
     }
@@ -248,7 +255,15 @@ app.post('/api/soundboard/upload', upload.single('audio'), async (req, res) => {
         '-ac', '2',
         finalPath
       ]);
-      conv.on('close', (code) => code === 0 ? resolve(true) : reject(new Error('Conversie mislukt')));
+      conv.on('close', (code) => {
+        if (code === 0) {
+          resolve(true);
+        } else {
+          console.error(`[server] FFmpeg conversion failed with code ${code}`);
+          reject(new Error('Conversie mislukt'));
+        }
+      });
+      conv.on('error', (err) => reject(err));
     });
 
     if (fs.existsSync(tempInputPath)) fs.unlinkSync(tempInputPath);
@@ -260,7 +275,9 @@ app.post('/api/soundboard/upload', upload.single('audio'), async (req, res) => {
     await soundboardManager.preloadSingleSample(sampleId);
 
     // Informeer alle clients over de nieuwe lijst
-    io.emit('soundboard:list', soundboardManager.getSamples());
+    const samples = soundboardManager.getSamples();
+    console.log(`[server] Broadcasting ${samples.length} samples to all clients after upload`);
+    io.emit('soundboard:list', samples);
 
     res.json({ success: true });
   } catch (err) {
@@ -5787,7 +5804,9 @@ io.on('connection', (socket) => {
   else socket.emit('queuePushVote:end', null);
   socket.emit('queuePush:lock', { locked: queuePushLocked });
   socket.emit('skip:lock', { locked: isSkipLocked() });
-  socket.emit('soundboard:list', soundboardManager.getSamples());
+  const soundboardSamples = soundboardManager.getSamples();
+  console.log(`[server] Client connected, sending ${soundboardSamples.length} soundboard samples`);
+  socket.emit('soundboard:list', soundboardSamples);
 
   // ── auth:verify ──
   socket.on('auth:verify', (data: { token: string }, callback?: (valid: boolean) => void) => {
@@ -5801,14 +5820,18 @@ io.on('connection', (socket) => {
     const admin = isAdmin(data.token, nickname);
     const isDJ = await isCurrentDJ(nickname ?? '');
     if (!admin && !isDJ) {
+      console.log(`[server] User ${nickname} denied soundboard access`);
       socket.emit('error:toast', { message: 'Geen rechten voor soundboard' });
       return;
     }
+    console.log(`[server] Playing soundboard sample: ${data.sampleId} from user ${nickname}`);
     await soundboardManager.playSample(data.sampleId);
   });
 
   socket.on('soundboard:list', () => {
-    socket.emit('soundboard:list', soundboardManager.getSamples());
+    const samples = soundboardManager.getSamples();
+    console.log(`[server] Sending ${samples.length} soundboard samples to client`);
+    socket.emit('soundboard:list', samples);
   });
 
   // ── DJ Schedule ──

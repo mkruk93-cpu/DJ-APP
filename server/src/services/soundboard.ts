@@ -57,7 +57,11 @@ class SoundboardManager extends EventEmitter {
   }
 
   private loadSamples() {
-    if (!fs.existsSync(SAMPLE_DIR)) return;
+    if (!fs.existsSync(SAMPLE_DIR)) {
+      console.log(`[soundboard] Sample directory does not exist: ${SAMPLE_DIR}`);
+      this.samples = [];
+      return;
+    }
     const files = fs.readdirSync(SAMPLE_DIR);
     const allowedExts = ['.mp3', '.wav', '.m4a', '.ogg', '.opus', '.webm', '.aac', '.flac'];
     
@@ -68,6 +72,8 @@ class SoundboardManager extends EventEmitter {
         name: path.basename(f, path.extname(f)).replace(/_/g, ' ').replace(/-/g, ' '),
         file: path.join(SAMPLE_DIR, f)
       }));
+    
+    console.log(`[soundboard] Loaded ${this.samples.length} samples from ${SAMPLE_DIR}`);
   }
 
   private preloadSamples() {

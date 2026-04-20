@@ -4531,8 +4531,8 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess, forceDualMono = f
 // ── Soundboard Mixing ──
 let sbMixBuffer: Buffer[] = [];
 let currentDuckingFactor = 1.0;
-const DUCK_TARGET = 0.3;
-const DUCK_SPEED = 0.05; // Snelheid van volume verandering per chunk
+const DUCK_TARGET = 0.15; // Sterker ducken (was 0.3, nu 15% van origineel volume)
+const DUCK_SPEED = 0.08; // Sneller ducken
 
 soundboardManager.on('pcm', (chunk: Buffer) => {
   sbMixBuffer.push(chunk);

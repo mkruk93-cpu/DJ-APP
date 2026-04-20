@@ -28,7 +28,10 @@ export default function Soundboard() {
   const refreshSamples = () => {
     const socket = getSocket();
     if (socket) {
+      console.log('[Soundboard] Requesting soundboard:list from server');
       socket.emit('soundboard:list');
+    } else {
+      console.warn('[Soundboard] Socket not available for refresh');
     }
   };
 
@@ -37,8 +40,11 @@ export default function Soundboard() {
     if (!socket) return;
 
     socket.on('soundboard:list', (list: Sample[]) => {
+      console.log('[Soundboard] Received samples:', list);
       setSamples(list);
     });
+    
+    // Request samples immediately
     refreshSamples();
 
     // Check of we al rechten hebben
@@ -73,8 +79,11 @@ export default function Soundboard() {
   const playSample = (id: string) => {
     const socket = getSocket();
     if (socket) {
+      console.log('[Soundboard] Playing sample:', id);
       const adminToken = localStorage.getItem('radio_admin_token') || '';
       socket.emit('soundboard:play', { sampleId: id, token: adminToken });
+    } else {
+      console.error('[Soundboard] No socket connection available for playback');
     }
   };
 
@@ -92,13 +101,18 @@ export default function Soundboard() {
       };
 
       mediaRecorder.onstop = async () => {
+        // Zorg dat alle tracks direct worden gestopt
+        stream.getTracks().forEach(track => {
+          track.stop();
+        });
+        
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        stream.getTracks().forEach(track => track.stop());
         
         if (audioChunksRef.current.length > 0) {
           await uploadVoiceMessage(audioBlob);
+        } else {
+          setIsRecording(false);
         }
-        setIsRecording(false);
       };
 
       mediaRecorder.start();
@@ -113,10 +127,18 @@ export default function Soundboard() {
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+    // Stop de MediaRecorder onmiddellijk
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
       mediaRecorderRef.current.stop();
     }
-    setIsRecording(false);
+    // Zorg dat alle streams direct worden gestopt als fallback
+    if (mediaRecorderRef.current?.stream) {
+      mediaRecorderRef.current.stream.getTracks().forEach(track => {
+        if (track.readyState === 'live') {
+          track.stop();
+        }
+      });
+    }
   };
 
   const uploadVoiceMessage = async (blob: Blob) => {
@@ -164,6 +186,8 @@ export default function Soundboard() {
 
       const adminToken = localStorage.getItem('radio_admin_token') || '';
       
+      console.log('[Soundboard] Uploading file:', file.name, 'Size:', file.size, 'Type:', file.type);
+      
       const response = await fetch(`${API_BASE}/api/soundboard/upload`, {
         method: 'POST',
         headers: { 
@@ -173,11 +197,19 @@ export default function Soundboard() {
       });
 
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || 'Upload mislukt');
+      if (!response.ok) {
+        console.error('[Soundboard] Upload error:', data);
+        throw new Error(data.error || `Upload mislukt (${response.status})`);
+      }
       
+      console.log('[Soundboard] Upload successful, refreshing samples list...');
       if (fileInputRef.current) fileInputRef.current.value = '';
-      // Ververs de lijst na upload
-      setTimeout(refreshSamples, 1000);
+      
+      // Ververs de lijst na upload met wat extra delay voor de server
+      setTimeout(() => {
+        console.log('[Soundboard] Refreshing samples after upload...');
+        refreshSamples();
+      }, 1000);
     } catch (err) {
       console.error('Fout bij uploaden sample:', err);
       alert(err instanceof Error ? err.message : 'Upload mislukt.');
