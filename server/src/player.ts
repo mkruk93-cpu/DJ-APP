@@ -4530,13 +4530,28 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess, forceDualMono = f
  */
 // ── Soundboard Mixing ──
 let sbMixBuffer: Buffer[] = [];
+let currentDuckingFactor = 1.0;
+const DUCK_TARGET = 0.3;
+const DUCK_SPEED = 0.05; // Snelheid van volume verandering per chunk
+
 soundboardManager.on('pcm', (chunk: Buffer) => {
   sbMixBuffer.push(chunk);
 });
 
 function getSbChunk(size: number): Buffer | null {
-  if (sbMixBuffer.length === 0) return null;
+  if (sbMixBuffer.length === 0) {
+    // Geleidelijk terug naar vol volume
+    if (currentDuckingFactor < 1.0) {
+      currentDuckingFactor = Math.min(1.0, currentDuckingFactor + DUCK_SPEED);
+    }
+    return null;
+  }
   
+  // Geleidelijk naar ducking volume
+  if (currentDuckingFactor > DUCK_TARGET) {
+    currentDuckingFactor = Math.max(DUCK_TARGET, currentDuckingFactor - DUCK_SPEED);
+  }
+
   let total = 0;
   const parts: Buffer[] = [];
   while (sbMixBuffer.length > 0 && total < size) {
@@ -4564,7 +4579,8 @@ function mixPCM(music: Buffer, sb: Buffer): Buffer {
   const outView = new Int16Array(out.buffer, out.byteOffset, sampleCount);
 
   for (let i = 0; i < sampleCount; i++) {
-    const m = musicView[i];
+    // Pas ducking toe op de muziek
+    const m = musicView[i] * currentDuckingFactor;
     const s = sbView[i];
     const mixed = m + s;
     outView[i] = mixed > 32767 ? 32767 : (mixed < -32768 ? -32768 : mixed);
