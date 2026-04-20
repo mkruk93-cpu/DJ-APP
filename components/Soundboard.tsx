@@ -17,6 +17,7 @@ export default function Soundboard() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
   useEffect(() => {
     const socket = getSocket();
@@ -89,8 +90,8 @@ export default function Soundboard() {
 
       const adminToken = localStorage.getItem('radio_admin_token') || '';
       
-      // We praten nu tegen de interne Next.js API route
-      const response = await fetch('/api/soundboard/voice', {
+      // We praten nu tegen de externe Express API
+      const response = await fetch(`${API_BASE}/api/soundboard/voice`, {
         method: 'POST',
         headers: { 
           'X-Admin-Token': adminToken,
@@ -124,7 +125,7 @@ export default function Soundboard() {
 
       const adminToken = localStorage.getItem('radio_admin_token') || '';
       
-      const response = await fetch('/api/soundboard/upload', {
+      const response = await fetch(`${API_BASE}/api/soundboard/upload`, {
         method: 'POST',
         headers: { 
           'X-Admin-Token': adminToken,

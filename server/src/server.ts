@@ -5804,7 +5804,7 @@ io.on('connection', (socket) => {
       socket.emit('error:toast', { message: 'Geen rechten voor soundboard' });
       return;
     }
-    soundboardManager.playSample(data.sampleId);
+    await soundboardManager.playSample(data.sampleId);
   });
 
   socket.on('soundboard:list', () => {

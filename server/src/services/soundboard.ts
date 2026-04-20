@@ -106,7 +106,7 @@ class SoundboardManager extends EventEmitter {
     console.log('[soundboard] Ready for Node.js mixing');
   }
 
-  public playSample(sampleId: string) {
+  public async playSample(sampleId: string): Promise<void> {
     const cached = this.sampleCache.get(sampleId);
     if (cached) {
       console.log(`[soundboard] Playing sample from cache: ${sampleId}`);
@@ -119,26 +119,31 @@ class SoundboardManager extends EventEmitter {
 
     console.log(`[soundboard] Playing sample (not cached): ${sample.name}`);
 
-    this.playSampleFromFile(sample.file);
+    await this.playSampleFromFile(sample.file);
   }
 
-  public async playSampleFromFile(filePath: string) {
-    const ffmpeg = spawn('ffmpeg', [
-      '-probesize', '32',
-      '-analyzeduration', '0',
-      '-i', filePath,
-      '-f', 's16le',
-      '-ar', '44100',
-      '-ac', '2',
-      'pipe:1'
-    ]);
+  public playSampleFromFile(filePath: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const ffmpeg = spawn('ffmpeg', [
+        '-probesize', '32',
+        '-analyzeduration', '0',
+        '-i', filePath,
+        '-f', 's16le',
+        '-ar', '44100',
+        '-ac', '2',
+        'pipe:1'
+      ]);
 
-    ffmpeg.stdout.on('data', (chunk: Buffer) => {
-      this.emit('pcm', chunk);
-    });
+      ffmpeg.stdout.on('data', (chunk: Buffer) => {
+        this.emit('pcm', chunk);
+      });
 
-    ffmpeg.on('error', (err) => {
-      console.error(`[soundboard] Error decoding file ${filePath}:`, err);
+      ffmpeg.on('close', () => resolve());
+
+      ffmpeg.on('error', (err) => {
+        console.error(`[soundboard] Error decoding file ${filePath}:`, err);
+        reject(err);
+      });
     });
   }
 }
