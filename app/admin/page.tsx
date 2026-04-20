@@ -43,6 +43,7 @@ export default function AdminPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [autoApprove, setAutoApprove] = useState(false);
+  const [showSoundboardPublic, setShowSoundboardPublic] = useState(false);
   const [radioServerUrl, setRadioServerUrl] = useState("");
   const [radioUrlSaved, setRadioUrlSaved] = useState(false);
   const [userApprovals, setUserApprovals] = useState<any[]>([]);
@@ -279,6 +280,7 @@ export default function AdminPage() {
     }
     if (data) {
       setAutoApprove(data.auto_approve ?? false);
+      setShowSoundboardPublic(data.show_soundboard_public ?? false);
       const rUrl = data.radio_server_url ?? "";
       setRadioServerUrl(rUrl);
       store.getState().setServerUrl(rUrl || null);
@@ -348,6 +350,15 @@ export default function AdminPage() {
     await getSupabase()
       .from("settings")
       .update({ auto_approve: next })
+      .eq("id", 1);
+  }
+
+  async function toggleSoundboardPublic() {
+    const next = !showSoundboardPublic;
+    setShowSoundboardPublic(next);
+    await getSupabase()
+      .from("settings")
+      .update({ show_soundboard_public: next })
       .eq("id", 1);
   }
 
@@ -586,6 +597,36 @@ export default function AdminPage() {
                 />
                 <span className={autoApprove ? "font-semibold text-green-400" : "text-gray-400"}>
                   {autoApprove ? "AUTOMATISCH" : "HANDMATIG"}
+                </span>
+              </button>
+            </div>
+          </div>
+        </details>
+
+        <details open className="overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
+          <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-semibold text-white transition hover:bg-gray-800/60">
+            Soundboard zichtbaarheid
+            <span className="text-xs text-gray-400">Uitklappen</span>
+          </summary>
+          <div className="border-t border-gray-800 p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold text-white">Soundboard Publiek</p>
+                <p className="text-xs text-gray-500">
+                  {showSoundboardPublic
+                    ? "Soundboard is zichtbaar voor iedereen"
+                    : "Soundboard is alleen zichtbaar voor admins"}
+                </p>
+              </div>
+              <button
+                onClick={toggleSoundboardPublic}
+                className="flex items-center gap-2 rounded-lg border border-gray-700 px-3 py-1.5 text-sm transition hover:border-gray-600"
+              >
+                <span
+                  className={`inline-block h-3 w-3 rounded-full ${showSoundboardPublic ? "bg-green-400 shadow-sm shadow-green-400/50" : "bg-gray-600"}`}
+                />
+                <span className={showSoundboardPublic ? "font-semibold text-green-400" : "text-gray-400"}>
+                  {showSoundboardPublic ? "PUBLIEK" : "PRIVÉ"}
                 </span>
               </button>
             </div>

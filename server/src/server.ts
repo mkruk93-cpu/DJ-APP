@@ -203,13 +203,12 @@ app.post('/api/soundboard/upload', upload.single('audio'), async (req, res) => {
     const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : (req.headers['x-admin-token'] as string);
     const nickname = req.body.nickname;
     
-    console.log(`[server] Soundboard upload request from: ${nickname}`);
-    
-    if (!isAdmin(token, nickname) && !(await isCurrentDJ(nickname ?? ''))) {
-      console.log(`[server] Soundboard upload denied - not admin/DJ: ${nickname}`);
-      res.status(403).json({ error: 'Geen rechten voor soundboard upload' });
+    if (!(await canUseSoundboard(token, nickname))) {
+      res.status(403).json({ error: 'Geen rechten voor soundboard' });
       return;
     }
+
+    console.log(`[server] Soundboard upload request from: ${nickname}`);
 
     if (!req.file) {
       console.warn('[server] Soundboard upload - no file received');
@@ -292,7 +291,7 @@ app.post('/api/soundboard/voice', upload.single('audio'), async (req, res) => {
     const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : (req.headers['x-admin-token'] as string);
     const nickname = req.body.nickname;
     
-    if (!isAdmin(token, nickname) && !(await isCurrentDJ(nickname ?? ''))) {
+    if (!(await canUseSoundboard(token, nickname))) {
       res.status(403).json({ error: 'Geen rechten voor soundboard' });
       return;
     }
@@ -321,6 +320,35 @@ app.post('/api/soundboard/voice', upload.single('audio'), async (req, res) => {
 });
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+let soundboardPublicCache: { value: boolean; ts: number } | null = null;
+const SOUNDBOARD_PUBLIC_TTL = 30 * 1000;
+
+async function isSoundboardPublic(): Promise<boolean> {
+  if (soundboardPublicCache && (Date.now() - soundboardPublicCache.ts < SOUNDBOARD_PUBLIC_TTL)) {
+    return soundboardPublicCache.value;
+  }
+  
+  try {
+    const { data, error } = await sb
+      .from('settings')
+      .select('show_soundboard_public')
+      .eq('id', 1)
+      .maybeSingle();
+    
+    const isPublic = !!data?.show_soundboard_public;
+    soundboardPublicCache = { value: isPublic, ts: Date.now() };
+    return isPublic;
+  } catch (err) {
+    return false;
+  }
+}
+
+async function canUseSoundboard(token?: string, nickname?: string): Promise<boolean> {
+  if (isAdmin(token, nickname)) return true;
+  if (await isCurrentDJ(nickname ?? '')) return true;
+  return await isSoundboardPublic();
+}
 
 function isAdmin(token?: string, nickname?: string): boolean {
   const isTokenAdmin = !!token && token === ADMIN_TOKEN;
@@ -5817,9 +5845,7 @@ io.on('connection', (socket) => {
   // ── Soundboard ──
   socket.on('soundboard:play', async (data: { sampleId: string; token?: string }) => {
     const nickname = socketNicknameById.get(socket.id);
-    const admin = isAdmin(data.token, nickname);
-    const isDJ = await isCurrentDJ(nickname ?? '');
-    if (!admin && !isDJ) {
+    if (!(await canUseSoundboard(data.token, nickname))) {
       console.log(`[server] User ${nickname} denied soundboard access`);
       socket.emit('error:toast', { message: 'Geen rechten voor soundboard' });
       return;

@@ -4,13 +4,18 @@ import { useIsAdmin } from '@/lib/useIsAdmin';
 import { useAuth } from '@/lib/authContext';
 
 import { useRadioStore } from '@/lib/radioStore';
+import { getSupabase } from '@/lib/supabaseClient';
 
 interface Sample {
   id: string;
   name: string;
 }
 
-export default function Soundboard() {
+interface SoundboardProps {
+  showPublic?: boolean;
+}
+
+export default function Soundboard({ showPublic }: SoundboardProps) {
   const isAdmin = useIsAdmin();
   const { userAccount } = useAuth();
   const serverUrl = useRadioStore((s) => s.serverUrl);
@@ -18,10 +23,18 @@ export default function Soundboard() {
   const [isRecording, setIsRecording] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isMicAllowed, setIsMicAllowed] = useState<boolean | null>(null);
+  const [showSoundboardPublic, setShowSoundboardPublic] = useState(showPublic ?? false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
+  // Update local state when prop changes
+  useEffect(() => {
+    if (showPublic !== undefined) {
+      setShowSoundboardPublic(showPublic);
+    }
+  }, [showPublic]);
+
   // Gebruik de serverUrl uit de store (die live wordt bijgewerkt vanuit de database)
   const API_BASE = serverUrl || process.env.NEXT_PUBLIC_CONTROL_SERVER_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
@@ -47,6 +60,25 @@ export default function Soundboard() {
     // Request samples immediately
     refreshSamples();
 
+    // Load the soundboard public setting ONLY if prop not provided
+    if (showPublic === undefined) {
+      const loadSoundboardSetting = async () => {
+        try {
+          const { data, error } = await getSupabase()
+            .from('settings')
+            .select('show_soundboard_public')
+            .eq('id', 1)
+            .single();
+          if (!error && data) {
+            console.log('[Soundboard] Public setting fetched locally:', data.show_soundboard_public);
+            setShowSoundboardPublic(data.show_soundboard_public ?? false);
+          }
+        } catch (err) {
+          console.error('[Soundboard] Failed to load setting:', err);
+        }
+      };
+      loadSoundboardSetting();
+    }
     // Check of we al rechten hebben
     if (navigator.permissions && navigator.permissions.query) {
       navigator.permissions.query({ name: 'microphone' as any }).then(result => {
@@ -218,7 +250,8 @@ export default function Soundboard() {
     }
   };
 
-  if (!isAdmin) return null;
+  // Toon soundboard als admin OF als het publiek is ingesteld
+  if (!isAdmin && !showSoundboardPublic) return null;
 
   return (
     <div className="flex flex-col gap-5 p-4 bg-gray-900 rounded-xl border border-gray-800 shadow-xl">
@@ -227,7 +260,7 @@ export default function Soundboard() {
           <span className="text-xl">🔊</span>
           <h3 className="text-lg font-bold text-white tracking-tight">Soundboard & Interactie</h3>
         </div>
-        {isMicAllowed === false && (
+        {isAdmin && isMicAllowed === false && (
           <button 
             onClick={requestMicPermission}
             className="text-[10px] bg-red-500/20 text-red-400 px-2 py-1 rounded border border-red-500/40 hover:bg-red-500/30 transition"

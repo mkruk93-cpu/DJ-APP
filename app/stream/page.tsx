@@ -148,6 +148,7 @@ export default function StreamPage() {
   const [requestedLoading, setRequestedLoading] = useState(false);
   const [statsOpen, setStatsOpen] = useState(false);
   const [appInfoOpen, setAppInfoOpen] = useState(false);
+  const [showSoundboardPublic, setShowSoundboardPublic] = useState(false);
   const [mobileHeaderMenuOpen, setMobileHeaderMenuOpen] = useState(false);
   const [adminOverlayOpen, setAdminOverlayOpen] = useState(false);
   const [profileModalUser, setProfileModalUser] = useState<string | null>(null);
@@ -1260,6 +1261,7 @@ export default function StreamPage() {
       ]);
       setTwitchLive(twitchRes.live ?? false);
       setIcecastUrl(settingsRes.data?.icecast_url || null);
+      setShowSoundboardPublic(settingsRes.data?.show_soundboard_public ?? false);
       const rUrl = settingsRes.data?.radio_server_url || null;
       setRadioServerUrl(rUrl);
       store.getState().setServerUrl(rUrl);
@@ -2011,7 +2013,7 @@ export default function StreamPage() {
                 )}
               </button>
             )}
-            {isAdminUser && (
+            {(isAdminUser || showSoundboardPublic) && (
               <button
                 onClick={() => setActiveTab("soundboard")}
                 className={`relative flex-1 rounded-md px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition ${
@@ -2078,9 +2080,9 @@ export default function StreamPage() {
               {/* (existing requested panel content) */}
             </div>
           )}
-          {isAdminUser && (
+          {(isAdminUser || showSoundboardPublic) && (
             <div className={`min-h-0 min-w-0 flex-1 overflow-hidden flex-col gap-2 ${activeTab === "soundboard" ? "flex" : "hidden"} lg:hidden`}>
-              <Soundboard />
+              <Soundboard showPublic={showSoundboardPublic} />
             </div>
           )}
           {(showRadioPanel || showQueuePanel) && (
@@ -2131,7 +2133,7 @@ export default function StreamPage() {
                   )}
                 </div>
               )}
-              {isAdminUser && (
+              {(isAdminUser || showSoundboardPublic) && (
                 <div className={`relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5 ${
                   desktopAccordionTab === "soundboard" ? "z-40 flex-1" : "z-0"
                 }`}>
@@ -2147,7 +2149,7 @@ export default function StreamPage() {
                   </button>
                   {desktopAccordionTab === "soundboard" && (
                     <div className="min-h-0 flex-1 overflow-y-auto p-2">
-                      <Soundboard />
+                      <Soundboard showPublic={showSoundboardPublic} />
                     </div>
                   )}
                 </div>
