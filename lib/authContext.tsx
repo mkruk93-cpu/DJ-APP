@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { User, Session, AuthError } from '@supabase/supabase-js';
 import { getSupabase } from '@/lib/supabaseClient';
+import { clearAdminSessionArtifacts } from '@/lib/auth';
 
 interface UserAccount {
   id: string;
@@ -21,7 +22,7 @@ export interface AuthContextType {
   userAccount: UserAccount | null;
   loading: boolean;
   signUp: (email: string, password: string, username?: string, realName?: string) => Promise<{ error: AuthError | null }>;
-  signIn: (email: string, password: string) => Promise<{ error: AuthError | null }>;
+  signIn: (identifier: string, password: string) => Promise<{ error: AuthError | null }>;
   signOut: () => Promise<void>;
   refreshUserAccount: (overrideUser?: User | null) => Promise<void>;
   freezeAuthCheck: (frozen: boolean) => void;
@@ -150,7 +151,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { error };
   }
 
-  async function signIn(email: string, password: string) {
+  async function signIn(identifier: string, password: string) {
+    clearAdminSessionArtifacts();
+    const normalizedIdentifier = identifier.trim();
+    let email = normalizedIdentifier;
+
+    if (normalizedIdentifier && !normalizedIdentifier.includes('@')) {
+      try {
+        const response = await fetch('/api/get-email-by-username', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: normalizedIdentifier }),
+        });
+
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || typeof payload.email !== 'string') {
+          return {
+            error: {
+              name: 'AuthApiError',
+              message: 'User not found',
+              status: response.status,
+            } as AuthError,
+          };
+        }
+
+        email = payload.email;
+      } catch (err) {
+        console.error('Username lookup failed:', err);
+        return {
+          error: {
+            name: 'AuthRetryableFetchError',
+            message: 'Username lookup failed',
+            status: 500,
+          } as AuthError,
+        };
+      }
+    }
+
     const { error } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -164,6 +201,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSession(null);
     setUserAccount(null);
     if (typeof window !== 'undefined') localStorage.removeItem('nickname');
+    clearAdminSessionArtifacts();
   }
 
   useEffect(() => {
@@ -205,6 +243,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         void refreshUserAccount(currentUser);
       } else {
         setUserAccount(null);
+        clearAdminSessionArtifacts();
       }
     });
 

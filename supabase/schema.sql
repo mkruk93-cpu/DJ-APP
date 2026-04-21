@@ -283,3 +283,6 @@ CREATE TABLE IF NOT EXISTS dj_schedule (
 );
 
 ALTER PUBLICATION supabase_realtime ADD TABLE dj_schedule;
+
+-- Soundboard settings update
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS show_soundboard_public boolean DEFAULT false;

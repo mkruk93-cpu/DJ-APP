@@ -73,6 +73,19 @@ function normalizeName(value: string): string {
   return value.trim().toLowerCase();
 }
 
+function mergeMessages(existing: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
+  const byId = new Map<string, ChatMessage>();
+  for (const message of existing) {
+    if (message?.id) byId.set(message.id, message);
+  }
+  for (const message of incoming) {
+    if (message?.id) byId.set(message.id, message);
+  }
+  return Array.from(byId.values())
+    .sort((a, b) => a.created_at.localeCompare(b.created_at))
+    .slice(-MAX_MESSAGES);
+}
+
 export default function ChatBox({ onNewMessage, username, onUserClick }: ChatBoxProps = {}) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -96,6 +109,8 @@ export default function ChatBox({ onNewMessage, username, onUserClick }: ChatBox
   const pickerRef = useRef<HTMLDivElement>(null);
   const mediaAbortRef = useRef<AbortController | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
+  const channelRef = useRef<ReturnType<ReturnType<typeof getSupabase>["channel"]> | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
   const channelId = useId();
   const nickname = username || (typeof window !== "undefined" ? localStorage.getItem("nickname") ?? "Gast" : "Gast");
   const activeMediaType: MediaType | null = pickerTab === "gif" || pickerTab === "sticker" ? pickerTab : null;
@@ -120,6 +135,17 @@ export default function ChatBox({ onNewMessage, username, onUserClick }: ChatBox
     const host = messagesRef.current;
     if (!host) return;
     host.scrollTo({ top: host.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+  }, []);
+
+  const refreshMessages = useCallback(async () => {
+    const { data } = await getSupabase()
+      .from("chat_messages")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(50);
+    if (data) {
+      setMessages((prev) => mergeMessages(prev, [...data].reverse()));
+    }
   }, []);
 
   function parseSticker(raw: string): string | null {
@@ -218,43 +244,93 @@ export default function ChatBox({ onNewMessage, username, onUserClick }: ChatBox
 
   useEffect(() => {
     const sb = getSupabase();
+    let cancelled = false;
 
-    sb.from("chat_messages")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(10)
-      .then(({ data }) => {
-        if (data) setMessages(data.reverse());
-      });
+    const clearReconnectTimer = () => {
+      if (reconnectTimerRef.current !== null) {
+        window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+    };
 
-    const channel = sb
-      .channel(`chat-${channelId}`)
-      .on<ChatMessage>(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "chat_messages" },
-        (payload) => {
-          setMessages((prev) => {
-            const next = [...prev, payload.new];
-            return next.length > MAX_MESSAGES ? next.slice(-MAX_MESSAGES) : next;
-          });
-          onNewMessage?.();
-        }
-      )
-      .on<{ old: { id: string } }>(
-        "postgres_changes",
-        { event: "DELETE", schema: "public", table: "chat_messages" },
-        (payload) => {
-          const removedId = (payload as { old?: { id?: string } }).old?.id;
-          if (!removedId) return;
-          setMessages((prev) => prev.filter((m) => m.id !== removedId));
-        },
-      )
-      .subscribe();
+    const attachChannel = () => {
+      if (cancelled) return;
+      const channel = sb
+        .channel(`chat-${channelId}`)
+        .on<ChatMessage>(
+          "postgres_changes",
+          { event: "INSERT", schema: "public", table: "chat_messages" },
+          (payload) => {
+            setMessages((prev) => {
+              if (prev.some((message) => message.id === payload.new.id)) return prev;
+              return mergeMessages(prev, [payload.new]);
+            });
+            onNewMessage?.();
+          }
+        )
+        .on<{ old: { id: string } }>(
+          "postgres_changes",
+          { event: "DELETE", schema: "public", table: "chat_messages" },
+          (payload) => {
+            const removedId = (payload as { old?: { id?: string } }).old?.id;
+            if (!removedId) return;
+            setMessages((prev) => prev.filter((m) => m.id !== removedId));
+          },
+        )
+        .subscribe((status) => {
+          if (status === "SUBSCRIBED") {
+            void refreshMessages();
+            return;
+          }
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+            void refreshMessages();
+            clearReconnectTimer();
+            reconnectTimerRef.current = window.setTimeout(() => {
+              if (channelRef.current) {
+                void sb.removeChannel(channelRef.current);
+                channelRef.current = null;
+              }
+              attachChannel();
+            }, 1200);
+          }
+        });
+
+      channelRef.current = channel;
+    };
+
+    void refreshMessages();
+    attachChannel();
 
     return () => {
-      sb.removeChannel(channel);
+      cancelled = true;
+      clearReconnectTimer();
+      if (channelRef.current) {
+        void sb.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
     };
-  }, []);
+  }, [channelId, onNewMessage, refreshMessages]);
+
+  useEffect(() => {
+    const refreshOnReturn = () => {
+      if (document.visibilityState === "visible") {
+        void refreshMessages();
+      }
+    };
+    window.addEventListener("focus", refreshOnReturn);
+    document.addEventListener("visibilitychange", refreshOnReturn);
+    return () => {
+      window.removeEventListener("focus", refreshOnReturn);
+      document.removeEventListener("visibilitychange", refreshOnReturn);
+    };
+  }, [refreshMessages]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      void refreshMessages();
+    }, 15000);
+    return () => window.clearInterval(interval);
+  }, [refreshMessages]);
 
   useEffect(() => {
     return () => mediaAbortRef.current?.abort();

@@ -1,4 +1,5 @@
 const RADIO_TOKEN_KEY = 'radio_admin_token';
+const ADMIN_SESSION_KEY = 'admin_auth';
 
 export function getRadioToken(): string | null {
   if (typeof window === 'undefined') return null;
@@ -16,5 +17,16 @@ export function clearRadioToken(): void {
 }
 
 export function isRadioAdmin(): boolean {
-  return getRadioToken() !== null;
+  const token = getRadioToken();
+  const expectedToken = process.env.NEXT_PUBLIC_ADMIN_PASSWORD?.trim();
+
+  if (!token || !expectedToken) return false;
+
+  return token.trim() === expectedToken;
+}
+
+export function clearAdminSessionArtifacts(): void {
+  if (typeof window === 'undefined') return;
+  sessionStorage.removeItem(ADMIN_SESSION_KEY);
+  clearRadioToken();
 }

@@ -14,7 +14,7 @@ import { seedSettings, getActiveMode, getActiveFallbackGenre, getModeSettings, g
 import { getQueue, addToQueue, removeFromQueue, reorderQueue, fetchVideoInfo, extractYoutubeId, extractSourceId, isSoundcloudUrl, getThumbnailUrl, encodeLocalFileUrl } from './queue.js';
 import { canPerformAction } from './permissions.js';
 import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, isPlayCycleRunning, playerEvents, setKeepFiles, getJingleSettings, setJingleSettings, getJingleSelection, setJingleSelection, getJingleCatalog, invalidatePreload, invalidateNextReady, removeQueueItemFromPreload, setActiveFallbackGenre, setActiveFallbackGenres, setActiveSharedFallbackPlaylists, setSharedAutoPlaybackMode, resetSharedAutoPlaybackCycleForSelection, setQueueItemSelectionMeta, setHideLocalDiscoveryForFallback } from './player.js';
-import { soundboardManager, SAMPLE_DIR } from './services/soundboard.js';
+import { soundboardManager, SAMPLE_DIR, SOUNDBOARD_CATEGORIES } from './services/soundboard.js';
 import { isCurrentDJ, getDJSchedule, claimDJSlot } from './services/djSchedule.js';
 import { youtubeSearch, soundcloudSearch, spotdlSearch } from './services/search.js';
 import { musicBrainzAutocomplete, lastFmGetArtistInfo, lastFmGetTopTracks, lastFmGetTopAlbums, iTunesSearchArtwork, lastFmGetArtistImage, lastFmGetLovedTracks, lastFmGetRecentTracks } from './services/musicSearch.js';
@@ -57,6 +57,7 @@ import {
   removeFavoriteArtist,
   updateFavoriteArtistMetadata,
   followPublicPlaylist,
+  followExternalPlaylistIntoLibrary,
   isFavoriteArtist,
   deletePublicUserPlaylistById,
   type PlaylistGenreMeta as UserPlaylistGenreMeta,
@@ -114,6 +115,7 @@ import {
 } from './genreHitsStore.js';
 import { getStatsSummary, recordRequestEvent } from './services/statsStore.js';
 import { recordMissingTrackLookup } from './services/missingTrackLog.js';
+import { startBackupService } from './services/backupService.js';
 
 // ── Environment ──────────────────────────────────────────────────────────────
 
@@ -201,7 +203,9 @@ app.post('/api/soundboard/upload', upload.single('audio'), async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : (req.headers['x-admin-token'] as string);
-    const nickname = req.body.nickname;
+    const nickname = typeof req.body.nickname === 'string' ? req.body.nickname : '';
+    const sampleName = typeof req.body.sampleName === 'string' ? req.body.sampleName : '';
+    const category = typeof req.body.category === 'string' ? req.body.category : '';
     
     if (!(await canUseSoundboard(token, nickname))) {
       res.status(403).json({ error: 'Geen rechten voor soundboard' });
@@ -213,6 +217,18 @@ app.post('/api/soundboard/upload', upload.single('audio'), async (req, res) => {
     if (!req.file) {
       console.warn('[server] Soundboard upload - no file received');
       res.status(400).json({ error: 'Geen audio bestand ontvangen' });
+      return;
+    }
+
+    const normalizedSampleName = sampleName.trim().slice(0, 80);
+    if (!normalizedSampleName) {
+      res.status(400).json({ error: 'Geef je sample eerst een naam.' });
+      return;
+    }
+
+    const normalizedCategory = category.trim().toLowerCase();
+    if (!SOUNDBOARD_CATEGORIES.includes(normalizedCategory as typeof SOUNDBOARD_CATEGORIES[number])) {
+      res.status(400).json({ error: 'Ongeldige samplecategorie.' });
       return;
     }
 
@@ -243,8 +259,7 @@ app.post('/api/soundboard/upload', upload.single('audio'), async (req, res) => {
     }
 
     // Converteer naar WAV in de samples map (gegarandeerde compatibiliteit)
-    const safeBaseName = basename(req.file.originalname, originalExt).replace(/[^a-z0-9]/gi, '_').toLowerCase();
-    const finalFileName = `${safeBaseName}.wav`;
+    const { sampleId, fileName: finalFileName } = soundboardManager.createSampleIdentity(normalizedSampleName, req.file.originalname);
     const finalPath = pathJoin(SAMPLE_DIR, finalFileName);
     
     await new Promise((resolve, reject) => {
@@ -268,17 +283,22 @@ app.post('/api/soundboard/upload', upload.single('audio'), async (req, res) => {
     if (fs.existsSync(tempInputPath)) fs.unlinkSync(tempInputPath);
     console.log(`[server] New sample uploaded and converted: ${finalFileName}`);
 
-    // Update manager
-    soundboardManager.reloadSamples();
-    const sampleId = basename(finalFileName, extname(finalFileName));
+    soundboardManager.registerUploadedSample({
+      sampleId,
+      fileName: finalFileName,
+      name: normalizedSampleName,
+      category: normalizedCategory,
+      uploadedBy: nickname || 'Onbekend',
+      originalFileName: req.file.originalname ?? null,
+    });
     await soundboardManager.preloadSingleSample(sampleId);
 
     // Informeer alle clients over de nieuwe lijst
-    const samples = soundboardManager.getSamples();
+    const samples = toPublicSoundboardSamples();
     console.log(`[server] Broadcasting ${samples.length} samples to all clients after upload`);
     io.emit('soundboard:list', samples);
 
-    res.json({ success: true });
+    res.json({ success: true, sampleId });
   } catch (err) {
     console.error('[server] Sample upload error:', err);
     res.status(500).json({ error: 'Interne fout bij uploaden sample' });
@@ -363,8 +383,8 @@ app.get('/api/soundboard/samples', async (req, res) => {
       return;
     }
 
-    const samples = soundboardManager.getSamples().map(({ id, name }) => ({ id, name }));
-    res.json({ samples });
+    const samples = soundboardManager.getSamples().map(({ file, ...sample }) => sample);
+    res.json({ samples, categories: SOUNDBOARD_CATEGORIES });
   } catch (err) {
     console.error('[server] Soundboard samples error:', err);
     res.status(500).json({ error: 'Kon samplelijst niet ophalen' });
@@ -375,6 +395,10 @@ async function canUseSoundboard(token?: string, nickname?: string): Promise<bool
   if (isAdmin(token, nickname)) return true;
   if (await isCurrentDJ(nickname ?? '')) return true;
   return await isSoundboardPublic();
+}
+
+function toPublicSoundboardSamples() {
+  return soundboardManager.getSamples().map(({ file, ...sample }) => sample);
 }
 
 function isAdmin(token?: string, nickname?: string): boolean {
@@ -3458,7 +3482,33 @@ app.post('/api/user-playlists/:id/follow-public', async (req, res) => {
     return res.status(400).json({ error: 'Playlist id ontbreekt' });
   }
   try {
-    const followed = await followPublicPlaylist(identity, playlistId);
+    let followed = await followPublicPlaylist(identity, playlistId);
+    if (!followed && !playlistId.startsWith('user:')) {
+      const [sharedMeta, sharedTracks] = await Promise.all([
+        getSharedPlaylistSummaryById(playlistId),
+        getSharedPlaylistTracks(playlistId),
+      ]);
+      if (sharedMeta && sharedTracks) {
+        followed = await followExternalPlaylistIntoLibrary(identity, {
+          sourcePlaylistId: `shared:${sharedMeta.id}`,
+          name: sharedMeta.name,
+          source: 'shared-follow',
+          genreMeta: {
+            genre_group: sharedMeta.genre_group ?? null,
+            subgenre: sharedMeta.subgenre ?? null,
+            related_parent_playlist_id: `shared:${sharedMeta.id}`,
+            cover_url: sharedMeta.cover_url ?? null,
+          },
+          tracks: sharedTracks.map((track, index) => ({
+            title: track.title.slice(0, 300),
+            artist: track.artist?.slice(0, 300) ?? null,
+            album: track.album?.slice(0, 300) ?? null,
+            spotify_url: track.spotify_url?.slice(0, 600) ?? null,
+            position: index + 1,
+          })),
+        });
+      }
+    }
     if (!followed) return res.status(404).json({ error: 'Publieke playlist niet gevonden' });
     return res.json({ ok: true, playlist: followed });
   } catch (err) {
@@ -5873,7 +5923,7 @@ io.on('connection', (socket) => {
   else socket.emit('queuePushVote:end', null);
   socket.emit('queuePush:lock', { locked: queuePushLocked });
   socket.emit('skip:lock', { locked: isSkipLocked() });
-  const soundboardSamples = soundboardManager.getSamples();
+  const soundboardSamples = toPublicSoundboardSamples();
   console.log(`[server] Client connected, sending ${soundboardSamples.length} soundboard samples`);
   socket.emit('soundboard:list', soundboardSamples);
 
@@ -5896,7 +5946,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('soundboard:list', () => {
-    const samples = soundboardManager.getSamples();
+    const samples = toPublicSoundboardSamples();
     console.log(`[server] Client ${socket.id} requested samples. Found ${samples.length} samples in ${SAMPLE_DIR}`);
     socket.emit('soundboard:list', samples);
   });
@@ -6754,6 +6804,8 @@ async function main(): Promise<void> {
       console.warn('[shared-inbox] Poll import failed:', getErrorMessage(err));
     });
   }, SHARED_IMPORT_POLL_MS);
+
+  startBackupService();
 }
 
 main().catch((err) => {

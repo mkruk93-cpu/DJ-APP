@@ -11,7 +11,7 @@ import type { StreamHub } from './streamHub.js';
 import { pickRandomFallbackForGenre, parseAutoFallbackGenreId, LIKED_AUTO_GENRE_ID } from './fallbackGenres.js';
 import { fetchArtworkCandidate } from './artwork.js';
 import { listLikedPlaylistTracks } from './services/genreCuratedConfig.js';
-import { getSharedPlaylistTracks, parseSharedFallbackPlaylistId } from './services/sharedPlaylistStore.js';
+import { getSharedPlaylistSummaryById, getSharedPlaylistTracks, parseSharedFallbackPlaylistId } from './services/sharedPlaylistStore.js';
 import { getUserPlaylistTracksForFallback } from './services/userPlaylistStore.js';
 import { getTopTracksByGenre, getMergedGenreTags, getPriorityArtistsForGenre, resolveMergedGenreId, type GenreHitItem } from './services/discovery.js';
 import { getCachedGenreHits, makeGenreHitsCacheKey, setGenreHitsCacheEntry } from './genreHitsStore.js';
@@ -2070,8 +2070,12 @@ async function prepareSharedAutoFallbackTrack(
   const expectedSourceKey = expectedSourceKeyOverride ?? `shared:${playlistId}`;
   try {
     if (!isAutoSourceStillActive(expectedSourceKey)) return null;
-    const tracks = await getSharedPlaylistTracks(playlistId);
+    const [tracks, playlistSummary] = await Promise.all([
+      getSharedPlaylistTracks(playlistId),
+      getSharedPlaylistSummaryById(playlistId),
+    ]);
     if (!tracks || tracks.length === 0) return null;
+    const playlistName = playlistSummary?.name?.trim() || null;
 
     const candidates = tracks
       .map((track) => {
@@ -2190,7 +2194,7 @@ async function prepareSharedAutoFallbackTrack(
       added_by: null,
       isFallback: true,
       selection_label: 'Autoplay playlist',
-      selection_playlist: null,
+      selection_playlist: playlistName,
       selection_tab: 'playlists',
       selection_key: `shared:${playlistId}`,
     };
@@ -2247,7 +2251,7 @@ async function prepareSharedAutoFallbackTrack(
       cleanupAfterUse: true,
       forceDualMono,
       selectionLabel: 'Autoplay playlist',
-      selectionPlaylist: null,
+      selectionPlaylist: playlistName,
       selectionTab: 'playlists',
       selectionKey: `shared:${playlistId}`,
     };

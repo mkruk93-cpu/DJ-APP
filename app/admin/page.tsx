@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { getSupabase } from "@/lib/supabaseClient";
 import { connectSocket, disconnectSocket, getSocket } from "@/lib/socket";
 import { useRadioStore } from "@/lib/radioStore";
-import { getRadioToken, setRadioToken, clearRadioToken } from "@/lib/auth";
+import { getRadioToken, setRadioToken, isRadioAdmin, clearAdminSessionArtifacts } from "@/lib/auth";
+import { isConfiguredAdminUser } from "@/lib/adminIdentity";
 import { skipTrack as apiSkipTrack, setKeepFiles as apiSetKeepFiles, updateSetting as apiUpdateSetting } from "@/lib/radioApi";
 import ModeSelector from "@/components/admin/ModeSelector";
 import ModeSettings from "@/components/admin/ModeSettings";
@@ -38,6 +40,7 @@ function formatDuration(seconds: number | null): string {
 }
 
 export default function AdminPage() {
+  const router = useRouter();
   const { user, userAccount } = useAuth();
   const [authenticated, setAuthenticated] = useState(false);
   const [password, setPassword] = useState("");
@@ -81,13 +84,16 @@ export default function AdminPage() {
   }, []);
 
   useEffect(() => {
-    if (sessionStorage.getItem("admin_auth") === "true") {
+    const hasActiveAdminSession = sessionStorage.getItem("admin_auth") === "true";
+    if (hasActiveAdminSession && isRadioAdmin()) {
       setAuthenticated(true);
     }
     const token = getRadioToken();
-    if (token) {
+    if (token && isRadioAdmin()) {
       setRadioTokenState(token);
       setRadioAuthed(true);
+    } else {
+      clearAdminSessionArtifacts();
     }
   }, []);
 
@@ -99,12 +105,10 @@ export default function AdminPage() {
   }, [radioToken]);
 
   useEffect(() => {
-    const username = (userAccount?.username ?? "").trim().toLowerCase();
-    if (username === "krukkex") {
-      setAuthenticated(true);
-      sessionStorage.setItem("admin_auth", "true");
-    }
-  }, [userAccount?.username]);
+    if (!isConfiguredAdminUser(userAccount)) return;
+    setAuthenticated(true);
+    sessionStorage.setItem("admin_auth", "true");
+  }, [userAccount]);
 
   const loadUserApprovals = useCallback(async () => {
     setApprovalsLoading(true);
@@ -134,9 +138,34 @@ export default function AdminPage() {
   useEffect(() => {
     if (!authenticated || radioAuthed) return;
     const token = ADMIN_PASSWORD ?? "";
+    if (!token) return;
     setRadioToken(token);
     setRadioAuthed(true);
   }, [authenticated, radioAuthed]);
+
+  useEffect(() => {
+    if (user === undefined) return;
+    if (!user) {
+      router.replace("/login");
+      return;
+    }
+    if (!userAccount) {
+      return;
+    }
+    if (!isConfiguredAdminUser(userAccount)) {
+      clearAdminSessionArtifacts();
+      setAuthenticated(false);
+      setRadioAuthed(false);
+      router.replace("/login");
+      return;
+    }
+    if (userAccount && !userAccount.approved) {
+      clearAdminSessionArtifacts();
+      setAuthenticated(false);
+      setRadioAuthed(false);
+      router.replace("/login");
+    }
+  }, [user, userAccount, router]);
 
   // All hooks are now above - render normally (SSR will handle itself)
   useEffect(() => {
@@ -486,6 +515,14 @@ export default function AdminPage() {
   }
 
   if (!authenticated) {
+    if (!user || !userAccount || !userAccount.approved || !isConfiguredAdminUser(userAccount)) {
+      return (
+        <div className="flex min-h-screen items-center justify-center">
+          <div className="text-white">Toegang controleren...</div>
+        </div>
+      );
+    }
+
     return (
       <div className="flex min-h-screen items-center justify-center p-4">
         <div className="w-full max-w-sm rounded-2xl border border-gray-800 bg-gray-900 p-8">
@@ -519,8 +556,7 @@ export default function AdminPage() {
             <h1 className="text-lg font-bold text-white">Admin Dashboard</h1>
             <button
               onClick={() => {
-                sessionStorage.removeItem("admin_auth");
-                clearRadioToken();
+                clearAdminSessionArtifacts();
                 setAuthenticated(false);
                 setRadioAuthed(false);
               }}

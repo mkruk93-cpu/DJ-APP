@@ -1,10 +1,10 @@
 import { useAuth } from '@/lib/authContext';
-import { isRadioAdmin } from '@/lib/auth';
+import { isConfiguredAdminUser } from '@/lib/adminIdentity';
 import { useEffect, useState, useRef } from 'react';
 
 /**
  * Custom hook to determine if the current user has admin privileges.
- * An admin is either a user with the radio admin token or the user with the username 'KrukkeX'.
+ * Admin UI is only available to the configured approved admin account.
  * @returns {boolean} True if the user is an admin, false otherwise.
  */
 export function useIsAdmin(): boolean {
@@ -19,9 +19,7 @@ export function useIsAdmin(): boolean {
       return;
     }
 
-    const hasToken = isRadioAdmin();
-    const username = (userAccount?.username ?? "").trim().toLowerCase();
-    const isUserAdmin = hasToken || username === 'krukkex';
+    const isUserAdmin = isConfiguredAdminUser(userAccount);
     
     if (isUserAdmin || !authLoading) {
       setIsAdmin(isUserAdmin);

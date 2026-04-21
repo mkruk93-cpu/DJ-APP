@@ -858,6 +858,98 @@ export async function followPublicPlaylist(
   }, true);
 }
 
+export async function followExternalPlaylistIntoLibrary(
+  owner: PlaylistOwner,
+  input: {
+    sourcePlaylistId: string;
+    name: string;
+    source: string;
+    tracks: CreatePlaylistInputTrack[];
+    genreMeta?: PlaylistGenreMeta;
+  },
+): Promise<PlaylistSummary | null> {
+  return withStoreAccess((store) => {
+    migrateOwnerPlaylists(store, owner);
+    const sourcePlaylistId = (input.sourcePlaylistId ?? '').trim();
+    const playlistName = input.name.trim().slice(0, 140);
+    if (!sourcePlaylistId || !playlistName) return null;
+
+    const ownerKey = getOwnerKey(owner.nickname);
+    const existing = store.playlists.find((entry) =>
+      getOwnerKey(entry.nickname) === ownerKey
+      && entry.related_parent_playlist_id === sourcePlaylistId,
+    );
+
+    if (existing) {
+      const seen = new Set(existing.tracks.map((track) => getTrackMergeKey(track)));
+      for (const track of input.tracks) {
+        const candidate: StoreTrack = {
+          id: randomUUID(),
+          title: String(track.title ?? '').trim(),
+          artist: track.artist ?? null,
+          album: track.album ?? null,
+          spotify_url: track.spotify_url ?? null,
+          artwork_url: track.artwork_url ?? null,
+          position: existing.tracks.length + 1,
+        };
+        if (!candidate.title) continue;
+        const key = getTrackMergeKey(candidate);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        existing.tracks.push(candidate);
+      }
+      existing.tracks = existing.tracks
+        .sort((a, b) => a.position - b.position)
+        .map((entry, index) => ({ ...entry, position: index + 1 }));
+      existing.name = playlistName;
+      existing.source = input.source.trim() || existing.source;
+      const meta = normalizeGenreMeta(input.genreMeta);
+      existing.genre_group = meta.genre_group;
+      existing.subgenre = meta.subgenre;
+      existing.related_parent_playlist_id = sourcePlaylistId;
+      existing.cover_url = meta.cover_url ?? null;
+      return mapPlaylistSummary(existing, owner);
+    }
+
+    const createdAt = new Date().toISOString();
+    const meta = normalizeGenreMeta({
+      genre_group: input.genreMeta?.genre_group ?? null,
+      subgenre: input.genreMeta?.subgenre ?? null,
+      related_parent_playlist_id: sourcePlaylistId,
+      cover_url: input.genreMeta?.cover_url ?? null,
+    });
+    const normalizedTracks: StoreTrack[] = input.tracks.map((track, index) => ({
+      id: randomUUID(),
+      title: String(track.title ?? '').trim(),
+      artist: track.artist ?? null,
+      album: track.album ?? null,
+      spotify_url: track.spotify_url ?? null,
+      artwork_url: track.artwork_url ?? null,
+      position: normalizeTrackPosition(index, track.position),
+    })).filter((track) => track.title);
+
+    store.playlists.push({
+      id: randomUUID(),
+      nickname: owner.nickname,
+      device_id: owner.deviceId,
+      name: playlistName,
+      source: input.source.trim() || 'followed',
+      created_at: createdAt,
+      genre_group: meta.genre_group,
+      subgenre: meta.subgenre,
+      related_parent_playlist_id: meta.related_parent_playlist_id,
+      cover_url: meta.cover_url ?? null,
+      shared_with: [],
+      is_public: false,
+      is_public_fallback: false,
+      tracks: normalizedTracks,
+    });
+
+    const created = store.playlists[store.playlists.length - 1];
+    return created ? mapPlaylistSummary(created, owner) : null;
+  }, true);
+}
+
 export async function isFavoriteArtist(owner: PlaylistOwner, mbid: string): Promise<boolean> {
   return withStoreAccess((store) => {
     const ownerKey = getOwnerKey(owner.nickname);

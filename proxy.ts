@@ -11,6 +11,7 @@ export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   const publicRoutes = ['/login', '/register', '/manifest', '/sw.js', '/icons']
+  const authPages = ['/login', '/register']
 
   const isPublicRoute = publicRoutes.some((route) => pathname.startsWith(route))
 
@@ -20,7 +21,27 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(redirectUrl)
   }
 
-  if (user && (pathname.startsWith('/login') || pathname.startsWith('/register'))) {
+  if (!user) {
+    return response
+  }
+
+  const { data: userAccount } = await supabase
+    .from('user_accounts')
+    .select('approved')
+    .eq('id', user.id)
+    .maybeSingle()
+
+  const isApproved = userAccount?.approved === true
+  const isAuthPage = authPages.some((route) => pathname.startsWith(route))
+
+  if (!isApproved && !isAuthPage) {
+    const redirectUrl = new URL('/login', request.url)
+    redirectUrl.searchParams.set('pending', '1')
+    redirectUrl.searchParams.set('redirect', pathname)
+    return NextResponse.redirect(redirectUrl)
+  }
+
+  if (isApproved && isAuthPage) {
     return NextResponse.redirect(new URL('/stream', request.url))
   }
 

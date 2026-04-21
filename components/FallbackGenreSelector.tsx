@@ -27,6 +27,11 @@ interface SharedFallbackPreset {
   createdAt: string;
 }
 
+type StoredFallbackSelectorPrefs = Partial<{
+  playlistSortMode: PlaylistSortMode;
+  playlistViewMode: PlaylistViewMode;
+}>;
+
 function normalizeBucketLabel(value: string | null | undefined, fallback: string): string {
   const safe = (value ?? "").trim();
   return safe || fallback;
@@ -144,6 +149,7 @@ export default function FallbackGenreSelector() {
   const { userAccount } = useAuth();
   const connected = useRadioStore((s) => s.connected);
   const genres = useRadioStore((s) => s.fallbackGenres);
+  const currentTrack = useRadioStore((s) => s.currentTrack);
   const activeGenre = useRadioStore((s) => s.activeFallbackGenre);
   const activeGenres = useRadioStore((s) => s.activeFallbackGenres);
   const activeGenreBy = useRadioStore((s) => s.activeFallbackGenreBy);
@@ -237,6 +243,15 @@ export default function FallbackGenreSelector() {
     () => effectiveSelectedGenreIds.filter((id) => id.startsWith("shared:") || id.startsWith("user:")),
     [effectiveSelectedGenreIds],
   );
+  const activePresetId = useMemo(() => {
+    if (!activePresetName || optimisticSelectedGenreIds) return null;
+    const activeKey = [...selectedGenreIds].sort().join("|");
+    return presets.find((preset) => (
+      preset.name === activePresetName
+      && [...preset.genreIds].sort().join("|") === activeKey
+      && preset.sharedPlaybackMode === sharedPlaybackMode
+    ))?.id ?? null;
+  }, [activePresetName, optimisticSelectedGenreIds, presets, selectedGenreIds, sharedPlaybackMode]);
 
   useEffect(() => {
     if (!optimisticSelectedGenreIds) return;
@@ -279,7 +294,19 @@ export default function FallbackGenreSelector() {
     return options[0] ?? null;
   }
   const shouldRender = connected && sortedGenres.length > 0;
+  const livePlaylistLabel = useMemo(() => {
+    if (currentTrack?.selection_tab !== "playlists") return null;
+    const playlistName = currentTrack.selection_playlist?.trim();
+    if (playlistName) return cleanFallbackLabel(playlistName);
+    const selectionKey = currentTrack.selection_key?.trim() ?? "";
+    if (!selectionKey) return null;
+    const matchingGenre = sortedGenres.find((genre) => genre.id === selectionKey);
+    return matchingGenre ? cleanFallbackLabel(matchingGenre.label) : null;
+  }, [currentTrack, sortedGenres]);
   const activeLabel = useMemo(() => {
+    if (livePlaylistLabel) {
+      return livePlaylistLabel;
+    }
     // Show preset name only if it exists AND the user hasn't made an optimistic (manual) change
     // that hasn't been confirmed by the server yet.
     if (activePresetName && !optimisticSelectedGenreIds) {
@@ -301,7 +328,7 @@ export default function FallbackGenreSelector() {
     }
     const activeGenreLabel = sortedGenres.find((g) => g.id === activeGenre)?.label;
     return activeGenreLabel ? cleanFallbackLabel(activeGenreLabel) : activeGenre ?? "Kies genre";
-  }, [sortedGenres, activeGenre, selectedSharedGenres, activePresetName, optimisticSelectedGenreIds]);
+  }, [sortedGenres, activeGenre, selectedSharedGenres, activePresetName, optimisticSelectedGenreIds, livePlaylistLabel]);
 
   useEffect(() => {
     function updateMobileState() {
@@ -448,21 +475,9 @@ export default function FallbackGenreSelector() {
     try {
       const raw = localStorage.getItem(getStorageKey()) ?? localStorage.getItem(getLegacyStorageKey());
       if (!raw) return;
-      const parsed = JSON.parse(raw) as Partial<{
-        playlistSortMode: PlaylistSortMode;
-        playlistViewMode: PlaylistViewMode;
-        activeSection: FallbackSection;
-        openSections: Record<FallbackSection, boolean>;
-      }>;
+      const parsed = JSON.parse(raw) as StoredFallbackSelectorPrefs;
       if (parsed.playlistSortMode) setPlaylistSortMode(parsed.playlistSortMode);
       if (parsed.playlistViewMode) setPlaylistViewMode(parsed.playlistViewMode);
-      if (parsed.activeSection) {
-        setActiveSection(parsed.activeSection);
-      } else if (parsed.openSections) {
-        if (parsed.openSections.playlists) setActiveSection("playlists");
-        else if (parsed.openSections.auto) setActiveSection("auto");
-        else setActiveSection("local");
-      }
     } catch {
       // Ignore invalid preferences.
     }
@@ -473,11 +488,10 @@ export default function FallbackGenreSelector() {
     const payload = JSON.stringify({
       playlistSortMode,
       playlistViewMode,
-      activeSection,
     });
     localStorage.setItem(getStorageKey(), payload);
     localStorage.setItem(getLegacyStorageKey(), payload);
-  }, [playlistSortMode, playlistViewMode, activeSection]);
+  }, [playlistSortMode, playlistViewMode]);
 
   useEffect(() => {
     const socket = getSocket();
@@ -690,10 +704,14 @@ export default function FallbackGenreSelector() {
                       key={preset.id}
                       type="button"
                       onClick={() => applyPreset(preset)}
-                      className="flex w-full items-center justify-between rounded border border-gray-700 bg-gray-800/70 px-2 py-1 text-left text-[10px] text-gray-200 transition hover:border-violet-500/70 hover:bg-gray-800"
+                      className={`flex w-full items-center justify-between rounded border px-2 py-1 text-left text-[10px] transition ${
+                        activePresetId === preset.id
+                          ? "border-violet-500/80 bg-violet-600/20 text-violet-100"
+                          : "border-gray-700 bg-gray-800/70 text-gray-200 hover:border-violet-500/70 hover:bg-gray-800"
+                      }`}
                     >
                       <span className="truncate">{preset.name}{preset.createdBy ? ` (${preset.createdBy})` : ''}</span>
-                      <span className="ml-2 text-gray-500">{preset.genreIds.length}</span>
+                      <span className={`ml-2 ${activePresetId === preset.id ? "text-violet-200" : "text-gray-500"}`}>{preset.genreIds.length}</span>
                     </button>
                   ))
                 )}

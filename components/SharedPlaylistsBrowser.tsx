@@ -652,19 +652,19 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
         onSelect: () => openPlaylistEdit(playlist),
       });
     }
+    if (!isPlaylistOwner(playlist)) {
+      actions.push({
+        key: "show-own-library",
+        label: "Toon in mijn SpotifyBrowser",
+        tone: "accent" as const,
+        onSelect: () => {
+          void followPublicPlaylistInLibrary(playlist.id)
+            .then(() => setStatus(`"${playlist.name}" toegevoegd aan je SpotifyBrowser.`))
+            .catch((err) => setError(err instanceof Error ? err.message : "Kon playlist niet toevoegen."));
+        },
+      });
+    }
     if (playlist.kind === "user_public") {
-      if (!isPlaylistOwner(playlist)) {
-        actions.push({
-          key: "show-own-library",
-          label: "Toon in mijn SpotifyBrowser",
-          tone: "accent" as const,
-          onSelect: () => {
-            void followPublicPlaylistInLibrary(playlist.id)
-              .then(() => setStatus(`"${playlist.name}" toegevoegd aan je SpotifyBrowser.`))
-              .catch((err) => setError(err instanceof Error ? err.message : "Kon playlist niet toevoegen."));
-          },
-        });
-      }
       if (isPlaylistOwner(playlist)) {
         actions.push({
           key: "delete",

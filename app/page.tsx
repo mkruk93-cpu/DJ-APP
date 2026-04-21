@@ -22,6 +22,8 @@ export default function HomePage() {
 
   useEffect(() => {
     if (!isClient || loading) return;
+
+    if (user && !userAccount) return;
     
     if (user && userAccount?.approved) {
       router.replace("/stream");

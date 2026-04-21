@@ -1517,7 +1517,7 @@ export default function StreamPage() {
   }
   
   useEffect(() => {
-    if (authLoading || !user) {
+    if (authLoading || !user || !userAccount) {
       setShowApprovalCheck(false);
       return;
     }
@@ -1535,7 +1535,7 @@ export default function StreamPage() {
     }
   }, [authLoading, user, userAccount, userAccount?.approved]);
 
-  if (authLoading || !user) {
+  if (authLoading || !user || !userAccount) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="text-white">Laden...</div>
@@ -1544,7 +1544,7 @@ export default function StreamPage() {
   }
 
   // Only show approval screen if we've confirmed the user is not approved (not just loading)
-  if (showApprovalCheck && !userAccount?.approved) {
+  if (!userAccount.approved || (showApprovalCheck && !userAccount.approved)) {
     return (
       <div className="flex min-h-screen items-center justify-center p-4">
         <div className="w-full max-w-md rounded-2xl border border-gray-800 bg-gray-900 p-8 shadow-lg shadow-violet-500/5 text-center">

@@ -319,6 +319,15 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function stripVariousArtists(value: string): string {
+  return value
+    .split(/\s*(?:,|;|\/|&|\band\b|\+)\s*/iu)
+    .map((part) => cleanLooseTagValue(part))
+    .filter((part) => part && !/^various artists?$/iu.test(part))
+    .join(', ')
+    .trim();
+}
+
 function cleanImportedArtist(value: string, titleCandidate: string): string | null {
   let out = cleanLooseTagValue(value)
     .replace(/[\u2010-\u2015\u2212]+/g, '-')
@@ -336,6 +345,7 @@ function cleanImportedArtist(value: string, titleCandidate: string): string | nu
   }
 
   out = out.replace(/\s*-\s*$/u, '').trim();
+  out = stripVariousArtists(out);
   if (!out) return null;
   if (/^\d{1,4}$/u.test(out)) return null;
   return out;
@@ -484,8 +494,11 @@ function parseCsvBuffer(fileName: string, buffer: Buffer, maxTracks: number): Ex
 
   for (const record of records) {
     const normalizedRecord = getNormalizedRecord(record);
-    const title = firstValue(normalizedRecord, titleKeys);
-    const artist = firstValue(normalizedRecord, artistKeys);
+    const titleRaw = firstValue(normalizedRecord, titleKeys);
+    const artistRaw = firstValue(normalizedRecord, artistKeys);
+    const splitTitleCandidate = splitArtistTitleCandidate(titleRaw);
+    const title = cleanImportedTitle(splitTitleCandidate?.title ?? titleRaw);
+    const artist = cleanImportedArtist(artistRaw, title) ?? splitTitleCandidate?.artist ?? null;
     if (!title || !artist) continue;
 
     const dedupeKey = `${artist.toLowerCase()}|${title.toLowerCase()}`;
