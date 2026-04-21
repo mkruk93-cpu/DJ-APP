@@ -324,6 +324,14 @@ app.post('/api/soundboard/voice', upload.single('audio'), async (req, res) => {
 let soundboardPublicCache: { value: boolean; ts: number } | null = null;
 const SOUNDBOARD_PUBLIC_TTL = 30 * 1000;
 
+async function setSoundboardPublic(next: boolean): Promise<void> {
+  const { error } = await sb
+    .from('settings')
+    .upsert({ id: 1, show_soundboard_public: next }, { onConflict: 'id' });
+  if (error) throw error;
+  soundboardPublicCache = { value: next, ts: Date.now() };
+}
+
 async function isSoundboardPublic(): Promise<boolean> {
   if (soundboardPublicCache && (Date.now() - soundboardPublicCache.ts < SOUNDBOARD_PUBLIC_TTL)) {
     return soundboardPublicCache.value;
@@ -343,6 +351,25 @@ async function isSoundboardPublic(): Promise<boolean> {
     return false;
   }
 }
+
+app.get('/api/soundboard/samples', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : (req.headers['x-admin-token'] as string | undefined);
+    const nickname = typeof req.query.nickname === 'string' ? req.query.nickname : undefined;
+
+    if (!(await canUseSoundboard(token, nickname))) {
+      res.status(403).json({ error: 'Geen rechten voor soundboard' });
+      return;
+    }
+
+    const samples = soundboardManager.getSamples().map(({ id, name }) => ({ id, name }));
+    res.json({ samples });
+  } catch (err) {
+    console.error('[server] Soundboard samples error:', err);
+    res.status(500).json({ error: 'Kon samplelijst niet ophalen' });
+  }
+});
 
 async function canUseSoundboard(token?: string, nickname?: string): Promise<boolean> {
   if (isAdmin(token, nickname)) return true;
@@ -1895,7 +1922,7 @@ function popDeferredQueueItemRoundRobin(): { addedBy: string; item: DeferredQueu
 }
 
 async function getServerState(): Promise<ServerState> {
-  const [mode, modeSettings, queue, activeFallbackGenre, activeFallbackGenreBy, fallbackGenres, activeFallbackSharedMode, lockAutoplayFallback, hideLocalDiscovery] = await withStateRetry(() => Promise.all([
+  const [mode, modeSettings, queue, activeFallbackGenre, activeFallbackGenreBy, fallbackGenres, activeFallbackSharedMode, lockAutoplayFallback, hideLocalDiscovery, activeFallbackPresetName] = await withStateRetry(() => Promise.all([
     getActiveMode(sb),
     getModeSettings(sb),
     getQueue(sb),
@@ -1905,6 +1932,7 @@ async function getServerState(): Promise<ServerState> {
     resolveSharedPlaybackMode(),
     getSetting<boolean>(sb, 'lock_autoplay_fallback'),
     getSetting<boolean>(sb, 'hide_local_discovery'),
+    getSetting<string | null>(sb, 'fallback_active_preset_name'),
   ]));
   const activeFallbackGenres = await resolveActiveFallbackGenres(activeFallbackGenre, true);
 
@@ -1923,6 +1951,7 @@ async function getServerState(): Promise<ServerState> {
     activeFallbackGenres,
     activeFallbackGenreBy: normalizeNickname(activeFallbackGenreBy),
     activeFallbackSharedMode,
+    activeFallbackPresetName: activeFallbackPresetName ?? null,
     lockAutoplayFallback: !!lockAutoplayFallback,
     hideLocalDiscovery: !!hideLocalDiscovery,
     listenerCount: getEffectiveListenerCount(),
@@ -2018,6 +2047,7 @@ function buildDegradedServerState(): ServerState {
     activeFallbackGenres: [],
     activeFallbackGenreBy: null,
     activeFallbackSharedMode: 'random',
+    activeFallbackPresetName: null,
     lockAutoplayFallback: false,
     hideLocalDiscovery: false,
     listenerCount: getEffectiveListenerCount(),
@@ -3407,6 +3437,10 @@ app.patch('/api/user-playlists/:id', async (req, res) => {
       return res.status(404).json({ error: 'Playlist niet gevonden of je bent geen eigenaar' });
     }
 
+    if (typeof nextPublic === 'boolean' || typeof nextPublicFallback === 'boolean') {
+      await emitFallbackGenreUpdate();
+    }
+
     return res.json({ ok: true, playlist: updated });
   } catch (err) {
     console.error('[rest] /api/user-playlists/:id PATCH error:', err);
@@ -4640,6 +4674,13 @@ app.post('/api/settings', async (req, res) => {
   if (!isAdmin(token)) return res.status(403).json({ error: 'Unauthorized' });
 
   try {
+    if (key === 'show_soundboard_public') {
+      const enabled = value === true || value === 'true' || value === 1 || value === '1';
+      await setSoundboardPublic(enabled);
+      io.emit('settings:soundboardPublicChanged', { enabled });
+      console.log(`[rest] Setting updated: ${key}=${enabled}`);
+      return res.json({ ok: true, enabled });
+    }
     if (key === 'lock_autoplay_fallback' || key === 'hide_local_discovery') {
       const bool = typeof value === 'boolean'
         ? value
@@ -5856,7 +5897,7 @@ io.on('connection', (socket) => {
 
   socket.on('soundboard:list', () => {
     const samples = soundboardManager.getSamples();
-    console.log(`[server] Sending ${samples.length} soundboard samples to client`);
+    console.log(`[server] Client ${socket.id} requested samples. Found ${samples.length} samples in ${SAMPLE_DIR}`);
     socket.emit('soundboard:list', samples);
   });
 
@@ -6257,6 +6298,13 @@ io.on('connection', (socket) => {
     }
 
     try {
+      if (data.key === 'show_soundboard_public') {
+        const enabled = data.value === true || data.value === 'true' || data.value === 1 || data.value === '1';
+        await setSoundboardPublic(enabled);
+        io.emit('settings:soundboardPublicChanged', { enabled });
+        console.log(`[settings] Updated: ${data.key}=${enabled}`);
+        return;
+      }
       if (data.key === 'fallback_active_genre') {
         const requested = normalizeFallbackGenreId(data.value);
         if (requested && !(await isKnownFallbackSelection(requested))) {
@@ -6340,7 +6388,7 @@ io.on('connection', (socket) => {
   socket.on('queue:remove', async (data: { id: string; token?: string; added_by?: string }) => {
     const mode = await getActiveMode(sb);
     const admin = isAdmin(data.token, socketNicknameById.get(socket.id));
-    const requester = normalizeNickname(data.added_by) ?? null;
+    const requester = normalizeNickname(data.added_by) ?? normalizeNickname(socketNicknameById.get(socket.id)) ?? null;
     const queue = await getQueue(sb);
     const target = queue.find((item) => item.id === data.id);
     const targetOwner = target ? normalizeNickname(target.added_by) : null;

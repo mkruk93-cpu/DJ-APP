@@ -215,6 +215,9 @@ export default function AdminPage() {
     socket.on("settings:keepFilesChanged", (data: { keep: boolean }) => {
       setKeepFiles(data.keep);
     });
+    socket.on("settings:soundboardPublicChanged", (data: { enabled: boolean }) => {
+      setShowSoundboardPublic(!!data.enabled);
+    });
     socket.on("settings:jingleChanged", (data: { enabled: boolean; everyTracks: number; selectedKeys?: string[] }) => {
       setJingleEnabled(!!data.enabled);
       setJingleEveryTracks(Math.max(1, Math.round(Number(data.everyTracks) || 4)));
@@ -356,10 +359,12 @@ export default function AdminPage() {
   async function toggleSoundboardPublic() {
     const next = !showSoundboardPublic;
     setShowSoundboardPublic(next);
-    await getSupabase()
-      .from("settings")
-      .update({ show_soundboard_public: next })
-      .eq("id", 1);
+    try {
+      await apiUpdateSetting("show_soundboard_public", next);
+    } catch (err) {
+      console.warn("[admin] toggleSoundboardPublic failed:", err);
+      setShowSoundboardPublic(!next);
+    }
   }
 
   async function saveRadioServerUrl() {

@@ -203,7 +203,7 @@ export default function StreamPage() {
   const radioMode = useRadioStore((s) => s.mode);
   const streamOnline = useRadioStore((s) => s.streamOnline);
   const pausedForIdle = useRadioStore((s) => s.pausedForIdle);
-  const playerPlaying = useRadioStore((s) => s.playerPlaying);
+  const playerListening = useRadioStore((s) => s.playerListening);
   const skipLocked = useRadioStore((s) => s.skipLocked);
   const store = useRadioStore;
   const isAdminUser = useIsAdmin();
@@ -970,7 +970,7 @@ export default function StreamPage() {
     const emitState = () => {
       socket.emit("listener:state", { 
         nickname: username,
-        listening: playerPlaying
+        listening: playerListening
       });
     };
 
@@ -982,7 +982,7 @@ export default function StreamPage() {
     return () => {
       socket.off("connect", emitState);
     };
-  }, [playerPlaying, userAccount?.username]);
+  }, [playerListening, userAccount?.username]);
 
   // Handle Spotify OAuth callback (code in URL after redirect)
   useEffect(() => {
@@ -1030,6 +1030,7 @@ export default function StreamPage() {
             activeFallbackGenres: state.activeFallbackGenres ?? [],
             activeFallbackGenreBy: state.activeFallbackGenreBy ?? null,
             activeFallbackSharedMode: state.activeFallbackSharedMode ?? "random",
+            activeFallbackPresetName: state.activeFallbackPresetName ?? null,
             mode: state.mode ?? "radio",
             modeSettings: state.modeSettings ?? store.getState().modeSettings,
             listenerCount: state.listenerCount ?? 0,
@@ -1057,7 +1058,7 @@ export default function StreamPage() {
       setTunnelRecoveryUntil(null);
       fetchState();
       if (userAccount?.username) {
-        socket.emit("listener:state", { nickname: userAccount.username, listening: store.getState().playerPlaying });
+        socket.emit("listener:state", { nickname: userAccount.username, listening: store.getState().playerListening });
       }
     });
 
@@ -1162,6 +1163,10 @@ export default function StreamPage() {
       if (typeof data.pausedForIdle === "boolean") {
         store.getState().setPausedForIdle(data.pausedForIdle);
       }
+    });
+
+    socket.on("settings:soundboardPublicChanged", (data: { enabled: boolean }) => {
+      setShowSoundboardPublic(!!data.enabled);
     });
 
     socket.on("error:toast", (data: { message: string }) => {
@@ -2159,7 +2164,7 @@ export default function StreamPage() {
         </div>
       </main>
       {infoToastMessage && (
-        <div className={`pointer-events-none fixed left-1/2 top-3 -translate-x-1/2 sm:top-4 ${playerFullscreen ? "z-[220] w-[96%] max-w-2xl" : "z-[115] w-[92%] max-w-xl"}`}>
+        <div className={`pointer-events-none fixed left-1/2 -translate-x-1/2 ${playerFullscreen ? "top-3 z-[220] w-[96%] max-w-2xl" : "top-[4.25rem] z-[240] w-[92%] max-w-xl sm:top-[5.25rem]"}`}>
           <div className={`pointer-events-auto flex items-start justify-between gap-2 text-violet-100 ${
             playerFullscreen
               ? "rounded-xl border border-violet-700/80 bg-violet-950/88 px-4 py-3 text-sm shadow-2xl shadow-violet-900/35 backdrop-blur-md sm:px-5 sm:py-3.5 sm:text-base"

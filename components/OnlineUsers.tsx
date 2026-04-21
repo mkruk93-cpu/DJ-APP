@@ -9,7 +9,7 @@ export default function OnlineUsers({ username, onUserClick }: { username?: stri
   const [onlineUsers, setOnlineUsers] = useState<Array<{ nickname: string; listening: boolean }>>([]);
   const [expanded, setExpanded] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const playerPlaying = useRadioStore((s) => s.playerPlaying);
+  const playerListening = useRadioStore((s) => s.playerListening);
   const setOnlineUserCount = useRadioStore((s) => s.setOnlineUserCount);
   const { userAccount } = useAuth();
   const menuRef = useRef<HTMLDivElement>(null);
@@ -41,13 +41,13 @@ export default function OnlineUsers({ username, onUserClick }: { username?: stri
     try {
       await channel.track({
         nickname: myNickname,
-        listening: !!playerPlaying,
+        listening: !!playerListening,
         online_at: new Date().toISOString(),
       });
     } catch {
       // Ignore presence track errors; reconnect will retry.
     }
-  }, [myNickname, playerPlaying]);
+  }, [myNickname, playerListening]);
 
   useEffect(() => {
     const supabase = getSupabase();

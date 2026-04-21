@@ -127,6 +127,7 @@ export interface ServerState {
   activeFallbackGenres: string[];
   activeFallbackGenreBy: string | null;
   activeFallbackSharedMode: 'random' | 'ordered';
+  activeFallbackPresetName: string | null;
   listenerCount: number;
   streamOnline: boolean;
   pausedForIdle: boolean;

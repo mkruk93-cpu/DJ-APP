@@ -178,7 +178,7 @@ export default function FallbackGenreSelector() {
     [sortedGenres],
   );
   const sharedPlaylists = useMemo(
-    () => sortedGenres.filter((genre) => genre.id.startsWith("shared:")),
+    () => sortedGenres.filter((genre) => genre.id.startsWith("shared:") || genre.id.startsWith("user:")),
     [sortedGenres],
   );
   const sortedSharedPlaylists = useMemo(
@@ -249,6 +249,12 @@ export default function FallbackGenreSelector() {
     setOptimisticSelectedGenreIds(null);
   }, [optimisticSelectedGenreIds, selectedGenreIds]);
 
+  useEffect(() => {
+    if (optimisticSelectedGenreIds || selectedGenreIds.length === 0) return;
+    const resolvedSection = getSectionForGenreId(selectedGenreIds[0]);
+    setActiveSection((prev) => (prev === resolvedSection ? prev : resolvedSection));
+  }, [optimisticSelectedGenreIds, selectedGenreIds]);
+
   function getSectionForGenreId(id: string): FallbackSection {
     if (id.startsWith("shared:") || id.startsWith("user:")) return "playlists";
     if (id.startsWith("auto:")) return "auto";
@@ -261,11 +267,16 @@ export default function FallbackGenreSelector() {
     return sharedPlaylists.map((g) => g.id);
   }
 
-  function pickRandomSectionId(section: FallbackSection): string | null {
+  function getSectionFallbackId(section: FallbackSection): string | null {
+    if (activeGenre && getSectionForGenreId(activeGenre) === section) {
+      return activeGenre;
+    }
+    const sectionSelected = effectiveSelectedGenreIds.filter((id) => getSectionForGenreId(id) === section);
+    if (sectionSelected.length > 0) {
+      return sectionSelected[0] ?? null;
+    }
     const options = getSectionIds(section);
-    if (options.length === 0) return null;
-    const index = Math.floor(Math.random() * options.length);
-    return options[index] ?? null;
+    return options[0] ?? null;
   }
   const shouldRender = connected && sortedGenres.length > 0;
   const activeLabel = useMemo(() => {
@@ -376,27 +387,26 @@ export default function FallbackGenreSelector() {
     let next = isActive
       ? sectionSelected.filter((entry) => entry !== id)
       : [...sectionSelected, id];
-    
-    // Safety check: if unselecting the last item, pick a random one in the same section
+
     if (next.length === 0) {
-      const randomFallback = pickRandomSectionId(section);
-      if (randomFallback) next = [randomFallback];
+      const fallbackId = getSectionFallbackId(section);
+      if (!fallbackId) return;
+      next = [fallbackId];
     }
-    
-    // Apply to server
+
     applySectionSelection(section, next);
   }
 
   function setAllForSection(section: FallbackSection, enabled: boolean): void {
     const sectionIds = getSectionIds(section);
     if (sectionIds.length === 0) return;
-    
+
     if (enabled) {
       applySectionSelection(section, sectionIds);
       return;
     }
-    
-    const fallbackId = pickRandomSectionId(section);
+
+    const fallbackId = getSectionFallbackId(section);
     if (fallbackId) {
       applySectionSelection(section, [fallbackId]);
     }

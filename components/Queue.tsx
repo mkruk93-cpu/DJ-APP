@@ -296,6 +296,7 @@ export default function Queue() {
                       const token = isAdminUser() ? getRadioToken() : undefined;
                       getSocket().emit("queue:remove", {
                         id: item.id,
+                        added_by: nickname || storedNickname || undefined,
                         token: token ?? undefined,
                       });
                     },

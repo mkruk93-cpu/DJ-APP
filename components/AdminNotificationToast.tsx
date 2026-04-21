@@ -222,7 +222,7 @@ export default function AdminNotificationToast({ onApprovalComplete }: AdminNoti
   }
 
   return (
-    <div className="fixed top-4 right-4 z-50 max-w-md animate-pulse">
+    <div className="fixed right-4 top-[4.5rem] z-[240] max-w-md animate-pulse sm:top-20">
       <div className="rounded-lg border border-violet-500/50 bg-violet-950/90 p-4 shadow-lg shadow-violet-500/20 backdrop-blur-sm">
         <div className="mb-3 flex items-center gap-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-violet-500 text-sm font-bold text-white">

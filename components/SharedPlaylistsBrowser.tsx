@@ -398,6 +398,15 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
     await loadTracksPage(playlist.id, false);
   }
 
+  function handlePlaylistCardKeyDown(
+    event: React.KeyboardEvent<HTMLDivElement>,
+    playlist: SharedPlaylist,
+  ): void {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    void openPlaylist(playlist);
+  }
+
   const resolveThumb = useCallback(async (url: string): Promise<void> => {
     if (thumbs[url]) return;
     if (thumbLoadingRef.current.has(url)) return;
@@ -840,7 +849,13 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                       <div className="mt-1 space-y-1">
                         {subgroup.items.map((playlist) => (
                           <div key={playlist.id} className="space-y-1">
-                            <div className="flex w-full items-center gap-1 rounded-lg border border-gray-800 bg-gray-900/70 px-2 py-1.5 text-left transition hover:border-blue-700/60 hover:bg-gray-800/80 sm:gap-2 sm:px-2.5">
+                            <div
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => { void openPlaylist(playlist); }}
+                              onKeyDown={(event) => handlePlaylistCardKeyDown(event, playlist)}
+                              className="flex w-full cursor-pointer items-center gap-1 rounded-lg border border-gray-800 bg-gray-900/70 px-2 py-1.5 text-left transition hover:border-blue-700/60 hover:bg-gray-800/80 focus:outline-none focus:ring-2 focus:ring-blue-500/40 sm:gap-2 sm:px-2.5"
+                            >
                               {(playlist.cover_url || playlistCoverById[playlist.id]) ? (
                                 <img src={playlist.cover_url || playlistCoverById[playlist.id]} alt="" className="h-8 w-8 shrink-0 rounded object-cover" />
                               ) : (
@@ -851,18 +866,18 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                                 </div>
                               )}
                               <div className="min-w-0">
-                                <button
-                                  type="button"
-                                  onClick={() => { void openPlaylist(playlist); }}
-                                  className="min-w-0 truncate text-left text-[11px] font-semibold text-white"
-                                >
+                                <p className="min-w-0 truncate text-left text-[11px] font-semibold text-white">
                                   {playlist.name}
-                                </button>
+                                </p>
                                 <p className="truncate text-[10px] text-gray-400">
                                   {renderPlaylistKindLabel(playlist)}
                                 </p>
                               </div>
-                              <div className="ml-auto flex shrink-0 items-center gap-1">
+                              <div
+                                className="ml-auto flex shrink-0 items-center gap-1"
+                                onClick={(event) => event.stopPropagation()}
+                                onKeyDown={(event) => event.stopPropagation()}
+                              >
                                 <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-300">
                                   {playlist.track_count}
                                 </span>
@@ -933,7 +948,13 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
               </details>
             )) : sortedPlaylists.map((playlist) => (
               <div key={playlist.id} className="mt-1 space-y-1">
-                <div className="flex w-full items-center gap-1 rounded-lg border border-gray-800 bg-gray-900/70 px-2 py-1.5 text-left transition hover:border-blue-700/60 hover:bg-gray-800/80 sm:gap-2 sm:px-2.5">
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => { void openPlaylist(playlist); }}
+                  onKeyDown={(event) => handlePlaylistCardKeyDown(event, playlist)}
+                  className="flex w-full cursor-pointer items-center gap-1 rounded-lg border border-gray-800 bg-gray-900/70 px-2 py-1.5 text-left transition hover:border-blue-700/60 hover:bg-gray-800/80 focus:outline-none focus:ring-2 focus:ring-blue-500/40 sm:gap-2 sm:px-2.5"
+                >
                   {playlist.cover_url ? (
                     <img src={playlist.cover_url} alt="" className="h-8 w-8 shrink-0 rounded object-cover" />
                   ) : (
@@ -944,18 +965,18 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                     </div>
                   )}
                   <div className="min-w-0">
-                    <button
-                      type="button"
-                      onClick={() => { void openPlaylist(playlist); }}
-                      className="truncate text-left text-[11px] font-semibold text-white"
-                    >
+                    <p className="truncate text-left text-[11px] font-semibold text-white">
                       {playlist.name}
-                    </button>
+                    </p>
                     <p className="truncate text-[10px] text-gray-400">
                       {renderPlaylistKindLabel(playlist)}
                     </p>
                   </div>
-                  <div className="ml-auto flex shrink-0 items-center gap-1">
+                  <div
+                    className="ml-auto flex shrink-0 items-center gap-1"
+                    onClick={(event) => event.stopPropagation()}
+                    onKeyDown={(event) => event.stopPropagation()}
+                  >
                     <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-300">
                       {playlist.track_count}
                     </span>

@@ -573,6 +573,7 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
         is_public_fallback: !playlist.is_public_fallback,
       });
       await loadSavedPlaylists();
+      if (showSharedPlaylistsInSpotifyTab) await loadSharedPlaylists();
     } catch (err) {
       alert("Fallback-zichtbaarheid aanpassen mislukt: " + (err instanceof Error ? err.message : "onbekende fout"));
     }
@@ -1091,8 +1092,8 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
     }
     setImportStatus(`Bezig met instellen van "${playlist.name}"...`);
     try {
-      // Zorg dat de playlist publiek gedeeld is, anders kan de fallback-server er niet bij
-      await updateUserPlaylistSharing(playlist.id, { is_public: true });
+      // Zorg dat de playlist zichtbaar is voor de fallback-selector en direct als bron geldig blijft.
+      await updateUserPlaylistSharing(playlist.id, { is_public: true, is_public_fallback: true });
       
       const selectedBy = currentNickname;
       getSocket().emit("fallback:genre:set", {

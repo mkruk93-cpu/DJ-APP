@@ -213,6 +213,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const [remoteCastSupported, setRemoteCastSupported] = useState(false);
   const [remoteCastConnected, setRemoteCastConnected] = useState(false);
   const [mobileCastFallbackVisible, setMobileCastFallbackVisible] = useState(false);
+  const [locallySilenced, setLocallySilenced] = useState(false);
   const userPaused = useRef(false);
   const playingRef = useRef(false);
   const reconnectAttemptRef = useRef(0);
@@ -493,20 +494,22 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   }, []);
 
   const setPlayerPlaying = useRadioStore((s) => s.setPlayerPlaying);
+  const setPlayerListening = useRadioStore((s) => s.setPlayerListening);
 
   useEffect(() => {
     playingRef.current = playing;
     setPlayerPlaying(playing);
 
     const socket = getSocket();
-    const isListening = playing && volume > 0 && nicknameRef.current.trim();
+    const isListening = !!(playing && volume > 0 && !locallySilenced && nicknameRef.current.trim());
+    setPlayerListening(isListening);
     if (socket && socket.connected && nicknameRef.current.trim()) {
       socket.emit("listener:state", {
         nickname: nicknameRef.current,
         listening: isListening,
       });
     }
-  }, [playing, connected, volume, setPlayerPlaying]);
+  }, [playing, connected, locallySilenced, volume, setPlayerListening, setPlayerPlaying]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -542,7 +545,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   useEffect(() => {
     const socket = getSocket();
     function onSocketConnect() {
-      const isListening = playingRef.current && volume > 0 && nicknameRef.current.trim();
+      const isListening = playingRef.current && volume > 0 && !locallySilenced && nicknameRef.current.trim();
       if (nicknameRef.current.trim()) {
         socket.emit("listener:state", {
           nickname: nicknameRef.current,
@@ -560,7 +563,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
         });
       }
     };
-  }, [volume]);
+  }, [locallySilenced, volume]);
 
   const syncedRadioTrack = useSyncedTrack(radioTrack);
   const isJingleTrack = !!syncedRadioTrack && (
@@ -575,6 +578,24 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   useEffect(() => {
     if (audioRef.current) audioRef.current.volume = volume;
   }, [volume]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.muted = locallySilenced;
+  }, [locallySilenced]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleStart = () => setLocallySilenced(true);
+    const handleEnd = () => setLocallySilenced(false);
+    window.addEventListener("soundboard:recording-start", handleStart as EventListener);
+    window.addEventListener("soundboard:recording-end", handleEnd as EventListener);
+    return () => {
+      window.removeEventListener("soundboard:recording-start", handleStart as EventListener);
+      window.removeEventListener("soundboard:recording-end", handleEnd as EventListener);
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;

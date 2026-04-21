@@ -28,6 +28,8 @@ interface RadioStore extends RadioState {
   setSkipLocked: (locked: boolean) => void;
   playerPlaying: boolean;
   setPlayerPlaying: (playing: boolean) => void;
+  playerListening: boolean;
+  setPlayerListening: (listening: boolean) => void;
   onlineUserCount: number;
   setOnlineUserCount: (count: number) => void;
   pushMessage: string | null;
@@ -84,6 +86,7 @@ export const useRadioStore = create<RadioStore>((set) => ({
   lockAutoplayFallback: false,
   hideLocalDiscovery: false,
   playerPlaying: false,
+  playerListening: false,
   pushMessage: null,
   pushMessageExpiry: 0,
 
@@ -112,6 +115,7 @@ export const useRadioStore = create<RadioStore>((set) => ({
   setServerUrl: (serverUrl) => set({ serverUrl }),
   setSkipLocked: (skipLocked) => set({ skipLocked }),
   setPlayerPlaying: (playerPlaying) => set({ playerPlaying }),
+  setPlayerListening: (playerListening) => set({ playerListening }),
   setPushMessage: (pushMessage) => set({ pushMessage }),
   setPushMessageExpiry: (pushMessageExpiry) => set({ pushMessageExpiry }),
   resetAll: () => set({
@@ -124,6 +128,7 @@ export const useRadioStore = create<RadioStore>((set) => ({
     activeFallbackGenres: [],
     activeFallbackGenreBy: null,
     activeFallbackSharedMode: "random",
+    activeFallbackPresetName: null,
     listenerCount: 0,
     onlineUserCount: 0,
     streamOnline: false,
@@ -136,6 +141,7 @@ export const useRadioStore = create<RadioStore>((set) => ({
     lockAutoplayFallback: false,
     hideLocalDiscovery: false,
     playerPlaying: false,
+    playerListening: false,
     pushMessage: null,
     pushMessageExpiry: 0,
   }),

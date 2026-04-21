@@ -19,6 +19,7 @@ export default function Soundboard({ showPublic }: SoundboardProps) {
   const isAdmin = useIsAdmin();
   const { userAccount } = useAuth();
   const serverUrl = useRadioStore((s) => s.serverUrl);
+  const radioConnected = useRadioStore((s) => s.connected);
   const [samples, setSamples] = useState<Sample[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -37,28 +38,58 @@ export default function Soundboard({ showPublic }: SoundboardProps) {
 
   // Gebruik de serverUrl uit de store (die live wordt bijgewerkt vanuit de database)
   const API_BASE = serverUrl || process.env.NEXT_PUBLIC_CONTROL_SERVER_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+  const nickname = userAccount?.username?.trim() || '';
 
-  const refreshSamples = () => {
+  const broadcastRecordingState = (active: boolean) => {
+    if (typeof window === 'undefined') return;
+    window.dispatchEvent(new CustomEvent(active ? 'soundboard:recording-start' : 'soundboard:recording-end'));
+  };
+
+  const refreshSamples = async () => {
     const socket = getSocket();
-    if (socket) {
+    if (socket?.connected) {
       console.log('[Soundboard] Requesting soundboard:list from server');
       socket.emit('soundboard:list');
-    } else {
-      console.warn('[Soundboard] Socket not available for refresh');
+    }
+
+    try {
+      const adminToken = localStorage.getItem('radio_admin_token') || '';
+      const params = new URLSearchParams();
+      if (nickname) params.set('nickname', nickname);
+      const response = await fetch(`${API_BASE}/api/soundboard/samples${params.toString() ? `?${params.toString()}` : ''}`, {
+        headers: adminToken ? { 'X-Admin-Token': adminToken } : undefined,
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const data = await response.json().catch(() => ({}));
+      if (Array.isArray(data.samples)) {
+        console.log('[Soundboard] Received samples via HTTP:', data.samples);
+        setSamples(data.samples);
+      }
+    } catch (err) {
+      console.warn('[Soundboard] HTTP sample refresh failed:', err);
     }
   };
 
   useEffect(() => {
     const socket = getSocket();
-    if (!socket) return;
-
-    socket.on('soundboard:list', (list: Sample[]) => {
+    const handleList = (list: Sample[]) => {
       console.log('[Soundboard] Received samples:', list);
       setSamples(list);
-    });
+    };
+    socket.on('soundboard:list', handleList);
     
     // Request samples immediately
-    refreshSamples();
+    void refreshSamples();
+
+    // Retry fetching samples after 2 seconds if still empty, as the socket might take time to connect to the right URL
+    const retryTimeout = setTimeout(() => {
+      if (samples.length === 0) {
+        console.log('[Soundboard] Retrying samples list request...');
+        void refreshSamples();
+      }
+    }, 2000);
 
     // Load the soundboard public setting ONLY if prop not provided
     if (showPublic === undefined) {
@@ -79,6 +110,7 @@ export default function Soundboard({ showPublic }: SoundboardProps) {
       };
       loadSoundboardSetting();
     }
+
     // Check of we al rechten hebben
     if (navigator.permissions && navigator.permissions.query) {
       navigator.permissions.query({ name: 'microphone' as any }).then(result => {
@@ -92,9 +124,10 @@ export default function Soundboard({ showPublic }: SoundboardProps) {
     }
 
     return () => {
-      socket.off('soundboard:list');
+      socket.off('soundboard:list', handleList);
+      clearTimeout(retryTimeout);
     };
-  }, []);
+  }, [API_BASE, nickname, radioConnected]);
 
   const requestMicPermission = async () => {
     try {
@@ -120,6 +153,7 @@ export default function Soundboard({ showPublic }: SoundboardProps) {
   };
 
   const startRecording = async () => {
+    if (isRecording || isUploading) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream);
@@ -150,15 +184,19 @@ export default function Soundboard({ showPublic }: SoundboardProps) {
       mediaRecorder.start();
       setIsRecording(true);
       setIsMicAllowed(true);
+      broadcastRecordingState(true);
     } catch (err) {
       console.error('Microfoon toegang geweigerd:', err);
       setIsMicAllowed(false);
       alert('Microfoon toegang is vereist. Klik op de microfoon knop om toestemming te geven.');
       setIsRecording(false);
+      broadcastRecordingState(false);
     }
   };
 
   const stopRecording = () => {
+    if (!isRecording && mediaRecorderRef.current?.state !== 'recording') return;
+    broadcastRecordingState(false);
     // Stop de MediaRecorder onmiddellijk
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
       mediaRecorderRef.current.stop();
@@ -318,7 +356,7 @@ export default function Soundboard({ showPublic }: SoundboardProps) {
           <h4 className="text-[11px] font-bold uppercase tracking-widest text-gray-500 px-1">Beschikbare Samples</h4>
           <div className="flex items-center gap-2">
             <button 
-              onClick={refreshSamples}
+              onClick={() => { void refreshSamples(); }}
               className="p-1 hover:bg-gray-800 rounded transition text-gray-500 hover:text-gray-300"
               title="Lijst verversen"
             >
@@ -342,7 +380,7 @@ export default function Soundboard({ showPublic }: SoundboardProps) {
             <div className="col-span-full py-8 text-center bg-gray-950/30 rounded-lg border border-dashed border-gray-800">
               <p className="text-xs text-gray-600 italic">Geen samples gevonden in data/samples</p>
               <button 
-                onClick={refreshSamples}
+                onClick={() => { void refreshSamples(); }}
                 className="mt-2 text-[10px] text-violet-400 hover:text-violet-300 underline"
               >
                 Lijst nu ophalen
