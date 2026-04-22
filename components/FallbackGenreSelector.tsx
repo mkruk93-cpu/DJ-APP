@@ -493,6 +493,7 @@ export default function FallbackGenreSelector() {
   }, []);
 
   const [shouldScroll, setShouldScroll] = useState(false);
+  const [marqueeMetrics, setMarqueeMetrics] = useState<{ distance: number; duration: number }>({ distance: 0, duration: 14 });
   const marqueeContainerRef = useRef<HTMLSpanElement>(null);
   const marqueeTextRef = useRef<HTMLSpanElement>(null);
 
@@ -501,7 +502,19 @@ export default function FallbackGenreSelector() {
       if (marqueeContainerRef.current && marqueeTextRef.current) {
         const containerWidth = marqueeContainerRef.current.offsetWidth;
         const textWidth = marqueeTextRef.current.scrollWidth;
-        setShouldScroll(textWidth > containerWidth);
+        const nextShouldScroll = textWidth > containerWidth;
+        setShouldScroll(nextShouldScroll);
+        if (nextShouldScroll) {
+          const gap = 32;
+          const distance = textWidth + gap;
+          const pxPerSecond = 28;
+          setMarqueeMetrics({
+            distance,
+            duration: Math.max(8, distance / pxPerSecond),
+          });
+        } else {
+          setMarqueeMetrics({ distance: 0, duration: 14 });
+        }
       }
     };
     checkScroll();
@@ -551,16 +564,20 @@ export default function FallbackGenreSelector() {
           )}
           <span ref={marqueeContainerRef} className="marquee-container relative block flex-1 overflow-hidden">
             <span
-              ref={marqueeTextRef}
-              className={`block whitespace-nowrap ${shouldScroll ? "marquee-text" : ""}`}
+              className={`block whitespace-nowrap ${shouldScroll ? "marquee-track" : ""}`}
               style={{
-                animation: shouldScroll ? 'marquee-scroll-slow 14s linear infinite' : 'none',
-                display: 'inline-block',
+                animation: shouldScroll ? `marquee-scroll-slow ${marqueeMetrics.duration}s linear infinite` : 'none',
+                display: 'inline-flex',
+                ['--marquee-distance' as string]: `${marqueeMetrics.distance}px`,
               }}
             >
-              {activeLabel}
+              <span ref={marqueeTextRef} className="shrink-0 whitespace-nowrap">
+                {activeLabel}
+              </span>
               {shouldScroll && (
-                <span aria-hidden="true" className="mx-8">{activeLabel}</span>
+                <span aria-hidden="true" className="ml-8 shrink-0 whitespace-nowrap">
+                  {activeLabel}
+                </span>
               )}
             </span>
           </span>

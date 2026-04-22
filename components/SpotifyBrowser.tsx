@@ -2642,6 +2642,18 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
         </div>
       )}
 
+      {(view === "tracks" || view === "importedTracks" || view === "sharedTracks") && (
+        <div className="shrink-0">
+          <input
+            type="text"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Zoek op track, artiest of album..."
+            className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-xs text-white outline-none transition focus:border-violet-500"
+          />
+        </div>
+      )}
+
       {/* Track list */}
       {view === "tracks" && !spotifyEnabled && (
         <div className="rounded-md border border-yellow-500/30 bg-yellow-500/10 p-2">

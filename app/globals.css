@@ -14,7 +14,7 @@
     transform: translateX(0);
   }
   100% {
-    transform: translateX(-100%);
+    transform: translateX(calc(-1 * var(--marquee-distance, 100%)));
   }
 }
 
@@ -24,11 +24,10 @@
   -webkit-mask-image: linear-gradient(to right, transparent, black 12px, black calc(100% - 12px), transparent);
 }
 
-.marquee-text {
-  animation: marquee-scroll-slow 14s linear infinite;
+.marquee-track {
   will-change: transform;
-  display: inline-block;
-  padding-right: 2rem;
+  display: inline-flex;
+  width: max-content;
 }
 
 :root {

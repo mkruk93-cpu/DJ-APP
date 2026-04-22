@@ -162,6 +162,7 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
   const [trackContextMenu, setTrackContextMenu] = useState<{ x: number; y: number; track: UserPlaylistTrack } | null>(null);
   const [trackContextStyle, setTrackContextStyle] = useState<{ left: number; top: number } | null>(null);
   const thumbLoadingRef = useRef<Set<string>>(new Set());
+  const playlistCoverLoadingRef = useRef<Set<string>>(new Set());
   const thumbQueueRef = useRef<string[]>([]);
   const thumbWorkersRef = useRef(0);
   const trackHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -335,21 +336,75 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
     localStorage.setItem(getLegacyStorageKey(), payload);
   }, [playlistSortMode, playlistViewMode, showHelp, collapsedGenres, collapsedSubgenres, hasStoredCollapseState]);
 
-  // Haal albumart op voor playlists zonder cover_url
-  useEffect(() => {
-    const missing = sharedPlaylists.filter((pl) => !pl.cover_url && pl.spotify_url);
-    missing.forEach((pl) => {
-      if (playlistCoverById[pl.id]) return;
-      const spotifyUrl = pl.spotify_url?.trim();
-      if (!spotifyUrl) return;
-      getSpotifyOembed(spotifyUrl)
-        .then((meta) => {
-          const thumb = (meta?.thumbnail_url ?? "").trim();
-          if (thumb) setPlaylistCoverById((prev) => ({ ...prev, [pl.id]: thumb }));
+  const resolvePlaylistCoverFromFirstTrack = useCallback(async (playlistId: string): Promise<string | null> => {
+    try {
+      const page = await getSharedPlaylistTracksPage(playlistId, 8, 0);
+      for (const track of page.items) {
+        const explicitArtwork = (track.artwork_url ?? "").trim();
+        if (explicitArtwork) return explicitArtwork;
+        const spotifyUrl = (track.spotify_url ?? "").trim();
+        if (!spotifyUrl) continue;
+        const cached = (thumbs[spotifyUrl] ?? "").trim();
+        if (cached) return cached;
+        try {
+          const meta = await getSpotifyOembed(spotifyUrl);
+          const thumb = (meta.thumbnail_url ?? "").trim();
+          if (thumb) {
+            setThumbs((prev) => (prev[spotifyUrl] ? prev : { ...prev, [spotifyUrl]: thumb }));
+            return thumb;
+          }
+        } catch {
+          // Keep scanning the next track for usable artwork.
+        }
+      }
+    } catch {
+      // Ignore cover probing failures for shared playlists.
+    }
+    return null;
+  }, [thumbs]);
+
+  const ensurePlaylistCovers = useCallback((playlists: SharedPlaylist[]) => {
+    for (const playlist of playlists) {
+      const playlistId = String(playlist.id ?? "").trim();
+      if (!playlistId) continue;
+      const explicitCover = (playlist.cover_url ?? "").trim();
+      if (explicitCover) {
+        setPlaylistCoverById((prev) => (prev[playlistId] ? prev : { ...prev, [playlistId]: explicitCover }));
+        continue;
+      }
+      if (playlistCoverById[playlistId]) continue;
+      if (playlistCoverLoadingRef.current.has(playlistId)) continue;
+
+      const spotifyUrl = (playlist.spotify_url ?? "").trim();
+      playlistCoverLoadingRef.current.add(playlistId);
+
+      const resolveCover = async () => {
+        if (spotifyUrl) {
+          try {
+            const meta = await getSpotifyOembed(spotifyUrl);
+            const thumb = (meta?.thumbnail_url ?? "").trim();
+            if (thumb) return thumb;
+          } catch {
+            // Fall back to first-track artwork below.
+          }
+        }
+        return resolvePlaylistCoverFromFirstTrack(playlistId);
+      };
+
+      void resolveCover()
+        .then((cover) => {
+          if (!cover) return;
+          setPlaylistCoverById((prev) => ({ ...prev, [playlistId]: cover }));
         })
-        .catch(() => {});
-    });
-  }, [sharedPlaylists, playlistCoverById]);
+        .finally(() => {
+          playlistCoverLoadingRef.current.delete(playlistId);
+        });
+    }
+  }, [playlistCoverById, resolvePlaylistCoverFromFirstTrack]);
+
+  useEffect(() => {
+    if (sharedPlaylists.length > 0) ensurePlaylistCovers(sharedPlaylists);
+  }, [sharedPlaylists, ensurePlaylistCovers]);
 
   const loadTracksPage = useCallback(async (playlistId: string, append: boolean) => {
     if (append) setLoadingMoreTracks(true);
@@ -955,8 +1010,8 @@ export default function SharedPlaylistsBrowser({ onAddTrack, submitting }: Share
                   onKeyDown={(event) => handlePlaylistCardKeyDown(event, playlist)}
                   className="flex w-full cursor-pointer items-center gap-1 rounded-lg border border-gray-800 bg-gray-900/70 px-2 py-1.5 text-left transition hover:border-blue-700/60 hover:bg-gray-800/80 focus:outline-none focus:ring-2 focus:ring-blue-500/40 sm:gap-2 sm:px-2.5"
                 >
-                  {playlist.cover_url ? (
-                    <img src={playlist.cover_url} alt="" className="h-8 w-8 shrink-0 rounded object-cover" />
+                  {(playlist.cover_url || playlistCoverById[playlist.id]) ? (
+                    <img src={playlist.cover_url || playlistCoverById[playlist.id]} alt="" className="h-8 w-8 shrink-0 rounded object-cover" />
                   ) : (
                     <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-blue-500/15">
                       <svg className="h-4 w-4 text-blue-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
