@@ -357,7 +357,7 @@ export default function ChatBox({ onNewMessage, username, onUserClick }: ChatBox
     const latestMessageId = messages[messages.length - 1]?.id ?? null;
     const prevLatestMessageId = lastMessageIdRef.current;
     const hasNewLatestMessage = !!latestMessageId && latestMessageId !== prevLatestMessageId;
-    const shouldScroll = !didInitialScrollRef.current || (hasNewLatestMessage && shouldAutoScrollRef.current);
+    const shouldScroll = !didInitialScrollRef.current || hasNewLatestMessage;
 
     lastMessageIdRef.current = latestMessageId;
     if (!shouldScroll) return;
@@ -376,7 +376,7 @@ export default function ChatBox({ onNewMessage, username, onUserClick }: ChatBox
     const host = messagesRef.current;
     if (!host) return;
     const observer = new MutationObserver(() => {
-      if (shouldAutoScrollRef.current) {
+      if (shouldAutoScrollRef.current || !didInitialScrollRef.current) {
         scrollToBottom(false);
       }
     });
