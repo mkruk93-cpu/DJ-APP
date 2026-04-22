@@ -800,6 +800,12 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
         castArtist = `Live • ${syncedRadioTrack.added_by}`;
       }
 
+      const notificationArtist = pausedForIdle
+        ? (displayArtist ?? "Stand-by")
+        : syncedRadioTrack
+          ? (syncedRadioTrack.added_by ? `Live • ${syncedRadioTrack.added_by}` : "Live radio")
+          : (displayArtist ?? track.artist ?? "Live radio");
+
       const castArtwork = currentArtwork
         ?? displayArtwork
         ?? (track.artwork_url ?? null)
@@ -808,7 +814,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
 
       navigator.mediaSession.metadata = new MediaMetadata({
         title: castTitle,
-        artist: castArtist,
+        artist: notificationArtist,
         album: "KrukkeX Radio",
         artwork: [
           { src: castArtwork, sizes: "512x512", type: "image/png" },
