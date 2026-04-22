@@ -2098,6 +2098,16 @@ export default function SpotifyBrowser({ onAddTrack, submitting, mode = "all", o
                 Alles onder elkaar
               </button>
             </div>
+            <NoAutofillInput
+              type="search"
+              name={`playlist-library-filter-${Math.random().toString(36).substring(7)}`}
+              autoComplete="off"
+              spellCheck={false}
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="Zoek playlists..."
+              className="mb-2 w-full rounded-md border border-gray-700 bg-gray-800 px-2.5 py-1 text-xs text-white placeholder-gray-500 outline-none transition focus:border-emerald-400"
+            />
             {groupedSavedPlaylists.length === 0 && !savedPlaylistsLoading && (
               <p className="text-[10px] text-gray-400">Nog geen persoonlijke playlists.</p>
             )}

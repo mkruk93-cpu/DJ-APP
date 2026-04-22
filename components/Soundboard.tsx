@@ -44,6 +44,11 @@ function getFavoritesStorageKey(username: string): string {
   return `soundboard-favorites:${normalized}`;
 }
 
+function formatUploaderLabel(value: string): string {
+  const safe = value.trim();
+  return safe || 'Onbekend';
+}
+
 export default function Soundboard({ showPublic }: SoundboardProps) {
   const isAdmin = useIsAdmin();
   const { userAccount } = useAuth();
@@ -117,31 +122,34 @@ export default function Soundboard({ showPublic }: SoundboardProps) {
     }
   }, [favoriteIds, nickname]);
 
+  const favoriteSet = useMemo(() => new Set(favoriteIds), [favoriteIds]);
+
   const uploaderOptions = useMemo(() => {
-    return Array.from(new Set(samples.map((sample) => sample.uploadedBy || 'Onbekend'))).sort((a, b) =>
+    return Array.from(new Set(samples.map((sample) => formatUploaderLabel(sample.uploadedBy)))).sort((a, b) =>
       a.localeCompare(b, 'nl', { sensitivity: 'base' }),
     );
   }, [samples]);
 
-  const favoriteSet = useMemo(() => new Set(favoriteIds), [favoriteIds]);
-
   const visibleSamples = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
     const filtered = samples.filter((sample) => {
+      const uploadedBy = formatUploaderLabel(sample.uploadedBy);
       if (categoryFilter !== 'all' && sample.category !== categoryFilter) return false;
-      if (uploaderFilter !== 'all' && sample.uploadedBy !== uploaderFilter) return false;
+      if (uploaderFilter !== 'all' && uploadedBy !== uploaderFilter) return false;
       if (!term) return true;
 
       return [
         sample.name,
-        sample.uploadedBy,
+        uploadedBy,
         sample.category,
         sample.originalFileName ?? '',
       ].some((value) => value.toLowerCase().includes(term));
     });
 
     return filtered.sort((a, b) => {
-      const primary = a[sortField].localeCompare(b[sortField], 'nl', { sensitivity: 'base' });
+      const left = sortField === 'uploadedBy' ? formatUploaderLabel(a.uploadedBy) : a[sortField];
+      const right = sortField === 'uploadedBy' ? formatUploaderLabel(b.uploadedBy) : b[sortField];
+      const primary = left.localeCompare(right, 'nl', { sensitivity: 'base' });
       if (primary !== 0) return primary;
       return a.name.localeCompare(b.name, 'nl', { sensitivity: 'base' });
     });
@@ -149,6 +157,10 @@ export default function Soundboard({ showPublic }: SoundboardProps) {
 
   const favoriteSamples = useMemo(() => {
     return visibleSamples.filter((sample) => favoriteSet.has(sample.id));
+  }, [favoriteSet, visibleSamples]);
+
+  const regularSamples = useMemo(() => {
+    return visibleSamples.filter((sample) => !favoriteSet.has(sample.id));
   }, [favoriteSet, visibleSamples]);
 
   const broadcastRecordingState = (active: boolean) => {
@@ -400,64 +412,105 @@ export default function Soundboard({ showPublic }: SoundboardProps) {
 
   if (!isAdmin && !showSoundboardPublic) return null;
 
-  return (
-    <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden rounded-xl border border-gray-800 bg-gray-900 p-3 shadow-xl sm:p-4">
-      <div className="border-b border-gray-800 pb-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-violet-400 sm:text-sm">
-            Soundboard
-          </h2>
-          <div className="flex items-center gap-2">
-            {isAdmin && isMicAllowed === false && (
-              <button
-                onClick={requestMicPermission}
-                className="rounded border border-red-500/40 bg-red-500/20 px-2 py-1 text-[10px] text-red-400 transition hover:bg-red-500/30"
-              >
-                Mic Toestaan
-              </button>
-            )}
-            <span className="text-xs text-gray-500">
-              {samples.length} {samples.length === 1 ? "sample" : "samples"}
-            </span>
+  const sampleTabs: Array<{ id: Tab; label: string }> = [
+    { id: 'samples', label: 'Samples' },
+    { id: 'live', label: 'Live' },
+    { id: 'upload', label: 'Upload' },
+  ];
+
+  const renderSampleCard = (sample: Sample, highlighted = false) => {
+    const isFavorite = favoriteSet.has(sample.id);
+    const uploadedBy = formatUploaderLabel(sample.uploadedBy);
+
+    return (
+      <div
+        key={`${highlighted ? 'favorite-' : 'sample-'}${sample.id}`}
+        role="button"
+        tabIndex={0}
+        onClick={() => playSample(sample.id)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            playSample(sample.id);
+          }
+        }}
+        className={`group relative z-0 overflow-hidden rounded-lg border px-2.5 py-2 text-left text-gray-300 transition-all hover:border-violet-400 hover:bg-violet-600 hover:text-white active:scale-95 ${
+          highlighted
+            ? 'border-pink-500/20 bg-pink-500/5'
+            : 'border-gray-800 bg-gray-900/85'
+        }`}
+      >
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            toggleFavorite(sample.id);
+          }}
+          className={`absolute right-2 top-2 z-10 rounded-full px-1.5 py-0.5 text-xs transition ${
+            isFavorite
+              ? 'bg-pink-500/20 text-pink-300 hover:bg-pink-500/30'
+              : 'bg-black/30 text-gray-500 hover:bg-black/50 hover:text-pink-200'
+          }`}
+          aria-label={isFavorite ? `Verwijder ${sample.name} uit favorieten` : `Voeg ${sample.name} toe aan favorieten`}
+        >
+          {isFavorite ? '♥' : '♡'}
+        </button>
+        <div className="relative z-0 space-y-1 pr-7">
+          <p className="truncate text-xs font-semibold">{sample.name}</p>
+          <div className="flex flex-wrap gap-1 text-[9px] text-gray-500 group-hover:text-violet-100/90">
+            <span className="rounded-full bg-black/20 px-1.5 py-0.5">{formatCategoryLabel(sample.category)}</span>
+            <span className="rounded-full bg-black/20 px-1.5 py-0.5">door {uploadedBy}</span>
           </div>
         </div>
       </div>
+    );
+  };
 
-      <div className="flex shrink-0 items-center gap-1 rounded-xl bg-gray-950/50 p-1 border border-gray-800">
-        <button
-          onClick={() => setActiveTab('samples')}
-          className={`flex-1 rounded-lg px-3 py-2 text-xs font-bold transition-all ${
-            activeTab === 'samples'
-              ? 'bg-violet-600 text-white shadow-lg'
-              : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
-          }`}
-        >
-          Samples
-        </button>
-        <button
-          onClick={() => setActiveTab('live')}
-          className={`flex-1 rounded-lg px-3 py-2 text-xs font-bold transition-all ${
-            activeTab === 'live'
-              ? 'bg-violet-600 text-white shadow-lg'
-              : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
-          }`}
-        >
-          Live
-        </button>
-        <button
-          onClick={() => setActiveTab('upload')}
-          className={`flex-1 rounded-lg px-3 py-2 text-xs font-bold transition-all ${
-            activeTab === 'upload'
-              ? 'bg-violet-600 text-white shadow-lg'
-              : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
-          }`}
-        >
-          Uploaden
-        </button>
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden rounded-xl border border-gray-800 bg-gray-900 p-3 shadow-xl sm:p-4">
+      <div className="flex items-center justify-between border-b border-gray-800 pb-2">
+        <h2 className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+          Soundboard
+        </h2>
+        <div className="flex items-center gap-2">
+          {isAdmin && isMicAllowed === false && (
+            <button
+              onClick={requestMicPermission}
+              className="rounded border border-red-500/40 bg-red-500/20 px-2 py-1 text-[10px] text-red-400 transition hover:bg-red-500/30"
+            >
+              Mic Toestaan
+            </button>
+          )}
+          <span className="text-[10px] text-gray-500">
+            {samples.length} {samples.length === 1 ? 'sample' : 'samples'}
+          </span>
+        </div>
+      </div>
+
+      <div className="shrink-0 rounded-md border border-gray-800 bg-gray-950/50 p-1">
+        <div className="flex gap-1">
+          {sampleTabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex-1 rounded-md px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition ${
+                activeTab === tab.id
+                  ? 'bg-violet-600 text-white shadow-sm'
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {activeTab === 'live' && (
-        <div className="shrink-0">
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden rounded-xl border border-gray-800 bg-gray-950/40 p-3">
+          <div className="rounded-lg border border-violet-500/20 bg-violet-500/5 px-3 py-2 text-[11px] text-gray-300">
+            Houd de knop ingedrukt om op te nemen. Zodra je loslaat, wordt de opname meteen afgespeeld.
+          </div>
           <button
             onMouseDown={startRecording}
             onMouseUp={stopRecording}
@@ -476,192 +529,166 @@ export default function Soundboard({ showPublic }: SoundboardProps) {
             <span className="text-xl">{isRecording ? '⏹' : (isMicAllowed ? '🎤' : '🎙️')}</span>
             <div className="min-w-0 text-left">
               <div className="leading-tight">{isRecording ? 'Aan het opnemen...' : 'Live Inspreken'}</div>
-              {isRecording && (
-                <div className="text-[10px] font-normal opacity-70">Laat los om direct te verzenden</div>
-              )}
+              <div className="text-[10px] font-normal opacity-70">
+                {isRecording ? 'Laat los om af te spelen' : 'Inhouden voor opname'}
+              </div>
             </div>
           </button>
         </div>
       )}
 
       {activeTab === 'samples' && (
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-800 bg-gray-950/30">
-          <div className="shrink-0 space-y-2 border-b border-gray-800 p-2">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setFavoritesOpen((prev) => !prev)}
-                className={`flex-1 rounded-lg border px-2 py-1.5 text-[11px] font-bold transition ${
-                  favoritesOpen
-                    ? 'border-pink-500/60 bg-pink-500/20 text-pink-200'
-                    : 'border-gray-700 bg-gray-800 text-gray-400 hover:border-gray-600 hover:text-white'
-                }`}
-              >
-                Favorieten
-              </button>
-              <div ref={sortPanelRef} className="relative flex-1">
-                <button
-                  type="button"
-                  onClick={() => setSortPanelOpen((prev) => !prev)}
-                  className={`w-full rounded-lg border px-2 py-1.5 text-[11px] font-bold transition ${
-                    sortPanelOpen
-                      ? 'border-violet-500/60 bg-violet-500/20 text-violet-200'
-                      : 'border-gray-700 bg-gray-800 text-gray-400 hover:border-gray-600 hover:text-white'
-                  }`}
-                >
-                  Sorteren
-                </button>
-                {sortPanelOpen && (
-                  <div className="absolute right-0 top-full z-20 mt-2 w-56 rounded-xl border border-gray-700 bg-gray-900 p-2 shadow-2xl shadow-black/40">
-                    <div className="space-y-2">
-                      <label className="block space-y-1">
-                        <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Sorteer op</span>
-                        <select
-                          value={sortField}
-                          onChange={(event) => setSortField(event.target.value as SortField)}
-                          className="w-full rounded-lg border border-gray-700 bg-gray-800 px-2 py-1.5 text-xs text-white outline-none focus:border-violet-500"
-                        >
-                          <option value="name">Naam</option>
-                          <option value="uploadedBy">Gebruiker</option>
-                          <option value="category">Categorie</option>
-                        </select>
-                      </label>
-                      <label className="block space-y-1">
-                        <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Categorie</span>
-                        <select
-                          value={categoryFilter}
-                          onChange={(event) => setCategoryFilter(event.target.value)}
-                          className="w-full rounded-lg border border-gray-700 bg-gray-800 px-2 py-1.5 text-xs text-white outline-none focus:border-violet-500"
-                        >
-                          <option value="all">Alle categorieën</option>
-                          {categories.map((category) => (
-                            <option key={category} value={category}>
-                              {formatCategoryLabel(category)}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    </div>
-                  </div>
-                )}
-              </div>
-              <button
-                onClick={() => { void refreshSamples(); }}
-                className="rounded-lg border border-gray-700 bg-gray-800 p-1.5 text-gray-400 transition hover:bg-gray-700 hover:text-white"
-                title="Verversen"
-              >
-                🔄
-              </button>
-            </div>
-
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-800 bg-gray-950/30 md:overflow-visible">
+          <div className="shrink-0 space-y-2 border-b border-gray-800 p-3 md:relative md:z-10">
             <input
               type="text"
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder="Zoek samples..."
-              className="w-full rounded-lg border border-gray-700 bg-gray-800 px-2 py-1.5 text-xs text-white outline-none focus:border-violet-500"
+              placeholder="Zoek samples, uploader of categorie..."
+              className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-xs text-white outline-none transition focus:border-violet-500"
             />
-          </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto p-2">
-            <div className="space-y-2">
-              {favoritesOpen && (
-                <div className="space-y-1.5">
-                  <h5 className="text-[10px] font-bold uppercase tracking-widest text-pink-300">Jouw favorieten</h5>
-                  {favoriteSamples.length > 0 ? (
-                    <div className="grid grid-cols-2 gap-1.5">
-                      {favoriteSamples.map((sample) => (
-                        <div
-                          key={`favorite-${sample.id}`}
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => playSample(sample.id)}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter' || event.key === ' ') {
-                              event.preventDefault();
-                              playSample(sample.id);
-                            }
-                          }}
-                          className="group relative overflow-hidden rounded-lg border border-pink-500/20 bg-pink-500/5 px-2 py-2 text-left text-gray-300 transition-all hover:border-violet-400 hover:bg-violet-600 hover:text-white active:scale-95"
-                        >
+            <div className="flex items-center justify-between gap-2">
+              <span className="rounded-full bg-gray-800/60 px-2 py-1 text-[10px] text-gray-300">
+                {visibleSamples.length} zichtbaar
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setFavoritesOpen((prev) => !prev)}
+                  className={`rounded-md border px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition ${
+                    favoritesOpen
+                      ? 'border-pink-500/60 bg-pink-500/20 text-pink-200'
+                      : 'border-gray-700 bg-gray-800 text-gray-300 hover:border-gray-600 hover:text-white'
+                  }`}
+                >
+                  Favorieten
+                </button>
+                <div ref={sortPanelRef} className="relative z-40">
+                  <button
+                    type="button"
+                    onClick={() => setSortPanelOpen((prev) => !prev)}
+                    className={`rounded-md border px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition ${
+                      sortPanelOpen
+                        ? 'border-violet-500/60 bg-violet-500/20 text-violet-200'
+                        : 'border-gray-700 bg-gray-800 text-gray-300 hover:border-gray-600 hover:text-white'
+                    }`}
+                  >
+                    Sorteren
+                  </button>
+                  {sortPanelOpen && (
+                    <div className="absolute right-0 top-full z-50 mt-2 w-72 rounded-xl border border-gray-700 bg-gray-900 p-3 shadow-2xl shadow-black/50">
+                      <div className="grid gap-3">
+                        <label className="space-y-1">
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Sortering</span>
+                          <select
+                            value={sortField}
+                            onChange={(event) => setSortField(event.target.value as SortField)}
+                            className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-xs text-white outline-none transition focus:border-violet-500"
+                          >
+                            <option value="name">Naam</option>
+                            <option value="uploadedBy">Uploader</option>
+                            <option value="category">Categorie</option>
+                          </select>
+                        </label>
+                        <label className="space-y-1">
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Filter op categorie</span>
+                          <select
+                            value={categoryFilter}
+                            onChange={(event) => setCategoryFilter(event.target.value)}
+                            className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-xs text-white outline-none transition focus:border-violet-500"
+                          >
+                            <option value="all">Alle categorieen</option>
+                            {categories.map((category) => (
+                              <option key={category} value={category}>
+                                {formatCategoryLabel(category)}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="space-y-1">
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Filter op uploader</span>
+                          <select
+                            value={uploaderFilter}
+                            onChange={(event) => setUploaderFilter(event.target.value)}
+                            className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-xs text-white outline-none transition focus:border-violet-500"
+                          >
+                            <option value="all">Alle uploaders</option>
+                            {uploaderOptions.map((uploader) => (
+                              <option key={uploader} value={uploader}>
+                                {uploader}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <div className="flex items-center justify-between gap-2 border-t border-gray-800 pt-2">
                           <button
                             type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              toggleFavorite(sample.id);
+                            onClick={() => {
+                              setSortField('name');
+                              setCategoryFilter('all');
+                              setUploaderFilter('all');
                             }}
-                            className="absolute right-1 top-1 z-20 rounded-full bg-black/30 px-1.5 py-0.5 text-xs text-pink-300 transition hover:bg-black/50 hover:text-pink-200"
+                            className="rounded-md border border-gray-700 px-2.5 py-1.5 text-[10px] font-semibold text-gray-300 transition hover:border-gray-600 hover:text-white"
                           >
-                            ♥
+                            Reset filters
                           </button>
-                          <div className="relative z-10 space-y-0.5 pr-6">
-                            <span className="block truncate text-xs font-semibold">{sample.name}</span>
-                            <div className="flex flex-wrap gap-1 text-[9px] text-gray-500 group-hover:text-violet-100/90">
-                              <span className="rounded-full bg-black/20 px-1.5 py-0.25">{formatCategoryLabel(sample.category)}</span>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="rounded-lg border border-dashed border-pink-500/20 bg-pink-500/5 py-2 text-center">
-                      <p className="text-[10px] italic text-pink-100/70">Geen favorieten.</p>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-1.5">
-                {visibleSamples.map((sample) => {
-                  const isFavorite = favoriteSet.has(sample.id);
-
-                  return (
-                    <div
-                      key={sample.id}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => playSample(sample.id)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault();
-                          playSample(sample.id);
-                        }
-                      }}
-                      className="group relative overflow-hidden rounded-lg border border-gray-800 bg-gray-850 px-2 py-2 text-left text-gray-300 transition-all hover:border-violet-400 hover:bg-violet-600 hover:text-white active:scale-95"
-                    >
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          toggleFavorite(sample.id);
-                        }}
-                        className={`absolute right-1 top-1 z-20 rounded-full px-1.5 py-0.5 text-xs transition ${
-                          isFavorite
-                            ? 'bg-pink-500/20 text-pink-300 hover:bg-pink-500/30'
-                            : 'bg-black/30 text-gray-500 hover:bg-black/50 hover:text-pink-200'
-                        }`}
-                      >
-                        {isFavorite ? '♥' : '♡'}
-                      </button>
-                      <div className="relative z-10 space-y-0.5 pr-6">
-                        <span className="block truncate text-xs font-semibold">{sample.name}</span>
-                        <div className="flex flex-wrap gap-1 text-[9px] text-gray-500 group-hover:text-violet-100/90">
-                          <span className="rounded-full bg-black/20 px-1.5 py-0.25">{formatCategoryLabel(sample.category)}</span>
+                          <button
+                            type="button"
+                            onClick={() => setSortPanelOpen(false)}
+                            className="rounded-md bg-violet-600 px-2.5 py-1.5 text-[10px] font-semibold text-white transition hover:bg-violet-500"
+                          >
+                            Sluiten
+                          </button>
                         </div>
                       </div>
                     </div>
-                  );
-                })}
+                  )}
+                </div>
+                <button
+                  onClick={() => { void refreshSamples(); }}
+                  className="rounded-md border border-gray-700 bg-gray-800 px-2 py-1.5 text-[10px] font-semibold text-gray-300 transition hover:border-gray-600 hover:text-white"
+                  title="Ververs"
+                >
+                  Ververs
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto p-3">
+            <div className="space-y-3">
+              {favoritesOpen && (
+                <section className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <h4 className="text-[10px] font-semibold uppercase tracking-wider text-pink-300">Jouw favorieten</h4>
+                    <span className="text-[10px] text-pink-200/80">{favoriteSamples.length}</span>
+                  </div>
+                  {favoriteSamples.length > 0 ? (
+                    <div className="grid grid-cols-2 gap-2">
+                      {favoriteSamples.map((sample) => renderSampleCard(sample, true))}
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-pink-500/20 bg-pink-500/5 py-4 text-center">
+                      <p className="text-[10px] italic text-pink-100/70">Nog geen favorieten geselecteerd.</p>
+                    </div>
+                  )}
+                </section>
+              )}
+
+              <div className="grid grid-cols-2 gap-2">
+                {regularSamples.map((sample) => renderSampleCard(sample))}
               </div>
 
               {visibleSamples.length === 0 && (
                 <div className="rounded-lg border border-dashed border-gray-800 bg-gray-950/30 py-8 text-center">
-                  <p className="text-xs italic text-gray-600">Geen samples gevonden voor deze filter.</p>
+                  <p className="text-xs italic text-gray-600">Geen samples gevonden voor deze selectie.</p>
                   <button
                     onClick={() => {
                       setSearchTerm('');
                       setCategoryFilter('all');
                       setUploaderFilter('all');
+                      setFavoritesOpen(false);
                       void refreshSamples();
                     }}
                     className="mt-2 text-[10px] text-violet-400 underline hover:text-violet-300"
@@ -676,13 +703,15 @@ export default function Soundboard({ showPublic }: SoundboardProps) {
       )}
 
       {activeTab === 'upload' && (
-        <div className="shrink-0 space-y-3 overflow-hidden rounded-xl border border-gray-800 bg-gray-950/50 p-3">
-          <div className="flex items-center justify-between border-b border-gray-800 pb-2">
-            <h4 className="text-sm font-bold text-white">Nieuwe Sample Uploaden</h4>
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden rounded-xl border border-gray-800 bg-gray-950/40 p-3">
+          <div>
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400">Nieuwe sample</h3>
+            <p className="mt-1 text-[11px] text-gray-500">Geef je sample eerst een naam en categorie mee.</p>
           </div>
+
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label className="space-y-1">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Naam</span>
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Naam</span>
               <input
                 type="text"
                 value={sampleName}
@@ -692,7 +721,7 @@ export default function Soundboard({ showPublic }: SoundboardProps) {
               />
             </label>
             <label className="space-y-1">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Categorie</span>
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Categorie</span>
               <select
                 value={selectedCategory}
                 onChange={(event) => setSelectedCategory(event.target.value)}

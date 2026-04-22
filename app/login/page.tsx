@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/authContext";
 
-export default function LoginPage() {
+function LoginPageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { signIn, user, userAccount, loading, signOut } = useAuth();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -17,23 +18,25 @@ export default function LoginPage() {
     setIsClient(true);
   }, []);
 
-  // Redirect if already logged in and approved
+  const requestedRedirect = searchParams.get("redirect");
+  const safeRedirect = requestedRedirect && requestedRedirect.startsWith("/") && !requestedRedirect.startsWith("//")
+    ? requestedRedirect
+    : null;
+
   useEffect(() => {
-    // Once we have the user account, the "login" process is complete,
-    // so we can turn off the specific login loading indicator.
     if (user && userAccount) {
       setLoginLoading(false);
     }
 
     if (isClient && !loading && user && userAccount?.approved) {
       if (userAccount.username) {
-        router.replace("/stream");
+        router.replace(safeRedirect ?? "/stream");
       } else {
         router.replace("/account-setup");
       }
     }
-  }, [user, userAccount, loading, router, signOut, isClient]);
- 
+  }, [user, userAccount, loading, router, isClient, safeRedirect]);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
@@ -44,28 +47,21 @@ export default function LoginPage() {
 
       if (signInError) {
         setLoginLoading(false);
-        if (signInError.message.includes('Invalid login credentials') || signInError.message.includes('User not found')) {
+        if (signInError.message.includes("Invalid login credentials") || signInError.message.includes("User not found")) {
           setError("Ongeldige username of wachtwoord.");
-        } else if (signInError.message.includes('Email not confirmed')) {
+        } else if (signInError.message.includes("Email not confirmed")) {
           setError("Bevestig eerst je email adres.");
         } else {
           setError("Inloggen mislukt: " + signInError.message);
         }
-        return;
       }
-
-      // On success, we keep `loginLoading` true. The page shows "Laden...".
-      // The `onAuthStateChange` in AuthContext will update `user` and `userAccount`.
-      // The `useEffect` above will then handle the redirect or show the pending approval message.
-
     } catch (err) {
-      console.error('Login error:', err);
+      console.error("Login error:", err);
       setError("Er is een onverwachte fout opgetreden.");
       setLoginLoading(false);
     }
   }
 
-  // Show loading while checking auth state
   if (!isClient || (loading && !user) || loginLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -74,29 +70,23 @@ export default function LoginPage() {
     );
   }
 
-  // Handle case where user is logged in but profile is still loading
   if (user && loading && !userAccount) {
-     return (
+    return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="text-white">Account profiel laden...</div>
       </div>
     );
   }
 
-  // If logged in but somehow userAccount is still missing after loading finished
   if (user && !loading && !userAccount) {
     return (
       <div className="flex min-h-screen items-center justify-center p-4">
-        <div className="w-full max-w-md rounded-2xl border border-gray-800 bg-gray-900 p-8 shadow-lg shadow-violet-500/5 text-center">
+        <div className="w-full max-w-md rounded-2xl border border-gray-800 bg-gray-900 p-8 text-center shadow-lg shadow-violet-500/5">
           <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-red-600/20 text-3xl">
             ⚠️
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-white mb-4">
-            Profiel Fout
-          </h1>
-          <p className="text-gray-400 mb-6">
-            We konden je accountgegevens niet ophalen. Probeer het opnieuw.
-          </p>
+          <h1 className="mb-4 text-2xl font-bold tracking-tight text-white">Profiel Fout</h1>
+          <p className="mb-6 text-gray-400">We konden je accountgegevens niet ophalen. Probeer het opnieuw.</p>
           <button
             onClick={async () => {
               await signOut();
@@ -111,25 +101,22 @@ export default function LoginPage() {
     );
   }
 
-  // If logged in but not approved, show pending message
   if (user && userAccount && !userAccount.approved) {
     return (
       <div className="flex min-h-screen items-center justify-center p-4">
-        <div className="w-full max-w-md rounded-2xl border border-gray-800 bg-gray-900 p-8 shadow-lg shadow-violet-500/5 text-center">
+        <div className="w-full max-w-md rounded-2xl border border-gray-800 bg-gray-900 p-8 text-center shadow-lg shadow-violet-500/5">
           <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-yellow-600/20 text-3xl">
             ⏳
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-white mb-4">
-            Account in Behandeling
-          </h1>
-          <p className="text-gray-400 mb-6">
+          <h1 className="mb-4 text-2xl font-bold tracking-tight text-white">Account in Behandeling</h1>
+          <p className="mb-6 text-gray-400">
             Je account is aangemaakt maar nog niet goedgekeurd door de admin.
             Je ontvangt een notificatie zodra je toegang krijgt.
           </p>
           <button
             onClick={async () => {
               await signOut();
-              router.push('/login');
+              router.push("/login");
             }}
             className="w-full rounded-lg bg-violet-600 px-4 py-3 font-semibold text-white transition hover:bg-violet-500"
           >
@@ -147,17 +134,13 @@ export default function LoginPage() {
           <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-violet-600/20 text-3xl">
             🔐
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-white">
-            Log in op KrukkeX
-          </h1>
-          <p className="mt-1 text-sm text-gray-400">
-            Voer je gegevens in om toegang te krijgen
-          </p>
+          <h1 className="text-2xl font-bold tracking-tight text-white">Log in op KrukkeX</h1>
+          <p className="mt-1 text-sm text-gray-400">Voer je gegevens in om toegang te krijgen</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label htmlFor="username" className="block text-sm font-medium text-gray-300 mb-2">
+            <label htmlFor="username" className="mb-2 block text-sm font-medium text-gray-300">
               Username/Email
             </label>
             <input
@@ -173,7 +156,7 @@ export default function LoginPage() {
           </div>
 
           <div>
-            <label htmlFor="password" className="block text-sm font-medium text-gray-300 mb-2">
+            <label htmlFor="password" className="mb-2 block text-sm font-medium text-gray-300">
               Wachtwoord
             </label>
             <input
@@ -188,14 +171,12 @@ export default function LoginPage() {
             />
           </div>
 
-          {error && (
-            <p className="text-sm text-red-400">{error}</p>
-          )}
+          {error && <p className="text-sm text-red-400">{error}</p>}
 
           <button
             type="submit"
             disabled={loginLoading}
-            className="w-full rounded-lg bg-violet-600 px-4 py-3 font-semibold text-white transition hover:bg-violet-500 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full rounded-lg bg-violet-600 px-4 py-3 font-semibold text-white transition hover:bg-violet-500 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {loginLoading ? "Inloggen..." : "Log in"}
           </button>
@@ -205,8 +186,8 @@ export default function LoginPage() {
           <p className="text-sm text-gray-400">
             Nog geen account?{" "}
             <button
-              onClick={() => router.push('/register')}
-              className="text-violet-400 hover:text-violet-300 transition"
+              onClick={() => router.push("/register")}
+              className="text-violet-400 transition hover:text-violet-300"
             >
               Registreer
             </button>
@@ -214,5 +195,19 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center">
+          <div className="text-white">Laden... (auth check)</div>
+        </div>
+      }
+    >
+      <LoginPageInner />
+    </Suspense>
   );
 }

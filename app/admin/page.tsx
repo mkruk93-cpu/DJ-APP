@@ -41,7 +41,7 @@ function formatDuration(seconds: number | null): string {
 
 export default function AdminPage() {
   const router = useRouter();
-  const { user, userAccount } = useAuth();
+  const { user, userAccount, loading: authLoading } = useAuth();
   const [authenticated, setAuthenticated] = useState(false);
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -64,6 +64,7 @@ export default function AdminPage() {
   const [pushExpiryMinutes, setPushExpiryMinutes] = useState(0);
   const [pushSending, setPushSending] = useState(false);
   const [pushError, setPushError] = useState("");
+  const [accessDenied, setAccessDenied] = useState(false);
 
   const radioConnected = useRadioStore((s) => s.connected);
   const radioTrack = useRadioStore((s) => s.currentTrack);
@@ -107,6 +108,7 @@ export default function AdminPage() {
   useEffect(() => {
     if (!isConfiguredAdminUser(userAccount)) return;
     setAuthenticated(true);
+    setAccessDenied(false);
     sessionStorage.setItem("admin_auth", "true");
   }, [userAccount]);
 
@@ -144,9 +146,12 @@ export default function AdminPage() {
   }, [authenticated, radioAuthed]);
 
   useEffect(() => {
-    if (user === undefined) return;
+    if (authLoading) return;
     if (!user) {
-      router.replace("/login");
+      setAccessDenied(true);
+      if (!embedded) {
+        router.replace("/login");
+      }
       return;
     }
     if (!userAccount) {
@@ -156,16 +161,23 @@ export default function AdminPage() {
       clearAdminSessionArtifacts();
       setAuthenticated(false);
       setRadioAuthed(false);
-      router.replace("/login");
+      setAccessDenied(true);
+      if (!embedded) {
+        router.replace("/login");
+      }
       return;
     }
     if (userAccount && !userAccount.approved) {
       clearAdminSessionArtifacts();
       setAuthenticated(false);
       setRadioAuthed(false);
-      router.replace("/login");
+      setAccessDenied(true);
+      if (!embedded) {
+        router.replace("/login");
+      }
+      return;
     }
-  }, [user, userAccount, router]);
+  }, [authLoading, embedded, user, userAccount, router]);
 
   // All hooks are now above - render normally (SSR will handle itself)
   useEffect(() => {
@@ -218,7 +230,7 @@ export default function AdminPage() {
       fetchState();
       const username = userAccount?.username;
       if (username) {
-        socket.emit("listener:state", { nickname: username, listening: true });
+        socket.emit("listener:state", { nickname: username, listening: false });
       }
     });
 
@@ -515,6 +527,19 @@ export default function AdminPage() {
   }
 
   if (!authenticated) {
+    if (accessDenied && embedded) {
+      return (
+        <div className="flex min-h-screen items-center justify-center bg-gray-950 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-red-900/50 bg-gray-900 p-6 text-center">
+            <h1 className="text-base font-semibold text-white">Geen admin-toegang</h1>
+            <p className="mt-2 text-sm text-gray-400">
+              Deze overlay kan alleen worden geopend met een goedgekeurd admin-account.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
     if (!user || !userAccount || !userAccount.approved || !isConfiguredAdminUser(userAccount)) {
       return (
         <div className="flex min-h-screen items-center justify-center">

@@ -4535,11 +4535,21 @@ function decodeToEncoder(audioFile: string, enc: ChildProcess, forceDualMono = f
 // ── Soundboard Mixing ──
 let sbMixBuffer: Buffer[] = [];
 let currentDuckingFactor = 1.0;
-const DUCK_TARGET = 0.15; // Sterker ducken (was 0.3, nu 15% van origineel volume)
+let currentDuckTarget = 0.38;
+const VOICE_DUCK_TARGET = 0.15;
+const SAMPLE_DUCK_TARGET = 0.38;
 const DUCK_SPEED = 0.08; // Sneller ducken
 
-soundboardManager.on('pcm', (chunk: Buffer) => {
-  sbMixBuffer.push(chunk);
+soundboardManager.on('pcm', (payload: Buffer | { chunk: Buffer; duckTarget?: number }) => {
+  if (Buffer.isBuffer(payload)) {
+    currentDuckTarget = SAMPLE_DUCK_TARGET;
+    sbMixBuffer.push(payload);
+    return;
+  }
+  currentDuckTarget = typeof payload.duckTarget === 'number'
+    ? Math.min(1, Math.max(VOICE_DUCK_TARGET, payload.duckTarget))
+    : SAMPLE_DUCK_TARGET;
+  sbMixBuffer.push(payload.chunk);
 });
 
 function getSbChunk(size: number): Buffer | null {
@@ -4552,8 +4562,8 @@ function getSbChunk(size: number): Buffer | null {
   }
   
   // Geleidelijk naar ducking volume
-  if (currentDuckingFactor > DUCK_TARGET) {
-    currentDuckingFactor = Math.max(DUCK_TARGET, currentDuckingFactor - DUCK_SPEED);
+  if (currentDuckingFactor > currentDuckTarget) {
+    currentDuckingFactor = Math.max(currentDuckTarget, currentDuckingFactor - DUCK_SPEED);
   }
 
   let total = 0;

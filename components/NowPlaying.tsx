@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getSupabase } from "@/lib/supabaseClient";
 import { useRadioStore } from "@/lib/radioStore";
 import { parseTrackDisplay, decodeHtmlEntities } from "@/lib/trackDisplay";
@@ -47,9 +47,11 @@ export default function NowPlaying({ radioTrack, showFallback = false, preferSup
   const prevTrack = useRef<string>("");
   const prevCurrentTrackKeyRef = useRef<string>("");
   const prevNextCandidateKeyRef = useRef<string>("none");
+  const lastRadioTrackRef = useRef<Track | null>(null);
   const connected = useRadioStore((s) => s.connected);
   const queue = useRadioStore((s) => s.queue);
   const upcomingTrack = useRadioStore((s) => s.upcomingTrack);
+  const pausedForIdle = useRadioStore((s) => s.pausedForIdle);
   const syncedRadioTrack = useSyncedTrack(radioTrack);
 
   useEffect(() => {
@@ -107,17 +109,43 @@ export default function NowPlaying({ radioTrack, showFallback = false, preferSup
     syncedRadioTrack.youtube_id === "jingle"
     || (syncedRadioTrack.selection_key ?? "").toLowerCase().startsWith("jingle:")
   );
+  useEffect(() => {
+    if (syncedRadioTrack && !isJingleTrack) {
+      lastRadioTrackRef.current = syncedRadioTrack;
+    }
+  }, [syncedRadioTrack, isJingleTrack]);
   const isLoading = !!syncedRadioTrack && syncedRadioTrack.started_at === 0;
   const radioHasMetadata = !!(syncedRadioTrack?.title || syncedRadioTrack?.thumbnail);
-  const showSupabaseData = (showFallback && (!connected || preferSupabase)) || !radioHasMetadata;
+  const standbySource = useMemo(() => {
+    if (!pausedForIdle || syncedRadioTrack) return null;
+    const queuedCandidate = upcomingTrack ?? queue.find((item) => item.youtube_id !== "jingle") ?? null;
+    if (queuedCandidate) {
+      return {
+        title: queuedCandidate.title ?? queuedCandidate.youtube_id ?? null,
+        artist: queuedCandidate.artist ?? null,
+        artwork_url: queuedCandidate.thumbnail ?? null,
+      };
+    }
+    const lastTrack = lastRadioTrackRef.current;
+    if (!lastTrack) return null;
+    return {
+      title: lastTrack.title ?? null,
+      artist: lastTrack.artist ?? null,
+      artwork_url: lastTrack.thumbnail ?? null,
+    };
+  }, [pausedForIdle, queue, syncedRadioTrack, upcomingTrack]);
+  const standbyParsed = parseTrackDisplay(standbySource?.title);
+  const standbyTitle = standbySource ? decodeHtmlEntities(standbyParsed.title ?? standbySource.title) : null;
+  const standbyArtist = standbySource ? decodeHtmlEntities(standbySource.artist ?? standbyParsed.artist) : null;
+  const showSupabaseData = !pausedForIdle && ((showFallback && (!connected || preferSupabase)) || !radioHasMetadata);
   const parsedRadio = parseTrackDisplay(syncedRadioTrack?.title);
   const radioTitle = isJingleTrack ? null : (parsedRadio.title ?? syncedRadioTrack?.title ?? null);
   const radioArtist = isJingleTrack ? null : parsedRadio.artist;
   const currentRequestedBy = isJingleTrack ? null : (syncedRadioTrack?.added_by ?? null);
   const currentIsRandom = syncedRadioTrack?.youtube_id === "local";
-  const displayTitle = syncedRadioTrack ? radioTitle : (showSupabaseData ? decodeHtmlEntities(track.title) : null);
-  const displayArtist = syncedRadioTrack ? radioArtist : (showSupabaseData ? decodeHtmlEntities(track.artist) : null);
-  const displayArtwork = isJingleTrack ? null : (syncedRadioTrack?.thumbnail ?? (showSupabaseData ? track.artwork_url : null));
+  const displayTitle = syncedRadioTrack ? radioTitle : (standbyTitle ?? (showSupabaseData ? decodeHtmlEntities(track.title) : null));
+  const displayArtist = syncedRadioTrack ? radioArtist : (standbyArtist ?? (showSupabaseData ? decodeHtmlEntities(track.artist) : null));
+  const displayArtwork = isJingleTrack ? null : (syncedRadioTrack?.thumbnail ?? standbySource?.artwork_url ?? (showSupabaseData ? track.artwork_url : null));
   const hasData = displayTitle || displayArtist;
   const nextQueueItem = (queue.find((item) => {
     const key = (item.selection_key ?? "").toLowerCase();

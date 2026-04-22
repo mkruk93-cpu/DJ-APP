@@ -46,6 +46,8 @@ export const SAMPLE_DIR = resolveSampleDir();
 const DATA_DIR = resolveSoundboardDataDir();
 const METADATA_FILE = path.join(DATA_DIR, 'soundboard_samples.json');
 const allowedExts = ['.mp3', '.wav', '.m4a', '.ogg', '.opus', '.webm', '.aac', '.flac'];
+const SOUNDBOARD_AUDIO_FILTER =
+  'highpass=f=35,lowpass=f=17000,silenceremove=start_periods=1:start_duration=0.12:start_threshold=-42dB:start_silence=0.04:stop_periods=1:stop_duration=0.18:stop_threshold=-42dB:stop_silence=0.06,dynaudnorm=f=180:g=11:m=8,alimiter=limit=0.93';
 
 export const SOUNDBOARD_CATEGORIES = [
   'meme',
@@ -250,6 +252,7 @@ class SoundboardManager extends EventEmitter {
 
     const ffmpeg = spawn('ffmpeg', [
       '-i', sample.file,
+      '-af', SOUNDBOARD_AUDIO_FILTER,
       '-f', 's16le',
       '-ar', '44100',
       '-ac', '2',
@@ -275,7 +278,7 @@ class SoundboardManager extends EventEmitter {
     const cached = this.sampleCache.get(sampleId);
     if (cached) {
       console.log(`[soundboard] Playing sample from cache: ${sampleId}`);
-      this.emit('pcm', cached);
+      this.emit('pcm', { chunk: cached, duckTarget: 0.38 });
       return;
     }
 
@@ -283,15 +286,17 @@ class SoundboardManager extends EventEmitter {
     if (!sample) return;
 
     console.log(`[soundboard] Playing sample (not cached): ${sample.name}`);
-    await this.playSampleFromFile(sample.file);
+    await this.playSampleFromFile(sample.file, { duckTarget: 0.38 });
   }
 
-  public playSampleFromFile(filePath: string): Promise<void> {
+  public playSampleFromFile(filePath: string, options?: { duckTarget?: number }): Promise<void> {
     return new Promise((resolve, reject) => {
+      const duckTarget = typeof options?.duckTarget === 'number' ? options.duckTarget : 0.15;
       const ffmpeg = spawn('ffmpeg', [
         '-probesize', '32',
         '-analyzeduration', '0',
         '-i', filePath,
+        '-af', SOUNDBOARD_AUDIO_FILTER,
         '-f', 's16le',
         '-ar', '44100',
         '-ac', '2',
@@ -299,7 +304,7 @@ class SoundboardManager extends EventEmitter {
       ]);
 
       ffmpeg.stdout.on('data', (chunk: Buffer) => {
-        this.emit('pcm', chunk);
+        this.emit('pcm', { chunk, duckTarget });
       });
 
       ffmpeg.on('close', () => resolve());

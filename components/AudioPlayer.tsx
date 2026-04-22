@@ -225,6 +225,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const healthCheckTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
   const playIntentRef = useRef(true);
+  const lastRadioTrackRef = useRef<Track | null>(null);
   const [playIntentReady, setPlayIntentReady] = useState(false);
 
   // Single-instance playback coordination
@@ -574,6 +575,13 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const fallbackGenres = useRadioStore((s) => s.fallbackGenres);
   const queue = useRadioStore((s) => s.queue);
   const upcomingTrack = useRadioStore((s) => s.upcomingTrack);
+  const pausedForIdle = useRadioStore((s) => s.pausedForIdle);
+
+  useEffect(() => {
+    if (syncedRadioTrack && !isJingleTrack) {
+      lastRadioTrackRef.current = syncedRadioTrack;
+    }
+  }, [syncedRadioTrack, isJingleTrack]);
 
   useEffect(() => {
     if (audioRef.current) audioRef.current.volume = volume;
@@ -775,19 +783,25 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
 
     const updateMetadata = () => {
       // Use syncedRadioTrack for live track info, fallback to track from Supabase
-      const syncedRadio = syncedRadioTrack;
-      const castTitle = syncedRadio?.title ?? track.title ?? "KrukkeX Live";
+      const syncedRadio = syncedRadioTrack ?? ({ added_by: null, thumbnail: null } as Pick<Track, "added_by" | "thumbnail">);
+      const castTitle = displayTitle ?? "KrukkeX Live";
       
       // Only show added_by when it's a requested track, not for DJ mode (Rekordbox) tracks
-      let castArtist: string;
-      if (syncedRadio) {
+      let castArtist = displayArtist ?? "Live radio";
+      if (pausedForIdle) {
         // For DJ mode (no added_by), don't show artist to avoid showing stale data
         castArtist = syncedRadio.added_by ? `Live • ${syncedRadio.added_by}` : "Live radio";
       } else {
         castArtist = track.artist ?? "Live radio";
       }
-      
+      if (pausedForIdle) {
+        castArtist = displayArtist ?? "Stand-by";
+      } else if (syncedRadioTrack?.added_by) {
+        castArtist = `Live • ${syncedRadioTrack.added_by}`;
+      }
+
       const castArtwork = currentArtwork
+        ?? displayArtwork
         ?? (track.artwork_url ?? null)
         ?? (syncedRadio?.thumbnail ?? null)
         ?? "/icons/krukkex-icon-512x512.png";
@@ -848,7 +862,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
         // Ignore Media Session cleanup failures on unsupported browsers.
       }
     };
-  }, [clearReconnectTimer, clearWaitingTimer, currentArtwork, persistPlayIntent, preferSupabase, src, startPlayback, track, syncedRadioTrack]);
+  }, [clearReconnectTimer, clearWaitingTimer, currentArtwork, pausedForIdle, persistPlayIntent, src, startPlayback, syncedRadioTrack, track]);
 
   // Trigger stream refresh on track change to clear buffer and ensure fresh start
   // DISABLED: On mobile this causes interruptions and blocks autoplay.
@@ -1182,7 +1196,30 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const hasLiveRadioTrack = !!radioTrack;
   const isLoading = isRadioMode && syncedRadioTrack.started_at === 0;
   const radioHasMetadata = !!(syncedRadioTrack?.title || syncedRadioTrack?.thumbnail);
-  const showSupabaseData = (((showFallback && (!connected || preferSupabase)) || !radioHasMetadata) && !hasLiveRadioTrack);
+  const standbySource = useMemo(() => {
+    if (!pausedForIdle || syncedRadioTrack) return null;
+    const queuedCandidate = upcomingTrack ?? queue.find((item) => item.youtube_id !== "jingle") ?? null;
+    if (queuedCandidate) {
+      return {
+        title: queuedCandidate.title ?? queuedCandidate.youtube_id ?? null,
+        artist: queuedCandidate.artist ?? null,
+        thumbnail: queuedCandidate.thumbnail ?? null,
+        added_by: queuedCandidate.added_by ?? null,
+      };
+    }
+    const lastTrack = lastRadioTrackRef.current;
+    if (!lastTrack) return null;
+    return {
+      title: lastTrack.title ?? null,
+      artist: lastTrack.artist ?? null,
+      thumbnail: lastTrack.thumbnail ?? null,
+      added_by: lastTrack.added_by ?? null,
+    };
+  }, [pausedForIdle, queue, syncedRadioTrack, upcomingTrack]);
+  const standbyParsed = parseTrackDisplay(standbySource?.title);
+  const standbyTitle = standbySource ? decodeHtmlEntities(standbyParsed.title ?? standbySource.title) : null;
+  const standbyArtist = standbySource ? decodeHtmlEntities(standbySource.artist ?? standbyParsed.artist) : null;
+  const showSupabaseData = !pausedForIdle && (((showFallback && (!connected || preferSupabase)) || !radioHasMetadata) && !hasLiveRadioTrack);
   const parsedRadio = parseTrackDisplay(syncedRadioTrack?.title);
   const radioTitle = isJingleTrack ? null : (parsedRadio.title ?? syncedRadioTrack?.title ?? null);
   const radioArtist = isJingleTrack ? null : parsedRadio.artist;
@@ -1196,17 +1233,22 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     ? (fallbackGenres.find((genre) => genre.id === selectionKey)?.label ?? null)
     : null;
   const selectionPlaylistLabel = syncedRadioTrack?.selection_playlist ?? sharedSelectionLabel ?? null;
-  const displayTitle = syncedRadioTrack ? decodeHtmlEntities(radioTitle) : (showSupabaseData ? decodeHtmlEntities(track.title) : null);
-  const displayArtist = syncedRadioTrack ? decodeHtmlEntities(radioArtist) : (showSupabaseData ? decodeHtmlEntities(track.artist) : null);
+  const displayTitle = syncedRadioTrack
+    ? decodeHtmlEntities(radioTitle)
+    : (standbyTitle ?? (showSupabaseData ? decodeHtmlEntities(track.title) : null));
+  const displayArtist = syncedRadioTrack
+    ? decodeHtmlEntities(radioArtist)
+    : (standbyArtist ?? (showSupabaseData ? decodeHtmlEntities(track.artist) : null));
   const syncedRadioArtwork = syncedRadioTrack?.thumbnail ?? null;
   const immediateRadioArtwork = radioTrack?.thumbnail ?? null;
+  const standbyArtwork = standbySource?.thumbnail ?? null;
   const trackArtworkForPlaylistActions = isJingleTrack
     ? null
     : (syncedRadioArtwork ?? immediateRadioArtwork ?? null);
   // Outside DJ mode we never render Supabase artwork to avoid Rekordbox exporter covers flashing in.
   const supabaseArtwork = (showSupabaseData && preferSupabase) ? track.artwork_url : null;
   // Keep synced artwork leading to avoid falling back to stale exporter thumbnails.
-  const displayArtwork = isJingleTrack ? null : (syncedRadioArtwork ?? immediateRadioArtwork ?? supabaseArtwork);
+  const displayArtwork = isJingleTrack ? null : (syncedRadioArtwork ?? immediateRadioArtwork ?? standbyArtwork ?? supabaseArtwork);
   const artworkVersion = syncedRadioTrack
     ? `${syncedRadioTrack.id}|${syncedRadioTrack.started_at}|${displayArtwork ?? ""}`
     : `${displayTitle ?? ""}|${displayArtist ?? ""}|${displayArtwork ?? ""}`;

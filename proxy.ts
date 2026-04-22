@@ -9,6 +9,10 @@ export async function proxy(request: NextRequest) {
   } = await supabase.auth.getUser()
 
   const { pathname } = request.nextUrl
+  const redirectParam = request.nextUrl.searchParams.get('redirect')
+  const safeRedirectPath = redirectParam && redirectParam.startsWith('/') && !redirectParam.startsWith('//')
+    ? redirectParam
+    : null
 
   const publicRoutes = ['/login', '/register', '/manifest', '/sw.js', '/icons']
   const authPages = ['/login', '/register']
@@ -42,7 +46,7 @@ export async function proxy(request: NextRequest) {
   }
 
   if (isApproved && isAuthPage) {
-    return NextResponse.redirect(new URL('/stream', request.url))
+    return NextResponse.redirect(new URL(safeRedirectPath ?? '/stream', request.url))
   }
 
   return response

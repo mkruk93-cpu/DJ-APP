@@ -294,22 +294,9 @@ export default function FallbackGenreSelector() {
     return options[0] ?? null;
   }
   const shouldRender = connected && sortedGenres.length > 0;
-  const livePlaylistLabel = useMemo(() => {
-    if (currentTrack?.selection_tab !== "playlists") return null;
-    const playlistName = currentTrack.selection_playlist?.trim();
-    if (playlistName) return cleanFallbackLabel(playlistName);
-    const selectionKey = currentTrack.selection_key?.trim() ?? "";
-    if (!selectionKey) return null;
-    const matchingGenre = sortedGenres.find((genre) => genre.id === selectionKey);
-    return matchingGenre ? cleanFallbackLabel(matchingGenre.label) : null;
-  }, [currentTrack, sortedGenres]);
   const activeLabel = useMemo(() => {
-    if (livePlaylistLabel) {
-      return livePlaylistLabel;
-    }
-    // Show preset name only if it exists AND the user hasn't made an optimistic (manual) change
-    // that hasn't been confirmed by the server yet.
-    if (activePresetName && !optimisticSelectedGenreIds) {
+    // Toon een presetnaam alleen als de huidige selectie ook echt met een preset matcht.
+    if (activePresetName && activePresetId && !optimisticSelectedGenreIds) {
       return activePresetName;
     }
     // Als er meerdere playlists geselecteerd zijn, toon het aantal
@@ -328,7 +315,7 @@ export default function FallbackGenreSelector() {
     }
     const activeGenreLabel = sortedGenres.find((g) => g.id === activeGenre)?.label;
     return activeGenreLabel ? cleanFallbackLabel(activeGenreLabel) : activeGenre ?? "Kies genre";
-  }, [sortedGenres, activeGenre, selectedSharedGenres, activePresetName, optimisticSelectedGenreIds, livePlaylistLabel]);
+  }, [sortedGenres, activeGenre, selectedSharedGenres, activePresetName, activePresetId, optimisticSelectedGenreIds]);
 
   useEffect(() => {
     function updateMobileState() {

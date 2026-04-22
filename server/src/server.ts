@@ -142,6 +142,8 @@ const REKORDBOX_OUTPUT_PATH = process.env.REKORDBOX_OUTPUT_PATH ?? '';
 const KEEP_FILES = process.env.KEEP_FILES === 'true';
 const AUTO_PAUSE_WHEN_IDLE = String(process.env.AUTO_PAUSE_WHEN_IDLE ?? 'true').toLowerCase() !== 'false';
 const AUTO_PAUSE_IDLE_GRACE_MS = Math.max(0, parseInt(process.env.AUTO_PAUSE_IDLE_GRACE_MS ?? '45000', 10) || 45_000);
+const SOUNDBOARD_UPLOAD_FILTER =
+  'highpass=f=35,lowpass=f=17000,silenceremove=start_periods=1:start_duration=0.12:start_threshold=-42dB:start_silence=0.04:stop_periods=1:stop_duration=0.18:stop_threshold=-42dB:stop_silence=0.06,dynaudnorm=f=180:g=11:m=8,alimiter=limit=0.93';
 
 const useIcecast = !!process.env.ICECAST_HOST;
 const internalPlayerUseIcecast = String(process.env.INTERNAL_PLAYER_USE_ICECAST ?? '').toLowerCase() === 'true';
@@ -265,6 +267,8 @@ app.post('/api/soundboard/upload', upload.single('audio'), async (req, res) => {
     await new Promise((resolve, reject) => {
       const conv = spawn('ffmpeg', [
         '-i', tempInputPath,
+        '-af', SOUNDBOARD_UPLOAD_FILTER,
+        '-c:a', 'pcm_s16le',
         '-ar', '44100',
         '-ac', '2',
         finalPath
@@ -325,7 +329,7 @@ app.post('/api/soundboard/voice', upload.single('audio'), async (req, res) => {
     fs.writeFileSync(tempPath, req.file.buffer);
 
     console.log(`[server] Received voice message, playing...`);
-    await soundboardManager.playSampleFromFile(tempPath);
+    await soundboardManager.playSampleFromFile(tempPath, { duckTarget: 0.15 });
 
     // Verwijder het tijdelijke bestand na 30 seconden (ruim voldoende voor afspelen)
     setTimeout(() => {
