@@ -513,8 +513,9 @@ export default function RequestForm(
   useEffect(() => {
     load();
     const interval = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
       load();
-    }, 5000);
+    }, 15_000);
     return () => clearInterval(interval);
   }, [load]);
 

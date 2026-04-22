@@ -1234,8 +1234,9 @@ export default function StreamPage() {
 
     // Safety net: keep upcoming/current state in sync in case a socket event is missed.
     const stateSyncInterval = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
       if (store.getState().connected) fetchState();
-    }, 15000);
+    }, 30_000);
 
     return () => {
       if (toastTimerRef.current) {
@@ -1275,7 +1276,10 @@ export default function StreamPage() {
     }
 
     pollExternal();
-    const interval = setInterval(pollExternal, 15_000);
+    const interval = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void pollExternal();
+    }, 60_000);
 
     return () => {
       clearInterval(interval);
@@ -1387,13 +1391,14 @@ export default function StreamPage() {
     if (!statsOpen) return;
     void fetchPublicStats(statsDays);
     const interval = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
       void fetchPublicStats(statsDays);
-    }, 20_000);
+    }, 60_000);
     return () => clearInterval(interval);
   }, [statsOpen, statsServerUrl, statsDays]);
 
   useEffect(() => {
-    if (!showRequestedPanel) return;
+    if (!showRequestedPanel || activeTab !== "requested") return;
     let cancelled = false;
     let timer: ReturnType<typeof setInterval> | null = null;
 
@@ -1416,12 +1421,15 @@ export default function StreamPage() {
     };
 
     void loadRequested();
-    timer = setInterval(() => void loadRequested(), 5000);
+    timer = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void loadRequested();
+    }, 15_000);
     return () => {
       cancelled = true;
       if (timer) clearInterval(timer);
     };
-  }, [showRequestedPanel, requestedItems.length]);
+  }, [activeTab, showRequestedPanel, requestedItems.length]);
 
   const filteredRecentStats = (statsSummary?.recentRequests ?? []).filter((row) => {
     if (!statsFilter.kind || !statsFilter.value) return true;

@@ -111,6 +111,9 @@ export default function ChatBox({ onNewMessage, username, onUserClick }: ChatBox
   const longPressTimerRef = useRef<number | null>(null);
   const channelRef = useRef<ReturnType<ReturnType<typeof getSupabase>["channel"]> | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
+  const shouldAutoScrollRef = useRef(true);
+  const didInitialScrollRef = useRef(false);
+  const lastMessageIdRef = useRef<string | null>(null);
   const channelId = useId();
   const nickname = username || (typeof window !== "undefined" ? localStorage.getItem("nickname") ?? "Gast" : "Gast");
   const activeMediaType: MediaType | null = pickerTab === "gif" || pickerTab === "sticker" ? pickerTab : null;
@@ -135,6 +138,13 @@ export default function ChatBox({ onNewMessage, username, onUserClick }: ChatBox
     const host = messagesRef.current;
     if (!host) return;
     host.scrollTo({ top: host.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+  }, []);
+
+  const isNearBottom = useCallback(() => {
+    const host = messagesRef.current;
+    if (!host) return true;
+    const distanceFromBottom = host.scrollHeight - host.scrollTop - host.clientHeight;
+    return distanceFromBottom <= 72;
   }, []);
 
   const refreshMessages = useCallback(async () => {
@@ -327,8 +337,9 @@ export default function ChatBox({ onNewMessage, username, onUserClick }: ChatBox
 
   useEffect(() => {
     const interval = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
       void refreshMessages();
-    }, 15000);
+    }, 120000);
     return () => window.clearInterval(interval);
   }, [refreshMessages]);
 
@@ -341,34 +352,45 @@ export default function ChatBox({ onNewMessage, username, onUserClick }: ChatBox
   }, []);
 
   useEffect(() => {
-    // Always show latest message on load and follow new messages.
-    scrollToBottom(messages.length > 1);
-  }, [messages, scrollToBottom]);
-
-  // Scroll to bottom when new messages arrive - multiple passes to handle lazy-loaded images
-  useEffect(() => {
     if (messages.length === 0) return;
-    // First scroll - immediate
-    scrollToBottom(false);
-    // Second scroll - after images/gifs may have loaded
+
+    const latestMessageId = messages[messages.length - 1]?.id ?? null;
+    const prevLatestMessageId = lastMessageIdRef.current;
+    const hasNewLatestMessage = !!latestMessageId && latestMessageId !== prevLatestMessageId;
+    const shouldScroll = !didInitialScrollRef.current || (hasNewLatestMessage && shouldAutoScrollRef.current);
+
+    lastMessageIdRef.current = latestMessageId;
+    if (!shouldScroll) return;
+
+    didInitialScrollRef.current = true;
+    scrollToBottom(hasNewLatestMessage);
     const timeout1 = setTimeout(() => scrollToBottom(false), 100);
-    // Third scroll - for slower loads
     const timeout2 = setTimeout(() => scrollToBottom(false), 500);
     return () => {
       clearTimeout(timeout1);
       clearTimeout(timeout2);
     };
-  }, [messages.length, scrollToBottom]);
+  }, [isNearBottom, messages, scrollToBottom]);
 
   useEffect(() => {
     const host = messagesRef.current;
     if (!host) return;
     const observer = new MutationObserver(() => {
-      scrollToBottom(false);
+      if (shouldAutoScrollRef.current) {
+        scrollToBottom(false);
+      }
     });
     observer.observe(host, { childList: true, subtree: true });
-    return () => observer.disconnect();
-  }, [scrollToBottom]);
+    const handleScroll = () => {
+      shouldAutoScrollRef.current = isNearBottom();
+    };
+    shouldAutoScrollRef.current = isNearBottom();
+    host.addEventListener("scroll", handleScroll, { passive: true });
+    return () => {
+      observer.disconnect();
+      host.removeEventListener("scroll", handleScroll);
+    };
+  }, [isNearBottom, scrollToBottom]);
 
   useEffect(() => {
     function handleOutsideClick(e: MouseEvent) {

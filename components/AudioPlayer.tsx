@@ -228,6 +228,49 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const lastRadioTrackRef = useRef<Track | null>(null);
   const [playIntentReady, setPlayIntentReady] = useState(false);
 
+  function stopStreamPlayback(options?: {
+    rememberIntent?: boolean;
+    playbackState?: MediaSessionPlaybackState;
+    clearSource?: boolean;
+  }) {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const rememberIntent = options?.rememberIntent !== false;
+    const clearSource = options?.clearSource !== false;
+
+    if (rememberIntent) {
+      persistPlayIntent(false);
+    } else {
+      playIntentRef.current = false;
+    }
+
+    userPaused.current = true;
+    reconnectAttemptRef.current = 0;
+    waitingSinceRef.current = 0;
+    if (reconnectTimer.current) {
+      clearTimeout(reconnectTimer.current);
+      reconnectTimer.current = null;
+    }
+    if (waitingTimerRef.current) {
+      clearTimeout(waitingTimerRef.current);
+      waitingTimerRef.current = null;
+    }
+
+    audio.pause();
+    if (clearSource) {
+      audio.removeAttribute("src");
+      audio.src = "";
+      audio.load();
+    }
+    setPlaying(false);
+    setAutoplayBlocked(false);
+
+    if (typeof navigator !== "undefined" && "mediaSession" in navigator && options?.playbackState) {
+      navigator.mediaSession.playbackState = options.playbackState;
+    }
+  }
+
   // Single-instance playback coordination
   useEffect(() => {
     if (typeof window === "undefined" || !("BroadcastChannel" in window)) return;
@@ -239,12 +282,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
       if (event.data === "play_started" && playingRef.current) {
         // Another tab started playing, pause this one
         console.log("[AudioPlayer] Another tab started playing, pausing this one.");
-        const audio = audioRef.current;
-        if (audio) {
-          audio.pause();
-          setPlaying(false);
-          userPaused.current = true;
-        }
+        stopStreamPlayback({ rememberIntent: false, playbackState: "paused" });
       }
     };
 
@@ -826,15 +864,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     updateMetadata();
 
     navigator.mediaSession.setActionHandler("pause", () => {
-      const audio = audioRef.current;
-      if (!audio) return;
-      persistPlayIntent(false);
-      userPaused.current = true;
-      clearReconnectTimer();
-      clearWaitingTimer();
-      audio.pause();
-      setPlaying(false);
-      navigator.mediaSession.playbackState = "paused";
+      stopStreamPlayback({ playbackState: "paused" });
     });
 
     navigator.mediaSession.setActionHandler("play", () => {
@@ -849,14 +879,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     });
 
     navigator.mediaSession.setActionHandler("stop", () => {
-      const audio = audioRef.current;
-      if (!audio) return;
-      persistPlayIntent(false);
-      userPaused.current = true;
-      audio.pause();
-      audio.src = ""; // Clear source to stop buffering
-      setPlaying(false);
-      navigator.mediaSession.playbackState = "none";
+      stopStreamPlayback({ playbackState: "none" });
     });
 
     return () => {
@@ -868,7 +891,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
         // Ignore Media Session cleanup failures on unsupported browsers.
       }
     };
-  }, [clearReconnectTimer, clearWaitingTimer, currentArtwork, pausedForIdle, persistPlayIntent, src, startPlayback, syncedRadioTrack, track]);
+  }, [currentArtwork, pausedForIdle, src, startPlayback, syncedRadioTrack, track]);
 
   // Trigger stream refresh on track change to clear buffer and ensure fresh start
   // DISABLED: On mobile this causes interruptions and blocks autoplay.
@@ -891,10 +914,9 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
 
   useEffect(() => {
     return () => {
-      clearReconnectTimer();
-      clearWaitingTimer();
+      stopStreamPlayback({ rememberIntent: false, clearSource: true });
     };
-  }, [clearReconnectTimer, clearWaitingTimer]);
+  }, []);
 
   useEffect(() => {
     function onFullscreenChange() {
@@ -1050,18 +1072,8 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   }, [syncedRadioTrack]);
 
   function toggle() {
-    const audio = audioRef.current;
-    if (!audio) return;
-
     if (playing) {
-      clearReconnectTimer();
-      clearWaitingTimer();
-      reconnectAttemptRef.current = 0;
-      persistPlayIntent(false);
-      userPaused.current = true;
-      audio.pause();
-      setPlaying(false);
-      setAutoplayBlocked(false);
+      stopStreamPlayback({ playbackState: "paused" });
     } else {
       if (!src) return;
       void startPlayback({ forceReload: true, rememberIntent: true });
