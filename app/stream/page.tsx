@@ -1106,13 +1106,15 @@ export default function StreamPage() {
       previousQueueLengthRef.current = nextQueueLength;
     });
 
-    socket.on("queue:added", (data: { title?: string | null; added_by?: string | null }) => {
+    socket.on("queue:added", (data: { title?: string | null; artist?: string | null; added_by?: string | null }) => {
       const addedBy = (data.added_by ?? "").trim();
       if (!addedBy) return;
       const me = (userAccount?.username ?? "").trim().toLowerCase();
       const title = (data.title ?? "").trim() || "een nummer";
-      if (me && addedBy.toLowerCase() === me) showInfoToast(`Toegevoegd aan wachtrij: ${title}`);
-      else showInfoToast(`${addedBy} voegde toe: ${title}`);
+      const artist = (data.artist ?? "").trim();
+      const trackLabel = artist ? `${artist} - ${title}` : title;
+      if (me && addedBy.toLowerCase() === me) showInfoToast(`Toegevoegd aan wachtrij: ${trackLabel}`);
+      else showInfoToast(`${addedBy} voegde toe: ${trackLabel}`);
     });
 
     socket.on("upcoming:update", (upcoming: UpcomingTrack | null) => {

@@ -2322,13 +2322,16 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
                                 const payload = await res.json();
                                 
                                 if (res.ok && payload.item?.url) {
+                                  const resolvedArtist = payload.item.artist ?? track.artist?.name ?? selectedArtist.name;
+                                  const resolvedTitle = payload.item.title ?? track.name;
                                   await submitUrl(
                                     payload.item.url,
                                     payload.item.thumbnail ?? thumb ?? undefined,
-                                    payload.item.title ?? track.name,
-                                    payload.item.artist ?? track.artist?.name ?? selectedArtist.name,
+                                    resolvedTitle,
+                                    resolvedArtist,
                                     { sourceType: 'search', sourceGenre: null, sourcePlaylist: null }
                                   );
+                                  startRecentAdd(trackId, payload.item.url, resolvedTitle, resolvedArtist);
                                   setAddedTrackId(trackId);
                                   setTimeout(() => setAddedTrackId(null), 5000);
                                 } else if (payload.candidates && payload.candidates.length > 0) {
@@ -2652,7 +2655,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
       <div className="pointer-events-none absolute left-0 right-0 top-2 z-[70] px-2">
         <div className="pointer-events-auto flex items-center justify-between gap-2 rounded-lg border border-violet-800/60 bg-violet-950/95 px-3 py-2 text-xs text-violet-100 shadow-lg shadow-violet-900/30 backdrop-blur">
           <span className="min-w-0 flex-1 truncate">
-            Toegevoegd: <span className="font-semibold">{recentAdd.title}</span> · {undoSecondsLeft}s
+            Toegevoegd: <span className="font-semibold">{recentAdd.artist ? `${recentAdd.artist} - ${recentAdd.title}` : recentAdd.title}</span> · {undoSecondsLeft}s
           </span>
           <button
             type="button"

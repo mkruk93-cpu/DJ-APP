@@ -1228,7 +1228,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const showSupabaseData = !pausedForIdle && (((showFallback && (!connected || preferSupabase)) || !radioHasMetadata) && !hasLiveRadioTrack);
   const parsedRadio = parseTrackDisplay(syncedRadioTrack?.title);
   const radioTitle = isJingleTrack ? null : (parsedRadio.title ?? syncedRadioTrack?.title ?? null);
-  const radioArtist = isJingleTrack ? null : parsedRadio.artist;
+  const radioArtist = isJingleTrack ? null : (syncedRadioTrack?.artist ?? parsedRadio.artist ?? null);
   const radioRequestedBy = isJingleTrack ? null : (syncedRadioTrack?.added_by ?? null);
   const radioIsRandom = syncedRadioTrack?.youtube_id === "local";
   const autoGenreIsLikedPlaylist = (activeFallbackGenre ?? "").toLowerCase() === "auto:liked";
@@ -1284,9 +1284,10 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
     return item.youtube_id !== "jingle" && !key.startsWith("jingle:");
   }) ?? null;
   const nextCandidateTitle = nextQueueItem?.title ?? upcomingTrack?.title ?? null;
+  const nextCandidateArtist = nextQueueItem?.artist ?? upcomingTrack?.artist ?? null;
   const parsedNext = parseTrackDisplay(nextCandidateTitle);
   const nextTitle = parsedNext.title ?? nextCandidateTitle;
-  const nextArtist = parsedNext.artist;
+  const nextArtist = nextCandidateArtist ?? parsedNext.artist;
   const fullscreenCurrentArtwork = useMemo(() => getFullscreenArtworkUrl(currentArtwork), [currentArtwork]);
   const fullscreenIncomingArtwork = useMemo(() => getFullscreenArtworkUrl(incomingArtwork), [incomingArtwork]);
   const fullscreenCurrentArtworkFallback = useMemo(
