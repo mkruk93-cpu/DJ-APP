@@ -2146,7 +2146,7 @@ export default function StreamPage() {
           {radioConnected && radioMode !== "dj" && !showRadioOfflineState && (
             <div className="mt-1.5 shrink-0 space-y-1.5">
               <div className="flex min-w-0 flex-wrap items-center gap-1.5 pb-0.5">
-                <div className="relative z-[150] min-w-0 flex-[1.2] overflow-visible">
+                <div className="relative z-[120] min-w-0 flex-[1.2] overflow-visible">
                   <FallbackGenreSelector />
                 </div>
                 <div className="min-w-0 flex-1">
