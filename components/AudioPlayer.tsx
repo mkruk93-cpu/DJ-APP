@@ -1557,6 +1557,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const duration = isJingleTrack ? null : (syncedRadioTrack?.duration ?? null);
   const progress = duration && duration > 0 ? Math.min(elapsed / duration, 1) : 0;
   const durationLabel = duration && duration > 0 ? formatTime(duration) : "--:--";
+  const showCompactTimer = isRadioMode && !isLoading && !!duration && duration > 0;
   const showCastButton = true;
 
   const artworkFallback = (
@@ -1841,7 +1842,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
                     </div>
                   </div>
                 </div>
-                {radioMode !== "dj" && (
+                {isRadioMode && (
                   <div className="rounded-2xl border border-gray-700/70 bg-black/25 p-3 backdrop-blur-md md:p-4">
                     <p className="text-[10px] uppercase tracking-[0.24em] text-gray-300">Volgend nummer</p>
                     <p className="mt-1.5 line-clamp-1 text-sm font-semibold text-violet-100 md:text-base">
@@ -1950,7 +1951,12 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
             )}
           </div>
 
-          <div className="min-w-0 flex-1">
+          <div className={`relative min-w-0 flex-1 ${showCompactTimer ? "pr-16" : ""}`}>
+            {showCompactTimer && (
+              <div className="absolute right-0 top-0 rounded-full border border-violet-400/20 bg-black/45 px-2 py-0.5 text-[9px] font-semibold tabular-nums text-violet-100 shadow-sm shadow-black/30">
+                {formatTime(elapsed)} / {durationLabel}
+              </div>
+            )}
             {hasTrack ? (
               <>
                 {displayTitle && <p className="truncate text-sm font-semibold text-white">{displayTitle}</p>}
@@ -2027,9 +2033,13 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-yellow-400">Laden...</span>
               </div>
             ) : isRadioMode ? (
-              <p className="mt-0.5 text-[10px] tabular-nums text-gray-500">
-                {formatTime(elapsed)} / {durationLabel}
-              </p>
+              <div className="mt-1 flex items-center gap-2">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-violet-500" />
+                </span>
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-violet-400">Live</span>
+              </div>
             ) : (
               <div className="mt-1 flex items-center gap-2">
                 <span className="relative flex h-2 w-2">

@@ -533,7 +533,7 @@ export default function FallbackGenreSelector() {
   return (
     <details
       ref={menuRef}
-      className="group relative z-[120]"
+      className="group relative z-[144]"
       onToggle={(e) => {
         if (fallbackChangeBlocked) {
           e.preventDefault();
@@ -591,7 +591,7 @@ export default function FallbackGenreSelector() {
         <span className="justify-self-end text-gray-400 transition group-open:rotate-180">▾</span>
       </summary>
       <div
-        className="fixed z-[130] overflow-y-auto rounded-md border border-gray-700 bg-gray-900/95 p-1 shadow-lg shadow-black/40 sm:max-h-60"
+        className="fixed z-[144] overflow-y-auto rounded-md border border-gray-700 bg-gray-900/95 p-1 shadow-lg shadow-black/40 sm:max-h-60"
         style={
           menuLayout !== null
             ? { top: menuLayout.top, left: menuLayout.left, width: menuLayout.width, maxHeight: `calc(100dvh - ${menuLayout.top + 8}px)` }

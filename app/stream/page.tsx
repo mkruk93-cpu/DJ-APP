@@ -1973,8 +1973,7 @@ export default function StreamPage() {
             </div>
           </div>
         )}
-        {!(forceDjCommunityUi || (communityUiActive && !showRadioPanel)) && (
-          <div className="mt-2 rounded-lg border border-gray-700/60 bg-gray-800/60 px-2.5 py-1 sm:px-3 sm:py-1.5">
+        <div className="mt-2 rounded-lg border border-gray-700/60 bg-gray-800/60 px-2.5 py-1 sm:px-3 sm:py-1.5">
             <p className="truncate text-[11px] text-gray-300 sm:text-xs">
               <span className="mr-1 uppercase tracking-wider text-gray-500">Volgende:</span>
               {!isHydrated || showLoadingStates ? (
@@ -2000,7 +1999,6 @@ export default function StreamPage() {
               )}
             </p>
           </div>
-        )}
         {(mode !== "offline" && mode !== "radio" && !showRadioOfflineState) && (
           <div className={mode === "twitch" ? "block" : "hidden sm:block"}>
             <NowPlaying
@@ -2146,7 +2144,7 @@ export default function StreamPage() {
           {radioConnected && radioMode !== "dj" && !showRadioOfflineState && (
             <div className="mt-1.5 shrink-0 space-y-1.5">
               <div className="flex min-w-0 flex-wrap items-center gap-1.5 pb-0.5">
-                <div className="relative z-[120] min-w-0 flex-[1.2] overflow-visible">
+                <div className="relative z-[144] min-w-0 flex-[1.2] overflow-visible">
                   <FallbackGenreSelector />
                 </div>
                 <div className="min-w-0 flex-1">
