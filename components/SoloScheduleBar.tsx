@@ -18,6 +18,7 @@ interface SoloScheduleBarProps {
   onEndActiveSolo?: () => void;
   endingActiveSolo?: boolean;
   expanded?: boolean;
+  onClose?: () => void;
 }
 
 function formatSlotLabel(startTime: string, endTime: string): string {
@@ -41,6 +42,7 @@ export default function SoloScheduleBar({
   onEndActiveSolo,
   endingActiveSolo = false,
   expanded = false,
+  onClose,
 }: SoloScheduleBarProps) {
   const [claimingId, setClaimingId] = useState<string | null>(null);
   const [newStart, setNewStart] = useState("");
@@ -56,6 +58,7 @@ export default function SoloScheduleBar({
 
   const slotItems = useMemo(() => {
     const bookingByKey = new Map(bookings.map((booking) => [`${booking.startTime}_${booking.endTime}`, booking]));
+    const openSlotKeys = new Set(slots.map((slot) => `${slot.startTime}_${slot.endTime}`));
     const openSlotItems = slots
       .map((slot) => {
         const booking = bookingByKey.get(`${slot.startTime}_${slot.endTime}`) ?? null;
@@ -69,7 +72,7 @@ export default function SoloScheduleBar({
       })
       .filter((item) => !item.isPast || item.isActive);
     const customBookingItems = bookings
-      .filter((booking) => !bookingByKey.has(`${booking.startTime}_${booking.endTime}`))
+      .filter((booking) => !openSlotKeys.has(`${booking.startTime}_${booking.endTime}`))
       .map((booking) => {
         const startMs = new Date(booking.startTime).getTime();
         const endMs = new Date(booking.endTime).getTime();
@@ -112,12 +115,21 @@ export default function SoloScheduleBar({
   if (!expanded) return null;
 
   return (
-    <div className="mb-2 rounded-xl border border-amber-500/20 bg-amber-500/8 px-2 py-2 sm:px-3">
+    <div className="pointer-events-auto rounded-xl border border-amber-500/20 bg-gray-950/95 px-2 py-2 shadow-2xl shadow-black/45 backdrop-blur sm:px-3">
       <div className="flex flex-wrap items-center gap-2">
         <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-amber-300">Solo inschrijven</p>
         <p className="text-xs text-gray-300">
           Plan zelf je solo in. Je kiest zelf een starttijd en een duur van 15 tot 60 minuten.
         </p>
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-gray-600/60 bg-gray-900/70 px-3 py-1 text-xs font-semibold text-gray-200 transition hover:border-gray-500 hover:bg-gray-800"
+          >
+            Sluiten
+          </button>
+        )}
         {activeNickname && (
           <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-[11px] font-medium text-amber-200">
             Nu live: {activeNickname}

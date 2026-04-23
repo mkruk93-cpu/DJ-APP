@@ -413,7 +413,6 @@ export default function StreamPage() {
     }
     setSoloScheduleExpanded(true);
     setSoloScheduleHighlighted(true);
-    soloScheduleRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   useEffect(() => {
@@ -1780,7 +1779,7 @@ export default function StreamPage() {
       {isAdminUser && <AdminNotificationToast onApprovalComplete={handleApprovalComplete} />}
       {/* Header */}
       <header
-        className="relative z-[150] shrink-0 border-b border-gray-800 bg-gray-900/80 px-2 py-1.5 backdrop-blur-sm sm:px-6 sm:py-3"
+        className="sticky top-0 relative z-[150] shrink-0 border-b border-gray-800 bg-gray-900/80 px-2 py-1.5 backdrop-blur-sm sm:px-6 sm:py-3"
         style={{
           paddingTop: "max(env(safe-area-inset-top), 0px)",
           minHeight: "56px"
@@ -1789,7 +1788,7 @@ export default function StreamPage() {
         {showSoloSchedule && (
           <div
             ref={soloScheduleRef}
-            className={`scroll-mt-24 transition-all duration-300 ${soloScheduleHighlighted ? "rounded-2xl ring-2 ring-amber-300/70 ring-offset-2 ring-offset-gray-950" : ""}`}
+            className={`pointer-events-none absolute left-0 right-0 top-full z-[145] px-2 pt-2 transition-all duration-300 sm:px-6 ${soloScheduleExpanded ? "opacity-100" : "opacity-0"} ${soloScheduleHighlighted ? "rounded-2xl" : ""}`}
           >
             <SoloScheduleBar
               slots={soloOpenSlots}
@@ -1806,6 +1805,7 @@ export default function StreamPage() {
               onEndActiveSolo={handleEndActiveSolo}
               endingActiveSolo={endingActiveSolo}
               expanded={soloScheduleExpanded}
+              onClose={() => setSoloScheduleExpanded(false)}
             />
           </div>
         )}
