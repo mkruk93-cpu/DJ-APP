@@ -15,13 +15,13 @@ import { getQueue, addToQueue, removeFromQueue, reorderQueue, fetchVideoInfo, ex
 import { canPerformAction } from './permissions.js';
 import { startPlayCycle, stopPlayCycle, getCurrentTrack, getUpcomingTrack, skipCurrentTrack, isSkipLocked, isPlayCycleRunning, playerEvents, setKeepFiles, getJingleSettings, setJingleSettings, getJingleSelection, setJingleSelection, getJingleCatalog, invalidatePreload, invalidateNextReady, removeQueueItemFromPreload, setActiveFallbackGenre, setActiveFallbackGenres, setActiveSharedFallbackPlaylists, setSharedAutoPlaybackMode, resetSharedAutoPlaybackCycleForSelection, setQueueItemSelectionMeta, setHideLocalDiscoveryForFallback } from './player.js';
 import { soundboardManager, SAMPLE_DIR, SOUNDBOARD_CATEGORIES } from './services/soundboard.js';
-import { isCurrentDJ, getDJSchedule, claimDJSlot } from './services/djSchedule.js';
+import { isCurrentDJ, getDJSchedule, claimDJSlot, getCurrentDJSlot, endCurrentDJSlot, getDJSlotById, updateDJSlot, deleteDJSlot } from './services/djSchedule.js';
 import { youtubeSearch, soundcloudSearch, spotdlSearch } from './services/search.js';
 import { musicBrainzAutocomplete, lastFmGetArtistInfo, lastFmGetTopTracks, lastFmGetTopAlbums, iTunesSearchArtwork, lastFmGetArtistImage, lastFmGetLovedTracks, lastFmGetRecentTracks } from './services/musicSearch.js';
 import { startBridge } from './bridge.js';
 import { startNowPlayingWatcher } from './nowPlaying.js';
 import { StreamHub } from './streamHub.js';
-import type { Mode, ModeSettings, ServerState, DurationVote, QueuePushVote, FallbackGenre, Track } from './types.js';
+import type { Mode, ModeSettings, ServerState, DurationVote, QueuePushVote, FallbackGenre, Track, SoloScheduleSlot, SoloScheduleBooking } from './types.js';
 import {
   searchGenres,
   getTopTracksByGenre,
@@ -397,7 +397,8 @@ app.get('/api/soundboard/samples', async (req, res) => {
 
 async function canUseSoundboard(token?: string, nickname?: string): Promise<boolean> {
   if (isAdmin(token, nickname)) return true;
-  if (await isCurrentDJ(nickname ?? '')) return true;
+  const mode = await getActiveMode(sb).catch(() => 'radio' as Mode);
+  if (mode === 'solo' && await isCurrentDJ(nickname ?? '')) return true;
   return await isSoundboardPublic();
 }
 
@@ -729,6 +730,177 @@ function normalizeDeviceId(value: unknown): string | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
   return trimmed.slice(0, 120);
+}
+
+function normalizeIsoDateTime(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString();
+}
+
+function normalizeSoloSlotDurationMinutes(value: unknown): number {
+  const parsed = Math.round(Number(value));
+  if (!Number.isFinite(parsed) || parsed <= 0) return 60;
+  return Math.max(15, Math.min(360, parsed));
+}
+
+function normalizeSoloOpenSlot(raw: unknown, defaultDurationMinutes = 60): SoloScheduleSlot | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const record = raw as Record<string, unknown>;
+  const startTime = normalizeIsoDateTime(record.startTime ?? record.start_time ?? record.start);
+  const explicitEnd = normalizeIsoDateTime(record.endTime ?? record.end_time ?? record.end);
+  if (!startTime) return null;
+  const fallbackEnd = new Date(new Date(startTime).getTime() + normalizeSoloSlotDurationMinutes(defaultDurationMinutes) * 60_000).toISOString();
+  const endTime = explicitEnd ?? fallbackEnd;
+  if (new Date(endTime).getTime() <= new Date(startTime).getTime()) return null;
+  const id = typeof record.id === 'string' && record.id.trim()
+    ? record.id.trim()
+    : `${startTime}_${endTime}`;
+  return { id, startTime, endTime };
+}
+
+function normalizeSoloOpenSlots(raw: unknown, defaultDurationMinutes = 60): SoloScheduleSlot[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  return raw
+    .map((entry) => normalizeSoloOpenSlot(entry, defaultDurationMinutes))
+    .filter((entry): entry is SoloScheduleSlot => !!entry)
+    .sort((left, right) => new Date(left.startTime).getTime() - new Date(right.startTime).getTime())
+    .filter((entry) => {
+      const key = `${entry.startTime}_${entry.endTime}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function mapSoloBooking(raw: {
+  id: string;
+  nickname: string;
+  start_time: string;
+  end_time: string;
+  created_at?: string | null;
+}): SoloScheduleBooking {
+  return {
+    id: raw.id,
+    nickname: raw.nickname,
+    startTime: raw.start_time,
+    endTime: raw.end_time,
+    createdAt: raw.created_at ?? null,
+  };
+}
+
+function findMatchingSoloOpenSlot(slots: SoloScheduleSlot[], startTime: string, endTime: string): SoloScheduleSlot | null {
+  return slots.find((slot) => slot.startTime === startTime && slot.endTime === endTime) ?? null;
+}
+
+async function getSoloScheduleState(): Promise<{
+  slotDurationMinutes: number;
+  openSlots: SoloScheduleSlot[];
+  bookings: SoloScheduleBooking[];
+  activeNickname: string | null;
+  activeSlot: SoloScheduleBooking | null;
+  visible: boolean;
+}> {
+  const [durationRaw, rawSlots, bookings, currentSlot, visibleRaw] = await Promise.all([
+    getSetting<number>(sb, 'solo_slot_duration_minutes'),
+    getSetting<unknown>(sb, 'solo_open_slots'),
+    getDJSchedule(),
+    getCurrentDJSlot(),
+    getSetting<boolean>(sb, 'show_solo_schedule'),
+  ]);
+  const slotDurationMinutes = normalizeSoloSlotDurationMinutes(durationRaw);
+  const openSlots = normalizeSoloOpenSlots(rawSlots, slotDurationMinutes);
+  const normalizedBookings = bookings.map(mapSoloBooking);
+  const activeSlot = currentSlot ? mapSoloBooking(currentSlot) : null;
+  return {
+    slotDurationMinutes,
+    openSlots,
+    bookings: normalizedBookings,
+    activeNickname: activeSlot?.nickname ?? null,
+    activeSlot,
+    visible: !!visibleRaw,
+  };
+}
+
+async function hasActiveSoloControl(nickname?: string | null): Promise<boolean> {
+  const normalized = normalizeNickname(nickname);
+  if (!normalized) return false;
+  const activeSlot = await getCurrentDJSlot();
+  if (!activeSlot) return false;
+  return normalizeNickname(activeSlot.nickname) === normalized;
+}
+
+function clampSoloSelfScheduleMinutes(startTime: string, endTime: string): { ok: boolean; endTime: string; error?: string } {
+  const startMs = new Date(startTime).getTime();
+  const endMs = new Date(endTime).getTime();
+  const diffMinutes = Math.round((endMs - startMs) / 60_000);
+  if (endMs <= startMs) {
+    return { ok: false, endTime, error: 'De eindtijd moet na de starttijd liggen' };
+  }
+  if (diffMinutes < 15) {
+    return { ok: false, endTime, error: 'Een solo moet minimaal 15 minuten duren' };
+  }
+  if (diffMinutes > 60) {
+    return { ok: false, endTime, error: 'Een solo mag maximaal 60 minuten duren' };
+  }
+  return { ok: true, endTime: new Date(startMs + diffMinutes * 60_000).toISOString() };
+}
+
+async function clearQueueForSoloSlot(nickname: string): Promise<number> {
+  const normalizedSolo = normalizeNickname(nickname);
+  if (!normalizedSolo) return 0;
+  const queue = await getQueue(sb);
+  const removable = queue.filter((item) => normalizeNickname(item.added_by) !== normalizedSolo);
+  if (removable.length === 0) return 0;
+  const removableIds = removable.map((item) => item.id);
+  const { error } = await sb.from('queue').delete().in('id', removableIds);
+  if (error) throw error;
+  const remaining = await getQueue(sb);
+  for (let i = 0; i < remaining.length; i += 1) {
+    if (remaining[i].position !== i + 1) {
+      await sb.from('queue').update({ position: i + 1 }).eq('id', remaining[i].id);
+    }
+  }
+  return removable.length;
+}
+
+async function emitSoloScheduleUpdate(target: Pick<IOServer, 'emit'> | { emit: (event: string, payload: unknown) => void } = io): Promise<void> {
+  const soloState = await getSoloScheduleState();
+  target.emit('solo:schedule:update', soloState);
+}
+
+const VALID_MODES: Mode[] = ['dj', 'radio', 'democracy', 'jukebox', 'party', 'solo'];
+const SOLO_RETURN_MODE_SETTING_KEY = 'solo_return_mode';
+
+function normalizeModeValue(value: unknown): Mode | null {
+  return typeof value === 'string' && VALID_MODES.includes(value as Mode) ? value as Mode : null;
+}
+
+async function storeSoloReturnMode(mode: Mode | null): Promise<void> {
+  await setSetting(sb, SOLO_RETURN_MODE_SETTING_KEY, mode);
+}
+
+async function getStoredSoloReturnMode(): Promise<Mode> {
+  const stored = normalizeModeValue(await getSetting<string | null>(sb, SOLO_RETURN_MODE_SETTING_KEY));
+  return stored && stored !== 'solo' ? stored : 'radio';
+}
+
+async function applyAndBroadcastMode(mode: Mode): Promise<void> {
+  await setSetting(sb, 'active_mode', mode);
+  applyPlaybackForMode(mode);
+  evaluateIdlePlayback(mode);
+  resetVotes();
+  const modeSettings = await getModeSettings(sb);
+  io.emit('mode:change', { mode, settings: modeSettings });
+}
+
+async function restoreModeAfterSolo(): Promise<Mode> {
+  const returnMode = await getStoredSoloReturnMode();
+  await applyAndBroadcastMode(returnMode);
+  await storeSoloReturnMode(null);
+  return returnMode;
 }
 
 function isTransientStateError(err: unknown): boolean {
@@ -1791,6 +1963,45 @@ function getEffectiveListenerCount(): number {
   return 0;
 }
 
+async function maybeAutoSwitchToSoloMode(): Promise<Mode> {
+  const [mode, soloSchedule] = await Promise.all([
+    getActiveMode(sb),
+    getSoloScheduleState(),
+  ]);
+
+  const activeSlot = soloSchedule.activeSlot;
+  if (!activeSlot) {
+    if (mode === 'solo') {
+      lastAutoSoloSlotId = null;
+      return await restoreModeAfterSolo();
+    }
+    lastAutoSoloSlotId = null;
+    return mode;
+  }
+
+  if (lastAutoSoloSlotId === activeSlot.id) {
+    return mode;
+  }
+
+  lastAutoSoloSlotId = activeSlot.id;
+  const removedQueueItems = await clearQueueForSoloSlot(activeSlot.nickname);
+  resetVotes();
+  io.emit('vote:update', null);
+  if (removedQueueItems > 0) {
+    const queue = await getQueue(sb);
+    io.emit('queue:update', { items: queue });
+    io.emit('info:toast', { message: `Solo van ${activeSlot.nickname} is gestart. Wachtrij opgeschoond.` });
+  }
+  if (mode === 'solo') {
+    return mode;
+  }
+
+  await storeSoloReturnMode(mode);
+  await applyAndBroadcastMode('solo');
+  console.log(`[mode] Auto-switched to solo for slot ${activeSlot.id} (${activeSlot.nickname})`);
+  return 'solo';
+}
+
 function clampInt(value: number, min: number, max: number): number {
   const normalized = Number.isFinite(value) ? Math.round(value) : min;
   return Math.max(min, Math.min(max, normalized));
@@ -1805,6 +2016,13 @@ function getModeQueueLimitConfig(mode: Mode, settings: ModeSettings): { base: nu
     };
   }
   if (mode === 'radio') {
+    return {
+      base: settings.radio_queue_base_per_user,
+      min: settings.radio_queue_min_per_user,
+      step: settings.radio_queue_listener_step,
+    };
+  }
+  if (mode === 'solo') {
     return {
       base: settings.radio_queue_base_per_user,
       min: settings.radio_queue_min_per_user,
@@ -1858,6 +2076,7 @@ const deferredQueueByUser = new Map<string, DeferredQueueItem[]>();
 const socketNicknameById = new Map<string, string>();
 let deferredRoundRobinCursor = 0;
 let lastObservedTrackKey: string | null = null;
+let lastAutoSoloSlotId: string | null = null;
 
 function normalizeQueueUser(value: string | null | undefined): string {
   const trimmed = (value ?? '').trim();
@@ -1963,6 +2182,7 @@ async function getServerState(): Promise<ServerState> {
     getSetting<string | null>(sb, 'fallback_active_preset_name'),
   ]));
   const activeFallbackGenres = await resolveActiveFallbackGenres(activeFallbackGenre, true);
+  const soloSchedule = await getSoloScheduleState();
 
   const jingleSettings = getJingleSettings();
   return {
@@ -1974,6 +2194,12 @@ async function getServerState(): Promise<ServerState> {
     jingleSelectedKeys: getJingleSelection(),
     mode,
     modeSettings,
+    soloSlotDurationMinutes: soloSchedule.slotDurationMinutes,
+    soloOpenSlots: soloSchedule.openSlots,
+    soloBookings: soloSchedule.bookings,
+    activeSoloNickname: soloSchedule.activeNickname,
+    activeSoloSlot: soloSchedule.activeSlot,
+    showSoloSchedule: soloSchedule.visible,
     fallbackGenres,
     activeFallbackGenre,
     activeFallbackGenres,
@@ -2070,6 +2296,12 @@ function buildDegradedServerState(): ServerState {
       party_queue_min_per_user: 1,
       party_queue_listener_step: 2,
     },
+    soloSlotDurationMinutes: 60,
+    soloOpenSlots: [],
+    soloBookings: [],
+    activeSoloNickname: null,
+    activeSoloSlot: null,
+    showSoloSchedule: false,
     fallbackGenres: [],
     activeFallbackGenre: null,
     activeFallbackGenres: [],
@@ -4705,18 +4937,16 @@ app.post('/api/mode', async (req, res) => {
   const { mode, token } = req.body ?? {};
   if (!isAdmin(token)) return res.status(403).json({ error: 'Unauthorized' });
 
-  const validModes = ['dj', 'radio', 'democracy', 'jukebox', 'party'];
-  if (!validModes.includes(mode)) return res.status(400).json({ error: 'Invalid mode' });
+  const nextMode = normalizeModeValue(mode);
+  if (!nextMode) return res.status(400).json({ error: 'Invalid mode' });
 
   try {
-    await setSetting(sb, 'active_mode', mode);
-    applyPlaybackForMode(mode as Mode);
-    evaluateIdlePlayback(mode as Mode);
-    resetVotes();
-    const modeSettings = await getModeSettings(sb);
-    io.emit('mode:change', { mode: mode as Mode, settings: modeSettings });
-    console.log(`[rest] Mode changed to: ${mode}`);
-    res.json({ ok: true, mode });
+    if (nextMode !== 'solo') {
+      await storeSoloReturnMode(null);
+    }
+    await applyAndBroadcastMode(nextMode);
+    console.log(`[rest] Mode changed to: ${nextMode}`);
+    res.json({ ok: true, mode: nextMode });
   } catch (err) {
     console.error('[rest] mode error:', err);
     res.status(500).json({ error: 'Failed to set mode' });
@@ -4735,7 +4965,7 @@ app.post('/api/settings', async (req, res) => {
       console.log(`[rest] Setting updated: ${key}=${enabled}`);
       return res.json({ ok: true, enabled });
     }
-    if (key === 'lock_autoplay_fallback' || key === 'hide_local_discovery') {
+    if (key === 'lock_autoplay_fallback' || key === 'hide_local_discovery' || key === 'show_solo_schedule') {
       const bool = typeof value === 'boolean'
         ? value
         : (value === 'true' || value === 1 || value === '1');
@@ -4743,7 +4973,12 @@ app.post('/api/settings', async (req, res) => {
       if (key === 'hide_local_discovery') {
         setHideLocalDiscoveryForFallback(bool);
       }
-      await emitFallbackGenreUpdate();
+      if (key === 'lock_autoplay_fallback' || key === 'hide_local_discovery') {
+        await emitFallbackGenreUpdate();
+      }
+      if (key === 'show_solo_schedule') {
+        await emitSoloScheduleUpdate();
+      }
       console.log(`[rest] Setting updated: ${key}=${bool}`);
       return res.json({ ok: true });
     }
@@ -4801,6 +5036,21 @@ app.post('/api/settings', async (req, res) => {
       io.emit('settings:jingleChanged', jingle);
       console.log(`[rest] Setting updated: ${key} (${selectedKeys.length} selected)`);
       return res.json({ ok: true, jingle });
+    }
+    if (key === 'solo_slot_duration_minutes') {
+      const duration = normalizeSoloSlotDurationMinutes(value);
+      await setSetting(sb, key, duration);
+      await emitSoloScheduleUpdate();
+      console.log(`[rest] Setting updated: ${key}=${duration}`);
+      return res.json({ ok: true, value: duration });
+    }
+    if (key === 'solo_open_slots') {
+      const duration = normalizeSoloSlotDurationMinutes(await getSetting<number>(sb, 'solo_slot_duration_minutes'));
+      const slots = normalizeSoloOpenSlots(value, duration);
+      await setSetting(sb, key, slots);
+      await emitSoloScheduleUpdate();
+      console.log(`[rest] Setting updated: ${key} (${slots.length} slots)`);
+      return res.json({ ok: true, value: slots });
     }
 
     await setSetting(sb, key, value);
@@ -5927,9 +6177,7 @@ io.on('connection', (socket) => {
   else socket.emit('queuePushVote:end', null);
   socket.emit('queuePush:lock', { locked: queuePushLocked });
   socket.emit('skip:lock', { locked: isSkipLocked() });
-  const soundboardSamples = toPublicSoundboardSamples();
-  console.log(`[server] Client connected, sending ${soundboardSamples.length} soundboard samples`);
-  socket.emit('soundboard:list', soundboardSamples);
+  void emitSoloScheduleUpdate(socket);
 
   // ── auth:verify ──
   socket.on('auth:verify', (data: { token: string }, callback?: (valid: boolean) => void) => {
@@ -5950,31 +6198,227 @@ io.on('connection', (socket) => {
   });
 
   socket.on('soundboard:list', () => {
-    const samples = toPublicSoundboardSamples();
-    console.log(`[server] Client ${socket.id} requested samples. Found ${samples.length} samples in ${SAMPLE_DIR}`);
-    socket.emit('soundboard:list', samples);
+    const nickname = socketNicknameById.get(socket.id);
+    void canUseSoundboard(undefined, nickname).then((allowed) => {
+      if (!allowed) {
+        socket.emit('error:toast', { message: 'Geen rechten voor soundboard' });
+        return;
+      }
+      const samples = toPublicSoundboardSamples();
+      console.log(`[server] Client ${socket.id} requested samples. Found ${samples.length} samples in ${SAMPLE_DIR}`);
+      socket.emit('soundboard:list', samples);
+    });
   });
 
   // ── DJ Schedule ──
   socket.on('dj:getSchedule', async () => {
-    const schedule = await getDJSchedule();
-    socket.emit('dj:schedule', schedule);
+    await emitSoloScheduleUpdate(socket);
   });
 
-  socket.on('dj:claimSlot', async (data: { startTime: string; endTime: string; token?: string }) => {
+  socket.on('dj:claimSlot', async (data: { startTime: string; endTime: string; token?: string }, ack?: (payload: { ok: boolean; error?: string }) => void) => {
     const nickname = socketNicknameById.get(socket.id);
     if (!nickname) {
       socket.emit('error:toast', { message: 'Je moet een nickname hebben' });
+      ack?.({ ok: false, error: 'Je moet een nickname hebben' });
       return;
     }
-    const success = await claimDJSlot(nickname, data.startTime, data.endTime);
+    const startTime = normalizeIsoDateTime(data.startTime);
+    const endTime = normalizeIsoDateTime(data.endTime);
+    if (!startTime || !endTime) {
+      socket.emit('error:toast', { message: 'Ongeldige solo tijden' });
+      ack?.({ ok: false, error: 'Ongeldige solo tijden' });
+      return;
+    }
+    const soloState = await getSoloScheduleState();
+    if (!findMatchingSoloOpenSlot(soloState.openSlots, startTime, endTime)) {
+      socket.emit('error:toast', { message: 'Dit solo slot staat niet open' });
+      ack?.({ ok: false, error: 'Dit solo slot staat niet open' });
+      return;
+    }
+    if (new Date(endTime).getTime() <= Date.now()) {
+      socket.emit('error:toast', { message: 'Dit solo slot is al voorbij' });
+      ack?.({ ok: false, error: 'Dit solo slot is al voorbij' });
+      return;
+    }
+    const success = await claimDJSlot(nickname, startTime, endTime);
     if (success) {
-      const schedule = await getDJSchedule();
-      io.emit('dj:schedule', schedule);
-      socket.emit('info:toast', { message: 'Slot geclaimd!' });
+      await emitSoloScheduleUpdate();
+      socket.emit('info:toast', { message: 'Solo slot geclaimd!' });
+      ack?.({ ok: true });
     } else {
       socket.emit('error:toast', { message: 'Slot is al bezet of ongeldig' });
+      ack?.({ ok: false, error: 'Slot is al bezet of ongeldig' });
     }
+  });
+
+  socket.on('dj:scheduleOwnSlot', async (data: { startTime: string; endTime: string }, ack?: (payload: { ok: boolean; error?: string }) => void) => {
+    const nickname = socketNicknameById.get(socket.id);
+    if (!nickname) {
+      socket.emit('error:toast', { message: 'Je moet een nickname hebben' });
+      ack?.({ ok: false, error: 'Je moet een nickname hebben' });
+      return;
+    }
+
+    const startTime = normalizeIsoDateTime(data.startTime);
+    const endTime = normalizeIsoDateTime(data.endTime);
+    if (!startTime || !endTime) {
+      socket.emit('error:toast', { message: 'Ongeldige solo tijden' });
+      ack?.({ ok: false, error: 'Ongeldige solo tijden' });
+      return;
+    }
+
+    const normalizedRange = clampSoloSelfScheduleMinutes(startTime, endTime);
+    if (!normalizedRange.ok) {
+      socket.emit('error:toast', { message: normalizedRange.error ?? 'Ongeldige solo duur' });
+      ack?.({ ok: false, error: normalizedRange.error ?? 'Ongeldige solo duur' });
+      return;
+    }
+    if (new Date(normalizedRange.endTime).getTime() <= Date.now()) {
+      socket.emit('error:toast', { message: 'Deze solo ligt al in het verleden' });
+      ack?.({ ok: false, error: 'Deze solo ligt al in het verleden' });
+      return;
+    }
+
+    const success = await claimDJSlot(nickname, startTime, normalizedRange.endTime);
+    if (!success) {
+      socket.emit('error:toast', { message: 'Dit tijdslot overlapt met een bestaande solo' });
+      ack?.({ ok: false, error: 'Dit tijdslot overlapt met een bestaande solo' });
+      return;
+    }
+
+    await emitSoloScheduleUpdate();
+    socket.emit('info:toast', { message: 'Jouw solo is ingepland!' });
+    ack?.({ ok: true });
+  });
+
+  socket.on('dj:updateOwnSlot', async (data: { id: string; startTime: string; endTime: string }, ack?: (payload: { ok: boolean; error?: string }) => void) => {
+    const nickname = socketNicknameById.get(socket.id);
+    if (!nickname) {
+      socket.emit('error:toast', { message: 'Je moet een nickname hebben' });
+      ack?.({ ok: false, error: 'Je moet een nickname hebben' });
+      return;
+    }
+
+    const slot = await getDJSlotById(data.id);
+    if (!slot) {
+      socket.emit('error:toast', { message: 'Deze solo bestaat niet meer' });
+      ack?.({ ok: false, error: 'Deze solo bestaat niet meer' });
+      return;
+    }
+    if (normalizeNickname(slot.nickname) !== normalizeNickname(nickname)) {
+      socket.emit('error:toast', { message: 'Je mag alleen je eigen solo wijzigen' });
+      ack?.({ ok: false, error: 'Je mag alleen je eigen solo wijzigen' });
+      return;
+    }
+    if (new Date(slot.start_time).getTime() <= Date.now()) {
+      socket.emit('error:toast', { message: 'Alleen toekomstige solo’s kunnen worden gewijzigd' });
+      ack?.({ ok: false, error: 'Alleen toekomstige solo’s kunnen worden gewijzigd' });
+      return;
+    }
+
+    const startTime = normalizeIsoDateTime(data.startTime);
+    const endTime = normalizeIsoDateTime(data.endTime);
+    if (!startTime || !endTime) {
+      socket.emit('error:toast', { message: 'Ongeldige solo tijden' });
+      ack?.({ ok: false, error: 'Ongeldige solo tijden' });
+      return;
+    }
+
+    const normalizedRange = clampSoloSelfScheduleMinutes(startTime, endTime);
+    if (!normalizedRange.ok) {
+      socket.emit('error:toast', { message: normalizedRange.error ?? 'Ongeldige solo duur' });
+      ack?.({ ok: false, error: normalizedRange.error ?? 'Ongeldige solo duur' });
+      return;
+    }
+    if (new Date(startTime).getTime() <= Date.now()) {
+      socket.emit('error:toast', { message: 'Kies een toekomstige starttijd' });
+      ack?.({ ok: false, error: 'Kies een toekomstige starttijd' });
+      return;
+    }
+
+    const success = await updateDJSlot(slot.id, nickname, startTime, normalizedRange.endTime);
+    if (!success) {
+      socket.emit('error:toast', { message: 'Dit tijdslot overlapt met een bestaande solo' });
+      ack?.({ ok: false, error: 'Dit tijdslot overlapt met een bestaande solo' });
+      return;
+    }
+
+    await emitSoloScheduleUpdate();
+    socket.emit('info:toast', { message: 'Jouw solo is aangepast!' });
+    ack?.({ ok: true });
+  });
+
+  socket.on('dj:cancelOwnSlot', async (data: { id: string }, ack?: (payload: { ok: boolean; error?: string }) => void) => {
+    const nickname = socketNicknameById.get(socket.id);
+    if (!nickname) {
+      socket.emit('error:toast', { message: 'Je moet een nickname hebben' });
+      ack?.({ ok: false, error: 'Je moet een nickname hebben' });
+      return;
+    }
+
+    const slot = await getDJSlotById(data.id);
+    if (!slot) {
+      socket.emit('error:toast', { message: 'Deze solo bestaat niet meer' });
+      ack?.({ ok: false, error: 'Deze solo bestaat niet meer' });
+      return;
+    }
+    if (normalizeNickname(slot.nickname) !== normalizeNickname(nickname)) {
+      socket.emit('error:toast', { message: 'Je mag alleen je eigen solo annuleren' });
+      ack?.({ ok: false, error: 'Je mag alleen je eigen solo annuleren' });
+      return;
+    }
+    if (new Date(slot.start_time).getTime() <= Date.now()) {
+      socket.emit('error:toast', { message: 'Een al gestarte solo kan niet meer worden geannuleerd' });
+      ack?.({ ok: false, error: 'Een al gestarte solo kan niet meer worden geannuleerd' });
+      return;
+    }
+
+    const success = await deleteDJSlot(slot.id);
+    if (!success) {
+      socket.emit('error:toast', { message: 'De solo kon niet worden geannuleerd' });
+      ack?.({ ok: false, error: 'De solo kon niet worden geannuleerd' });
+      return;
+    }
+
+    await emitSoloScheduleUpdate();
+    socket.emit('info:toast', { message: 'Jouw solo is geannuleerd.' });
+    ack?.({ ok: true });
+  });
+
+  socket.on('dj:endActiveSolo', async (data: { token?: string }, ack?: (payload: { ok: boolean; error?: string }) => void) => {
+    const nickname = socketNicknameById.get(socket.id);
+    const admin = isAdmin(data?.token, nickname);
+    const soloController = await hasActiveSoloControl(nickname);
+    if (!admin && !soloController) {
+      socket.emit('error:toast', { message: 'Geen rechten om deze solo te stoppen' });
+      ack?.({ ok: false, error: 'Geen rechten om deze solo te stoppen' });
+      return;
+    }
+
+    const currentSlot = await getCurrentDJSlot();
+    if (!currentSlot) {
+      socket.emit('error:toast', { message: 'Er is geen actieve solo om te stoppen' });
+      ack?.({ ok: false, error: 'Er is geen actieve solo om te stoppen' });
+      return;
+    }
+
+    const endedSlot = await endCurrentDJSlot();
+    if (!endedSlot) {
+      socket.emit('error:toast', { message: 'Solo kon niet worden gestopt' });
+      ack?.({ ok: false, error: 'Solo kon niet worden gestopt' });
+      return;
+    }
+
+    await emitSoloScheduleUpdate();
+
+    const mode = await getActiveMode(sb).catch(() => 'radio' as Mode);
+    if (mode === 'solo') {
+      lastAutoSoloSlotId = null;
+      await restoreModeAfterSolo();
+    }
+
+    io.emit('info:toast', { message: `Solo van ${currentSlot.nickname} is vroegtijdig afgebroken.` });
+    ack?.({ ok: true });
   });
 
   socket.on('listener:state', (data: { nickname?: string; listening?: boolean }) => {
@@ -6021,8 +6465,10 @@ io.on('connection', (socket) => {
   }) => void) => {
     try {
       const mode = await getActiveMode(sb);
-      const admin = isAdmin(data.token, socketNicknameById.get(socket.id));
-      if (!canPerformAction(mode, 'add_to_queue', admin)) {
+      const requesterNickname = socketNicknameById.get(socket.id);
+      const admin = isAdmin(data.token, requesterNickname);
+      const soloController = mode === 'solo' && await hasActiveSoloControl(requesterNickname);
+      if (!canPerformAction(mode, 'add_to_queue', admin, soloController)) {
         socket.emit('error:toast', { message: 'Je mag geen nummers toevoegen in deze modus' });
         ack?.({ ok: false, error: 'Je mag geen nummers toevoegen in deze modus' });
         return;
@@ -6233,13 +6679,13 @@ io.on('connection', (socket) => {
 
       const track = getCurrentTrack();
       // Admins can always skip, regardless of skip lock
-      if (!admin && isSkipLocked()) {
+      if (!privilegedSkip && isSkipLocked()) {
         socket.emit('error:toast', { message: 'Skip bezig — wacht tot het nieuwe nummer speelt' });
         return;
       }
       const waitSeconds = getSkipCooldownRemainingSeconds();
       // Admins can skip immediately, bypassing cooldown
-      if (!admin && waitSeconds > 0) {
+      if (!privilegedSkip && waitSeconds > 0) {
         socket.emit('error:toast', { message: `Wacht nog ${waitSeconds}s tot je opnieuw kunt skippen` });
         return;
       }
@@ -6248,12 +6694,17 @@ io.on('connection', (socket) => {
       const isLongTrack = (track?.duration ?? 0) > 600;
       const anyoneCanSkip = isLongTrack && playingFor >= ANYONE_SKIP_AFTER;
 
-      if (!anyoneCanSkip && !canPerformAction(mode, 'skip', admin)) {
+      if (mode === 'solo' && !privilegedSkip) {
+        socket.emit('error:toast', { message: 'Alleen de actieve solist of admin kan skippen in solo modus' });
+        return;
+      }
+
+      if (mode !== 'solo' && !anyoneCanSkip && !canPerformAction(mode, 'skip', admin)) {
         socket.emit('error:toast', { message: 'Je mag niet skippen in deze modus' });
         return;
       }
 
-      console.log(`[player] Skip requested by ${admin ? 'admin' : socket.id}`);
+      console.log(`[player] Skip requested by ${admin ? 'admin' : requesterNickname ?? socket.id}`);
       resetVotes();
       io.emit('vote:update', null);
       skipCurrentTrack();
@@ -6325,20 +6776,16 @@ io.on('connection', (socket) => {
       return;
     }
 
-    const validModes = ['dj', 'radio', 'democracy', 'jukebox', 'party'];
-    if (!validModes.includes(data.mode)) {
+    const nextMode = normalizeModeValue(data.mode);
+    if (!nextMode || nextMode === 'solo') {
       socket.emit('error:toast', { message: 'Ongeldige modus' });
       return;
     }
 
     try {
-      await setSetting(sb, 'active_mode', data.mode);
-      applyPlaybackForMode(data.mode as Mode);
-      evaluateIdlePlayback(data.mode as Mode);
-      resetVotes();
-      const modeSettings = await getModeSettings(sb);
-      io.emit('mode:change', { mode: data.mode as Mode, settings: modeSettings });
-      console.log(`[mode] Changed to: ${data.mode}`);
+      await storeSoloReturnMode(null);
+      await applyAndBroadcastMode(nextMode);
+      console.log(`[mode] Changed to: ${nextMode}`);
     } catch (err) {
       console.error('[socket] mode:set error:', err);
     }
@@ -6356,6 +6803,15 @@ io.on('connection', (socket) => {
         const enabled = data.value === true || data.value === 'true' || data.value === 1 || data.value === '1';
         await setSoundboardPublic(enabled);
         io.emit('settings:soundboardPublicChanged', { enabled });
+        console.log(`[settings] Updated: ${data.key}=${enabled}`);
+        return;
+      }
+      if (data.key === 'show_solo_schedule') {
+        const enabled = typeof data.value === 'boolean'
+          ? data.value
+          : (data.value === 'true' || data.value === 1 || data.value === '1');
+        await setSetting(sb, data.key, enabled);
+        await emitSoloScheduleUpdate();
         console.log(`[settings] Updated: ${data.key}=${enabled}`);
         return;
       }
@@ -6728,7 +7184,7 @@ async function main(): Promise<void> {
   const startupHideLocal = await getSetting<boolean>(sb, 'hide_local_discovery');
   setHideLocalDiscoveryForFallback(!!startupHideLocal);
 
-  const initialMode = await getActiveMode(sb);
+  const initialMode = await maybeAutoSwitchToSoloMode();
   console.log(`[mode] Initial mode: ${initialMode}`);
   
   // Register point award listener ONCE at startup (not on each mode change to prevent duplicates)
@@ -6761,7 +7217,7 @@ async function main(): Promise<void> {
       evaluateIdlePlayback(lastSyncedMode);
       return;
     }
-    getActiveMode(sb)
+    maybeAutoSwitchToSoloMode()
       .then(async (mode) => {
         if (mode === lastSyncedMode) {
           pendingSyncedMode = null;

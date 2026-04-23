@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { RadioState, Track, QueueItem, Mode, ModeSettings, VoteState, DurationVote, QueuePushVote, FallbackGenre } from './types';
+import type { RadioState, Track, QueueItem, Mode, ModeSettings, VoteState, DurationVote, QueuePushVote, FallbackGenre, SoloScheduleBooking, SoloScheduleSlot } from './types';
 
 interface RadioStore extends RadioState {
   setConnected: (connected: boolean) => void;
@@ -14,6 +14,14 @@ interface RadioStore extends RadioState {
   setActiveFallbackPresetName: (presetName: string | null) => void;
   setMode: (mode: Mode, settings: ModeSettings) => void;
   setModeSettings: (settings: ModeSettings) => void;
+  setSoloSchedule: (payload: {
+    slotDurationMinutes: number;
+    openSlots: SoloScheduleSlot[];
+    bookings: SoloScheduleBooking[];
+    activeNickname: string | null;
+    activeSlot: SoloScheduleBooking | null;
+    visible?: boolean;
+  }) => void;
   setListenerCount: (count: number) => void;
   setStreamOnline: (online: boolean) => void;
   setPausedForIdle: (pausedForIdle: boolean) => void;
@@ -73,6 +81,12 @@ export const useRadioStore = create<RadioStore>((set) => ({
     party_queue_min_per_user: 1,
     party_queue_listener_step: 2,
   },
+  soloSlotDurationMinutes: 60,
+  soloOpenSlots: [],
+  soloBookings: [],
+  activeSoloNickname: null,
+  activeSoloSlot: null,
+  showSoloSchedule: false,
   listenerCount: 0,
   onlineUserCount: 0,
   streamOnline: false,
@@ -102,6 +116,14 @@ export const useRadioStore = create<RadioStore>((set) => ({
   setActiveFallbackPresetName: (activeFallbackPresetName) => set({ activeFallbackPresetName }),
   setMode: (mode, modeSettings) => set({ mode, modeSettings }),
   setModeSettings: (modeSettings) => set({ modeSettings }),
+  setSoloSchedule: ({ slotDurationMinutes, openSlots, bookings, activeNickname, activeSlot, visible }) => set({
+    soloSlotDurationMinutes: slotDurationMinutes,
+    soloOpenSlots: openSlots,
+    soloBookings: bookings,
+    activeSoloNickname: activeNickname,
+    activeSoloSlot: activeSlot,
+    ...(typeof visible === 'boolean' ? { showSoloSchedule: visible } : {}),
+  }),
   setListenerCount: (listenerCount) => set({ listenerCount }),
   setOnlineUserCount: (onlineUserCount) => set({ onlineUserCount }),
   setStreamOnline: (streamOnline) => set({ streamOnline }),
@@ -129,6 +151,12 @@ export const useRadioStore = create<RadioStore>((set) => ({
     activeFallbackGenreBy: null,
     activeFallbackSharedMode: "random",
     activeFallbackPresetName: null,
+    soloSlotDurationMinutes: 60,
+    soloOpenSlots: [],
+    soloBookings: [],
+    activeSoloNickname: null,
+    activeSoloSlot: null,
+    showSoloSchedule: false,
     listenerCount: 0,
     onlineUserCount: 0,
     streamOnline: false,

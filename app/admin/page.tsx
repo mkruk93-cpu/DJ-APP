@@ -10,6 +10,7 @@ import { isConfiguredAdminUser } from "@/lib/adminIdentity";
 import { skipTrack as apiSkipTrack, setKeepFiles as apiSetKeepFiles, updateSetting as apiUpdateSetting } from "@/lib/radioApi";
 import ModeSelector from "@/components/admin/ModeSelector";
 import ModeSettings from "@/components/admin/ModeSettings";
+import SoloScheduleSettings from "@/components/admin/SoloScheduleSettings";
 import QueueManager from "@/components/admin/QueueManager";
 import QueueAdd from "@/components/QueueAdd";
 import ListenerCount from "@/components/admin/ListenerCount";
@@ -70,6 +71,7 @@ export default function AdminPage() {
   const radioTrack = useRadioStore((s) => s.currentTrack);
   const lockAutoplayFallback = useRadioStore((s) => s.lockAutoplayFallback);
   const hideLocalDiscovery = useRadioStore((s) => s.hideLocalDiscovery);
+  const showSoloSchedule = useRadioStore((s) => s.showSoloSchedule);
   const store = useRadioStore;
 
   const embedded = useMemo(() => {
@@ -201,6 +203,12 @@ export default function AdminPage() {
             queue: state.queue ?? [],
             mode: state.mode ?? "radio",
             modeSettings: state.modeSettings ?? store.getState().modeSettings,
+            soloSlotDurationMinutes: state.soloSlotDurationMinutes ?? 60,
+            soloOpenSlots: state.soloOpenSlots ?? [],
+            soloBookings: state.soloBookings ?? [],
+            activeSoloNickname: state.activeSoloNickname ?? null,
+            activeSoloSlot: state.activeSoloSlot ?? null,
+            showSoloSchedule: state.showSoloSchedule ?? false,
             listenerCount: state.listenerCount ?? 0,
             streamOnline: state.streamOnline ?? false,
             pausedForIdle: state.pausedForIdle ?? false,
@@ -242,6 +250,23 @@ export default function AdminPage() {
     });
     socket.on("queue:update", (data: { items: QueueItem[] }) => store.getState().setQueue(data.items));
     socket.on("mode:change", (data: { mode: Mode; settings: ModeSettingsType }) => store.getState().setMode(data.mode, data.settings));
+    socket.on("solo:schedule:update", (data: {
+      slotDurationMinutes: number;
+      openSlots: Array<{ id: string; startTime: string; endTime: string }>;
+      bookings: Array<{ id: string; nickname: string; startTime: string; endTime: string; createdAt?: string | null }>;
+      activeNickname: string | null;
+      activeSlot: { id: string; nickname: string; startTime: string; endTime: string; createdAt?: string | null } | null;
+      visible?: boolean;
+    }) => {
+      store.getState().setSoloSchedule({
+        slotDurationMinutes: data.slotDurationMinutes ?? 60,
+        openSlots: data.openSlots ?? [],
+        bookings: data.bookings ?? [],
+        activeNickname: data.activeNickname ?? null,
+        activeSlot: data.activeSlot ?? null,
+        visible: data.visible ?? false,
+      });
+    });
     socket.on("vote:update", (data: VoteState | null) => store.getState().setVoteState(data));
     socket.on("stream:status", (data: { online: boolean; listeners: number; pausedForIdle?: boolean }) => {
       store.getState().setStreamOnline(data.online);
@@ -941,6 +966,35 @@ export default function AdminPage() {
                   </div>
                   <div className="flex items-center justify-between gap-3 border-t border-amber-900/30 pt-3">
                     <div>
+                      <p className="text-sm font-semibold text-white">Solo timetable zichtbaar</p>
+                      <p className="text-xs text-gray-500">
+                        {showSoloSchedule
+                          ? "Solo-timetable en inschrijvingen zijn zichtbaar op de streampagina in alle modi."
+                          : "Solo-timetable en inschrijvingen zijn overal verborgen op de streampagina."}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const next = !showSoloSchedule;
+                        try {
+                          await apiUpdateSetting("show_solo_schedule", next);
+                        } catch (err) {
+                          console.warn("[admin] show_solo_schedule failed:", err);
+                        }
+                      }}
+                      className="flex shrink-0 items-center gap-2 rounded-lg border border-gray-700 px-3 py-1.5 text-sm transition hover:border-gray-600"
+                    >
+                      <span
+                        className={`inline-block h-3 w-3 rounded-full ${showSoloSchedule ? "bg-green-400 shadow-sm shadow-green-400/50" : "bg-gray-600"}`}
+                      />
+                      <span className={showSoloSchedule ? "font-semibold text-green-300" : "text-gray-400"}>
+                        {showSoloSchedule ? "ZICHTBAAR" : "VERBORGEN"}
+                      </span>
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 border-t border-amber-900/30 pt-3">
+                    <div>
                       <p className="text-sm font-semibold text-white">Lokale discovery verbergen</p>
                       <p className="text-xs text-gray-500">
                         {hideLocalDiscovery
@@ -1065,6 +1119,7 @@ export default function AdminPage() {
                 </div>
                 <ModeSelector />
                 <ModeSettings />
+                <SoloScheduleSettings />
               </div>
             </details>
 

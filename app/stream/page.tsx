@@ -27,10 +27,12 @@ import PushNotification from "@/components/PushNotification";
 import ProfileModal from "@/components/ProfileModal";
 import Leaderboard from "@/components/Leaderboard";
 import Soundboard from "@/components/Soundboard";
-import type { Track, QueueItem, Mode, ModeSettings, VoteState, DurationVote, UpcomingTrack } from "@/lib/types";
+import SoloScheduleBar from "@/components/SoloScheduleBar";
+import type { Track, QueueItem, Mode, ModeSettings, VoteState, DurationVote, UpcomingTrack, SoloScheduleBooking } from "@/lib/types";
 import { parseTrackDisplay } from "@/lib/trackDisplay";
 import { useSyncedTrack } from "@/lib/useSyncedTrack";
 import { useAuth } from "@/lib/authContext";
+import { getRadioToken } from "@/lib/auth";
 import { useIsAdmin } from "@/lib/useIsAdmin";
 
 type StreamMode = "twitch" | "audio" | "radio" | "offline";
@@ -95,6 +97,17 @@ function firstNonEmpty(...values: Array<string | null | undefined>): string | nu
     if (typeof value === "string" && value.trim().length > 0) return value.trim();
   }
   return null;
+}
+
+function formatCountdown(totalSeconds: number): string {
+  const safe = Math.max(0, totalSeconds);
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  const seconds = safe % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
 class RadioPanelErrorBoundary extends Component<
@@ -190,6 +203,10 @@ export default function StreamPage() {
   const [showLoadingStates, setShowLoadingStates] = useState(true);
   const [radioStateReady, setRadioStateReady] = useState(false);
   const [offlineUiArmed, setOfflineUiArmed] = useState(false);
+  const [soloCountdownNow, setSoloCountdownNow] = useState(() => Date.now());
+  const [endingActiveSolo, setEndingActiveSolo] = useState(false);
+  const [soloScheduleHighlighted, setSoloScheduleHighlighted] = useState(false);
+  const [soloScheduleExpanded, setSoloScheduleExpanded] = useState(false);
   const activeTabRef = useRef<MobileTab>(activeTab);
   activeTabRef.current = activeTab;
   const previousQueueLengthRef = useRef<number>(0);
@@ -201,6 +218,12 @@ export default function StreamPage() {
   const queue = useRadioStore((s) => s.queue);
   const upcomingTrack = useRadioStore((s) => s.upcomingTrack);
   const radioMode = useRadioStore((s) => s.mode);
+  const soloOpenSlots = useRadioStore((s) => s.soloOpenSlots);
+  const soloBookings = useRadioStore((s) => s.soloBookings);
+  const soloSlotDurationMinutes = useRadioStore((s) => s.soloSlotDurationMinutes);
+  const activeSoloNickname = useRadioStore((s) => s.activeSoloNickname);
+  const activeSoloSlot = useRadioStore((s) => s.activeSoloSlot);
+  const showSoloSchedule = useRadioStore((s) => s.showSoloSchedule);
   const streamOnline = useRadioStore((s) => s.streamOnline);
   const pausedForIdle = useRadioStore((s) => s.pausedForIdle);
   const playerListening = useRadioStore((s) => s.playerListening);
@@ -259,15 +282,30 @@ export default function StreamPage() {
   // Fail-safe: once stream context is active, keep request/queue UI available.
   const isStreamUnavailable = communityUiActive ? false : (!streamOnline && !pausedForIdle);
   const tabsAllowed = communityUiActive ? true : !isStreamUnavailable;
+  const normalizedUsername = (userAccount?.username ?? "").trim().toLowerCase();
+  const normalizedActiveSolo = (activeSoloNickname ?? "").trim().toLowerCase();
+  const isActiveSoloUser = !!normalizedUsername && !!normalizedActiveSolo && normalizedUsername === normalizedActiveSolo;
+  const hasSoloControl = isAdminUser || isActiveSoloUser;
+  const nextUpcomingSolo = showSoloSchedule
+    ? [...soloBookings]
+        .filter((booking) => new Date(booking.startTime).getTime() > soloCountdownNow)
+        .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())[0] ?? null
+    : null;
+  const nextSoloStartsInSeconds = nextUpcomingSolo
+    ? Math.max(0, Math.ceil((new Date(nextUpcomingSolo.startTime).getTime() - soloCountdownNow) / 1000))
+    : null;
+  const showUpcomingSoloBanner = !!nextUpcomingSolo && !activeSoloSlot && nextSoloStartsInSeconds !== null && nextSoloStartsInSeconds <= 15 * 60;
   const showRequests = radioMode === "dj";
   const hideQueueUiForRadioUsers = radioMode === "radio" && !isAdminUser;
-  const showRadioPanel = communityUiActive && radioMode !== "dj" && !hideQueueUiForRadioUsers;
-  const showQueuePanel = communityUiActive && radioMode !== "dj" && !hideQueueUiForRadioUsers;
+  const showRadioPanel = communityUiActive && radioMode !== "dj" && (radioMode === "solo" ? hasSoloControl : !hideQueueUiForRadioUsers);
+  const showQueuePanel = communityUiActive && radioMode !== "dj" && (radioMode === "solo" ? true : !hideQueueUiForRadioUsers);
   const showRequestedPanel = communityUiActive && radioMode === "dj";
+  const canSeeSoundboard = radioMode === "solo" ? hasSoloControl : (isAdminUser || showSoundboardPublic);
   const voteState = useRadioStore((s) => s.voteState);
   const syncedCurrentTrack = useSyncedTrack(radioMode === "dj" ? null : radioTrack);
   const statsServerUrl = (radioServerUrl ?? process.env.NEXT_PUBLIC_CONTROL_SERVER_URL ?? "").replace(/\/+$/, "");
   const shouldShowInstallBanner = isHydrated && !isStandalonePwa && !installBannerDismissed;
+  const soloScheduleRef = useRef<HTMLDivElement | null>(null);
 
   function hydrateCurrentTrack(track: Track | null): Track | null {
     if (!track) return null;
@@ -366,6 +404,35 @@ export default function StreamPage() {
     window.dispatchEvent(new CustomEvent("radio-cast-toggle-request"));
   }
 
+  function openSoloScheduleFromHeader(): void {
+    if (typeof window === "undefined") return;
+    if (soloScheduleExpanded) {
+      setSoloScheduleExpanded(false);
+      setSoloScheduleHighlighted(false);
+      return;
+    }
+    setSoloScheduleExpanded(true);
+    setSoloScheduleHighlighted(true);
+    soloScheduleRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  useEffect(() => {
+    if (!soloScheduleHighlighted) return;
+    const timer = window.setTimeout(() => setSoloScheduleHighlighted(false), 1400);
+    return () => window.clearTimeout(timer);
+  }, [soloScheduleHighlighted]);
+
+  useEffect(() => {
+    if (!showSoloSchedule) return;
+    const timer = window.setInterval(() => setSoloCountdownNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [showSoloSchedule]);
+
+  useEffect(() => {
+    if (!activeSoloNickname) return;
+    showInfoToast(`Solo live: ${activeSoloNickname}`);
+  }, [activeSoloNickname]);
+
   useEffect(() => {
     if (skipLocked) {
       if (!skipWaitToastShownRef.current) {
@@ -408,6 +475,12 @@ export default function StreamPage() {
       else setActiveTab(showRequests ? "requests" : "chat");
     }
   }, [showRequestedPanel, showQueuePanel, showRadioPanel, activeTab, showRequests]);
+
+  useEffect(() => {
+    if (!canSeeSoundboard && activeTab === "soundboard") {
+      setActiveTab(showQueuePanel ? "queue" : "chat");
+    }
+  }, [activeTab, canSeeSoundboard, showQueuePanel]);
 
   useEffect(() => {
     if (desktopAccordionTab === "radio" && !showRadioPanel && showQueuePanel) {
@@ -905,15 +978,6 @@ export default function StreamPage() {
       window.scrollTo({ top: 0, left: 0, behavior: "auto" });
       document.documentElement.scrollTop = 0;
       document.body.scrollTop = 0;
-      const resetScrollContainers = () => {
-        document
-          .querySelectorAll<HTMLElement>(".overflow-y-auto, .chat-scroll")
-          .forEach((el) => {
-            el.scrollTop = 0;
-          });
-      };
-      resetScrollContainers();
-      setTimeout(resetScrollContainers, 0);
     };
     const timers = [0, 60, 180, 420, 900, 1500, 2200].map((delay) => window.setTimeout(forceTop, delay));
     const guard = window.setInterval(() => {
@@ -927,29 +991,12 @@ export default function StreamPage() {
       }
     }, 300);
     window.setTimeout(() => window.clearInterval(guard), 3200);
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") {
-        // Delay to allow mobile file dialogs to close completely
-        // Mobile file pickers can take longer to close
-        setTimeout(() => {
-          // Double-check we're not in the middle of file selection
-          const activeInput = document.querySelector('input[type="file"]:focus');
-          if (!activeInput) {
-            forceTop();
-          }
-        }, 300);
-      }
-    };
     forceTop();
     window.addEventListener("pageshow", forceTop);
-    window.addEventListener("focus", forceTop);
-    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       timers.forEach((id) => window.clearTimeout(id));
       window.clearInterval(guard);
       window.removeEventListener("pageshow", forceTop);
-      window.removeEventListener("focus", forceTop);
-      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, []);
 
@@ -1033,6 +1080,12 @@ export default function StreamPage() {
             activeFallbackPresetName: state.activeFallbackPresetName ?? null,
             mode: state.mode ?? "radio",
             modeSettings: state.modeSettings ?? store.getState().modeSettings,
+            soloSlotDurationMinutes: state.soloSlotDurationMinutes ?? 60,
+            soloOpenSlots: state.soloOpenSlots ?? [],
+            soloBookings: state.soloBookings ?? [],
+            activeSoloNickname: state.activeSoloNickname ?? null,
+            activeSoloSlot: state.activeSoloSlot ?? null,
+            showSoloSchedule: state.showSoloSchedule ?? false,
             listenerCount: state.listenerCount ?? 0,
             streamOnline: state.streamOnline ?? false,
             pausedForIdle: state.pausedForIdle ?? false,
@@ -1148,6 +1201,23 @@ export default function StreamPage() {
 
     socket.on("mode:change", (data: { mode: Mode; settings: ModeSettings }) => {
       store.getState().setMode(data.mode, data.settings);
+    });
+    socket.on("solo:schedule:update", (data: {
+      slotDurationMinutes: number;
+      openSlots: Array<{ id: string; startTime: string; endTime: string }>;
+      bookings: Array<{ id: string; nickname: string; startTime: string; endTime: string; createdAt?: string | null }>;
+      activeNickname: string | null;
+      activeSlot: { id: string; nickname: string; startTime: string; endTime: string; createdAt?: string | null } | null;
+      visible?: boolean;
+    }) => {
+      store.getState().setSoloSchedule({
+        slotDurationMinutes: data.slotDurationMinutes ?? 60,
+        openSlots: data.openSlots ?? [],
+        bookings: data.bookings ?? [],
+        activeNickname: data.activeNickname ?? null,
+        activeSlot: data.activeSlot ?? null,
+        visible: data.visible ?? false,
+      });
     });
 
     socket.on("vote:update", (data: VoteState | null) => {
@@ -1595,6 +1665,107 @@ export default function StreamPage() {
     console.log('[Stream] User approval completed');
   };
 
+  const handleClaimSoloSlot = (slot: { startTime: string; endTime: string }) => {
+    const socket = getSocket();
+    socket.emit("dj:claimSlot", slot, (response?: { ok?: boolean; error?: string }) => {
+      if (response?.ok) return;
+      if (response?.error) {
+        showToast(response.error);
+      }
+    });
+  };
+
+  const refreshSoloSchedule = () => {
+    const socket = getSocket();
+    socket.emit("dj:getSchedule");
+  };
+
+  const applyOptimisticSoloBookings = (updater: (current: SoloScheduleBooking[]) => SoloScheduleBooking[]) => {
+    const state = useRadioStore.getState();
+    state.setSoloSchedule({
+      slotDurationMinutes: state.soloSlotDurationMinutes,
+      openSlots: state.soloOpenSlots,
+      bookings: updater(state.soloBookings),
+      activeNickname: state.activeSoloNickname,
+      activeSlot: state.activeSoloSlot,
+      visible: state.showSoloSchedule,
+    });
+  };
+
+  const handleScheduleSoloSlot = (slot: { startTime: string; endTime: string }) => {
+    const socket = getSocket();
+    socket.emit("dj:scheduleOwnSlot", slot, (response?: { ok?: boolean; error?: string }) => {
+      if (response?.ok) {
+        const username = userAccount?.username?.trim();
+        if (username) {
+          applyOptimisticSoloBookings((current) => {
+            const next: SoloScheduleBooking[] = [
+              ...current,
+              {
+                id: `${username}_${slot.startTime}_${slot.endTime}`,
+                nickname: username,
+                startTime: slot.startTime,
+                endTime: slot.endTime,
+                createdAt: new Date().toISOString(),
+              },
+            ];
+            return next.sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+          });
+        }
+        refreshSoloSchedule();
+        return;
+      }
+      if (response?.error) {
+        showToast(response.error);
+      }
+    });
+  };
+
+  const handleUpdateOwnSoloSlot = (bookingId: string, slot: { startTime: string; endTime: string }) => {
+    const socket = getSocket();
+    socket.emit("dj:updateOwnSlot", { id: bookingId, ...slot }, (response?: { ok?: boolean; error?: string }) => {
+      if (response?.ok) {
+        applyOptimisticSoloBookings((current) => current.map((booking) => booking.id === bookingId
+          ? { ...booking, startTime: slot.startTime, endTime: slot.endTime }
+          : booking));
+        refreshSoloSchedule();
+        return;
+      }
+      if (response?.error) {
+        showToast(response.error);
+      }
+    });
+  };
+
+  const handleCancelOwnSoloSlot = (bookingId: string) => {
+    const socket = getSocket();
+    socket.emit("dj:cancelOwnSlot", { id: bookingId }, (response?: { ok?: boolean; error?: string }) => {
+      if (response?.ok) {
+        applyOptimisticSoloBookings((current) => current.filter((booking) => booking.id !== bookingId));
+        refreshSoloSchedule();
+        return;
+      }
+      if (response?.error) {
+        showToast(response.error);
+      }
+    });
+  };
+
+  const handleEndActiveSolo = () => {
+    if (endingActiveSolo) return;
+    const confirmed = typeof window === "undefined"
+      ? true
+      : window.confirm("Weet je zeker dat je de actieve solo vroegtijdig wilt afbreken?");
+    if (!confirmed) return;
+    setEndingActiveSolo(true);
+    const socket = getSocket();
+    socket.emit("dj:endActiveSolo", { token: getRadioToken() ?? undefined }, (response?: { ok?: boolean; error?: string }) => {
+      setEndingActiveSolo(false);
+      if (response?.ok) return;
+      showToast(response?.error ?? "Solo kon niet worden afgebroken");
+    });
+  };
+
   return (
     <div
       className="fixed inset-0 flex flex-col overflow-hidden bg-gray-950"
@@ -1615,6 +1786,29 @@ export default function StreamPage() {
           minHeight: "56px"
         }}
       >
+        {showSoloSchedule && (
+          <div
+            ref={soloScheduleRef}
+            className={`scroll-mt-24 transition-all duration-300 ${soloScheduleHighlighted ? "rounded-2xl ring-2 ring-amber-300/70 ring-offset-2 ring-offset-gray-950" : ""}`}
+          >
+            <SoloScheduleBar
+              slots={soloOpenSlots}
+              bookings={soloBookings}
+              activeNickname={activeSoloNickname}
+              currentUsername={userAccount?.username ?? null}
+              durationMinutes={soloSlotDurationMinutes}
+              isAdmin={isAdminUser}
+              onClaim={handleClaimSoloSlot}
+              onSchedule={handleScheduleSoloSlot}
+              onUpdateOwnSlot={handleUpdateOwnSoloSlot}
+              onCancelOwnSlot={handleCancelOwnSoloSlot}
+              canEndActiveSolo={radioMode === "solo" && hasSoloControl && !!activeSoloSlot}
+              onEndActiveSolo={handleEndActiveSolo}
+              endingActiveSolo={endingActiveSolo}
+              expanded={soloScheduleExpanded}
+            />
+          </div>
+        )}
 
         <div className="flex w-full items-center gap-1.5">
           <h1 className="min-w-0 flex-1 truncate text-sm font-bold tracking-tight text-white sm:text-lg">
@@ -1634,6 +1828,17 @@ export default function StreamPage() {
             >
               Stats
             </button>
+            {showSoloSchedule && (
+              <button
+                onClick={openSoloScheduleFromHeader}
+                className="whitespace-nowrap rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-200 transition hover:border-amber-400/70 hover:bg-amber-500/15 sm:px-3 sm:text-sm"
+                aria-label="Solo inschrijven"
+                title="Solo inschrijven"
+              >
+                <span className="sm:hidden">📅</span>
+                <span className="hidden sm:inline">Solo Inschrijven</span>
+              </button>
+            )}
             <button
               onClick={() => setLeaderboardOpen(true)}
               className="whitespace-nowrap rounded-lg border border-gray-700 px-2 py-1 text-xs text-gray-400 hover:border-gray-600 hover:text-white transition sm:px-3 sm:text-sm"
@@ -2028,7 +2233,7 @@ export default function StreamPage() {
                 )}
               </button>
             )}
-            {(isAdminUser || showSoundboardPublic) && (
+                {canSeeSoundboard && (
               <button
                 onClick={() => setActiveTab("soundboard")}
                 className={`relative flex-1 rounded-md px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition ${
@@ -2079,7 +2284,7 @@ export default function StreamPage() {
           {showRadioPanel && (
             <div className={`min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden ${activeTab === "radio" ? "flex" : "hidden"} lg:hidden`}>
               <RadioPanelErrorBoundary>
-                <QueueAdd username={userAccount?.username} />
+              <QueueAdd username={userAccount?.username} hasSoloControl={hasSoloControl} />
               </RadioPanelErrorBoundary>
             </div>
           )}
@@ -2095,7 +2300,7 @@ export default function StreamPage() {
               {/* (existing requested panel content) */}
             </div>
           )}
-          {(isAdminUser || showSoundboardPublic) && (
+                {canSeeSoundboard && (
             <div className={`min-h-0 min-w-0 flex-1 overflow-hidden flex-col gap-2 ${activeTab === "soundboard" ? "flex" : "hidden"} lg:hidden`}>
               <Soundboard showPublic={showSoundboardPublic} />
             </div>
@@ -2119,7 +2324,7 @@ export default function StreamPage() {
                   {desktopAccordionTab === "radio" && (
                     <div className="flex min-h-0 flex-1 flex-col p-2">
                       <RadioPanelErrorBoundary>
-                        <QueueAdd username={userAccount?.username} />
+                        <QueueAdd username={userAccount?.username} hasSoloControl={hasSoloControl} />
                       </RadioPanelErrorBoundary>
                     </div>
                   )}
@@ -2148,7 +2353,7 @@ export default function StreamPage() {
                   )}
                 </div>
               )}
-              {(isAdminUser || showSoundboardPublic) && (
+              {canSeeSoundboard && (
                 <div className={`relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-gray-800 bg-gray-900 shadow-lg shadow-violet-500/5 ${
                   desktopAccordionTab === "soundboard" ? "z-40 flex-1" : "z-0"
                 }`}>
@@ -2173,6 +2378,27 @@ export default function StreamPage() {
           )}
         </div>
       </main>
+      {showUpcomingSoloBanner && nextUpcomingSolo && nextSoloStartsInSeconds !== null && (
+        <div className={`pointer-events-none fixed left-1/2 -translate-x-1/2 ${playerFullscreen ? "top-3 z-[220] w-[96%] max-w-2xl" : "top-[4.25rem] z-[241] w-[92%] max-w-xl sm:top-[5.25rem]"}`}>
+          <div className="pointer-events-auto flex items-start justify-between gap-3 rounded-lg border border-amber-700/70 bg-amber-950/88 px-4 py-2 text-sm text-amber-100 shadow-lg shadow-amber-900/35 backdrop-blur-sm">
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold">
+                Solo van {nextUpcomingSolo.nickname} start over {formatCountdown(nextSoloStartsInSeconds)}
+              </p>
+              <p className="mt-0.5 text-xs text-amber-200/90">
+                {new Date(nextUpcomingSolo.startTime).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })} - {new Date(nextUpcomingSolo.endTime).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={openSoloScheduleFromHeader}
+              className="shrink-0 rounded border border-amber-600/60 px-2 py-1 text-xs font-semibold text-amber-100 transition hover:bg-amber-800/40"
+            >
+              Bekijk
+            </button>
+          </div>
+        </div>
+      )}
       {infoToastMessage && (
         <div className={`pointer-events-none fixed left-1/2 -translate-x-1/2 ${playerFullscreen ? "top-3 z-[220] w-[96%] max-w-2xl" : "top-[4.25rem] z-[240] w-[92%] max-w-xl sm:top-[5.25rem]"}`}>
           <div className={`pointer-events-auto flex items-start justify-between gap-2 text-violet-100 ${

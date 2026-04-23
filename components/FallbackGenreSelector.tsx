@@ -148,6 +148,7 @@ function normalizeAutoGenreId(raw: string): string {
 export default function FallbackGenreSelector() {
   const { userAccount } = useAuth();
   const connected = useRadioStore((s) => s.connected);
+  const mode = useRadioStore((s) => s.mode);
   const genres = useRadioStore((s) => s.fallbackGenres);
   const currentTrack = useRadioStore((s) => s.currentTrack);
   const activeGenre = useRadioStore((s) => s.activeFallbackGenre);
@@ -155,10 +156,15 @@ export default function FallbackGenreSelector() {
   const activeGenreBy = useRadioStore((s) => s.activeFallbackGenreBy);
   const sharedPlaybackMode = useRadioStore((s) => s.activeFallbackSharedMode);
   const activePresetName = useRadioStore((s) => s.activeFallbackPresetName);
+  const activeSoloNickname = useRadioStore((s) => s.activeSoloNickname);
   const lockAutoplayFallback = useRadioStore((s) => s.lockAutoplayFallback);
   const hideLocalDiscovery = useRadioStore((s) => s.hideLocalDiscovery);
   const isAdmin = useIsAdmin();
-  const fallbackChangeBlocked = lockAutoplayFallback && !isAdmin;
+  const normalizedUsername = (userAccount?.username ?? "").trim().toLowerCase();
+  const normalizedActiveSolo = (activeSoloNickname ?? "").trim().toLowerCase();
+  const hasSoloControl = isAdmin || (!!normalizedUsername && normalizedUsername === normalizedActiveSolo);
+  const soloFallbackBlocked = mode === "solo" && !hasSoloControl;
+  const fallbackChangeBlocked = soloFallbackBlocked || (lockAutoplayFallback && !isAdmin);
   const menuRef = useRef<HTMLDetailsElement | null>(null);
   const summaryRef = useRef<HTMLElement | null>(null);
   const [isMobile, setIsMobile] = useState(false);
@@ -633,7 +639,12 @@ export default function FallbackGenreSelector() {
             Gekozen door: <span className="text-violet-300">{activeGenreBy}</span>
           </p>
         )}
-        {lockAutoplayFallback && !getRadioToken() && (
+        {soloFallbackBlocked && (
+          <p className="mb-1 rounded-md border border-amber-800/60 bg-amber-950/40 px-2 py-1 text-[10px] text-amber-100">
+            Solo-modus staat aan. Alleen de actieve solist of een admin kan de autoplay fallback wijzigen.
+          </p>
+        )}
+        {lockAutoplayFallback && !soloFallbackBlocked && !getRadioToken() && (
           <p className="mb-1 rounded-md border border-amber-800/60 bg-amber-950/40 px-2 py-1 text-[10px] text-amber-100">
             Autoplay is <span className="font-semibold">vergrendeld</span>. Alleen met het radio admin-token (zoals in het admin-dashboard) kun je dit wijzigen.
           </p>

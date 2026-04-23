@@ -6,10 +6,10 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 export interface DJSlot {
   id: string;
-  user_id: string;
   nickname: string;
   start_time: string;
   end_time: string;
+  created_at?: string | null;
 }
 
 export async function isCurrentDJ(nickname: string): Promise<boolean> {
@@ -47,16 +47,121 @@ export async function getDJSchedule(): Promise<DJSlot[]> {
   return data || [];
 }
 
-export async function claimDJSlot(nickname: string, startTime: string, endTime: string): Promise<boolean> {
-  // Check if slot is already taken
-  const { data: existing } = await supabase
+export async function getCurrentDJSlot(): Promise<DJSlot | null> {
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
     .from('dj_schedule')
     .select('*')
-    .or(`start_time.lte.${startTime},end_time.gte.${endTime}`);
+    .lte('start_time', now)
+    .gt('end_time', now)
+    .order('start_time', { ascending: true })
+    .limit(1)
+    .maybeSingle();
 
-  if (existing && existing.length > 0) {
+  if (error) {
+    console.error('[dj-schedule] Error fetching current DJ slot:', error);
+    return null;
+  }
+
+  return data ?? null;
+}
+
+export async function endCurrentDJSlot(): Promise<DJSlot | null> {
+  const currentSlot = await getCurrentDJSlot();
+  if (!currentSlot) return null;
+
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from('dj_schedule')
+    .update({ end_time: now })
+    .eq('id', currentSlot.id)
+    .select('*')
+    .maybeSingle();
+
+  if (error) {
+    console.error('[dj-schedule] Error ending current DJ slot:', error);
+    return null;
+  }
+
+  return data ?? currentSlot;
+}
+
+export async function getDJSlotById(id: string): Promise<DJSlot | null> {
+  if (!id) return null;
+  const { data, error } = await supabase
+    .from('dj_schedule')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+
+  if (error) {
+    console.error('[dj-schedule] Error fetching DJ slot by id:', error);
+    return null;
+  }
+
+  return data ?? null;
+}
+
+export async function updateDJSlot(id: string, nickname: string, startTime: string, endTime: string): Promise<boolean> {
+  const { data: existing, error: existingError } = await supabase
+    .from('dj_schedule')
+    .select('id')
+    .neq('id', id)
+    .lt('start_time', endTime)
+    .gt('end_time', startTime);
+
+  if (existingError) {
+    console.error('[dj-schedule] Error checking slot overlap on update:', existingError);
     return false;
   }
+
+  if (existing && existing.length > 0) return false;
+
+  const { error } = await supabase
+    .from('dj_schedule')
+    .update({
+      nickname,
+      start_time: startTime,
+      end_time: endTime,
+    })
+    .eq('id', id);
+
+  if (error) {
+    console.error('[dj-schedule] Error updating DJ slot:', error);
+    return false;
+  }
+
+  return true;
+}
+
+export async function deleteDJSlot(id: string): Promise<boolean> {
+  if (!id) return false;
+  const { error } = await supabase
+    .from('dj_schedule')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    console.error('[dj-schedule] Error deleting DJ slot:', error);
+    return false;
+  }
+
+  return true;
+}
+
+export async function claimDJSlot(nickname: string, startTime: string, endTime: string): Promise<boolean> {
+  const { data: existing, error: existingError } = await supabase
+    .from('dj_schedule')
+    .select('id')
+    .lt('start_time', endTime)
+    .gt('end_time', startTime);
+
+  if (existingError) {
+    console.error('[dj-schedule] Error checking slot overlap:', existingError);
+    return false;
+  }
+
+  if (existing && existing.length > 0) return false;
 
   const { error } = await supabase
     .from('dj_schedule')

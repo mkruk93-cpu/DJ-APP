@@ -31,6 +31,9 @@ const DEFAULTS: Record<string, unknown> = {
   party_queue_base_per_user: 6,
   party_queue_min_per_user: 1,
   party_queue_listener_step: 2,
+  solo_slot_duration_minutes: 60,
+  solo_open_slots: [],
+  show_solo_schedule: false,
   lock_autoplay_fallback: false,
   hide_local_discovery: false,
 };

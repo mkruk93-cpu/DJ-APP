@@ -1,6 +1,20 @@
-export type Mode = 'dj' | 'radio' | 'democracy' | 'jukebox' | 'party';
+export type Mode = 'dj' | 'radio' | 'democracy' | 'jukebox' | 'party' | 'solo';
 
 export type Action = 'skip' | 'add_to_queue' | 'reorder_queue' | 'remove_from_queue' | 'vote_skip';
+
+export interface SoloScheduleSlot {
+  id: string;
+  startTime: string;
+  endTime: string;
+}
+
+export interface SoloScheduleBooking {
+  id: string;
+  nickname: string;
+  startTime: string;
+  endTime: string;
+  createdAt?: string | null;
+}
 
 export interface QueueItem {
   id: string;
@@ -125,6 +139,12 @@ export interface RadioState {
   activeFallbackPresetName: string | null;
   mode: Mode;
   modeSettings: ModeSettings;
+  soloSlotDurationMinutes: number;
+  soloOpenSlots: SoloScheduleSlot[];
+  soloBookings: SoloScheduleBooking[];
+  activeSoloNickname: string | null;
+  activeSoloSlot: SoloScheduleBooking | null;
+  showSoloSchedule: boolean;
   listenerCount: number;
   streamOnline: boolean;
   pausedForIdle: boolean;
@@ -146,19 +166,22 @@ export const MODE_LABELS: Record<Mode, string> = {
   democracy: 'Democratie',
   jukebox: 'Jukebox',
   party: 'Party',
+  solo: 'Solo',
 };
 
-export function canPerformAction(mode: Mode, action: Action, isAdmin: boolean): boolean {
-  const rules: Record<Mode, Record<Action, 'admin' | 'all' | 'none'>> = {
+export function canPerformAction(mode: Mode, action: Action, isAdmin: boolean, hasSoloControl = false): boolean {
+  const rules: Record<Mode, Record<Action, 'admin' | 'all' | 'none' | 'solo'>> = {
     dj: { skip: 'admin', add_to_queue: 'admin', reorder_queue: 'admin', remove_from_queue: 'admin', vote_skip: 'none' },
     radio: { skip: 'admin', add_to_queue: 'admin', reorder_queue: 'admin', remove_from_queue: 'admin', vote_skip: 'none' },
     democracy: { skip: 'admin', add_to_queue: 'all', reorder_queue: 'admin', remove_from_queue: 'admin', vote_skip: 'all' },
     jukebox: { skip: 'admin', add_to_queue: 'all', reorder_queue: 'admin', remove_from_queue: 'admin', vote_skip: 'none' },
     party: { skip: 'all', add_to_queue: 'all', reorder_queue: 'admin', remove_from_queue: 'all', vote_skip: 'none' },
+    solo: { skip: 'admin', add_to_queue: 'solo', reorder_queue: 'admin', remove_from_queue: 'admin', vote_skip: 'none' },
   };
 
   const rule = rules[mode]?.[action];
   if (!rule || rule === 'none') return false;
   if (rule === 'all') return true;
+  if (rule === 'solo') return isAdmin || hasSoloControl;
   return isAdmin;
 }

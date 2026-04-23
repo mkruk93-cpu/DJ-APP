@@ -5,13 +5,14 @@ import { useRadioStore } from "@/lib/radioStore";
 import { updateSetting as apiUpdateSetting } from "@/lib/radioApi";
 import type { Mode, ModeSettings } from "@/lib/types";
 
-const MODE_ORDER: Mode[] = ["dj", "radio", "democracy", "jukebox", "party"];
+const MODE_ORDER: Mode[] = ["dj", "radio", "democracy", "jukebox", "party", "solo"];
 const MODE_LABEL: Record<Mode, string> = {
   dj: "DJ",
   radio: "Radio",
   democracy: "Democratie",
   jukebox: "Jukebox",
   party: "Party",
+  solo: "Solo",
 };
 
 function getQueueSettingKeys(mode: Mode): {
@@ -27,6 +28,13 @@ function getQueueSettingKeys(mode: Mode): {
     };
   }
   if (mode === "radio") {
+    return {
+      base: "radio_queue_base_per_user",
+      min: "radio_queue_min_per_user",
+      step: "radio_queue_listener_step",
+    };
+  }
+  if (mode === "solo") {
     return {
       base: "radio_queue_base_per_user",
       min: "radio_queue_min_per_user",

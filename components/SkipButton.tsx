@@ -13,6 +13,7 @@ export default function SkipButton({ compact = false }: { compact?: boolean }) {
   const mode = useRadioStore((s) => s.mode);
   const voteState = useRadioStore((s) => s.voteState);
   const currentTrack = useRadioStore((s) => s.currentTrack);
+  const activeSoloNickname = useRadioStore((s) => s.activeSoloNickname);
   const listenerCount = useRadioStore((s) => s.listenerCount);
   const onlineUserCount = useRadioStore((s) => s.onlineUserCount);
   const modeSettings = useRadioStore((s) => s.modeSettings);
@@ -20,6 +21,7 @@ export default function SkipButton({ compact = false }: { compact?: boolean }) {
   const [voted, setVoted] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const admin = useIsAdmin();
+  const { userAccount } = useAuth();
 
   useEffect(() => {
     if (!currentTrack?.started_at) { setElapsed(0); return; }
@@ -45,6 +47,9 @@ export default function SkipButton({ compact = false }: { compact?: boolean }) {
   const isLongTrack = (currentTrack.duration ?? 0) > 600;
   const anyoneCanSkip = isLongTrack && elapsed >= ANYONE_SKIP_AFTER;
   const timeUntilSkip = ANYONE_SKIP_AFTER - elapsed;
+  const normalizedUsername = (userAccount?.username ?? "").trim().toLowerCase();
+  const normalizedActiveSolo = (activeSoloNickname ?? "").trim().toLowerCase();
+  const hasSoloControl = admin || (!!normalizedUsername && normalizedUsername === normalizedActiveSolo);
 
   function handleAdminSkip() {
     // Admins can always skip, regardless of skip lock
@@ -164,6 +169,15 @@ export default function SkipButton({ compact = false }: { compact?: boolean }) {
               </button>
             )}
           </>
+        )}
+
+        {mode === "solo" && hasSoloControl && (
+          <button
+            onClick={handleAdminSkip}
+            className="rounded-md px-2 py-1 text-xs font-medium transition bg-red-600/20 text-red-400 hover:bg-red-600/30"
+          >
+            Skip
+          </button>
         )}
 
         {isLongTrack && !anyoneCanSkip && timeUntilSkip > 0 && (
@@ -312,6 +326,25 @@ export default function SkipButton({ compact = false }: { compact?: boolean }) {
             Iedereen kan skippen over {Math.floor(timeUntilSkip / 60)}:{String(timeUntilSkip % 60).padStart(2, "0")}
           </p>
         )}
+      </div>
+    );
+  }
+
+  if (mode === "solo") {
+    if (!hasSoloControl) return null;
+    return (
+      <div className="flex flex-col gap-1.5">
+        {skipLocked && (
+          <p className="text-xs font-medium text-amber-400 animate-pulse">Volgende nummer wordt geladenâ€¦</p>
+        )}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleAdminSkip}
+            className="rounded-lg px-3 py-2 text-sm font-medium transition bg-red-600/20 text-red-400 hover:bg-red-600/30"
+          >
+            Skip
+          </button>
+        </div>
       </div>
     );
   }

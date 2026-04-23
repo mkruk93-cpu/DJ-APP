@@ -226,7 +226,7 @@ function dedupeSearchResults(items: SearchResult[]): SearchResult[] {
   });
 }
 
-export default function QueueAdd({ username }: { username?: string } = {}) {
+export default function QueueAdd({ username, hasSoloControl = false }: { username?: string; hasSoloControl?: boolean } = {}) {
   const [hydrated, setHydrated] = useState(false);
   const [input, setInput] = useState("");
   const [feedback, setFeedback] = useState<{ msg: string; ok: boolean } | null>(null);
@@ -500,7 +500,7 @@ export default function QueueAdd({ username }: { username?: string } = {}) {
   }, [serverUrl]);
 
   const isAdmin = useIsAdmin();
-  const canAdd = hydrated && canPerformAction(mode, "add_to_queue", isAdmin);
+  const canAdd = hydrated && canPerformAction(mode, "add_to_queue", isAdmin, hasSoloControl);
   const isUrl = isSupportedUrl(input.trim());
   const hasSpotifySource = isSpotifyConfigured();
   const activeGenreLabel = resolveGenreLabel(activeGenre, genres);

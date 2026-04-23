@@ -1,6 +1,20 @@
-export type Mode = 'dj' | 'radio' | 'democracy' | 'jukebox' | 'party';
+export type Mode = 'dj' | 'radio' | 'democracy' | 'jukebox' | 'party' | 'solo';
 
 export type Action = 'skip' | 'add_to_queue' | 'reorder_queue' | 'remove_from_queue' | 'vote_skip';
+
+export interface SoloScheduleSlot {
+  id: string;
+  startTime: string;
+  endTime: string;
+}
+
+export interface SoloScheduleBooking {
+  id: string;
+  nickname: string;
+  startTime: string;
+  endTime: string;
+  createdAt?: string | null;
+}
 
 export interface QueueItem {
   id: string;
@@ -122,6 +136,12 @@ export interface ServerState {
   jingleSelectedKeys: string[];
   mode: Mode;
   modeSettings: ModeSettings;
+  soloSlotDurationMinutes: number;
+  soloOpenSlots: SoloScheduleSlot[];
+  soloBookings: SoloScheduleBooking[];
+  activeSoloNickname: string | null;
+  activeSoloSlot: SoloScheduleBooking | null;
+  showSoloSchedule: boolean;
   fallbackGenres: FallbackGenre[];
   activeFallbackGenre: string | null;
   activeFallbackGenres: string[];
