@@ -120,7 +120,7 @@ export default function PushNotification() {
   if (!visible || dismissed || !pushMessage) return null;
 
   return (
-    <div className="fixed inset-x-4 bottom-20 z-[100] mx-auto max-w-lg animate-in fade-in slide-in-from-bottom-4 duration-300 sm:bottom-24">
+    <div className="fixed inset-x-4 top-2 z-[250] mx-auto max-w-lg animate-in fade-in slide-in-from-top-4 duration-300 sm:top-24">
       <div className="relative overflow-hidden rounded-2xl border border-amber-500/30 bg-gradient-to-r from-amber-950/95 via-orange-950/95 to-amber-950/95 p-4 shadow-2xl shadow-black/60 backdrop-blur-sm">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-amber-500/10 via-transparent to-transparent" />
         <div className="absolute -left-8 -top-8 h-24 w-24 rounded-full bg-amber-500/20 blur-2xl" />

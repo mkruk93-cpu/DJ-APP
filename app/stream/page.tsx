@@ -237,6 +237,7 @@ export default function StreamPage() {
   const [preferRadioUi, setPreferRadioUi] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [infoToastMessage, setInfoToastMessage] = useState<string | null>(null);
+  const [soloBannerDismissed, setSoloBannerDismissed] = useState(false);
   const [skipVoteToastHidden, setSkipVoteToastHidden] = useState(false);
   const [skipVoteToastExpiresAt, setSkipVoteToastExpiresAt] = useState<number | null>(null);
   const [skipVoteToastSecondsLeft, setSkipVoteToastSecondsLeft] = useState(0);
@@ -295,6 +296,7 @@ export default function StreamPage() {
     ? Math.max(0, Math.ceil((new Date(nextUpcomingSolo.startTime).getTime() - soloCountdownNow) / 1000))
     : null;
   const showUpcomingSoloBanner = !!nextUpcomingSolo && !activeSoloSlot && nextSoloStartsInSeconds !== null && nextSoloStartsInSeconds <= 15 * 60;
+  const upcomingSoloBannerVisible = showUpcomingSoloBanner && !soloBannerDismissed;
   const showRequests = radioMode === "dj";
   const hideQueueUiForRadioUsers = radioMode === "radio" && !isAdminUser;
   const showRadioPanel = communityUiActive && radioMode !== "dj" && (radioMode === "solo" ? hasSoloControl : !hideQueueUiForRadioUsers);
@@ -1816,6 +1818,12 @@ export default function StreamPage() {
           </h1>
           <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1 sm:gap-3">
             {/* Always show header components, with fallback during loading */}
+            {soloBannerDismissed && showUpcomingSoloBanner && nextSoloStartsInSeconds !== null && (
+              <div className="flex h-7 items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[10px] font-bold text-amber-200 transition hover:bg-amber-500/15 sm:px-3 sm:text-xs">
+                <span className="animate-pulse">📅</span>
+                <span>{formatCountdown(nextSoloStartsInSeconds)}</span>
+              </div>
+            )}
             <ModeIndicator />
             <OnlineUsers username={userAccount?.username} onUserClick={(username) => setProfileModalUser(username)} />
             <button
@@ -2376,9 +2384,9 @@ export default function StreamPage() {
           )}
         </div>
       </main>
-      {showUpcomingSoloBanner && nextUpcomingSolo && nextSoloStartsInSeconds !== null && (
+      {upcomingSoloBannerVisible && nextUpcomingSolo && nextSoloStartsInSeconds !== null && (
         <div className={`pointer-events-none fixed left-1/2 -translate-x-1/2 ${playerFullscreen ? "top-3 z-[220] w-[96%] max-w-2xl" : "top-[4.25rem] z-[241] w-[92%] max-w-xl sm:top-[5.25rem]"}`}>
-          <div className="pointer-events-auto flex items-start justify-between gap-3 rounded-lg border border-amber-700/70 bg-amber-950/88 px-4 py-2 text-sm text-amber-100 shadow-lg shadow-amber-900/35 backdrop-blur-sm">
+          <div className="pointer-events-auto flex items-start justify-between gap-3 rounded-lg border border-amber-700/70 bg-amber-950/90 px-4 py-2 text-sm text-amber-100 shadow-lg shadow-amber-900/35 backdrop-blur-sm">
             <div className="min-w-0 flex-1">
               <p className="font-semibold">
                 Solo van {nextUpcomingSolo.nickname} start over {formatCountdown(nextSoloStartsInSeconds)}
@@ -2387,18 +2395,28 @@ export default function StreamPage() {
                 {new Date(nextUpcomingSolo.startTime).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })} - {new Date(nextUpcomingSolo.endTime).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })}
               </p>
             </div>
-            <button
-              type="button"
-              onClick={openSoloScheduleFromHeader}
-              className="shrink-0 rounded border border-amber-600/60 px-2 py-1 text-xs font-semibold text-amber-100 transition hover:bg-amber-800/40"
-            >
-              Bekijk
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={openSoloScheduleFromHeader}
+                className="rounded border border-amber-600/60 px-2 py-1 text-xs font-semibold text-amber-100 transition hover:bg-amber-800/40"
+              >
+                Bekijk
+              </button>
+              <button
+                type="button"
+                onClick={() => setSoloBannerDismissed(true)}
+                className="flex h-6 w-6 items-center justify-center rounded-full text-amber-300 transition hover:bg-amber-800/40 hover:text-white"
+                aria-label="Sluit solo melding"
+              >
+                ×
+              </button>
+            </div>
           </div>
         </div>
       )}
       {infoToastMessage && (
-        <div className={`pointer-events-none fixed left-1/2 -translate-x-1/2 ${playerFullscreen ? "top-3 z-[220] w-[96%] max-w-2xl" : "top-[4.25rem] z-[240] w-[92%] max-w-xl sm:top-[5.25rem]"}`}>
+        <div className={`pointer-events-none fixed left-1/2 -translate-x-1/2 ${playerFullscreen ? "top-3 z-[220] w-[96%] max-w-2xl" : "top-2 z-[240] w-[92%] max-w-xl sm:top-[5.25rem]"}`}>
           <div className={`pointer-events-auto flex items-start justify-between gap-2 text-violet-100 ${
             playerFullscreen
               ? "rounded-xl border border-violet-700/80 bg-violet-950/88 px-4 py-3 text-sm shadow-2xl shadow-violet-900/35 backdrop-blur-md sm:px-5 sm:py-3.5 sm:text-base"
@@ -2597,7 +2615,7 @@ export default function StreamPage() {
         </div>
       )}
       {toastMessage && (
-        <div className={`pointer-events-none fixed bottom-4 left-1/2 w-[92%] max-w-xl -translate-x-1/2 ${playerFullscreen ? "z-[220]" : "z-[120]"}`}>
+        <div className={`pointer-events-none fixed top-2 left-1/2 w-[92%] max-w-xl -translate-x-1/2 ${playerFullscreen ? "z-[220]" : "z-[241]"}`}>
           <div className={`border border-red-900/60 bg-red-950/85 text-center text-red-100 backdrop-blur-sm ${
             playerFullscreen
               ? "rounded-xl px-5 py-3 text-base shadow-2xl shadow-red-900/45"
@@ -2608,7 +2626,7 @@ export default function StreamPage() {
         </div>
       )}
       {voteState && voteState.votes > 0 && !skipVoteToastHidden && (
-        <div className={`pointer-events-none fixed bottom-20 left-1/2 w-[94%] max-w-xl -translate-x-1/2 sm:bottom-6 ${playerFullscreen ? "z-[220]" : "z-[125]"}`}>
+        <div className={`pointer-events-none fixed top-[4.5rem] left-1/2 w-[94%] max-w-xl -translate-x-1/2 sm:top-24 ${playerFullscreen ? "z-[220]" : "z-[125]"}`}>
           <div className="pointer-events-auto rounded-lg border border-violet-700/60 bg-violet-950/90 px-3 py-2 text-violet-100 shadow-lg shadow-violet-900/40 backdrop-blur-sm">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 flex-1">

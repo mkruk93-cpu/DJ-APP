@@ -1879,7 +1879,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
 
       {/* Mobile: compact horizontal layout */}
       {!isFullscreen && <div className="relative z-[1] flex flex-col landscape:hidden sm:hidden">
-        <div className="flex items-center gap-1.5 p-1.5 pb-1">
+        <div className="flex items-center gap-1.5 p-1.5 pb-0">
           <div className="relative shrink-0" style={{ perspective: "900px" }}>
             {playing && <div className="player-cover-glow absolute -inset-1 rounded-xl bg-violet-500/30 blur-md" />}
             {(currentArtwork || incomingArtwork) ? (
@@ -1950,7 +1950,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
             )}
           </div>
 
-          <div className="min-w-0 flex-1 self-start">
+          <div className="min-w-0 flex-1 self-center">
             {hasTrack ? (
               <>
                 {displayTitle && <p className="break-words text-[13px] font-semibold leading-4 text-white">{displayTitle}</p>}
@@ -1973,7 +1973,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
                   </div>
                 )}
                 {canLikeTrack && (
-                  <div className="mt-1 flex items-center gap-1.5">
+                  <div className="mt-0.5 flex items-center gap-1.5">
                     <button
                       type="button"
                       onClick={likeTrack}
