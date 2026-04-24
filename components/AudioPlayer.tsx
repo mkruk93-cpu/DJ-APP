@@ -1557,7 +1557,6 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
   const duration = isJingleTrack ? null : (syncedRadioTrack?.duration ?? null);
   const progress = duration && duration > 0 ? Math.min(elapsed / duration, 1) : 0;
   const durationLabel = duration && duration > 0 ? formatTime(duration) : "--:--";
-  const showCompactTimer = isRadioMode && !isLoading && !!duration && duration > 0;
   const showCastButton = true;
 
   const artworkFallback = (
@@ -1579,7 +1578,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
       className={`audio-player-shell w-full overflow-hidden bg-gray-900 shadow-lg shadow-violet-500/5 ${
         isFullscreen
           ? "fixed inset-0 z-[180] h-[100dvh] max-w-none rounded-none border-0"
-          : "relative max-w-full rounded-xl border border-gray-800"
+          : "relative max-w-full rounded-xl border border-gray-800 min-h-[140px] sm:min-h-0"
       }`}
     >
       <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-xl">
@@ -1880,7 +1879,7 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
 
       {/* Mobile: compact horizontal layout */}
       {!isFullscreen && <div className="relative z-[1] flex flex-col landscape:hidden sm:hidden">
-        <div className="flex items-center gap-2 p-2">
+        <div className="flex items-center gap-1.5 p-1.5 pb-1">
           <div className="relative shrink-0" style={{ perspective: "900px" }}>
             {playing && <div className="player-cover-glow absolute -inset-1 rounded-xl bg-violet-500/30 blur-md" />}
             {(currentArtwork || incomingArtwork) ? (
@@ -1951,48 +1950,55 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
             )}
           </div>
 
-          <div className={`relative min-w-0 flex-1 ${showCompactTimer ? "pr-16" : ""}`}>
-            {showCompactTimer && (
-              <div className="absolute right-0 top-0 rounded-full border border-violet-400/20 bg-black/45 px-2 py-0.5 text-[9px] font-semibold tabular-nums text-violet-100 shadow-sm shadow-black/30">
-                {formatTime(elapsed)} / {durationLabel}
-              </div>
-            )}
+          <div className="min-w-0 flex-1 self-start">
             {hasTrack ? (
               <>
-                {displayTitle && <p className="truncate text-sm font-semibold text-white">{displayTitle}</p>}
-                {displayArtist && <p className="truncate text-xs text-violet-400">{displayArtist}</p>}
+                {displayTitle && <p className="break-words text-[13px] font-semibold leading-4 text-white">{displayTitle}</p>}
+                {displayArtist && <p className="mt-0.5 line-clamp-1 text-[11px] leading-3 text-violet-400">{displayArtist}</p>}
                 {isRadioMode && (radioRequestedBy || syncedRadioTrack) && (
-                  <div className="mt-1 space-y-0.5 text-[10px] text-gray-500">
-                    <p className="truncate">
-                      Keuze: <span className="text-gray-300">
-                        {selectionLabel ?? (radioIsRandom ? "Random selectie" : "Wachtrij")}
+                  <div className="mt-1 space-y-0 text-[10px] text-gray-500">
+                    <p className="line-clamp-1">
+                      <span className="text-gray-300">
+                        {selectionLabel ?? (radioIsRandom ? "Random" : "Wachtrij")}
                       </span>
+                      {selectionPlaylistLabel ? (
+                        <> · <span className="text-violet-300">{selectionPlaylistLabel.replace(/^Playlist ·\s*/i, "")}</span></>
+                      ) : null}
                     </p>
-                    {selectionPlaylistLabel ? (
-                      <p className="truncate">
-                        Playlist: <span className="text-violet-300">{selectionPlaylistLabel.replace(/^Playlist ·\s*/i, "")}</span>
-                      </p>
-                    ) : null}
                     {radioRequestedBy ? (
-                      <p className="truncate">
+                      <p className="line-clamp-1">
                         Aangevraagd door <span className="text-violet-300">{radioRequestedBy}</span>
                       </p>
                     ) : null}
                   </div>
                 )}
                 {canLikeTrack && (
-                  <div className="mt-0.5 flex items-center gap-1.5">
+                  <div className="mt-1 flex items-center gap-1.5">
                     <button
                       type="button"
                       onClick={likeTrack}
                       disabled={feedbackSaving}
-                      className={`rounded px-1.5 py-0.5 text-[10px] font-semibold transition ${
-                        likedTrackKey === currentLikeKey
-                          ? "bg-pink-500/20 text-pink-200"
-                          : "bg-gray-800 text-pink-300 hover:bg-gray-700"
-                      } disabled:opacity-70`}
+                      className="group flex items-center justify-center transition disabled:opacity-70"
+                      aria-label="Like"
                     >
-                      {likedTrackKey === currentLikeKey ? "♥ Geliked" : feedbackSaving ? "Opslaan..." : "♡ Like"}
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 24 24"
+                        fill={likedTrackKey === currentLikeKey ? "rgb(239, 68, 68)" : "none"}
+                        stroke={likedTrackKey === currentLikeKey ? "rgb(239, 68, 68)" : "currentColor"}
+                        strokeWidth={2}
+                        className={`h-[15px] w-[15px] transition-colors ${
+                          likedTrackKey === currentLikeKey
+                            ? "text-red-500"
+                            : "text-pink-300 group-hover:text-pink-200"
+                        }`}
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12Z"
+                        />
+                      </svg>
                     </button>
                     <TrackActions 
                       title={displayTitle ?? ""} 
@@ -2002,67 +2008,32 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
                       className="inline-flex"
                       iconSize={14}
                     />
-                    {canDislikeAutoTrack && (
-                      <button
-                        type="button"
-                        onClick={dislikeTrack}
-                        disabled={feedbackSaving}
-                        className={`rounded px-1.5 py-0.5 text-[10px] font-semibold transition ${
-                          dislikedTrackKey === currentLikeKey
-                            ? "bg-red-500/20 text-red-200"
-                            : "bg-gray-800 text-red-300 hover:bg-gray-700"
-                        } disabled:opacity-70`}
-                      >
-                        {dislikedTrackKey === currentLikeKey ? "✕ Disliked" : feedbackSaving ? "Opslaan..." : "🚫 Dislike"}
-                      </button>
-                    )}
                     {feedbackMessage && (
-                      <span className="truncate text-[10px] text-pink-200/90">{feedbackMessage}</span>
+                      <span className="line-clamp-1 text-[9px] text-pink-200/90">{feedbackMessage}</span>
                     )}
                   </div>
                 )}
               </>
             ) : (
-              <p className="text-sm font-medium text-gray-400">
+              <p className="text-xs font-medium text-gray-400">
                 {isRadioMode ? "Wacht op nummer..." : "Audio Stream"}
               </p>
             )}
-            {isLoading ? (
-              <div className="mt-1 flex items-center gap-2">
-                <span className="h-2 w-2 animate-spin rounded-full border border-violet-400 border-t-transparent" />
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-yellow-400">Laden...</span>
-              </div>
-            ) : isRadioMode ? (
-              <div className="mt-1 flex items-center gap-2">
-                <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400 opacity-75" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-violet-500" />
-                </span>
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-violet-400">Live</span>
-              </div>
-            ) : (
-              <div className="mt-1 flex items-center gap-2">
-                <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400 opacity-75" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-violet-500" />
-                </span>
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-violet-400">Live</span>
-              </div>
-            )}
           </div>
 
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex shrink-0 flex-col items-end gap-1 self-stretch">
+            <div className="flex items-center gap-1">
             {showCastButton && (
               <button
                 type="button"
                 onClick={toggleCast}
                 disabled={castBusy}
-                className={`flex h-7 min-w-[44px] items-center justify-center rounded-full border px-2 text-[10px] font-semibold transition ${
+                className={`flex h-6 min-w-[40px] items-center justify-center rounded-full border px-2 text-[9px] font-semibold transition ${
                   (castConnected || remoteCastConnected)
                     ? "border-emerald-400/80 bg-emerald-500/20 text-emerald-100"
                     : "border-gray-600/70 bg-black/40 text-white hover:border-emerald-400/80 hover:bg-black/60"
                 } disabled:opacity-60`}
-                aria-label="Cast naar tv"
+                aria-label="Cast"
               >
                 {castBusy ? "..." : (castConnected || remoteCastConnected) ? "TV" : "Cast"}
               </button>
@@ -2070,8 +2041,8 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
             <button
               type="button"
               onClick={toggleFullscreen}
-              className="flex h-7 w-7 items-center justify-center rounded-full border border-gray-600/70 bg-black/40 text-[10px] text-white transition hover:border-violet-400/80 hover:bg-black/60"
-              aria-label="Fullscreen player"
+              className="flex h-6 w-6 items-center justify-center rounded-full border border-gray-600/70 bg-black/40 text-[9px] text-white transition hover:border-violet-400/80 hover:bg-black/60"
+              aria-label="Full"
             >
               ⛶
             </button>
@@ -2079,27 +2050,27 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
               type="button"
               onClick={refreshStream}
               disabled={!src}
-              className="flex h-7 w-7 items-center justify-center rounded-full border border-gray-600/70 bg-black/40 text-[11px] text-white transition hover:border-violet-400/80 hover:bg-black/60 disabled:cursor-not-allowed disabled:opacity-40"
-              aria-label="Stream vernieuwen"
-              title="Stream vernieuwen"
+              className="order-first flex h-6 w-6 items-center justify-center rounded-full border border-gray-600/70 bg-black/40 text-[10px] text-white transition hover:border-violet-400/80 hover:bg-black/60 disabled:cursor-not-allowed disabled:opacity-40"
+              aria-label="Reset"
             >
               ↻
             </button>
+            </div>
             <button
               onClick={toggle}
-              className={`flex h-10 w-10 items-center justify-center rounded-full transition-all ${
+              className={`flex h-9 w-9 items-center justify-center self-end rounded-full transition-all ${
                 playing
                   ? "bg-violet-600 shadow-md shadow-violet-500/30 hover:bg-violet-500"
                   : "bg-gray-700 hover:bg-gray-600"
               }`}
             >
               {playing ? (
-                <svg className="h-4 w-4 text-white" fill="currentColor" viewBox="0 0 24 24">
+                <svg className="h-3.5 w-3.5 text-white" fill="currentColor" viewBox="0 0 24 24">
                   <rect x="6" y="4" width="4" height="16" rx="1" />
                   <rect x="14" y="4" width="4" height="16" rx="1" />
                 </svg>
               ) : (
-                <svg className="ml-0.5 h-4 w-4 text-white" fill="currentColor" viewBox="0 0 24 24">
+                <svg className="ml-0.5 h-3.5 w-3.5 text-white" fill="currentColor" viewBox="0 0 24 24">
                   <path d="M8 5v14l11-7z" />
                 </svg>
               )}
@@ -2108,7 +2079,12 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
         </div>
 
         {isRadioMode && duration && duration > 0 && (
-          <div className="px-2 pb-1.5">
+          <div className="px-2 pb-1">
+            <div className="flex justify-end">
+              <div className="text-[9px] font-semibold tabular-nums text-gray-500 leading-none mb-0.5">
+                {formatTime(elapsed)} / {durationLabel}
+              </div>
+            </div>
             <div className="h-1 w-full overflow-hidden rounded-full bg-gray-700">
               <div
                 className="h-full rounded-full bg-violet-500 transition-all duration-1000 ease-linear"
@@ -2119,8 +2095,8 @@ export default function AudioPlayer({ src, radioTrack, showFallback = false, pre
         )}
 
         {playing && (
-          <div className="px-2 pb-1.5">
-            <AudioVisualizer audioRef={audioRef} hostRef={playerRef} playing={playing} barCount={24} className="h-8" />
+          <div className="px-2 pb-1">
+            <AudioVisualizer audioRef={audioRef} hostRef={playerRef} playing={playing} barCount={24} className="h-6" />
           </div>
         )}
       </div>}

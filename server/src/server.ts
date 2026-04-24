@@ -6675,7 +6675,9 @@ io.on('connection', (socket) => {
   socket.on('track:skip', async (data: { isAdmin?: boolean; token?: string }) => {
     try {
       const mode = await getActiveMode(sb);
-      const admin = isAdmin(data.token, socketNicknameById.get(socket.id));
+      const requesterNickname = socketNicknameById.get(socket.id);
+      const admin = isAdmin(data.token, requesterNickname);
+      const privilegedSkip = admin || (mode === 'solo' && await hasActiveSoloControl(requesterNickname));
 
       const track = getCurrentTrack();
       // Admins can always skip, regardless of skip lock
@@ -6699,7 +6701,7 @@ io.on('connection', (socket) => {
         return;
       }
 
-      if (mode !== 'solo' && !anyoneCanSkip && !canPerformAction(mode, 'skip', admin)) {
+      if (!privilegedSkip && !anyoneCanSkip && !canPerformAction(mode, 'skip', admin, privilegedSkip)) {
         socket.emit('error:toast', { message: 'Je mag niet skippen in deze modus' });
         return;
       }
