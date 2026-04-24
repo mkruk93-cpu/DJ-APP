@@ -98,7 +98,7 @@ export default function SoloScheduleBar({
   function handleSchedule() {
     const parsed = new Date(newStart);
     if (!newStart || Number.isNaN(parsed.getTime())) return;
-    const normalizedDuration = Math.max(15, Math.min(60, Math.round(customDuration || durationMinutes || 60)));
+    const normalizedDuration = Math.max(10, Math.min(60, Math.round(customDuration || durationMinutes || 60)));
     const startTime = parsed.toISOString();
     const endTime = new Date(parsed.getTime() + normalizedDuration * 60_000).toISOString();
     setScheduling(true);
@@ -119,7 +119,7 @@ export default function SoloScheduleBar({
       <div className="flex flex-wrap items-center gap-2">
         <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-amber-300">Solo inschrijven</p>
         <p className="text-xs text-gray-300">
-          Plan zelf je solo in. Je kiest zelf een starttijd en een duur van 15 tot 60 minuten.
+          Plan zelf je solo in. Je kiest zelf een starttijd en een duur van 10 tot 60 minuten.
         </p>
         {onClose && (
           <button
@@ -156,18 +156,30 @@ export default function SoloScheduleBar({
             className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white outline-none transition focus:border-amber-400"
           />
         </label>
-        <label className="space-y-1">
+        <div className="space-y-1">
           <span className="text-[11px] font-semibold uppercase tracking-wide text-amber-200/80">Minuten</span>
-          <input
-            type="number"
-            min={15}
-            max={60}
-            step={15}
-            value={customDuration}
-            onChange={(event) => setCustomDuration(Number(event.target.value))}
-            className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white outline-none transition focus:border-amber-400"
-          />
-        </label>
+          <div className="flex h-9 items-center overflow-hidden rounded-lg border border-gray-700 bg-gray-950">
+            <button
+              type="button"
+              onClick={() => setCustomDuration(prev => Math.max(10, prev - 5))}
+              className="flex h-full w-10 items-center justify-center border-r border-gray-700 text-amber-200 transition hover:bg-gray-800 active:bg-gray-700"
+              aria-label="Minder minuten"
+            >
+              <span className="text-xl leading-none">−</span>
+            </button>
+            <div className="flex flex-1 items-center justify-center text-sm font-semibold text-white tabular-nums">
+              {customDuration}
+            </div>
+            <button
+              type="button"
+              onClick={() => setCustomDuration(prev => Math.min(60, prev + 5))}
+              className="flex h-full w-10 items-center justify-center border-l border-gray-700 text-amber-200 transition hover:bg-gray-800 active:bg-gray-700"
+              aria-label="Meer minuten"
+            >
+              <span className="text-xl leading-none">+</span>
+            </button>
+          </div>
+        </div>
         <button
           type="button"
           disabled={scheduling || !newStart}
